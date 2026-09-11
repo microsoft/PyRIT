@@ -64,7 +64,7 @@ RUN if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         echo "Installing PyRIT from local source"; \
         uv pip install --python /opt/venv/bin/python -e .[speech,opencv,fairness_bias,fastapi,playwright]; \
         echo "Building frontend..."; \
-        /opt/venv/bin/python build_scripts/prepare_package.py; \
+        /opt/venv/bin/python -m build_scripts.prepare_package; \
     fi && \
     echo "Creating build info..." && \
     /opt/venv/bin/python -c "import json; import pyrit; \

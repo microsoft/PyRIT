@@ -89,9 +89,35 @@ _PROMPT_TARGET_FORBIDDEN = [
     "transformers",
 ]
 
+_TARGET_CATALOG_FORBIDDEN = [
+    "huggingface_hub",
+    "torch",
+    "transformers",
+]
+
 
 class TestImportGuards:
     """Verify heavy modules are not eagerly loaded at key import points."""
+
+    def test_hugging_face_classifier_does_not_load_inference_frameworks(self) -> None:
+        """Importing the private classifier must not import local inference frameworks."""
+        loaded = _check_forbidden_imports(
+            import_statement=("from pyrit.score._classifiers.hugging_face import _HuggingFaceSequenceClassifier"),
+            forbidden=_TARGET_CATALOG_FORBIDDEN,
+        )
+        assert not loaded, f"Hugging Face classifier import loaded inference frameworks: {loaded}."
+
+    def test_scorer_catalog_does_not_load_inference_frameworks(self) -> None:
+        """Scorer discovery must include Roblox PII without importing its runtime frameworks."""
+        loaded = _check_forbidden_imports(
+            import_statement=(
+                "from pyrit.registry import ScorerRegistry\n"
+                "metadata = ScorerRegistry.get_registry_singleton().get_all_registered_class_metadata()\n"
+                "assert any(item.class_name == 'RobloxPiiScorer' for item in metadata)"
+            ),
+            forbidden=_TARGET_CATALOG_FORBIDDEN,
+        )
+        assert not loaded, f"Scorer catalog discovery loaded inference frameworks: {loaded}."
 
     def test_cli_arg_parsing_does_not_load_heavy_modules(self):
         """
@@ -132,4 +158,19 @@ class TestImportGuards:
         assert not loaded, (
             f"PromptTarget base class loaded ML modules: {loaded}. "
             f"Ensure heavy subclass imports use __getattr__ lazy loading in __init__.py."
+        )
+
+    def test_target_catalog_discovery_does_not_load_inference_frameworks(self) -> None:
+        """Full target discovery includes Hugging Face without importing its runtime frameworks."""
+        loaded = _check_forbidden_imports(
+            import_statement=(
+                "from pyrit.registry import TargetRegistry\n"
+                "metadata = TargetRegistry.get_registry_singleton().get_all_registered_class_metadata()\n"
+                "assert any(item.class_name == 'HuggingFaceChatTarget' for item in metadata)"
+            ),
+            forbidden=_TARGET_CATALOG_FORBIDDEN,
+        )
+        assert not loaded, (
+            f"Target catalog discovery loaded inference frameworks: {loaded}. "
+            f"Move target-specific runtime imports to construction or execution paths."
         )

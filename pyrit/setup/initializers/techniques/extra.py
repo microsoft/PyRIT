@@ -9,9 +9,23 @@ Opt-in techniques that are not part of the default ``core`` set. Exposes
 ``build_technique_factories``.
 """
 
-from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
-from pyrit.executor.attack import PAIRAttack, RedTeamingAttack, SkeletonKeyAttack
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
+from pyrit.converter import (
+    CharNoiseConverter,
+    CharSwapConverter,
+    RandomCapitalLettersConverter,
+    WordProportionSelectionStrategy,
+)
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    CrescendoAttack,
+    PAIRAttack,
+    PromptSendingAttack,
+    RedTeamingAttack,
+    SkeletonKeyAttack,
+)
 from pyrit.models import SeedPrompt
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 
@@ -32,7 +46,28 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="skeleton_key",
             attack_class=SkeletonKeyAttack,
+            description="Builds a multi-step context that asks the target to operate without its usual safety rules.",
             technique_tags=["single_turn"],
+        ),
+        AttackTechniqueFactory(
+            name="best_of_n",
+            attack_class=PromptSendingAttack,
+            description="Re-samples scrambled, re-cased, noised objective variants until one slips past the target.",
+            technique_tags=["single_turn"],
+            attack_kwargs={
+                "max_attempts_on_failure": 19,
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(
+                        converters=[
+                            CharSwapConverter(
+                                word_selection_strategy=WordProportionSelectionStrategy(proportion=0.4**0.5)
+                            ),
+                            RandomCapitalLettersConverter(percentage=0.4**0.5 * 100),
+                            CharNoiseConverter(noise_probability=0.4**3),
+                        ]
+                    )
+                ),
+            },
         ),
         AttackTechniqueFactory(
             name="violent_durian",
@@ -43,6 +78,15 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             adversarial_system_prompt=SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "violent_durian.yaml"),
             adversarial_seed_prompt=SeedPrompt.from_yaml_file(
                 EXECUTOR_RED_TEAM_PATH / "violent_durian_seed_prompt.yaml"
+            ),
+        ),
+        AttackTechniqueFactory(
+            name="split_payload",
+            attack_class=CrescendoAttack,
+            description="Splits the objective across an escalating conversation to conceal the complete request.",
+            technique_tags=["multi_turn"],
+            adversarial_system_prompt=SeedPrompt.from_yaml_file(
+                EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "split_payload.yaml"
             ),
         ),
     ]

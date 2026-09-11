@@ -67,7 +67,7 @@ for param in Scam.supported_parameters():
 # Each `Parameter` carries:
 #
 # - **name**: dict key in `self.params`, converted to `--kebab-case` for the CLI
-# - **description**: shown in `--list-scenarios` and `--help`
+# - **description**: shown in `list-scenarios` and `--help`
 # - **default**: value used when not supplied; deep-copied per run
 # - **param_type**: `str`, `int`, `float`, `bool`, a `Literal[...]`/`Enum` (a
 #   constrained scalar that carries its own allowed set), a `list[...]` of any of
@@ -135,10 +135,10 @@ for p in example_declarations:
 #
 # ```bash
 # # Use the declared default (5)
-# pyrit_scan airt.scam --target my_target --initializers target
+# pyrit_scan run airt.scam --target my_target --initializers target
 #
 # # Override
-# pyrit_scan airt.scam --target my_target --initializers target --max-turns 10
+# pyrit_scan run airt.scam --target my_target --initializers target --max-turns 10
 # ```
 #
 # The same flags work in `pyrit_shell`:
@@ -147,18 +147,13 @@ for p in example_declarations:
 # pyrit_shell> run airt.scam --target my_target --initializers target --max-turns 10
 # ```
 #
-# Declared flags also show up in `pyrit_scan <scenario> --help`, alongside
-# the built-in options:
+# Scenario-declared flags don't appear in `pyrit_scan run <scenario> --help`
+# (that shows only the built-in run options); use `list-scenarios` to discover
+# the full list of a scenario's parameters.
 #
-# ```bash
-# pyrit_scan airt.scam --help
-# # ...
-# #   --max-turns MAX_TURNS  Conversation turn cap
-# ```
+# ## Discovering parameters via `list-scenarios`
 #
-# ## Discovering parameters via --list-scenarios
-#
-# `--list-scenarios` prints declared parameters alongside each scenario's
+# `pyrit_scan list-scenarios` prints declared parameters alongside each scenario's
 # other metadata (description, techniques, datasets). The same formatter the
 # CLI uses is callable programmatically:
 

@@ -2,19 +2,23 @@
 # Licensed under the MIT license.
 
 import abc
+import asyncio
 import atexit
+import hashlib
+import json
 import logging
 import re
 import uuid
 import weakref
-from collections.abc import Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
+from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, func, not_, or_, select
+from sqlalchemy import MetaData, and_, case, func, literal, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -25,7 +29,6 @@ if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.memory.memory_models import (
-    AdditionalInitializerEntry,
     AtomicAttackIdentifierEntry,
     AttackIdentifierEntry,
     AttackResultEntry,
@@ -39,6 +42,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
     ScenarioResultEntry,
+    ScorableContentEntry,
     ScoreEntry,
     ScorerIdentifierEntry,
     SeedEntry,
@@ -52,12 +56,15 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
-    AdditionalInitializer,
+    MEDIA_PATH_DATA_TYPES,
     AtomicAttackIdentifier,
     AttackIdentifier,
+    AttackOutcome,
     AttackResult,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    ContentEntryScorable,
+    ContentScorable,
     Conversation,
     ConversationRetry,
     ConversationRetryReason,
@@ -67,11 +74,16 @@ from pyrit.models import (
     IdentifierType,
     Message,
     MessagePiece,
+    MessageScorable,
+    RetryEvent,
+    ScenarioAttackResultDelta,
     ScenarioIdentifier,
+    ScenarioProgressScore,
     ScenarioResult,
     ScenarioRunState,
     Score,
     ScorerIdentifier,
+    ScoreStatus,
     Seed,
     SeedDataset,
     SeedGroup,
@@ -92,7 +104,16 @@ Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
 
 
-class AttackResultsKeysetCursor(NamedTuple):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _PreparedScorableContent:
+    """A loose-content value prepared for durable database persistence."""
+
+    source: ContentScorable
+    stored: ContentScorable
+    value_sha256: str
+
+
+class AttackResultKeysetCursor(NamedTuple):
     """
     Keyset (seek) anchor identifying the last attack result on a page.
 
@@ -108,16 +129,84 @@ class AttackResultsKeysetCursor(NamedTuple):
     attack_result_id: str
 
     @classmethod
-    def from_attack_result(cls, result: AttackResult) -> "AttackResultsKeysetCursor":
+    def from_attack_result(cls, result: AttackResult) -> "AttackResultKeysetCursor":
         """
         Build the keyset anchor for ``result`` (typically the last row of a page).
 
         Returns:
-            AttackResultsKeysetCursor: Anchor capturing the result's recency sort key.
+            AttackResultKeysetCursor: Anchor capturing the result's recency sort key.
         """
         return cls(
             timestamp=result.timestamp,
             attack_result_id=result.attack_result_id,
+        )
+
+
+class ScenarioHistoryKeysetCursor(NamedTuple):
+    """Descending keyset anchor for scenario history."""
+
+    timestamp: datetime
+    scenario_result_id: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScenarioHistoryRunRecord:
+    """Lightweight persisted scenario header for one history row."""
+
+    scenario_result_id: str
+    scenario_name: str
+    scenario_version: int
+    pyrit_version: str
+    scenario_identifier: dict[str, Any]
+    objective_target_identifier: dict[str, Any]
+    status: str
+    labels: dict[str, str]
+    created_at: datetime
+    completed_at: datetime | None
+    error_message: str | None
+    error_type: str | None
+    scenario_registry_name: str | None
+    plan_atomic_groups: str | list[dict[str, Any]] | None
+    plan_seed_id_map: str | list[dict[str, str]] | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScenarioHistoryAggregate:
+    """
+    Attempt metrics for one scenario run, aggregated by the database.
+
+    Counters are computed over logical work units — every persisted attempt is first
+    resolved to the planned unit it belongs to, so retried and errored attempts never
+    inflate unit counts. The metrics query produces one aggregate per history row;
+    a separate projection returns only distinct technique names, never one row per unit.
+    """
+
+    scenario_result_id: str
+    unit_count: int
+    completed_units: int
+    successful_units: int
+    error_attempts: int
+    total_retries: int
+    latest_attempt_timestamp: datetime | None
+    atomic_attack_names: tuple[str, ...]
+
+    @classmethod
+    def empty(cls, *, scenario_result_id: str) -> "ScenarioHistoryAggregate":
+        """
+        Build the zero-valued aggregate for a run with no persisted attempts.
+
+        Returns:
+            ScenarioHistoryAggregate: Aggregate with all counters set to zero.
+        """
+        return cls(
+            scenario_result_id=scenario_result_id,
+            unit_count=0,
+            completed_units=0,
+            successful_units=0,
+            error_attempts=0,
+            total_retries=0,
+            latest_attempt_timestamp=None,
+            atomic_attack_names=(),
         )
 
 
@@ -150,6 +239,7 @@ class _AttackResultQuery:
     converter_classes: Sequence[str] | None = None
     converter_classes_match: Literal["all", "any"] = "all"
     has_converters: bool | None = None
+    include_scenario_attacks: bool = True
     labels: Mapping[str, str | Sequence[str]] | None = None
     targeted_harm_categories: Sequence[str] | None = None
     identifier_filters: Sequence[IdentifierFilter] | None = None
@@ -157,7 +247,7 @@ class _AttackResultQuery:
     min_turns: int | None = None
     max_turns: int | None = None
     limit: int | None = None
-    after: AttackResultsKeysetCursor | None = None
+    after: AttackResultKeysetCursor | None = None
 
     def __post_init__(self) -> None:
         """Snapshot mutable sequence and mapping inputs."""
@@ -413,7 +503,7 @@ class MemoryInterface(abc.ABC):
         """
         return [AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
 
-    def _attack_results_keyset_seek_condition(self, *, after: AttackResultsKeysetCursor) -> Any:
+    def _attack_results_keyset_seek_condition(self, *, after: AttackResultKeysetCursor) -> Any:
         """
         Build the keyset seek predicate selecting rows strictly after ``after``.
 
@@ -444,53 +534,6 @@ class MemoryInterface(abc.ABC):
         """
         result: Sequence[EmbeddingDataEntry] = self._query_entries(EmbeddingDataEntry)
         return result
-
-    def add_additional_initializer(self, *, initializer: AdditionalInitializer) -> None:
-        """
-        Insert or replace an additional initializer, keyed by its ``id``.
-
-        Args:
-            initializer: The additional initializer to persist.
-        """
-        self._update_entry(AdditionalInitializerEntry.from_domain_model(initializer))
-
-    def get_additional_initializers(self) -> Sequence[AdditionalInitializer]:
-        """
-        Load all additional initializers in run order.
-
-        Returns:
-            Sequence[AdditionalInitializer]: The persisted initializers ordered by
-            ``order_index`` then ``id`` for a stable, deterministic startup sequence.
-        """
-        entries = self._query_entries(
-            AdditionalInitializerEntry,
-            order_by=AdditionalInitializerEntry.order_index.asc(),
-        )
-        return sorted(
-            (entry.to_domain_model() for entry in entries),
-            key=lambda item: (item.order_index is None, item.order_index or 0, item.id),
-        )
-
-    def delete_additional_initializer(self, *, initializer_id: str) -> None:
-        """
-        Delete an additional initializer by id when it exists.
-
-        Args:
-            initializer_id: The additional initializer row id to delete.
-
-        Raises:
-            SQLAlchemyError: If the delete operation fails.
-        """
-        with closing(self.get_session()) as session:
-            try:
-                session.query(AdditionalInitializerEntry).filter(
-                    AdditionalInitializerEntry.id == initializer_id
-                ).delete(synchronize_session=False)
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error deleting additional initializer '{initializer_id}': {e}")
-                raise
 
     @abc.abstractmethod
     def _init_storage_io(self) -> None:
@@ -854,7 +897,8 @@ class MemoryInterface(abc.ABC):
         filters: dict[str, Any],
     ) -> Sequence[IdentifierModel]:
         if identifier_hashes is not None and not identifier_hashes:
-            return []
+            empty_identifiers: list[IdentifierModel] = []
+            return empty_identifiers
 
         list_filters = {name: value for name, value in filters.items() if isinstance(value, list)}
         conditions = [
@@ -1405,11 +1449,15 @@ class MemoryInterface(abc.ABC):
             batch_size=effective_batch_size,
         )
 
+        if not other_large_params:
+            return results
+
+        filtered_results: list[Model] = list(results)
         for _col, vals, attr_name in other_large_params:
             vals_set = set(vals)
-            results = [e for e in results if getattr(e, attr_name, None) in vals_set]
+            filtered_results = [e for e in filtered_results if getattr(e, attr_name, None) in vals_set]
 
-        return results
+        return filtered_results
 
     def _insert_entry(self, entry: Base) -> None:
         """
@@ -1583,18 +1631,161 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_scenario_result_label_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
         """
         Return a database-specific condition for filtering ScenarioResults by labels.
 
         Args:
-            labels: Dictionary of labels that must ALL be present.
+            labels: Labels with OR-within-key and AND-across-key semantics.
 
         Returns:
             Database-specific SQLAlchemy condition.
         """
 
+    def _get_scenario_registry_name_condition(self, *, scenario_names: Sequence[str]) -> Any:
+        """
+        Return a backend-specific condition matching persisted run-plan registry names.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support Scenario history filtering.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_scenario_registry_name_condition "
+            "to support Scenario history filtering."
+        )
+
+    def _get_scenario_history_plan_expressions(self) -> tuple[Any, Any, Any]:
+        """
+        Return registry-name and compact atomic-group expressions for history rows.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support Scenario history queries.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_scenario_history_plan_expressions "
+            "to support Scenario history queries."
+        )
+
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+        """
+        Return backend-specific JSON expressions for scenario attempt unit attribution.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support Scenario history queries.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_scenario_attempt_unit_expressions "
+            "to support Scenario history queries."
+        )
+
+    def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
+        """
+        Return backend-specific run-plan expansions used to resolve attempts to planned units.
+
+        The first subquery yields one row per planned ``(atomic group, seed group)`` pair with
+        columns ``scenario_result_id``, ``group_ordinal``, ``atomic_group_id``,
+        ``atomic_attack_name``, ``technique_eval_hash`` and ``seed_group_id``. The second yields
+        one row per planned seed group with columns ``scenario_result_id``, ``seed_group_id`` and
+        ``objective_sha256``.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support Scenario history queries.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_scenario_plan_unit_subqueries "
+            "to support Scenario history queries."
+        )
+
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
+        """
+        Persist scores whose loose-content anchors need no asynchronous file copy.
+
+        File-backed ``ContentScorable`` values must use ``add_scores_to_memory_async``
+        so the source bytes can be copied into managed results storage.
+        """
+        self._add_scores_to_memory(scores=scores, prepared_content_hashes={})
+
+    async def add_scores_to_memory_async(self, *, scores: Sequence[Score]) -> None:
+        """Prepare file-backed loose content, then persist the scores and their anchors."""
+        media_scorables = list(
+            dict.fromkeys(
+                score.scorable
+                for score in scores
+                if isinstance(score.scorable, ContentScorable) and score.scorable.data_type in MEDIA_PATH_DATA_TYPES
+            )
+        )
+        if not media_scorables:
+            self.add_scores_to_memory(scores=scores)
+            return
+
+        prepared_content = await asyncio.gather(
+            *(self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables)
+        )
+        prepared_by_source = {content.source: content for content in prepared_content}
+        prepared_hashes = {content.stored: content.value_sha256 for content in prepared_content}
+
+        copied_scores: list[tuple[Score, Score]] = []
+        scores_to_persist: list[Score] = []
+        for score in scores:
+            scorable = score.scorable
+            prepared = prepared_by_source.get(scorable) if isinstance(scorable, ContentScorable) else None
+            if prepared is None:
+                scores_to_persist.append(score)
+                continue
+            copied_score = score.model_copy(update={"scorable": prepared.stored})
+            copied_scores.append((score, copied_score))
+            scores_to_persist.append(copied_score)
+
+        self._add_scores_to_memory(
+            scores=scores_to_persist,
+            prepared_content_hashes=prepared_hashes,
+        )
+        for original_score, copied_score in copied_scores:
+            original_score.scorable = copied_score.scorable
+
+    async def _prepare_scorable_content_async(
+        self,
+        *,
+        scorable: ContentScorable,
+    ) -> _PreparedScorableContent:
+        """
+        Copy one media value into managed results storage and calculate its digest.
+
+        Returns:
+            _PreparedScorableContent: The managed content reference and its digest.
+        """
+        source_serializer = data_serializer_factory(
+            category="scorable-content-entries",
+            data_type=scorable.data_type,
+            value=scorable.value,
+        )
+        content = await source_serializer.read_data_async()
+        value_sha256 = hashlib.sha256(content).hexdigest()
+        parsed_source = urlparse(scorable.value)
+        extension_source = parsed_source.path if parsed_source.scheme in {"http", "https"} else scorable.value
+        extension = DataTypeSerializer.get_extension(extension_source)
+        destination_serializer = data_serializer_factory(
+            category="scorable-content-entries",
+            data_type=scorable.data_type,
+            extension=extension.removeprefix(".") if extension else None,
+        )
+        await destination_serializer.save_data_async(content, output_filename=value_sha256)
+        stored = ContentScorable(
+            value=destination_serializer.value,
+            data_type=scorable.data_type,
+        )
+        return _PreparedScorableContent(
+            source=scorable,
+            stored=stored,
+            value_sha256=value_sha256,
+        )
+
+    def _add_scores_to_memory(
+        self,
+        *,
+        scores: Sequence[Score],
+        prepared_content_hashes: Mapping[ContentScorable, str],
+    ) -> None:
         """
         Insert a list of scores into the memory storage.
 
@@ -1606,22 +1797,58 @@ class MemoryInterface(abc.ABC):
         analytics (e.g. refusal rate over a batch) still want the score row
         even when the scored content was never a real conversation turn.
 
+        A score anchored on loose content has that content written to
+        ``ScorableContentEntries`` and its anchor rewritten to name the stored row, so a
+        score's input can still be recovered when it was never a conversation turn.
+
         Raises:
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
+        referenced_piece_ids = {str(score.message_piece_id) for score in scores if score.message_piece_id}
+        referenced_piece_ids.update(
+            str(piece_id)
+            for score in scores
+            if isinstance(score.scorable, MessageScorable)
+            for piece_id in score.scorable.message_piece_ids
+        )
+        pieces_by_id = {
+            str(piece.id): piece
+            for piece in (
+                self.get_message_pieces(prompt_ids=sorted(referenced_piece_ids)) if referenced_piece_ids else []
+            )
+        }
+        original_ids: dict[str, uuid.UUID] = {
+            piece_id: original_prompt_id
+            for piece_id, piece in pieces_by_id.items()
+            if (original_prompt_id := piece.original_prompt_id) is not None and original_prompt_id != piece.id
+        }
         for score in scores:
-            if score.message_piece_id:
-                message_piece_id = score.message_piece_id
-                pieces = self.get_message_pieces(prompt_ids=[str(message_piece_id)])
-                if not pieces:
-                    logger.error(f"MessagePiece with ID {message_piece_id} not found in memory.")
-                    continue
-                # auto-link score to the original prompt id if the prompt is a duplicate
-                if pieces[0].original_prompt_id != pieces[0].id:
-                    score.message_piece_id = pieces[0].original_prompt_id  # type: ignore[ty:invalid-assignment]
-        entries = [ScoreEntry(entry=score) for score in scores]
+            if score.message_piece_id and str(score.message_piece_id) not in pieces_by_id:
+                logger.error(f"MessagePiece with ID {score.message_piece_id} not found in memory.")
+            if score.message_piece_id and (original_id := original_ids.get(str(score.message_piece_id))):
+                score.message_piece_id = original_id  # type: ignore[ty:invalid-assignment]
+            if isinstance(score.scorable, MessageScorable):
+                mapped_piece_ids: tuple[uuid.UUID, ...] = tuple(
+                    original_ids.get(str(piece_id), uuid.UUID(str(piece_id)))
+                    for piece_id in score.scorable.message_piece_ids
+                )
+                if mapped_piece_ids != score.scorable.message_piece_ids:
+                    score.scorable = MessageScorable(message_piece_ids=mapped_piece_ids)
+        content_entries, anchor_rewrites = self._store_scorable_content(
+            scores=scores,
+            prepared_content_hashes=prepared_content_hashes,
+        )
+        anchors_by_score = {id(score): anchor for score, anchor in anchor_rewrites}
+        persisted_scores = [
+            score.model_copy(update={"scorable": anchors_by_score[id(score)]})
+            if id(score) in anchors_by_score
+            else score
+            for score in scores
+        ]
+        entries = [ScoreEntry(entry=score) for score in persisted_scores]
         with closing(self.get_session()) as session:
             try:
+                session.add_all(content_entries)
                 for entry in entries:
                     if entry.scorer_class_identifier:
                         self._persist_scorer_identifier(
@@ -1630,10 +1857,80 @@ class MemoryInterface(abc.ABC):
                         )
                 session.add_all(entries)
                 session.commit()
+                for score, anchor in anchor_rewrites:
+                    score.scorable = anchor
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error inserting scores: {e}")
                 raise
+
+    @staticmethod
+    def _store_scorable_content(
+        *,
+        scores: Sequence[Score],
+        prepared_content_hashes: Mapping[ContentScorable, str],
+    ) -> tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
+        """
+        Turn loose-content anchors into stored references.
+
+        Scores sharing the same content share one row, so a scorer that returns several
+        scores over one input (a category per harm, say) does not duplicate it.
+
+        Returns:
+            tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
+                Content rows to insert and anchor rewrites to publish after commit.
+
+        Raises:
+            ValueError: If file-backed content was not prepared through the async path.
+        """
+        rows: dict[ContentScorable, ScorableContentEntry] = {}
+        anchor_rewrites: list[tuple[Score, ContentEntryScorable]] = []
+        for score in scores:
+            scorable = score.scorable
+            if not isinstance(scorable, ContentScorable):
+                continue
+            row = rows.get(scorable)
+            if row is None:
+                value_sha256 = prepared_content_hashes.get(scorable)
+                if scorable.data_type in MEDIA_PATH_DATA_TYPES and value_sha256 is None:
+                    raise ValueError(
+                        "File-backed ContentScorable values require add_scores_to_memory_async "
+                        "so PyRIT can copy the source bytes into managed storage."
+                    )
+                row = ScorableContentEntry(
+                    id=uuid.uuid4(),
+                    value=scorable.value,
+                    value_sha256=value_sha256 or hashlib.sha256(scorable.value.encode("utf-8")).hexdigest(),
+                    data_type=scorable.data_type,
+                    timestamp=datetime.now(tz=UTC),
+                )
+                rows[scorable] = row
+            anchor_rewrites.append((score, ContentEntryScorable(content_id=row.id, data_type=scorable.data_type)))
+        return list(rows.values()), anchor_rewrites
+
+    def get_scorable_content(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, ContentScorable]:
+        """
+        Load the loose content that stored scores are anchored on.
+
+        Args:
+            content_ids: The ids named by ``ContentEntryScorable`` anchors.
+
+        Returns:
+            dict[uuid.UUID, ContentScorable]: The content by id, omitting ids with no row.
+        """
+        if not content_ids:
+            return {}
+        wanted = [str(content_id) for content_id in content_ids]
+        entries = self._execute_batched_query(
+            ScorableContentEntry,
+            batch_column=ScorableContentEntry.id,
+            batch_values=wanted,
+        )
+        return {
+            entry.id: ContentScorable(value=entry.value, data_type=entry.data_type)
+            for entry in entries
+            if entry.value is not None
+        }
 
     @classmethod
     def _persist_scorer_identifier(cls, *, session: Any, scorer_identifier: ScorerIdentifier) -> None:
@@ -1666,7 +1963,8 @@ class MemoryInterface(abc.ABC):
             Sequence[Score]: A list of Score objects that match the specified filters.
         """
         if score_ids is not None and len(score_ids) == 0:
-            return []
+            empty_scores: list[Score] = []
+            return empty_scores
 
         conditions: list[Any] = []
 
@@ -1699,7 +1997,8 @@ class MemoryInterface(abc.ABC):
 
         # No score_ids specified - use regular query
         if not conditions:
-            return []
+            no_condition_scores: list[Score] = []
+            return no_condition_scores
 
         score_entries: Sequence[ScoreEntry] = self._query_entries(ScoreEntry, conditions=and_(*conditions))
         return [entry.get_score() for entry in score_entries]
@@ -1762,7 +2061,8 @@ class MemoryInterface(abc.ABC):
         # with their originals.
         original_ids = {piece.original_prompt_id for piece in message_pieces if piece.original_prompt_id is not None}
         if not original_ids:
-            return []
+            no_original_ids_scores: list[Score] = []
+            return no_original_ids_scores
 
         score_entries = self._execute_batched_query(
             ScoreEntry,
@@ -1770,7 +2070,22 @@ class MemoryInterface(abc.ABC):
             batch_values=list(original_ids),
             other_conditions=[],
         )
-        return [entry.get_score() for entry in score_entries]
+        entries_by_id = {entry.id: entry for entry in score_entries}
+
+        original_id_values = [str(original_id) for original_id in original_ids]
+        json_batch_size = max(1, self._MAX_BIND_VARS - 1)
+        for start in range(0, len(original_id_values), json_batch_size):
+            batch = original_id_values[start : start + json_batch_size]
+            scorable_condition = self._get_condition_json_array_match(
+                json_column=ScoreEntry.scorable,
+                property_path="$.message_piece_ids",
+                array_to_match=batch,
+                match_mode="any",
+            )
+            anchored_entries = self._query_entries(ScoreEntry, conditions=scorable_condition)
+            entries_by_id.update({entry.id: entry for entry in anchored_entries})
+
+        return [entry.get_score() for entry in entries_by_id.values()]
 
     def get_conversation_messages(self, *, conversation_id: str) -> MutableSequence[Message]:
         """
@@ -1929,7 +2244,8 @@ class MemoryInterface(abc.ABC):
                 an exception is logged and an empty list is returned.
         """
         if prompt_ids is not None and len(prompt_ids) == 0:
-            return []
+            empty_message_pieces: list[MessagePiece] = []
+            return empty_message_pieces
 
         try:
             conditions: list[Any] = []
@@ -2243,10 +2559,11 @@ class MemoryInterface(abc.ABC):
         # Ensure cleanup happens even if the object is garbage collected before process exits
         weakref.finalize(self, self.dispose_engine)
 
-    def get_seeds(
+    def _build_seed_filter_conditions(
         self,
         *,
         value: str | None = None,
+        exact: bool = False,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
@@ -2260,13 +2577,20 @@ class MemoryInterface(abc.ABC):
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
-    ) -> Sequence[Seed]:
+    ) -> "list[ColumnElement[bool]]":
         """
-        Retrieve a list of seed prompts based on the specified filters.
+        Build SQLAlchemy filter conditions shared by seed query and removal methods.
+
+        This centralizes the filter-building logic so that get_seeds and
+        remove_seeds_from_memory stay in sync and cannot drift.
 
         Args:
-            value (str): The value to match by substring. If None, all values are returned.
-            value_sha256 (str): The SHA256 hash of the value to match. If None, all values are returned.
+            value (str): The value to match. By default this matches by substring; pass exact=True to
+                require full-string equality instead. If None, all values are returned.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
+                Has no effect unless ``value`` is provided. Defaults to False (substring matching).
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
             dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
                 Supports wildcards: % (any characters) and _ (single character).
@@ -2291,13 +2615,13 @@ class MemoryInterface(abc.ABC):
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
 
         Returns:
-            Sequence[SeedPrompt]: A list of prompts matching the criteria.
+            list[ColumnElement[bool]]: A list of SQLAlchemy filter conditions.
         """
-        conditions = []
+        conditions: list[ColumnElement[bool]] = []
 
         # Apply filters for non-list fields
         if value:
-            conditions.append(SeedEntry.value.contains(value))
+            conditions.append(SeedEntry.value == value if exact else SeedEntry.value.contains(value))
         if value_sha256:
             conditions.append(SeedEntry.value_sha256.in_(value_sha256))
         if dataset_name:
@@ -2330,6 +2654,77 @@ class MemoryInterface(abc.ABC):
         if metadata:
             conditions.append(self._get_seed_metadata_conditions(metadata=metadata))
 
+        return conditions
+
+    def get_seeds(
+        self,
+        *,
+        value: str | None = None,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> Sequence[Seed]:
+        """
+        Retrieve a list of seed prompts based on the specified filters.
+
+        Args:
+            value (str): The value to match by substring. If None, all values are returned.
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are returned.
+            dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
+            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+                Supports wildcards: % (any characters) and _ (single character).
+                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
+            data_types (Sequence[str] | None): List of data types to filter seed prompts by
+                (e.g., text, image_path).
+            harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
+            all harm categories are considered.
+                Specifying multiple harm categories returns only prompts that are marked with all harm categories.
+            added_by (str): The user who added the prompts.
+            authors (Sequence[str]): A list of authors to filter by.
+                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
+                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            source (str): The source to filter by. If None, all sources are considered.
+            seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
+                "simulated_conversation").
+            parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively returns
+                prompt templates instead of prompts.
+            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+            prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+
+        Returns:
+            Sequence[Seed]: A list of seeds (e.g., SeedPrompt, SeedObjective, SeedSimulatedConversation)
+                matching the criteria.
+        """
+        conditions = self._build_seed_filter_conditions(
+            value=value,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
         try:
             memory_entries: Sequence[SeedEntry] = self._query_entries(
                 SeedEntry,
@@ -2340,8 +2735,245 @@ class MemoryInterface(abc.ABC):
             logger.exception(f"Failed to retrieve prompts with dataset name {dataset_name} with error {e}")
             raise
 
+    def remove_seeds_from_memory(
+        self,
+        *,
+        value: str | None = None,
+        exact: bool = True,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> int:
+        """
+        Delete a list of seed prompts based on the specified filters.
+
+        Accepts the same filtering parameters as get_seeds (plus an exact flag). It is recommended to
+        call get_seeds with the same filters first to preview which seeds will be removed. At least one
+        filter must be provided to prevent accidental deletion of all seeds. The deletion runs in a single
+        transaction, so it works consistently across SQLite and Azure SQL.
+
+        Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
+        serialized file on disk is left in place; delete those files separately if they are no longer needed.
+
+        Args:
+            value (str): The value to match. For the remove methods this defaults to full-string equality
+                (exact=True) so a short or common value does not delete far more seeds than intended; pass
+                exact=False to match by substring instead. If None, all values are considered.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
+                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
+                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
+                by substring.
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are considered.
+            dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
+            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+                Supports wildcards: % (any characters) and _ (single character).
+                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
+            data_types (Sequence[str] | None): List of data types to filter seed prompts by
+                (e.g., text, image_path).
+            harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
+            all harm categories are considered.
+                Specifying multiple harm categories matches only prompts that are marked with all harm categories.
+            added_by (str): The user who added the prompts.
+            authors (Sequence[str]): A list of authors to filter by.
+                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
+                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            source (str): The source to filter by. If None, all sources are considered.
+            seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
+                "simulated_conversation").
+            parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively targets
+                prompt templates instead of prompts.
+            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+            prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+
+        Returns:
+            int: The number of seeds removed.
+
+        Raises:
+            ValueError: If no filters are provided.
+            SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
+        """
+        conditions = self._build_seed_filter_conditions(
+            value=value,
+            exact=exact,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
+        # Guard against accidental "delete all": require at least one filter.
+        if not conditions:
+            raise ValueError(
+                "At least one filter parameter must be provided to remove_seeds_from_memory. "
+                "Calling without filters would delete all seeds."
+            )
+
+        # Delete matching rows in a single transaction so it is atomic across backends.
+        with closing(self.get_session()) as session:
+            try:
+                query = session.query(SeedEntry).filter(and_(*conditions))
+                count = query.delete(synchronize_session=False)
+                session.commit()
+                return count
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Failed to remove seeds from memory: {e}")
+                raise
+
+    def remove_seed_groups_from_memory(
+        self,
+        *,
+        value: str | None = None,
+        exact: bool = True,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> int:
+        """
+        Delete groups of seed prompts based on the provided filtering criteria.
+
+        Unlike remove_seeds_from_memory, which deletes only the individual seeds that match, this
+        removes every seed that shares a prompt_group_id with any matching seed. This preserves group
+        integrity: filtering by a single modality (e.g. data_types=["image_path"]) or attribute removes
+        the whole group rather than leaving a partial group behind. It accepts the same filtering
+        parameters as get_seeds (plus an exact flag). It is recommended to call get_seed_groups with the
+        same filters first to preview which groups will be removed. At least one filter must be provided
+        to prevent accidental deletion of all seeds. The deletion runs in a single transaction, so it
+        works consistently across SQLite and Azure SQL.
+
+        Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
+        one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+
+        Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
+        serialized file on disk is left in place; delete those files separately if they are no longer needed.
+
+        Args:
+            value (str): The value to match. For the remove methods this defaults to full-string equality
+                (exact=True) so a short or common value does not delete far more seeds than intended; pass
+                exact=False to match by substring instead. If None, all values are considered.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
+                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
+                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
+                by substring.
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are considered.
+            dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
+            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+                Supports wildcards: % (any characters) and _ (single character).
+                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
+            data_types (Sequence[str] | None): List of data types to filter seed prompts by
+                (e.g., text, image_path).
+            harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
+            all harm categories are considered.
+                Specifying multiple harm categories matches only prompts that are marked with all harm categories.
+            added_by (str): The user who added the prompts.
+            authors (Sequence[str]): A list of authors to filter by.
+                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
+                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            source (str): The source to filter by. If None, all sources are considered.
+            seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
+                "simulated_conversation").
+            parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively targets
+                prompt templates instead of prompts.
+            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+            prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+
+        Returns:
+            int: The number of seeds removed across all affected groups.
+
+        Raises:
+            ValueError: If no filters are provided.
+            SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
+        """
+        conditions = self._build_seed_filter_conditions(
+            value=value,
+            exact=exact,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
+        # Guard against accidental "delete all": require at least one filter.
+        if not conditions:
+            raise ValueError(
+                "At least one filter parameter must be provided to remove_seed_groups_from_memory. "
+                "Calling without filters would delete all seeds."
+            )
+
+        # Expand matches to whole groups and delete them in a single transaction. The matching group IDs
+        # are selected with a server-side subquery rather than materialized into Python and sent back as an
+        # IN (...) list, so a broad filter cannot exceed the backend's bound-parameter limit (e.g. Azure SQL).
+        # Seeds with a NULL prompt_group_id are excluded, so ungrouped matches are skipped.
+        with closing(self.get_session()) as session:
+            try:
+                group_id_subquery = (
+                    select(SeedEntry.prompt_group_id)
+                    .where(and_(*conditions))
+                    .where(SeedEntry.prompt_group_id.isnot(None))
+                    .distinct()
+                )
+                count = (
+                    session.query(SeedEntry)
+                    .filter(SeedEntry.prompt_group_id.in_(group_id_subquery))
+                    .delete(synchronize_session=False)
+                )
+                session.commit()
+                return count
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Failed to remove seed groups from memory: {e}")
+                raise
+
     def _add_list_conditions(
-        self, field: InstrumentedAttribute[Any], conditions: list[Any], values: Sequence[str] | None = None
+        self,
+        field: InstrumentedAttribute[Any],
+        conditions: "list[ColumnElement[bool]]",
+        values: Sequence[str] | None = None,
     ) -> None:
         if values:
             conditions.extend(field.contains(value) for value in values)
@@ -2420,6 +3052,9 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
+        Seeds already present in storage are skipped. Duplicates *within* ``seeds`` are all
+        inserted, because the check looks at what storage held when the call started.
+
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
             added_by (str): The user who added the seeds.
@@ -2427,17 +3062,79 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the 'added_by' attribute is not set for each prompt.
         """
-        entries: MutableSequence[SeedEntry] = []
         current_time = datetime.now(tz=UTC)
         for prompt in seeds:
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
-            if prompt.value_sha256 and not self.get_seeds(
-                value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name
-            ):
-                entries.append(SeedEntry(entry=prompt))
+        existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
+
+        entries: MutableSequence[SeedEntry] = []
+        for prompt in seeds:
+            if not prompt.value_sha256:
+                continue
+            # A seed without a dataset name matches the hash in any dataset, mirroring the
+            # filter that is applied when dataset_name is not supplied.
+            if prompt.dataset_name:
+                if (prompt.value_sha256, prompt.dataset_name) in existing_pairs:
+                    continue
+            elif prompt.value_sha256 in existing_hashes:
+                continue
+            entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
+
+    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed]) -> tuple[set[tuple[str, str]], set[str]]:
+        """
+        Look up which of these seeds' hashes are already stored.
+
+        Queries in chunks rather than once per seed, which otherwise dominates the cost of
+        loading a large dataset. ``get_seeds`` issues the statement directly instead of going
+        through the batching helpers, so the bound has to be applied here.
+
+        The seeds are grouped by dataset name so the name is still compared by the database
+        rather than in Python. Equality here is a property of the column's collation: Azure
+        SQL's default is case-insensitive, T-SQL also ignores trailing blanks, and an
+        accent-insensitive collation folds further still. Comparing the names in Python would
+        silently impose one fixed rule on every backend and insert a duplicate wherever the
+        stored spelling differs from the incoming one.
+
+        Args:
+            seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
+
+        Returns:
+            tuple[set[tuple[str, str]], set[str]]: The stored (value_sha256, dataset_name)
+                pairs keyed by the requested dataset name, and the stored hashes irrespective
+                of dataset.
+        """
+        hashes_by_dataset: dict[str | None, set[str]] = {}
+        for prompt in seeds:
+            if prompt.value_sha256:
+                # An empty name filters nothing, exactly like None, and the caller below
+                # treats both as "match the hash in any dataset". Normalize so the two
+                # cannot disagree.
+                hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
+
+        existing_pairs: set[tuple[str, str]] = set()
+        existing_hashes: set[str] = set()
+        for dataset_name, dataset_hashes in hashes_by_dataset.items():
+            hashes = sorted(dataset_hashes)
+            # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
+            # binds, so the hashes get what is left rather than the full ceiling.
+            chunk_size = self._MAX_BIND_VARS - (1 if dataset_name is not None else 0)
+            for index in range(0, len(hashes), chunk_size):
+                chunk = hashes[index : index + chunk_size]
+                for existing in self.get_seeds(value_sha256=chunk, dataset_name=dataset_name):
+                    if not existing.value_sha256:
+                        continue
+                    if dataset_name:
+                        # The database decided the name matched, so record the name that was
+                        # asked for; the stored spelling can differ under a case-insensitive
+                        # collation.
+                        existing_pairs.add((existing.value_sha256, dataset_name))
+                    else:
+                        existing_hashes.add(existing.value_sha256)
+
+        return existing_pairs, existing_hashes
 
     async def add_seed_datasets_to_memory_async(self, *, datasets: Sequence[SeedDataset], added_by: str) -> None:
         """
@@ -2464,7 +3161,7 @@ class MemoryInterface(abc.ABC):
                 distinct=True,
             )
             # Extract unique dataset names from the entries
-            dataset_names = set()
+            dataset_names: set[str] = set()
             for entry in entries:
                 if entry.dataset_name:
                     dataset_names.add(entry.dataset_name)
@@ -2771,14 +3468,15 @@ class MemoryInterface(abc.ABC):
         converter_classes: Sequence[str] | None = None,
         converter_classes_match: Literal["all", "any"] = "all",
         has_converters: bool | None = None,
-        labels: dict[str, str | Sequence[str]] | None = None,
+        include_scenario_attacks: bool = True,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int | None = None,
-        after: AttackResultsKeysetCursor | None = None,
+        after: AttackResultKeysetCursor | None = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -2812,7 +3510,9 @@ class MemoryInterface(abc.ABC):
             has_converters (bool | None, optional): Filter by converter presence.
                 ``True`` returns only attacks that used at least one converter. ``False`` returns
                 only attacks that used no converters. ``None`` applies no filter. Defaults to None.
-            labels (dict[str, str | Sequence[str]] | None, optional): Filter results
+            include_scenario_attacks (bool, optional): Whether to include attacks created as part
+                of scenario runs. Defaults to ``True``.
+            labels (Mapping[str, str | Sequence[str]] | None, optional): Filter results
                 by attack labels. Entries are AND-combined across label names; within a
                 single entry, a string value is an equality match and a sequence value is
                 an OR match over the listed values. An empty sequence applies no filter
@@ -2844,7 +3544,7 @@ class MemoryInterface(abc.ABC):
                 return, ordered by recency. When either ``limit`` or ``after`` is provided,
                 deduplication and pagination happen in the database (via ``ROW_NUMBER()``)
                 instead of loading every row into memory. Defaults to None (return all).
-            after (AttackResultsKeysetCursor | None, optional): Keyset (seek) anchor from a
+            after (AttackResultKeysetCursor | None, optional): Keyset (seek) anchor from a
                 previous page. When provided, only results ordered strictly after the anchor
                 under the recency sort are returned, giving insert/delete-stable pagination
                 without a drifting numeric offset. Defaults to None (start at the first page).
@@ -2869,6 +3569,7 @@ class MemoryInterface(abc.ABC):
             converter_classes=converter_classes,
             converter_classes_match=converter_classes_match,
             has_converters=has_converters,
+            include_scenario_attacks=include_scenario_attacks,
             labels=labels,
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
@@ -2895,7 +3596,8 @@ class MemoryInterface(abc.ABC):
                 with an ID-batched lookup.
         """
         if self._attack_result_query_has_empty_lookup(query=query):
-            return []
+            empty_attack_results: list[AttackResult] = []
+            return empty_attack_results
 
         conditions = self._build_attack_result_conditions(query=query)
         paginating = query.limit is not None or query.after is not None
@@ -2965,6 +3667,8 @@ class MemoryInterface(abc.ABC):
             conditions.append(AttackResultEntry.outcome == query.outcome)
         if query.scenario_result_id:
             conditions.append(AttackResultEntry.attribution_parent_id == uuid.UUID(query.scenario_result_id))
+        elif not query.include_scenario_attacks:
+            conditions.append(AttackResultEntry.attribution_parent_id.is_(None))
         return conditions
 
     def _build_attack_result_identifier_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
@@ -3128,7 +3832,7 @@ class MemoryInterface(abc.ABC):
         min_turns: int | None,
         max_turns: int | None,
         limit: int | None,
-        after: AttackResultsKeysetCursor | None,
+        after: AttackResultKeysetCursor | None,
     ) -> list[AttackResult]:
         """
         Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
@@ -3149,7 +3853,7 @@ class MemoryInterface(abc.ABC):
             min_turns (int | None): Inclusive lower bound on ``executed_turns`` for winners.
             max_turns (int | None): Inclusive upper bound on ``executed_turns`` for winners.
             limit (int | None): Maximum number of results to return.
-            after (AttackResultsKeysetCursor | None): Keyset anchor; only rows ordered strictly
+            after (AttackResultKeysetCursor | None): Keyset anchor; only rows ordered strictly
                 after it are returned. ``None`` starts at the first page.
 
         Returns:
@@ -3318,10 +4022,76 @@ class MemoryInterface(abc.ABC):
             entry.scenario_run_state = scenario_run_state.value
             entry.error_message = error_message
             entry.error_type = error_type
+            if scenario_run_state in (
+                ScenarioRunState.COMPLETED,
+                ScenarioRunState.FAILED,
+                ScenarioRunState.CANCELLED,
+            ):
+                entry.completion_time = datetime.now(tz=UTC)
 
             session.commit()
 
         logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
+
+    def try_update_scenario_run_state(
+        self,
+        *,
+        scenario_result_id: str,
+        expected_states: Collection[ScenarioRunState],
+        scenario_run_state: ScenarioRunState,
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> bool:
+        """
+        Update the run state only when the stored state is one of ``expected_states``.
+
+        The compare and the write are a single UPDATE so a run that reached a terminal state
+        on another thread is not overwritten. A read followed by
+        ``update_scenario_run_state`` cannot give that guarantee because scenario
+        preparation and cancellation run on different threads.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+            expected_states (Collection[ScenarioRunState]): States the row may currently be in.
+            scenario_run_state (ScenarioRunState): The new state for the scenario.
+            error_message (str | None): Optional scenario-level error message.
+            error_type (str | None): Optional exception class name.
+
+        Returns:
+            bool: True if the row was updated, False if it was missing or in another state.
+
+        Raises:
+            ValueError: If ``expected_states`` is empty.
+        """
+        if not expected_states:
+            raise ValueError("expected_states must not be empty")
+
+        values: dict[Any, Any] = {
+            "scenario_run_state": scenario_run_state.value,
+            "error_message": error_message,
+            "error_type": error_type,
+        }
+        if scenario_run_state in (
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.CANCELLED,
+        ):
+            values["completion_time"] = datetime.now(tz=UTC)
+
+        with closing(self.get_session()) as session:
+            updated_rows = (
+                session.query(ScenarioResultEntry)
+                .filter(
+                    ScenarioResultEntry.id == scenario_result_id,
+                    ScenarioResultEntry.scenario_run_state.in_([state.value for state in expected_states]),
+                )
+                .update(values, synchronize_session=False)
+            )
+            session.commit()
+
+        if updated_rows:
+            logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
+        return bool(updated_rows)
 
     def update_scenario_metadata(
         self,
@@ -3350,6 +4120,512 @@ class MemoryInterface(abc.ABC):
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
             entry.scenario_metadata = metadata if metadata else None
             session.commit()
+
+    def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
+        """Return one ScenarioResult header without hydrating linked attack results."""
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+            return entry.get_scenario_result() if entry is not None else None
+
+    def get_scenario_run_history_page(
+        self,
+        *,
+        scenario_names: Sequence[str] | None = None,
+        statuses: Sequence[str] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+        cursor: ScenarioHistoryKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
+        """
+        Return one descending scenario-history page and its database-side attempt metrics.
+
+        Only selected ScenarioResult columns and the linked AttackResult columns
+        required for aggregate counts are read. Full ORM result objects and their
+        relationships are never hydrated, and attempt metrics are reduced to one
+        aggregate row per history row inside the database.
+
+        Returns:
+            tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
+                Page headers, attempt aggregates keyed by scenario ID, and whether
+                another page exists.
+
+        Raises:
+            ValueError: If the limit, cursor ID, or label keys are invalid.
+        """
+        if limit < 1 or limit > 100:
+            raise ValueError("Scenario history limit must be between 1 and 100.")
+
+        conditions: list[Any] = []
+        effective_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
+        if effective_names:
+            conditions.append(
+                or_(
+                    ScenarioResultEntry.scenario_name.in_(effective_names),
+                    self._get_scenario_registry_name_condition(scenario_names=effective_names),
+                )
+            )
+        effective_statuses = sorted({status.strip().upper() for status in statuses or [] if status.strip()})
+        if effective_statuses:
+            conditions.append(ScenarioResultEntry.scenario_run_state.in_(effective_statuses))
+        effective_labels = {
+            key: value
+            for key, value in (labels or {}).items()
+            if (isinstance(value, str) and value) or (not isinstance(value, str) and len(value) > 0)
+        }
+        invalid_keys = sorted(key for key in effective_labels if not self._LABEL_KEY_PATTERN.fullmatch(key))
+        if invalid_keys:
+            raise ValueError(
+                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
+            )
+        if effective_labels:
+            conditions.append(self._get_scenario_result_label_condition(labels=effective_labels))
+        if cursor is not None:
+            cursor_id = uuid.UUID(cursor.scenario_result_id)
+            conditions.append(
+                or_(
+                    ScenarioResultEntry.timestamp < cursor.timestamp,
+                    and_(
+                        ScenarioResultEntry.timestamp == cursor.timestamp,
+                        ScenarioResultEntry.id < cursor_id,
+                    ),
+                )
+            )
+
+        statement = select(
+            ScenarioResultEntry.id,
+            ScenarioResultEntry.scenario_name,
+            ScenarioResultEntry.scenario_version,
+            ScenarioResultEntry.pyrit_version,
+            ScenarioResultEntry.scenario_identifier,
+            ScenarioResultEntry.objective_target_identifier,
+            ScenarioResultEntry.scenario_run_state,
+            ScenarioResultEntry.labels,
+            ScenarioResultEntry.timestamp,
+            ScenarioResultEntry.completion_time,
+            ScenarioResultEntry.error_message,
+            ScenarioResultEntry.error_type,
+            *(
+                expression.label(label)
+                for expression, label in zip(
+                    self._get_scenario_history_plan_expressions(),
+                    ("scenario_registry_name", "plan_atomic_groups", "plan_seed_id_map"),
+                    strict=True,
+                )
+            ),
+        )
+        if conditions:
+            statement = statement.where(and_(*conditions))
+        statement = statement.order_by(
+            ScenarioResultEntry.timestamp.desc(),
+            ScenarioResultEntry.id.desc(),
+        ).limit(limit + 1)
+        with closing(self.get_session()) as session:
+            rows = session.execute(statement).all()
+        page_rows = rows[:limit]
+
+        records = [
+            ScenarioHistoryRunRecord(
+                scenario_result_id=str(row.id),
+                scenario_name=row.scenario_name,
+                scenario_version=row.scenario_version,
+                pyrit_version=row.pyrit_version,
+                scenario_identifier=row.scenario_identifier or {},
+                objective_target_identifier=row.objective_target_identifier or {},
+                status=row.scenario_run_state,
+                labels=row.labels or {},
+                created_at=row.timestamp,
+                completed_at=row.completion_time,
+                error_message=row.error_message,
+                error_type=row.error_type,
+                scenario_registry_name=row.scenario_registry_name,
+                plan_atomic_groups=row.plan_atomic_groups,
+                plan_seed_id_map=row.plan_seed_id_map,
+            )
+            for row in page_rows
+        ]
+        aggregates = self.get_scenario_history_aggregates(
+            scenario_result_ids=[record.scenario_result_id for record in records],
+            plan_scenario_ids=[
+                record.scenario_result_id for record in records if record.plan_atomic_groups is not None
+            ],
+        )
+        return records, aggregates, len(rows) > limit
+
+    def get_scenario_history_aggregates(
+        self,
+        *,
+        scenario_result_ids: Sequence[str],
+        plan_scenario_ids: Sequence[str] = (),
+    ) -> dict[str, ScenarioHistoryAggregate]:
+        """
+        Return one attempt aggregate per requested scenario run.
+
+        Persisted attempts are grouped into logical work units before being counted, so
+        retries and errored re-runs of the same objective collapse into a single unit.
+        For every scenario listed in ``plan_scenario_ids`` the persisted run plan resolves
+        those units: attempts are matched to their planned atomic group and seed group
+        (remapping objective-hash attribution onto the planned seed group ID), and attempts
+        that resolve to no planned unit are excluded from the counters. Scenarios outside
+        ``plan_scenario_ids`` keep the persisted attribution as the unit identity and count
+        every unit, which is the legacy behavior for runs without a usable plan.
+
+        Args:
+            scenario_result_ids (Sequence[str]): Scenario run IDs to aggregate.
+            plan_scenario_ids (Sequence[str], optional): Subset of ``scenario_result_ids``
+                whose persisted run plan should resolve and filter units. Defaults to ().
+
+        Returns:
+            dict[str, ScenarioHistoryAggregate]: One aggregate per requested scenario ID.
+        """
+        aggregates = {
+            scenario_result_id: ScenarioHistoryAggregate.empty(scenario_result_id=scenario_result_id)
+            for scenario_result_id in scenario_result_ids
+        }
+        if not aggregates:
+            return aggregates
+
+        entry_ids = [uuid.UUID(scenario_result_id) for scenario_result_id in aggregates]
+        plan_entry_ids = [
+            uuid.UUID(scenario_result_id)
+            for scenario_result_id in plan_scenario_ids
+            if scenario_result_id in aggregates
+        ]
+        with closing(self.get_session()) as session:
+            aggregate_rows = session.execute(
+                self._build_scenario_history_aggregate_statement(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
+            ).all()
+            name_rows = session.execute(
+                select(AttackResultEntry.attribution_parent_id, self._get_scenario_attempt_unit_expressions()[0])
+                .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
+                .distinct()
+            ).all()
+
+        names_by_run: dict[str, list[str]] = {}
+        for scenario_result_id, atomic_attack_name in name_rows:
+            if scenario_result_id is None or not atomic_attack_name:
+                continue
+            names_by_run.setdefault(str(scenario_result_id), []).append(atomic_attack_name)
+        for row in aggregate_rows:
+            if row.scenario_result_id is None:
+                continue
+            run_id = str(row.scenario_result_id)
+            aggregates[run_id] = ScenarioHistoryAggregate(
+                scenario_result_id=run_id,
+                unit_count=row.unit_count or 0,
+                completed_units=row.completed_units or 0,
+                successful_units=row.successful_units or 0,
+                error_attempts=row.error_attempts or 0,
+                total_retries=row.total_retries or 0,
+                latest_attempt_timestamp=row.latest_attempt_timestamp,
+                atomic_attack_names=tuple(sorted(names_by_run.get(run_id, ()))),
+            )
+        return aggregates
+
+    def _build_scenario_history_aggregate_statement(
+        self,
+        *,
+        entry_ids: Sequence[uuid.UUID],
+        plan_entry_ids: Sequence[uuid.UUID],
+    ) -> Any:
+        """
+        Build the statement that reduces linked attempts to one metrics row per run.
+
+        Returns:
+            Any: A statement selecting one aggregate row per scenario run with attempts.
+        """
+        atomic_name, technique_hash, seed_group_id = self._get_scenario_attempt_unit_expressions()
+        attempts = (
+            select(
+                AttackResultEntry.id.label("attempt_id"),
+                AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
+                atomic_name.label("atomic_attack_name"),
+                technique_hash.label("technique_eval_hash"),
+                seed_group_id.label("seed_group_id"),
+                AttackResultEntry.objective_sha256.label("objective_sha256"),
+                AttackResultEntry.outcome.label("outcome"),
+                AttackResultEntry.timestamp.label("timestamp"),
+                func.coalesce(AttackResultEntry.total_retries, 0).label("total_retries"),
+            )
+            .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
+            .subquery("history_attempts")
+        )
+        units = self._build_scenario_history_unit_statement(attempts=attempts, plan_entry_ids=plan_entry_ids).subquery(
+            "history_units"
+        )
+
+        unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
+        is_error = units.c.outcome == AttackOutcome.ERROR.value
+        unit_retries = (
+            func.sum(units.c.total_retries).over(partition_by=unit_partition)
+            + func.count().over(partition_by=unit_partition)
+            - 1
+        )
+        ranked = select(
+            units.c.scenario_result_id,
+            units.c.timestamp,
+            units.c.outcome.label("latest_outcome"),
+            func.max(units.c.is_planned).over(partition_by=unit_partition).label("is_planned"),
+            unit_retries.label("unit_retries"),
+            func.sum(case((is_error, 1), else_=0)).over(partition_by=unit_partition).label("unit_errors"),
+            func.row_number()
+            .over(
+                partition_by=unit_partition,
+                order_by=(
+                    units.c.timestamp.desc(),
+                    units.c.attempt_id.desc(),
+                ),
+            )
+            .label("unit_rank"),
+        ).subquery("history_ranked_units")
+        counted = and_(ranked.c.unit_rank == 1, ranked.c.is_planned == 1)
+        return (
+            select(
+                ranked.c.scenario_result_id,
+                func.max(ranked.c.timestamp).label("latest_attempt_timestamp"),
+                func.sum(case((counted, 1), else_=0)).label("unit_count"),
+                func.sum(case((counted, 1), else_=0)).label("completed_units"),
+                func.sum(
+                    case((and_(counted, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
+                ).label("successful_units"),
+                func.sum(case((counted, ranked.c.unit_errors), else_=0)).label("error_attempts"),
+                func.sum(case((and_(counted, ranked.c.unit_retries > 0), ranked.c.unit_retries), else_=0)).label(
+                    "total_retries"
+                ),
+            )
+            .group_by(ranked.c.scenario_result_id)
+            .order_by(ranked.c.scenario_result_id)
+        )
+
+    def _build_scenario_history_unit_statement(self, *, attempts: Any, plan_entry_ids: Sequence[uuid.UUID]) -> Any:
+        """
+        Resolve every persisted attempt to the logical work unit whose counters it feeds.
+
+        Returns:
+            Any: A statement selecting one row per attempt with its resolved unit identity.
+        """
+        if not plan_entry_ids:
+            return select(
+                attempts.c.scenario_result_id,
+                attempts.c.attempt_id,
+                attempts.c.outcome,
+                attempts.c.timestamp,
+                attempts.c.total_retries,
+                attempts.c.atomic_attack_name.label("unit_group_id"),
+                attempts.c.seed_group_id.label("unit_seed_id"),
+                literal(1).label("is_planned"),
+            )
+
+        planned_units, plan_seeds = self._get_scenario_plan_unit_subqueries(scenario_result_ids=plan_entry_ids)
+        planned = (
+            select(
+                planned_units.c.scenario_result_id,
+                planned_units.c.group_ordinal,
+                planned_units.c.atomic_group_id,
+                planned_units.c.atomic_attack_name,
+                planned_units.c.technique_eval_hash,
+                planned_units.c.seed_group_id,
+                plan_seeds.c.objective_sha256,
+            )
+            .select_from(
+                planned_units.outerjoin(
+                    plan_seeds,
+                    and_(
+                        plan_seeds.c.scenario_result_id == planned_units.c.scenario_result_id,
+                        plan_seeds.c.seed_group_id == planned_units.c.seed_group_id,
+                    ),
+                )
+            )
+            .subquery("history_planned_units")
+        )
+        # An attempt persisted without seed-group attribution falls back to its objective hash,
+        # so it is matched against the planned seed group carrying that same objective hash.
+        seed_matches_exactly = planned.c.seed_group_id == attempts.c.seed_group_id
+        match_condition = and_(
+            planned.c.scenario_result_id == attempts.c.scenario_result_id,
+            planned.c.atomic_attack_name == attempts.c.atomic_attack_name,
+            or_(
+                attempts.c.technique_eval_hash == "",
+                planned.c.technique_eval_hash == attempts.c.technique_eval_hash,
+            ),
+            or_(
+                seed_matches_exactly,
+                and_(
+                    attempts.c.seed_group_id == attempts.c.objective_sha256,
+                    planned.c.objective_sha256 == attempts.c.seed_group_id,
+                ),
+            ),
+        )
+        matched = (
+            select(
+                attempts.c.scenario_result_id,
+                attempts.c.attempt_id,
+                attempts.c.outcome,
+                attempts.c.timestamp,
+                attempts.c.total_retries,
+                attempts.c.atomic_attack_name,
+                attempts.c.seed_group_id,
+                planned.c.atomic_group_id,
+                planned.c.seed_group_id.label("planned_seed_group_id"),
+                func.row_number()
+                .over(
+                    partition_by=attempts.c.attempt_id,
+                    order_by=(
+                        case((seed_matches_exactly, 0), else_=1),
+                        planned.c.group_ordinal,
+                        planned.c.seed_group_id,
+                    ),
+                )
+                .label("match_rank"),
+            )
+            .select_from(attempts.outerjoin(planned, match_condition))
+            .subquery("history_matched_attempts")
+        )
+        return select(
+            matched.c.scenario_result_id,
+            matched.c.attempt_id,
+            matched.c.outcome,
+            matched.c.timestamp,
+            matched.c.total_retries,
+            func.coalesce(matched.c.atomic_group_id, matched.c.atomic_attack_name).label("unit_group_id"),
+            func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
+            # Runs outside the plan-resolution set keep their raw identity and stay counted.
+            case(
+                (matched.c.scenario_result_id.notin_(plan_entry_ids), 1),
+                (matched.c.planned_seed_group_id.is_(None), 0),
+                else_=1,
+            ).label("is_planned"),
+        ).where(matched.c.match_rank == 1)
+
+    def get_unique_scenario_labels(self) -> dict[str, list[str]]:
+        """Return all unique label values across scenario results."""
+        label_values: dict[str, set[str]] = {}
+        with closing(self.get_session()) as session:
+            rows = (
+                session.query(ScenarioResultEntry.labels)
+                .filter(ScenarioResultEntry.labels.isnot(None))
+                .distinct()
+                .all()
+            )
+        for (labels,) in rows:
+            if not isinstance(labels, dict):
+                continue
+            for key, value in labels.items():
+                if isinstance(value, str):
+                    label_values.setdefault(key, set()).add(value)
+        return {key: sorted(values) for key, values in sorted(label_values.items())}
+
+    def get_scenario_attack_result_deltas(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        """
+        Return bounded scenario-linked result deltas in ascending keyset order.
+
+        This projection selects only progress fields and the linked objective
+        score. It never hydrates ORM relationships, prompt rows, or a full
+        ScenarioResult.
+
+        Returns:
+            tuple[list[ScenarioAttackResultDelta], bool]: The page and whether more rows exist.
+
+        Raises:
+            ValueError: If the limit or cursor identifiers are invalid.
+        """
+        if limit < 1 or limit > 500:
+            raise ValueError("Scenario progress limit must be between 1 and 500.")
+
+        scenario_uuid = uuid.UUID(scenario_result_id)
+        conditions: list[Any] = [AttackResultEntry.attribution_parent_id == scenario_uuid]
+        if cursor is not None:
+            cursor_uuid = uuid.UUID(cursor.attack_result_id)
+            conditions.append(
+                or_(
+                    AttackResultEntry.timestamp > cursor.timestamp,
+                    and_(
+                        AttackResultEntry.timestamp == cursor.timestamp,
+                        AttackResultEntry.id > cursor_uuid,
+                    ),
+                )
+            )
+
+        statement = (
+            select(
+                AttackResultEntry.id,
+                AttackResultEntry.conversation_id,
+                AttackResultEntry.objective,
+                AttackResultEntry.objective_sha256,
+                AttackResultEntry.atomic_attack_identifier,
+                AttackResultEntry.outcome,
+                AttackResultEntry.execution_time_ms,
+                AttackResultEntry.timestamp,
+                AttackResultEntry.retry_events_json,
+                AttackResultEntry.total_retries,
+                AttackResultEntry.error_type,
+                AttackResultEntry.error_message,
+                AttackResultEntry.attribution_data,
+                ScoreEntry.id.label("score_id"),
+                ScoreEntry.score_value,
+                ScoreEntry.score_type,
+                ScoreEntry.status.label("score_status"),
+                ScoreEntry.score_rationale,
+                ScoreEntry.scorer_class_identifier,
+            )
+            .outerjoin(ScoreEntry, AttackResultEntry.last_score_id == ScoreEntry.id)
+            .where(and_(*conditions))
+            .order_by(AttackResultEntry.timestamp.asc(), AttackResultEntry.id.asc())
+            .limit(limit + 1)
+        )
+        with closing(self.get_session()) as session:
+            rows = session.execute(statement).all()
+
+        has_more = len(rows) > limit
+        deltas: list[ScenarioAttackResultDelta] = []
+        for row in rows[:limit]:
+            retry_events = [
+                RetryEvent.model_validate(event)
+                for event in (json.loads(row.retry_events_json) if row.retry_events_json else [])
+            ]
+            atomic_identifier = (
+                AtomicAttackIdentifier.model_validate(row.atomic_attack_identifier)
+                if row.atomic_attack_identifier
+                else None
+            )
+            score = None
+            if row.score_id is not None:
+                scorer_identifier = (
+                    ComponentIdentifier.model_validate(row.scorer_class_identifier)
+                    if row.scorer_class_identifier
+                    else None
+                )
+                score = ScenarioProgressScore(
+                    scorer_name=scorer_identifier.class_name if scorer_identifier else "Unknown",
+                    score_type=row.score_type,
+                    status=ScoreStatus(row.score_status),
+                    score_value=row.score_value,
+                    score_rationale=row.score_rationale,
+                )
+            deltas.append(
+                ScenarioAttackResultDelta(
+                    attack_result_id=str(row.id),
+                    conversation_id=row.conversation_id,
+                    objective=row.objective,
+                    objective_sha256=row.objective_sha256,
+                    atomic_attack_identifier=atomic_identifier,
+                    outcome=AttackOutcome(row.outcome),
+                    execution_time_ms=row.execution_time_ms,
+                    timestamp=row.timestamp,
+                    retry_events=retry_events,
+                    total_retries=row.total_retries or 0,
+                    error_type=row.error_type,
+                    error_message=row.error_message,
+                    attribution_data=row.attribution_data or {},
+                    score=score,
+                )
+            )
+        return deltas, has_more
 
     def get_scenario_results(
         self,
@@ -3400,7 +4676,8 @@ class MemoryInterface(abc.ABC):
                 ordered by completion_time descending.
         """
         if scenario_result_ids is not None and len(scenario_result_ids) == 0:
-            return []
+            empty_scenario_results: list[ScenarioResult] = []
+            return empty_scenario_results
 
         conditions = self._build_scenario_result_query_conditions(
             scenario_name=scenario_name,

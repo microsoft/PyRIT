@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 import aiofiles
 
+from pyrit.common import get_mime_type
+
 if TYPE_CHECKING:
     from azure.identity.aio import DefaultAzureCredential
     from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
@@ -382,8 +384,9 @@ class AzureBlobStorageIO(StorageIO):
         if not self._client_async:
             self._client_async = await self._create_container_client_async()
         blob_name = self._resolve_blob_name(path)
+        content_type = get_mime_type(blob_name) or self._blob_content_type
         try:
-            await self._upload_blob_async(file_name=blob_name, data=data, content_type=self._blob_content_type)
+            await self._upload_blob_async(file_name=blob_name, data=data, content_type=content_type)
         except Exception as exc:
             logger.exception(f"Failed to write file at {blob_name}: {exc}")
             raise

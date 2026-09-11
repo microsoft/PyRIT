@@ -528,7 +528,6 @@ def test_background_default_is_none(patch_central_database):
     assert target.background is None
 
 
-@pytest.mark.asyncio
 async def test_generate_request_passes_background(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],
@@ -555,7 +554,6 @@ async def test_generate_request_passes_background(
             os.remove(path)
 
 
-@pytest.mark.asyncio
 async def test_generate_request_omits_background_when_none(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],

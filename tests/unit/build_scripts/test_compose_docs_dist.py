@@ -4,33 +4,20 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = REPO_ROOT / "build_scripts" / "compose_docs_dist.py"
-BUILD_SCRIPTS = REPO_ROOT / "build_scripts"
+from build_scripts import compose_docs_dist
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture(scope="module")
 def module():
-    # compose_docs_dist imports generate_pages_manifest from the same dir.
-    sys.path.insert(0, str(BUILD_SCRIPTS))
-    try:
-        spec = importlib.util.spec_from_file_location("compose_docs_dist", SCRIPT)
-        assert spec is not None and spec.loader is not None
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["compose_docs_dist"] = mod
-        spec.loader.exec_module(mod)
-        return mod
-    finally:
-        # Leave the sys.path entry so generate_pages_manifest stays importable
-        # for the rest of the test session.
-        pass
+    return compose_docs_dist
 
 
 def _make_artifacts(tmp_path: Path, slugs: list[str]) -> Path:

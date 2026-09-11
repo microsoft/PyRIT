@@ -5,6 +5,7 @@
 
 import pytest
 
+from pyrit.common.random_context import configure_random_seed
 from pyrit.converter import (
     ConverterResult,
     PolicyPuppetryConverter,
@@ -64,6 +65,17 @@ def test_default_template_is_random_member():
 
 def test_template_random_returns_enum_member():
     assert PolicyPuppetryTemplate.random() in set(PolicyPuppetryTemplate)
+
+
+def test_default_template_uses_configured_root_seed():
+    try:
+        configure_random_seed(seed=42)
+        first = PolicyPuppetryConverter()
+        second = PolicyPuppetryConverter()
+
+        assert first._prompt_template == second._prompt_template
+    finally:
+        configure_random_seed(seed=None)
 
 
 def test_to_seed_prompt_returns_named_template():

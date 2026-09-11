@@ -53,7 +53,8 @@ class TargetMetadata(RegistryMetadata):
     @property
     def supported_auth_modes(self) -> tuple[str, ...]:
         """Auth modes this target type accepts (e.g. ``"api_key"``, ``"identity"``)."""
-        return tuple(self.class_attributes.get("supported_auth_modes") or ())
+        auth_modes: tuple[str, ...] = tuple(self.class_attributes.get("supported_auth_modes") or ())
+        return auth_modes
 
 
 class TargetRegistry(Registry["PromptTarget", TargetMetadata]):

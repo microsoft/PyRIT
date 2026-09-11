@@ -2,17 +2,16 @@
 # Licensed under the MIT license.
 
 import logging
-from mimetypes import guess_type
 from pathlib import Path
 from typing import Any, cast
 
 from openai.types import VideoSeconds, VideoSize
 
-from pyrit.common import forward_init_parameters
+from pyrit.common import forward_init_parameters, get_mime_type
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
-from pyrit.memory import DataTypeSerializer, data_serializer_factory
+from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, construct_response_from_request
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -314,9 +313,7 @@ class OpenAIVideoTarget(OpenAITarget):
         )
         image_bytes = await image_serializer.read_data_async()
 
-        mime_type = DataTypeSerializer.get_mime_type(image_path)
-        if not mime_type:
-            mime_type, _ = guess_type(image_path, strict=False)
+        mime_type = get_mime_type(image_path)
         if not mime_type or mime_type not in self.SUPPORTED_IMAGE_FORMATS:
             raise ValueError(
                 f"Unsupported image format: {mime_type or 'unknown'}. "

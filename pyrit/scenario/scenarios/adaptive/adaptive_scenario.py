@@ -22,6 +22,10 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig
+from pyrit.models import (
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+)
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -197,6 +201,97 @@ class AdaptiveScenario(Scenario):
 
         return atomic_attacks
 
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+        """
+        Estimate compatible persisted envelopes, excluding adaptive inner attempts.
+
+        Returns:
+            ScenarioRunSizeEstimate: The adaptive outer-envelope estimate.
+        """
+        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
+        selected_count = sum(len(groups) for groups in selected_groups.values())
+        max_attempts = int(self.params.get("max_attempts_per_objective", 3))
+        baseline_components = (
+            [
+                ScenarioRunSizeComponent(
+                    label="Baseline",
+                    count=selected_count,
+                    is_baseline=True,
+                )
+            ]
+            if self._include_baseline
+            else []
+        )
+        if not self._estimate_target_is_configured:
+            components = [
+                *baseline_components,
+                ScenarioRunSizeComponent(
+                    label="Adaptive attack-envelope candidates",
+                    count=selected_count,
+                ),
+            ]
+            return ScenarioRunSizeEstimate(
+                minimum_attack_count=sum(component.count for component in baseline_components),
+                maximum_attack_count=sum(component.count for component in components),
+                components=components,
+                datasets=datasets,
+                note=(
+                    "The authoritative total depends on which selected techniques are compatible with the "
+                    f"configured objective target and each seed group. Up to {max_attempts} inner attempts per "
+                    "envelope and retries are excluded."
+                ),
+            )
+
+        assert self._objective_target is not None
+        techniques = self._build_techniques_dict(objective_target=self._objective_target)
+        dispatcher = AdaptiveTechniqueDispatcher(
+            objective_target=self._objective_target,
+            techniques=techniques,
+            selector=self._selector,
+            objective_scorer=self._objective_scorer,
+            max_attempts_per_objective=self.params.get("max_attempts_per_objective", 3),
+            scenario_result_id=self._scenario_result_id,
+        )
+        compatible_group_count = sum(
+            bool(dispatcher.compatible_techniques(seed_group=seed_group))
+            for seed_groups in selected_groups.values()
+            for seed_group in seed_groups
+        )
+
+        components = [
+            *baseline_components,
+            ScenarioRunSizeComponent(
+                label="Adaptive attack envelopes",
+                count=compatible_group_count,
+            ),
+        ]
+        estimated_attack_count = (
+            None if self._estimate_has_binding_size_cap else sum(component.count for component in components)
+        )
+        minimum_attack_count = None
+        maximum_attack_count = None
+        note = (
+            f"Each planned unit is one persisted adaptive envelope. Up to {max_attempts} selected technique "
+            "attempts may run inside that unit; inner attempts and retries are excluded."
+        )
+        if estimated_attack_count is None:
+            baseline_count = sum(component.count for component in baseline_components)
+            minimum_attack_count = baseline_count
+            maximum_attack_count = baseline_count + selected_count
+            note += (
+                " A binding randomized dataset cap may select a different compatibility mix at launch. "
+                "The range covers the baseline-only minimum through one compatible adaptive envelope per "
+                "selected seed group."
+            )
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=estimated_attack_count,
+            minimum_attack_count=minimum_attack_count,
+            maximum_attack_count=maximum_attack_count,
+            components=components,
+            datasets=datasets,
+            note=note,
+        )
+
     def _build_techniques_dict(
         self,
         *,
@@ -309,14 +404,20 @@ class AdaptiveScenario(Scenario):
             AttackScoringConfig | None: The most specific config that could
                 be built, or ``None`` if the technique is incompatible with
                 the scenario scorer.
+
+        Raises:
+            TypeError: If a factory returns a non-``AttackScoringConfig`` instance.
         """
         required = factory.scoring_config_type
         if required is None or required is AttackScoringConfig:
             return AttackScoringConfig(objective_scorer=self._objective_scorer)
         try:
-            return required(objective_scorer=self._objective_scorer)
+            config = required(objective_scorer=self._objective_scorer)
         except (TypeError, ValueError):
             return None
+        if not isinstance(config, AttackScoringConfig):
+            raise TypeError(f"Scoring config factory returned unsupported type: {type(config).__name__}")
+        return config
 
     async def _build_atomics_for_dataset_async(
         self,

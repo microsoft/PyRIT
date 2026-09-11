@@ -368,14 +368,14 @@ else:
 #
 # ```bash
 # # Evaluate all registered scorers (long-running — can take hours)
-# python build_scripts/evaluate_scorers.py
+# python -m build_scripts.evaluate_scorers
 #
 # # Evaluate only scorers with specific tags
-# python build_scripts/evaluate_scorers.py --tags refusal
-# python build_scripts/evaluate_scorers.py --tags refusal,default
+# python -m build_scripts.evaluate_scorers --tags refusal
+# python -m build_scripts.evaluate_scorers --tags refusal,default
 #
 # # Control parallelism (default: 5, lower if hitting rate limits)
-# python build_scripts/evaluate_scorers.py --max-concurrency 3
+# python -m build_scripts.evaluate_scorers --max-concurrency 3
 # ```
 #
 # ### Tags
@@ -395,7 +395,7 @@ else:
 # **Step 1: Evaluate refusal scorers first**
 #
 # ```bash
-# python build_scripts/evaluate_scorers.py --tags refusal
+# python -m build_scripts.evaluate_scorers --tags refusal
 # ```
 #
 # This evaluates only the 4 refusal variants and writes results to
@@ -405,7 +405,7 @@ else:
 # **Step 2: Re-evaluate all scorers**
 #
 # ```bash
-# python build_scripts/evaluate_scorers.py
+# python -m build_scripts.evaluate_scorers
 # ```
 #
 # On the next full run, `ScorerInitializer` reads the refusal metrics from Step 1, picks the best

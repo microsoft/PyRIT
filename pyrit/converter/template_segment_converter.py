@@ -4,7 +4,6 @@
 import hashlib
 import logging
 import pathlib
-import random
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import Converter, ConverterResult
@@ -28,6 +27,7 @@ class TemplateSegmentConverter(Converter):
         self,
         *,
         prompt_template: SeedPrompt | None = None,
+        seed: int | None = None,
     ) -> None:
         """
         Initialize the converter with the specified target and prompt template.
@@ -35,6 +35,7 @@ class TemplateSegmentConverter(Converter):
         Args:
             prompt_template (SeedPrompt, Optional): The prompt template for the conversion. Must have two or more
                 parameters. If not provided, uses the default ``tom_and_jerry.yaml`` template.
+            seed (int | None): Optional seed for reproducible segment boundaries. Defaults to None.
 
         Raises:
             ValueError: If the template has fewer than two parameters or if any parameter is missing in the template.
@@ -50,6 +51,7 @@ class TemplateSegmentConverter(Converter):
         )
 
         self._number_parameters = len(self.prompt_template.parameters or [])
+        self._seed = seed
 
         if self._number_parameters < 2:
             raise ValueError(
@@ -81,6 +83,7 @@ class TemplateSegmentConverter(Converter):
             params={
                 "template_hash": template_hash,
                 "number_parameters": self._number_parameters,
+                "seed": self._seed,
             }
         )
 
@@ -125,7 +128,9 @@ class TemplateSegmentConverter(Converter):
 
         # Handle edge case where we can't sample from an empty range
         if num_splits > 0 and len(words) > 1:
-            split_points = sorted(random.sample(range(1, len(words)), num_splits))
+            split_points = sorted(
+                self._get_random_generator(stream="segment-boundaries").sample(range(1, len(words)), num_splits)
+            )
         else:
             split_points = []
 

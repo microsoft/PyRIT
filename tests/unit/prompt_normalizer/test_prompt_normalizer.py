@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import os
 import tempfile
 import wave
@@ -24,7 +25,11 @@ from pyrit.exceptions import (
     execution_context,
     get_execution_context,
 )
+from pyrit.executor.attack.component.prepended_history_send_context import (
+    PrependedHistorySendContext,
+)
 from pyrit.memory import CentralMemory
+from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import (
     Message,
     MessagePiece,
@@ -36,7 +41,9 @@ from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
 from pyrit.prompt_normalizer.converter_configuration import (
     ConverterConfiguration,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 @pytest.fixture
@@ -93,6 +100,14 @@ class MockConverter(Converter):
         return output_type == "text"
 
 
+class ContextFailingConverter(Converter):
+    SUPPORTED_INPUT_TYPES: tuple[PromptDataType, ...] = ("text",)
+    SUPPORTED_OUTPUT_TYPES: tuple[PromptDataType, ...] = ("text",)
+
+    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        raise ValueError("conversion failed")
+
+
 def assert_message_piece_hashes_set(request: Message):
     assert request
     assert request.message_pieces
@@ -113,6 +128,183 @@ async def test_send_prompt_async_multiple_converters(mock_memory_instance, seed_
     )
 
     assert prompt_target.prompt_sent == ["S_G_V_s_b_G_8_="]
+
+
+async def test_send_prompt_async_forwards_normalizer_overrides_and_context(mock_memory_instance):
+    prompt_target = MagicMock(spec=PromptTarget)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    prompt_target.send_prompt_async = AsyncMock(
+        return_value=[MessagePiece(role="assistant", original_value="first").to_message()]
+    )
+    normalizer = PromptNormalizer()
+    conversation_id = "prepended-conversation"
+    message_normalizer = MagicMock(spec=MessageListNormalizer)
+    normalizer_overrides = {CapabilityName.EDITABLE_HISTORY: message_normalizer}
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(uuid4(),),
+        replay_seed_each_send=False,
+    )
+
+    await normalizer.send_prompt_async(
+        message=Message.from_prompt(prompt="first request", role="user"),
+        target=prompt_target,
+        conversation_id=conversation_id,
+        normalizer_overrides=normalizer_overrides,
+        send_context=target_context,
+    )
+
+    call = prompt_target.send_prompt_async.await_args
+    assert call.kwargs["normalizer_overrides"] == normalizer_overrides
+    assert call.kwargs["send_context"] is target_context
+
+
+async def test_send_prompt_async_conversion_failure_does_not_call_target(mock_memory_instance):
+    prompt_target = MagicMock(spec=PromptTarget)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    prompt_target.send_prompt_async = AsyncMock()
+    conversation_id = "prepended-conversation"
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(uuid4(),),
+        replay_seed_each_send=False,
+    )
+    converter_config = ConverterConfiguration.from_converters(converters=[ContextFailingConverter()])
+
+    with pytest.raises(ValueError, match="conversion failed"):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=prompt_target,
+            conversation_id=conversation_id,
+            request_converter_configurations=converter_config,
+            send_context=target_context,
+        )
+
+    prompt_target.send_prompt_async.assert_not_awaited()
+    mock_memory_instance.add_message_to_memory.assert_not_called()
+
+
+async def test_send_prompt_async_target_failure_is_persisted(mock_memory_instance):
+    prompt_target = MagicMock(spec=PromptTarget)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    prompt_target.send_prompt_async = AsyncMock(side_effect=ValueError("normalization failed"))
+    conversation_id = "prepended-conversation"
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(uuid4(),),
+        replay_seed_each_send=False,
+    )
+
+    with pytest.raises(Exception, match="Error normalizing prompt with conversation ID"):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=prompt_target,
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+
+    assert target_context.target_invocation_count == 0
+    mock_memory_instance.add_message_to_memory.assert_not_called()
+
+
+async def test_child_task_target_failure_is_persisted(mock_memory_instance):
+    class ChildTaskTarget(MockPromptTarget):
+        async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+            async def fail_in_child_task_async() -> list[Message]:
+                raise RuntimeError("provider failed")
+
+            return await asyncio.create_task(fail_in_child_task_async())
+
+    conversation_id = "prepended-conversation"
+    seed = Message.from_prompt(prompt="seed", role="user")
+    seed.get_piece().conversation_id = conversation_id
+    mock_memory_instance.get_conversation_messages.return_value = [seed]
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(seed.get_piece().id,),
+        replay_seed_each_send=False,
+    )
+
+    with pytest.raises(Exception, match="Error sending prompt with conversation ID"):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=ChildTaskTarget(),
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+
+    assert target_context.target_invocation_count == 1
+    assert not target_context.is_seed_consumed
+    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    persisted_values = [
+        call.kwargs["request"].get_value() for call in mock_memory_instance.add_message_to_memory.call_args_list
+    ]
+    assert "request" in persisted_values
+
+
+async def test_concurrent_rejection_is_not_misclassified_as_target_invocation(mock_memory_instance):
+    conversation_id = "prepended-conversation"
+    seed = Message.from_prompt(prompt="seed", role="user")
+    seed.get_piece().conversation_id = conversation_id
+    mock_memory_instance.get_conversation_messages.return_value = [seed]
+    target = MockPromptTarget()
+    target._configuration = TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True))
+    target_started = asyncio.Event()
+    target_release = asyncio.Event()
+
+    async def wait_in_target(*, normalized_conversation: list[Message]) -> list[Message]:
+        target_started.set()
+        await target_release.wait()
+        raise RuntimeError("provider failed")
+
+    target._send_prompt_to_target_async = AsyncMock(side_effect=wait_in_target)  # type: ignore[method-assign]
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(seed.get_piece().id,),
+        replay_seed_each_send=False,
+    )
+    normalizer = PromptNormalizer()
+    first_send = asyncio.create_task(
+        normalizer.send_prompt_async(
+            message=Message.from_prompt(prompt="first request", role="user"),
+            target=target,
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+    )
+    await target_started.wait()
+
+    with pytest.raises(Exception, match="Error normalizing prompt"):
+        await normalizer.send_prompt_async(
+            message=Message.from_prompt(prompt="concurrent request", role="user"),
+            target=target,
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+
+    mock_memory_instance.add_message_to_memory.assert_not_called()
+    target_release.set()
+    with pytest.raises(Exception, match="Error sending prompt"):
+        await first_send
+    persisted_values = [
+        call.kwargs["request"].get_value() for call in mock_memory_instance.add_message_to_memory.call_args_list
+    ]
+    assert "concurrent request" not in persisted_values
+
+
+async def test_send_prompt_async_empty_response_exception_is_persisted(mock_memory_instance):
+    prompt_target = MagicMock(spec=PromptTarget)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    prompt_target.send_prompt_async = AsyncMock(side_effect=EmptyResponseException(message="normalization failed"))
+    conversation_id = "prepended-conversation"
+    response = await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt="request", role="user"),
+        target=prompt_target,
+        conversation_id=conversation_id,
+    )
+
+    assert response.get_piece().response_error == "empty"
+    assert mock_memory_instance.add_message_to_memory.call_count == 2
 
 
 async def test_send_prompt_async_no_response_adds_memory(mock_memory_instance, seed_group):

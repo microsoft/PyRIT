@@ -13,7 +13,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.numeric_scale import NumericRubric
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
@@ -51,7 +51,7 @@ def render_scale_system_prompt(
     )
 
 
-class SelfAskScaleScorer(FloatScaleScorer):
+class SelfAskScaleScorer(MessageFloatScaleScorer):
     """
     A "self-ask" scorer for text scoring on a customizable numeric scale.
 

@@ -3,7 +3,7 @@
 """Inject the PyRIT version picker into a built doc site.
 
 Usage:
-    python build_scripts/inject_version_picker.py \\
+    python -m build_scripts.inject_version_picker \\
         --site-dir dist \\
         --base /PyRIT
 

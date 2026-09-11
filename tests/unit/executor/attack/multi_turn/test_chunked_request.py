@@ -5,18 +5,29 @@
 Tests for ChunkedRequestAttack.
 """
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pyrit.executor.attack.component import PrependedConversationConfig
+from pyrit.executor.attack.component.prepended_history_send_context import (
+    PrependedHistorySendContext,
+)
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.multi_turn import (
     ChunkedRequestAttack,
     ChunkedRequestAttackContext,
 )
+from pyrit.message_normalizer import HistorySquashNormalizer, MessageStringNormalizer
 from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import (
+    CapabilityName,
+    PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+)
 
 
 def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
@@ -256,6 +267,38 @@ class TestChunkedRequestAttack:
 @pytest.mark.usefixtures("patch_central_database")
 class TestChunkedRequestAttackExecution:
     """Tests for the main attack execution logic."""
+
+    async def test_perform_async_forwards_prepended_formatter_override(self):
+        mock_target = _make_mock_target()
+        mock_target.configuration = TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True))
+        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt="chunk response", role="assistant")
+        )
+        formatter = MagicMock(spec=MessageStringNormalizer)
+        config = PrependedConversationConfig(message_normalizer=formatter)
+        attack = ChunkedRequestAttack(
+            objective_target=mock_target,
+            prompt_normalizer=mock_normalizer,
+            prepended_conversation_config=config,
+            chunk_size=100,
+            total_length=100,
+        )
+        context = ChunkedRequestAttackContext(params=AttackParameters(objective="Extract the secret"))
+        target_context = PrependedHistorySendContext(
+            conversation_id=context.session.conversation_id,
+            seed_message_ids=(uuid.uuid4(),),
+            replay_seed_each_send=False,
+        )
+        context.prepended_history_send_context = target_context
+
+        await attack._perform_async(context=context)
+
+        send_kwargs = mock_normalizer.send_prompt_async.await_args.kwargs
+        override = send_kwargs["normalizer_overrides"][CapabilityName.EDITABLE_HISTORY]
+        assert isinstance(override, HistorySquashNormalizer)
+        assert override._message_normalizer is formatter
+        assert send_kwargs["send_context"] is target_context
 
     async def test_perform_async_sets_atomic_attack_identifier(self):
         """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""

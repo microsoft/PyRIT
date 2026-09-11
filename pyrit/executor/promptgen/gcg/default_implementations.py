@@ -208,7 +208,8 @@ class CrossEntropyLoss:
                 "CrossEntropyLoss.compute_loss produced no terms; "
                 "this indicates a corrupted instance with both weights at 0."
             )
-        return total
+        result: torch.Tensor = total
+        return result
 
 
 class LengthPreservingFilter:

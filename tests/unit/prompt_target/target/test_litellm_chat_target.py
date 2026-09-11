@@ -395,6 +395,15 @@ async def test_send_prompt_captures_token_usage(target, litellm_stub):
     assert metadata["token_usage_total_tokens"] == 15
 
 
+async def test_send_prompt_captures_finish_reason(target, litellm_stub):
+    """LiteLLM normalizes provider stop reasons (Anthropic ``end_turn`` becomes ``stop``)."""
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok", finish_reason="stop"))
+
+    result = await target.send_prompt_async(message=_user_message("hi"))
+
+    assert result[0].message_pieces[0].prompt_metadata["finish_reason"] == "stop"
+
+
 async def test_send_prompt_captures_response_cost_from_hidden_params(target, litellm_stub):
     response = _mock_response("ok")
     response._hidden_params = {"response_cost": 0.00042}
@@ -572,6 +581,21 @@ async def test_content_filter_finish_reason_returns_error_message(target, litell
     piece = result[0].message_pieces[0]
     assert piece.converted_value_data_type == "error"
     assert piece.prompt_metadata.get("partial_content") == "partial answer"
+
+
+async def test_content_filter_captures_token_usage_finish_reason_and_cost(target, litellm_stub):
+    """A blocked response still reports the tokens and spend it consumed."""
+    response = _mock_response(content="partial answer", finish_reason="content_filter")
+    response._hidden_params = {"response_cost": 0.00042}
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message("bad prompt"))
+
+    metadata = result[0].message_pieces[0].prompt_metadata
+    assert metadata["finish_reason"] == "content_filter"
+    assert metadata["token_usage_input_tokens"] == 10
+    assert metadata["token_usage_output_tokens"] == 5
+    assert float(metadata["token_usage_cost"]) == pytest.approx(0.00042)
 
 
 async def test_content_policy_exception_returns_error_message(target, litellm_stub):

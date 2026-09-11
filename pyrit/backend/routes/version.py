@@ -3,9 +3,11 @@
 
 """API routes for version information."""
 
+import asyncio
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -16,6 +18,20 @@ from pyrit.memory import CentralMemory
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/version", tags=["version"])
+
+
+def _load_build_info(build_info_path: Path) -> dict[str, Any]:
+    """
+    Load Docker build metadata from disk.
+
+    Args:
+        build_info_path: Path to the build metadata JSON file.
+
+    Returns:
+        dict[str, Any]: Parsed build metadata.
+    """
+    with open(build_info_path) as file:
+        return json.load(file)
 
 
 class VersionResponse(BaseModel):
@@ -49,14 +65,13 @@ async def get_version_async(request: Request) -> VersionResponse:
 
     # Try to load build info from Docker
     build_info_path = Path("/app/build_info.json")
-    if build_info_path.exists():
+    if await asyncio.to_thread(build_info_path.exists):
         try:
-            with open(build_info_path) as f:
-                build_info = json.load(f)
-                source = build_info.get("source")
-                commit = build_info.get("commit")
-                modified = build_info.get("modified")
-                display = build_info.get("display", version)
+            build_info = await asyncio.to_thread(_load_build_info, build_info_path)
+            source = build_info.get("source")
+            commit = build_info.get("commit")
+            modified = build_info.get("modified")
+            display = build_info.get("display", version)
         except Exception as e:
             logger.warning(f"Failed to load build info: {e}")
 

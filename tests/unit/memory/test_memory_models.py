@@ -461,7 +461,7 @@ class TestScoreEntry:
         assert entry.id == score.id
         assert entry.score_value == "0.9"
         assert entry.score_type == "float_scale"
-        assert entry.objective == "test objective"
+        assert entry.scored_expectation == {"schema_version": 1, "objective": "test objective", "conditions": []}
 
     def test_roundtrip_get_score(self):
         score = _make_score()
@@ -797,3 +797,9 @@ class TestScenarioResultEntry:
         entry = ScenarioResultEntry(entry=sr)
         s = str(entry)
         assert "test_scenario" in s
+
+    def test_init_without_objective_target_raises(self):
+        """The denormalized target column is the filter key, so a targetless result is rejected."""
+        sr = self._make_scenario_result(objective_target_identifier=None)
+        with pytest.raises(ValueError, match="objective_target_identifier is required"):
+            ScenarioResultEntry(entry=sr)

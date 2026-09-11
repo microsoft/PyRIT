@@ -6,7 +6,7 @@ import { TextEncoder, TextDecoder } from "util";
 // dialogs (tabster modalizer + Textarea) can take longer to mount under load.
 configure({ asyncUtilTimeout: 5000 });
 
-// jsdom omits TextEncoder/TextDecoder, which react-router v7 references at
+// jsdom omits TextEncoder/TextDecoder, which react-router references at
 // import time. Node's util provides spec-compatible implementations.
 global.TextEncoder = TextEncoder;
 global.TextDecoder = TextDecoder as typeof global.TextDecoder;

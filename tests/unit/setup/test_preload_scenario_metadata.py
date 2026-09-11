@@ -13,7 +13,6 @@ from pyrit.setup.initializers.preload_scenario_metadata import PreloadScenarioMe
 class TestPreloadScenarioMetadata:
     """Tests for PreloadScenarioMetadata.initialize_async."""
 
-    @pytest.mark.asyncio
     async def test_initialize_async_warms_metadata_cache(self) -> None:
         """``initialize_async`` should fetch the registry and warm the metadata cache."""
         initializer = PreloadScenarioMetadata()
@@ -33,7 +32,6 @@ class TestPreloadScenarioMetadata:
 
         mock_registry.get_all_registered_class_metadata.assert_called_once_with()
 
-    @pytest.mark.asyncio
     async def test_initialize_async_propagates_registry_errors(self) -> None:
         """If a scenario fails to instantiate, metadata building raises and the initializer surfaces it."""
         initializer = PreloadScenarioMetadata()

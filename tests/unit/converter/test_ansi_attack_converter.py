@@ -38,7 +38,16 @@ async def test_convert_async_incorporate_user_prompt_false():
 
 async def test_convert_async_unescape_scenario():
     # Force scenario to choose the unescape scenario by mocking random.choice
-    with patch("random.choice") as mock_choice:
+    converter = AnsiAttackConverter(
+        include_raw=True,
+        include_escaped=True,
+        include_tasks=True,
+        include_repeats=True,
+        include_unescape=True,
+        incorporate_user_prompt=True,
+    )
+    with patch.object(converter, "_get_random_generator") as mock_get_rng:
+        mock_choice = mock_get_rng.return_value.choice
         # We pick a stable return sequence for mock_choice:
         # The converter tries to pick scenario from scenario_choices which is influenced by multiple
         # random.choice calls. We'll guide it step-by-step.
@@ -62,15 +71,6 @@ async def test_convert_async_unescape_scenario():
             # After all these side effects, the last call to random.choice will pick from these 3 scenarios
             # We'll just return the scenario 3 text constructed in code.
         ]
-
-        converter = AnsiAttackConverter(
-            include_raw=True,
-            include_escaped=True,
-            include_tasks=True,
-            include_repeats=True,
-            include_unescape=True,
-            incorporate_user_prompt=True,
-        )
 
         # Because we set side_effect so specifically, we need to adapt the calls:
         # Actually, the code chooses scenario structure as:

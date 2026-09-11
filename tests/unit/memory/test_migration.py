@@ -174,6 +174,38 @@ def test_run_schema_migrations_applies_head_revision():
             engine.dispose()
 
 
+def test_scenario_progress_migration_adds_composite_index():
+    """The migration head contains the parent/timestamp/id keyset index."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "scenario-progress-index.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "head")
+                indexes = {index["name"] for index in inspect(connection).get_indexes("AttackResultEntries")}
+            assert "ix_AttackResultEntries_attribution_parent_timestamp_id" in indexes
+        finally:
+            engine.dispose()
+
+
+def test_migration_head_removes_additional_initializers_table():
+    """The migration head removes the obsolete second initializer configuration source."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "additional-initializers-removal.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "4c9a6e1f2b7d")
+                assert "AdditionalInitializers" in set(inspect(connection).get_table_names())
+
+                command.upgrade(config, "head")
+                assert "AdditionalInitializers" not in set(inspect(connection).get_table_names())
+        finally:
+            engine.dispose()
+
+
 def test_migration_online_mode():
     """
     Test that online migration configuration is valid.
@@ -301,6 +333,24 @@ def _config_for(connection):
     config.attributes["connection"] = connection
     config.attributes["version_table"] = "pyrit_memory_alembic_version"
     return config
+
+
+def test_scorable_content_migration_creates_hash_column():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "scorable-content.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                command.upgrade(_config_for(connection), "5a1d3c7e9f04")
+                columns = {
+                    column["name"]: column for column in inspect(connection).get_columns("ScorableContentEntries")
+                }
+
+            assert columns["value"]["nullable"] is False
+            assert columns["value_sha256"]["nullable"] is False
+            assert columns["value_sha256"]["type"].length == 64
+        finally:
+            engine.dispose()
 
 
 def test_backfill_links_attack_results_via_conversation_id():
@@ -659,11 +709,7 @@ def test_memory_interface_check_schema_migration_raises_without_engine():
 
 def test_memory_migrations_head_command(capsys):
     """The 'head' subcommand of memory_migrations.py prints the current Alembic head revision."""
-    import sys
-
-    # Import the module's main function
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "build_scripts"))
-    from memory_migrations import _cmd_head
+    from build_scripts.memory_migrations import _cmd_head
 
     _cmd_head()
     captured = capsys.readouterr()
@@ -2476,3 +2522,112 @@ def test_migrations_do_not_use_unbounded_string_primary_keys() -> None:
     assert not violations, "Found unbounded string primary keys in migrations (SQL Server incompatible):\n" + "\n".join(
         violations
     )
+
+
+# --------------------------------------------------------------------------- #
+# scored_expectation migration (1b3d5f7a9c2e)
+# --------------------------------------------------------------------------- #
+_SCORED_EXPECTATION_REV = "1b3d5f7a9c2e"
+_SCORED_EXPECTATION_PREV_REV = "8d1e3f5a7b9c"
+
+
+def _seed_pre_scored_expectation_score(connection, *, score_id, objective):
+    connection.execute(
+        text(
+            'INSERT INTO "ScoreEntries" '
+            "(id, score_value, status, score_type, score_metadata, scorer_class_identifier, timestamp, objective) "
+            "VALUES (:id, 'true', 'complete', 'true_false', '{}', '{}', '2026-01-01 00:00:00', :objective)"
+        ),
+        {"id": score_id, "objective": objective},
+    )
+
+
+def test_scored_expectation_migration_script_metadata():
+    """The scored_expectation migration declares the expected revision chain."""
+    import importlib
+
+    mig = importlib.import_module("pyrit.memory.alembic.versions.1b3d5f7a9c2e_persist_scored_expectation")
+
+    assert mig.revision == _SCORED_EXPECTATION_REV
+    assert mig.down_revision == _SCORED_EXPECTATION_PREV_REV
+    assert mig.branch_labels is None
+    assert mig.depends_on is None
+
+
+def test_scored_expectation_upgrade_backfills_objective_into_expectation():
+    """Upgrading folds a non-null objective into a versioned expectation and leaves NULLs NULL."""
+    id_with = str(uuid.uuid4())
+    id_without = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'scored-exp-up.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _SCORED_EXPECTATION_PREV_REV)
+                _seed_pre_scored_expectation_score(connection, score_id=id_with, objective="legacy objective")
+                _seed_pre_scored_expectation_score(connection, score_id=id_without, objective=None)
+
+                command.upgrade(config, _SCORED_EXPECTATION_REV)
+
+                columns = {column["name"] for column in inspect(connection).get_columns("ScoreEntries")}
+                assert "scored_expectation" in columns
+                assert "objective" not in columns
+
+                rows = dict(connection.execute(text('SELECT id, scored_expectation FROM "ScoreEntries"')).fetchall())
+                assert json.loads(rows[id_with]) == {
+                    "schema_version": 1,
+                    "objective": "legacy objective",
+                    "conditions": [],
+                }
+                assert rows[id_without] is None
+        finally:
+            engine.dispose()
+
+
+def test_scored_expectation_downgrade_recovers_objective_and_drops_conditions():
+    """Downgrading recovers the objective string and drops condition-only expectations."""
+    id_objective = str(uuid.uuid4())
+    id_condition_only = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'scored-exp-down.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _SCORED_EXPECTATION_REV)
+
+                objective_expectation = json.dumps({"schema_version": 1, "objective": "recover me", "conditions": []})
+                condition_only_expectation = json.dumps(
+                    {
+                        "schema_version": 1,
+                        "objective": None,
+                        "conditions": [{"condition_type": "matches_objective"}],
+                    }
+                )
+                insert = (
+                    'INSERT INTO "ScoreEntries" '
+                    "(id, score_value, status, score_type, score_metadata, scorer_class_identifier, timestamp, "
+                    "scored_expectation) "
+                    "VALUES (:id, 'true', 'complete', 'true_false', '{}', '{}', '2026-01-01 00:00:00', :exp)"
+                )
+                connection.execute(
+                    text(insert),
+                    [
+                        {"id": id_objective, "exp": objective_expectation},
+                        {"id": id_condition_only, "exp": condition_only_expectation},
+                    ],
+                )
+
+                command.downgrade(config, _SCORED_EXPECTATION_PREV_REV)
+
+                columns = {column["name"] for column in inspect(connection).get_columns("ScoreEntries")}
+                assert "objective" in columns
+                assert "scored_expectation" not in columns
+
+                objectives = dict(connection.execute(text('SELECT id, objective FROM "ScoreEntries"')).fetchall())
+                assert objectives[id_objective] == "recover me"
+                # A condition-only expectation has no objective the old schema can hold, so it is dropped.
+                assert objectives[id_condition_only] is None
+        finally:
+            engine.dispose()

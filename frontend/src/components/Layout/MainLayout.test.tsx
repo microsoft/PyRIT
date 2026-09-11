@@ -26,7 +26,7 @@ jest.mock("../Sidebar/Navigation", () => {
   }) => {
     return (
       <div data-testid="navigation" data-current-view={currentView}>
-        <button onClick={() => onNavigate("config")}>Config</button>
+        <button onClick={() => onNavigate("targets")}>Targets</button>
       </div>
     );
   };
@@ -53,6 +53,8 @@ describe("MainLayout", () => {
   const defaultProps = {
     currentView: 'chat' as const,
     onNavigate: jest.fn(),
+    onOpenFeedback: jest.fn(),
+    canManageConfiguration: true,
   };
 
   it("renders the header with title and subtitle", async () => {
@@ -64,15 +66,12 @@ describe("MainLayout", () => {
       </MainLayout>
     );
 
-    expect(screen.getByText("Co-PyRIT")).toBeInTheDocument();
     expect(
       screen.getByText("Python Risk Identification Tool")
     ).toBeInTheDocument();
 
-    // Wait for async useEffect to complete
-    await waitFor(() => {
-      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
-    });
+    expect(await screen.findByText("Co-PyRIT 1.0.0")).toBeInTheDocument();
+    expect(document.title).toBe("Co-PyRIT 1.0.0");
   });
 
   it("renders children content", async () => {
@@ -109,11 +108,14 @@ describe("MainLayout", () => {
     });
   });
 
-  it("displays version from API in tooltip", async () => {
+  it("displays the version, commit, and database for a development release", async () => {
     mockedVersionApi.getVersion.mockResolvedValue({
-      version: "1.0.0",
-      display: "v1.0.0-beta",
+      version: "1.1.0.dev0",
+      commit: "729b7dd0446cc95412345662a1a921e2a4bf1979",
+      display: "729b7dd0446cc95412345662a1a921e2a4bf1979",
+      database_info: "AzureSQLMemory (airtprod)",
     });
+    const user = userEvent.setup();
 
     renderWithProvider(
       <MainLayout {...defaultProps}>
@@ -124,6 +126,42 @@ describe("MainLayout", () => {
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
     });
+
+    await user.hover(screen.getByAltText("Co-PyRIT Logo"));
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("PyRIT 1.1.0.dev0");
+    expect(tooltip).toHaveTextContent(
+      "Commit: 729b7dd0446cc95412345662a1a921e2a4bf1979"
+    );
+    expect(tooltip).toHaveTextContent("AzureSQLMemory (airtprod)");
+  });
+
+  it("does not display the commit for a release version", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({
+      version: "1.1.0",
+      commit: "729b7dd0446cc95412345662a1a921e2a4bf1979",
+      display: "729b7dd0446cc95412345662a1a921e2a4bf1979",
+      database_info: "AzureSQLMemory (airtprod)",
+    });
+    const user = userEvent.setup();
+
+    renderWithProvider(
+      <MainLayout {...defaultProps}>
+        <div>Content</div>
+      </MainLayout>
+    );
+
+    await waitFor(() => {
+      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
+    });
+
+    await user.hover(screen.getByAltText("Co-PyRIT Logo"));
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("PyRIT 1.1.0");
+    expect(tooltip).not.toHaveTextContent("Commit:");
+    expect(tooltip).toHaveTextContent("AzureSQLMemory (airtprod)");
   });
 
   it("displays 'Unknown' when version API fails", async () => {
@@ -138,6 +176,8 @@ describe("MainLayout", () => {
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
     });
+    expect(screen.getByText("Co-PyRIT")).toBeInTheDocument();
+    expect(document.title).toBe("Co-PyRIT");
   });
 
   it("renders a 'Take a tour' button in the top bar when onStartTour is provided", async () => {

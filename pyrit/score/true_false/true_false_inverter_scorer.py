@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import (
+    ComponentIdentifier,
+    Condition,
+    Scorable,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -25,13 +31,13 @@ class TrueFalseInverterScorer(TrueFalseScorer):
                 Note: This parameter is present for signature compatibility but is not used.
 
         Raises:
-            ValueError: If the scorer is not an instance of TrueFalseScorer.
+            ValueError: If the scorer is not a true/false scorer.
         """
         if not isinstance(scorer, TrueFalseScorer):
             raise ValueError("The scorer must be a true false scorer")
         self._scorer = scorer
 
-        super().__init__(validator=ScorerPromptValidator())
+        super().__init__()
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -54,57 +60,72 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
-    async def _score_async(
-        self,
-        message: Message,
-        *,
-        objective: str | None = None,
-        role_filter: ChatMessageRole | None = None,
-    ) -> list[Score]:
+    def matched_conditions(self) -> frozenset[type[Condition]]:
         """
-        Scores the piece using the underlying true-false scorer and returns the inverted score.
-
-        Args:
-            message (Message): The message to score.
-            objective (str | None): The objective to evaluate against (the original attacker model's objective).
-                Defaults to None.
-            role_filter (ChatMessageRole | None): Optional filter for message roles. Defaults to None.
+        Report what the wrapped scorer matches.
 
         Returns:
-            list[Score]: A list containing a single Score object with the inverted true/false value.
+            frozenset[type[Condition]]: The condition types the wrapped scorer routes.
         """
-        scores = await self._scorer.score_async(
-            message,
-            objective=objective,
-            role_filter=role_filter,
-        )
+        return self._scorer.matched_conditions()
 
-        # TrueFalseScorers only have a single score
+    def required_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report what the wrapped scorer requires.
+
+        Returns:
+            frozenset[type[Condition]]: The required condition types.
+        """
+        return self._scorer.required_conditions()
+
+    async def _score_scorable_async(
+        self,
+        *,
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Score the scorable with the wrapped scorer and invert the result.
+
+        Args:
+            scorable (Scorable): What to look at.
+            expectation (ScoringExpectation | None): What the wrapped scorer should look for.
+
+        Returns:
+            list[Score]: ``[]`` when the wrapped scorer is non-applicable; otherwise, a list
+                containing its completed inverted score or unchanged undetermined score.
+        """
+        scores = await self._scorer._score_nested_async(scorable=scorable, expectation=expectation)
+        if not scores:
+            return []
+        return self._invert(scores)
+
+    def _invert(self, scores: list[Score]) -> list[Score]:
+        """
+        Flip a determined verdict, and leave an undetermined one alone.
+
+        Polarity sits above the acquisition policy: there is nothing to invert when the
+        wrapped scorer could not reach a verdict.
+
+        Returns:
+            list[Score]: A list containing the single inverted score.
+        """
         inv_score = scores[0]
-
-        inv_score.score_value = str(True) if not inv_score.get_value() else str(False)
-        inv_score.score_value_description = "Inverted score: " + str(inv_score.score_value_description)
-
         scorer_type = self._scorer.get_identifier().class_name
-        inv_score.score_rationale = (
-            f"Inverted score from {scorer_type} result: {inv_score.score_value}\n{inv_score.score_rationale}"
-        )
+
+        if inv_score.is_undetermined:
+            inv_score.score_rationale = (
+                f"Inverted score from {scorer_type} is undetermined\n{inv_score.score_rationale}"
+            )
+        else:
+            inv_score.score_value = str(True) if not inv_score.get_value() else str(False)
+            inv_score.score_value_description = "Inverted score: " + str(inv_score.score_value_description)
+            inv_score.score_rationale = (
+                f"Inverted score from {scorer_type} result: {inv_score.score_value}\n{inv_score.score_rationale}"
+            )
 
         inv_score.id = uuid.uuid4()
 
         inv_score.scorer_class_identifier = self.get_identifier()
 
         return [inv_score]
-
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        """
-        Indicate that True False Inverter scorers do not support piecewise scoring.
-
-        Args:
-            message_piece (MessagePiece): Unused.
-            objective (str | None): Unused.
-
-        Raises:
-            NotImplementedError: Always, since composite scoring operates at the response level.
-        """
-        raise NotImplementedError("TrueFalseInverterScorer does not support piecewise scoring.")

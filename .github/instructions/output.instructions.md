@@ -61,6 +61,7 @@ Every new domain printer **must** have a corresponding convenience function adde
 
 ```python
 from pyrit.output.helpers import output_attack_async
+
 await output_attack_async(result, format="pretty")
 ```
 

@@ -106,5 +106,7 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
     dot_product = np.dot(a, b)
     norms = np.linalg.norm(a) * np.linalg.norm(b)
+    if norms == 0:
+        return 0.0
 
     return float(dot_product / norms)

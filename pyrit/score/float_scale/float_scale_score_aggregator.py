@@ -4,7 +4,7 @@
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 
-from pyrit.models import Score
+from pyrit.models import Score, UndeterminedScoreError
 from pyrit.score.score_aggregator_result import ScoreAggregatorResult
 from pyrit.score.score_utils import (
     combine_metadata_and_categories,
@@ -13,6 +13,69 @@ from pyrit.score.score_utils import (
 
 FloatScaleOp = Callable[[list[float]], float]
 FloatScaleAggregatorFunc = Callable[[Iterable[Score]], list[ScoreAggregatorResult]]
+
+
+def _float_values(scores: list[Score]) -> list[float] | None:
+    """
+    Read every score's value, or None when any of them could not reach a verdict.
+
+    A float aggregate has no defined meaning when a constituent value is missing, so the
+    whole aggregation degrades to undetermined rather than silently dropping the score.
+
+    Returns:
+        list[float] | None: The values, or None when a constituent is undetermined.
+    """
+    try:
+        return [float(s.get_value()) for s in scores]
+    except UndeterminedScoreError:
+        return None
+
+
+def _empty_result(*, name: str) -> ScoreAggregatorResult:
+    """
+    Build the neutral result for an aggregation that received no scores.
+
+    Args:
+        name (str): Name of the aggregator variant.
+
+    Returns:
+        ScoreAggregatorResult: A zero-valued result that names the aggregator.
+    """
+    return ScoreAggregatorResult(
+        value=0.0,
+        description=f"No scores provided to {name} composite scorer.",
+        rationale="",
+        metadata={},
+        category=[],
+    )
+
+
+def _undetermined_result(
+    scores: list[Score],
+    *,
+    name: str,
+    metadata: dict,
+    category: list[str],
+) -> ScoreAggregatorResult:
+    """
+    Build the result for an aggregation whose constituents did not all reach a verdict.
+
+    Args:
+        scores (list[Score]): The constituent scores, reported in the rationale.
+        name (str): Name of the aggregator variant.
+        metadata (dict): Combined metadata of the constituents.
+        category (list[str]): Combined categories of the constituents.
+
+    Returns:
+        ScoreAggregatorResult: A result with no value that explains why.
+    """
+    return ScoreAggregatorResult(
+        value=None,
+        description=f"No verdict was reachable in a {name} composite scorer.",
+        rationale="\n".join(format_score_for_rationale(s) for s in scores),
+        metadata=metadata,
+        category=category,
+    )
 
 
 def _build_rationale(scores: list[Score], *, aggregate_description: str) -> tuple[str, str]:
@@ -60,35 +123,29 @@ def _create_aggregator(
     """
 
     def aggregator(scores: Iterable[Score]) -> list[ScoreAggregatorResult]:
-        # Validate types and normalize input
-        for s in scores:
+        # Materialize before validating: `scores` is an Iterable, so validating by
+        # iterating it first would exhaust a generator and leave nothing to aggregate.
+        scores_list = list(scores)
+        for s in scores_list:
             if s.score_type != "float_scale":
                 raise ValueError("All scores must be of type 'float_scale'.")
 
-        scores_list = list(scores)
         if not scores_list:
             if raise_on_empty:
                 raise ValueError("No scores available for aggregation")
             # No scores; return a neutral result
-            return [
-                ScoreAggregatorResult(
-                    value=0.0,
-                    description=f"No scores provided to {name} composite scorer.",
-                    rationale="",
-                    metadata={},
-                    category=[],
-                )
-            ]
+            return [_empty_result(name=name)]
 
-        float_values = [float(s.get_value()) for s in scores_list]
+        metadata, category = combine_metadata_and_categories(scores_list)
+        float_values = _float_values(scores_list)
+        if float_values is None:
+            return [_undetermined_result(scores_list, name=name, metadata=metadata, category=category)]
         result = result_func(float_values)
 
         # Clamp result to [0, 1] defensively
         result = max(0.0, min(1.0, result))
 
         description, rationale = _build_rationale(scores_list, aggregate_description=aggregate_description)
-        metadata, category = combine_metadata_and_categories(scores_list)
-
         return [
             ScoreAggregatorResult(
                 value=result,
@@ -158,6 +215,7 @@ def _create_aggregator_by_category(
     result_func: FloatScaleOp,
     aggregate_description: str,
     group_by_category: bool = True,
+    use_selected_score_metadata: bool = False,
 ) -> FloatScaleAggregatorFunc:
     """
     Create a float-scale aggregator that can optionally group scores by category.
@@ -175,6 +233,8 @@ def _create_aggregator_by_category(
         result_func (FloatScaleOp): Function applied to the list of float values to compute the aggregation result.
         aggregate_description (str): Base description for the aggregated result.
         group_by_category (bool): Whether to group scores by category. Defaults to True.
+        use_selected_score_metadata (bool): Whether conflicting metadata is resolved from scores whose
+            value matches the aggregate. Defaults to False.
 
     Returns:
         FloatScaleMultiScoreAggregator: Aggregator function that reduces a sequence of float-scale Scores
@@ -182,33 +242,27 @@ def _create_aggregator_by_category(
     """
 
     def aggregator(scores: Iterable[Score]) -> list[ScoreAggregatorResult]:
-        # Validate types and normalize input
-        for s in scores:
+        # Materialize before validating: `scores` is an Iterable, so validating by
+        # iterating it first would exhaust a generator and leave nothing to aggregate.
+        scores_list = list(scores)
+        for s in scores_list:
             if s.score_type != "float_scale":
                 raise ValueError("All scores must be of type 'float_scale'.")
 
-        scores_list = list(scores)
         if not scores_list:
             # No scores; return a neutral result
-            return [
-                ScoreAggregatorResult(
-                    value=0.0,
-                    description=f"No scores provided to {name} composite scorer.",
-                    rationale="",
-                    metadata={},
-                    category=[],
-                )
-            ]
+            return [_empty_result(name=name)]
 
         if not group_by_category:
             # Original behavior: aggregate all scores together
-            float_values = [float(s.get_value()) for s in scores_list]
+            metadata, category = combine_metadata_and_categories(scores_list)
+            float_values = _float_values(scores_list)
+            if float_values is None:
+                return [_undetermined_result(scores_list, name=name, metadata=metadata, category=category)]
             result = result_func(float_values)
             result = max(0.0, min(1.0, result))
 
             description, rationale = _build_rationale(scores_list, aggregate_description=aggregate_description)
-            metadata, category = combine_metadata_and_categories(scores_list)
-
             return [
                 ScoreAggregatorResult(
                     value=result,
@@ -241,9 +295,21 @@ def _create_aggregator_by_category(
         results: list[ScoreAggregatorResult] = []
 
         for category_name, category_scores in sorted(category_groups.items()):
-            float_values = [float(s.get_value()) for s in category_scores]
-            result = result_func(float_values)
-            result = max(0.0, min(1.0, result))
+            metadata, category_list = combine_metadata_and_categories(category_scores)
+            float_values = _float_values(category_scores)
+            if float_values is None:
+                results.append(
+                    _undetermined_result(category_scores, name=name, metadata=metadata, category=category_list)
+                )
+                continue
+            raw_result = result_func(float_values)
+            if use_selected_score_metadata:
+                selected_score = next(
+                    score for score, value in zip(category_scores, float_values, strict=True) if value == raw_result
+                )
+                selected_metadata = selected_score.score_metadata or {}
+                metadata.update(selected_metadata)
+            result = max(0.0, min(1.0, raw_result))
 
             # Build description and rationale for this category group
             if len(category_scores) == 1:
@@ -255,9 +321,6 @@ def _create_aggregator_by_category(
                 description = f"{aggregate_description}{category_suffix}"
                 # Use generic description for rationale, not "Frame score"
                 rationale = _build_rationale(category_scores, aggregate_description="")[1]
-
-            # Combine metadata and categories for this group
-            metadata, category_list = combine_metadata_and_categories(category_scores)
 
             results.append(
                 ScoreAggregatorResult(
@@ -296,6 +359,7 @@ class FloatScaleScorerByCategory:
         result_func=max,
         aggregate_description="Maximum value among constituent scorers",
         group_by_category=True,
+        use_selected_score_metadata=True,
     )
 
     MIN: FloatScaleAggregatorFunc = _create_aggregator_by_category(
@@ -303,6 +367,7 @@ class FloatScaleScorerByCategory:
         result_func=min,
         aggregate_description="Minimum value among constituent scorers",
         group_by_category=True,
+        use_selected_score_metadata=True,
     )
 
 

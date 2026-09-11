@@ -269,11 +269,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   }, [catalogEntries])
   const catalogMetadataAvailable = catalogTargetTypeOptions.length > 0
   const catalogUnavailable = catalogStatus !== 'loading' && !catalogMetadataAvailable
-  const targetTypeOptions = catalogStatus === 'loading'
-    ? []
-    : catalogMetadataAvailable
-      ? catalogTargetTypeOptions
-      : FALLBACK_TARGET_CATALOG_ENTRIES
+  const targetTypeOptions = catalogMetadataAvailable
+    ? catalogTargetTypeOptions
+    : FALLBACK_TARGET_CATALOG_ENTRIES
 
   const formShape = TARGET_FORM_SHAPES[targetType]
   const isRoundRobin = formShape === 'roundrobin'
@@ -531,9 +529,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 <Dropdown
                   aria-label="Target Type"
                   className={styles.fullWidthSelect}
-                  disabled={catalogStatus === 'loading'}
                   listbox={{ className: styles.targetTypeListbox }}
-                  placeholder={catalogStatus === 'loading' ? 'Loading target types...' : 'Select a target type'}
+                  placeholder="Select a target type"
                   positioning={{ matchTargetSize: 'width' }}
                   selectedOptions={targetType ? [targetType] : []}
                   value={targetType ? selectedTargetDisplayName : ''}

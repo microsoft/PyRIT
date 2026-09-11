@@ -2,6 +2,11 @@
 # Licensed under the MIT license.
 
 
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -12,6 +17,218 @@ attack_manager_mod = pytest.importorskip(
 IndividualPromptAttack = attack_manager_mod.IndividualPromptAttack
 MultiPromptAttack = attack_manager_mod.MultiPromptAttack
 ProgressiveMultiPromptAttack = attack_manager_mod.ProgressiveMultiPromptAttack
+EvaluateAttack = attack_manager_mod.EvaluateAttack
+
+
+class _StubMultiPromptAttack:
+    def run(self, **kwargs: Any) -> tuple[str, float, int]:
+        return "updated control", 0.5, 1
+
+
+class _RecordingMultiPromptAttackFactory:
+    def __init__(self, *, logfile: Path) -> None:
+        self._logfile = logfile
+        self.params_at_creation: dict[str, Any] | None = None
+
+    def __call__(self, *args: Any) -> _StubMultiPromptAttack:
+        with self._logfile.open() as f:
+            self.params_at_creation = json.load(f)["params"]
+        return _StubMultiPromptAttack()
+
+
+def _make_worker(*, name: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        model=SimpleNamespace(name_or_path=f"{name}-model"),
+        tokenizer=SimpleNamespace(name_or_path=f"{name}-tokenizer", chat_template=f"{name}-template"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("attack_class", "additional_kwargs", "expected_param_keys"),
+    [
+        (
+            IndividualPromptAttack,
+            {},
+            [
+                "goals",
+                "targets",
+                "test_goals",
+                "test_targets",
+                "control_init",
+                "test_prefixes",
+                "models",
+                "test_models",
+            ],
+        ),
+        (
+            ProgressiveMultiPromptAttack,
+            {"progressive_goals": False, "progressive_models": True},
+            [
+                "goals",
+                "targets",
+                "test_goals",
+                "test_targets",
+                "progressive_goals",
+                "progressive_models",
+                "control_init",
+                "test_prefixes",
+                "models",
+                "test_models",
+            ],
+        ),
+        (
+            EvaluateAttack,
+            {},
+            [
+                "goals",
+                "targets",
+                "test_goals",
+                "test_targets",
+                "control_init",
+                "test_prefixes",
+                "models",
+                "test_models",
+            ],
+        ),
+    ],
+)
+def test_attack_manager_initializes_exact_log_schema(
+    *,
+    tmp_path: Path,
+    attack_class: type[Any],
+    additional_kwargs: dict[str, Any],
+    expected_param_keys: list[str],
+) -> None:
+    logfile = tmp_path / "attack.json"
+
+    attack_class(
+        goals=["goal"],
+        targets=["target"],
+        workers=[_make_worker(name="train")],
+        control_init="control",
+        test_prefixes=["prefix"],
+        logfile=str(logfile),
+        managers={"MPA": _StubMultiPromptAttack},
+        test_goals=["test goal"],
+        test_targets=["test target"],
+        test_workers=[_make_worker(name="test")],
+        **additional_kwargs,
+    )
+
+    with logfile.open() as f:
+        log = json.load(f)
+
+    assert list(log) == ["params", "controls", "losses", "runtimes", "tests"]
+    assert list(log["params"]) == expected_param_keys
+    assert log["params"]["models"] == [
+        {
+            "model_path": "train-model",
+            "tokenizer_path": "train-tokenizer",
+            "chat_template": "train-template",
+        }
+    ]
+    assert log["params"]["test_models"] == [
+        {
+            "model_path": "test-model",
+            "tokenizer_path": "test-tokenizer",
+            "chat_template": "test-template",
+        }
+    ]
+    assert log["controls"] == []
+    assert log["losses"] == []
+    assert log["runtimes"] == []
+    assert log["tests"] == []
+
+
+@pytest.mark.parametrize(
+    ("attack_class", "additional_kwargs"),
+    [
+        (IndividualPromptAttack, {}),
+        (
+            ProgressiveMultiPromptAttack,
+            {"progressive_goals": False, "progressive_models": False},
+        ),
+    ],
+)
+def test_attack_manager_records_run_params_before_creating_mpa(
+    *,
+    tmp_path: Path,
+    attack_class: type[Any],
+    additional_kwargs: dict[str, Any],
+) -> None:
+    logfile = tmp_path / "attack.json"
+    factory = _RecordingMultiPromptAttackFactory(logfile=logfile)
+    attack = attack_class(
+        goals=["goal"],
+        targets=["target"],
+        workers=[_make_worker(name="train")],
+        logfile=str(logfile),
+        managers={"MPA": factory},
+        **additional_kwargs,
+    )
+
+    attack.run(
+        n_steps=1,
+        batch_size=2,
+        topk=3,
+        temp=0.5,
+        allow_non_ascii=False,
+        target_weight=0.75,
+        control_weight=0.25,
+        anneal=False,
+        test_steps=4,
+        incr_control=False,
+        stop_on_success=False,
+        verbose=False,
+        filter_cand=False,
+    )
+
+    assert factory.params_at_creation is not None
+    assert list(factory.params_at_creation)[-11:] == [
+        "n_steps",
+        "test_steps",
+        "batch_size",
+        "topk",
+        "temp",
+        "allow_non_ascii",
+        "target_weight",
+        "control_weight",
+        "anneal",
+        "incr_control",
+        "stop_on_success",
+    ]
+    assert {key: factory.params_at_creation[key] for key in list(factory.params_at_creation)[-11:]} == {
+        "n_steps": 1,
+        "test_steps": 4,
+        "batch_size": 2,
+        "topk": 3,
+        "temp": 0.5,
+        "allow_non_ascii": False,
+        "target_weight": 0.75,
+        "control_weight": 0.25,
+        "anneal": False,
+        "incr_control": False,
+        "stop_on_success": False,
+    }
+
+
+def test_evaluate_attack_records_test_count_and_empty_result_contract(tmp_path: Path) -> None:
+    logfile = tmp_path / "attack.json"
+    attack = EvaluateAttack(
+        goals=["goal"],
+        targets=["target"],
+        workers=[_make_worker(name="train")],
+        logfile=str(logfile),
+        managers={"MPA": _StubMultiPromptAttack},
+    )
+
+    result = attack.run(steps=0, controls=[], batch_size=1, verbose=False)
+
+    with logfile.open() as f:
+        params = json.load(f)["params"]
+    assert list(params)[-1] == "num_tests"
+    assert params["num_tests"] == 0
+    assert result == ([], [], [], [], [], [])
 
 
 class TestFilterMpaKwargs:

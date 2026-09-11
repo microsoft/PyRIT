@@ -125,7 +125,7 @@ initializers:
 Run security assessments from the command line with `pyrit_scan` or the interactive `pyrit_shell`. Execute built-in scenarios against your AI targets.
 
 ```bash
-pyrit_scan airt.scam --target openai_chat
+pyrit_scan run airt.scam --target openai_chat
 ```
 
 ![scanner-demo](scanner-demo.png)

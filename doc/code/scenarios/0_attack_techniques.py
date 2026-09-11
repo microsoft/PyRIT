@@ -58,7 +58,7 @@
 #   any scenario can use (the `role_play_*` variants, `many_shot`, `tap`, the `crescendo_*` variants, `red_teaming`,
 #   `context_compliance`). Registered by default.
 # - [`extra.py`](../../../pyrit/setup/initializers/techniques/extra.py) — opt-in techniques that are
-#   not part of the default set (`pair`, `violent_durian`, `skeleton_key`).
+#   not part of the default set (`pair`, `violent_durian`, `skeleton_key`, `best_of_n`).
 # - [`airt.py`](../../../pyrit/setup/initializers/techniques/airt.py) — source-owned techniques that
 #   belong to a specific AIRT scenario. Unlike `core`/`extra`, these are imported directly by their
 #   owning scenario and are *not* part of the default aggregation.
@@ -208,6 +208,11 @@ for result in results.completed_results:
 # different seed groups. When you find yourself reaching for a one-off single-turn attack subclass,
 # consider whether it would be better expressed as a registered technique so scenarios can select it
 # by name and tag.
+#
+# `best_of_n` is another example. Its factory configures a
+# `PromptSendingAttack` with a 20-sample retry budget and stochastic character-swap, capitalization,
+# and ASCII-noise converters. `PromptSendingAttack` already re-runs the converters for each attempt
+# and stops when the objective scorer succeeds, so this technique does not need a separate attack class.
 #
 # ## Defining your own
 #

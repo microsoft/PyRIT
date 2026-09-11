@@ -1,10 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pathlib import Path
+
+from build_scripts import example_index as example_index_module
+from build_scripts import gen_api_md as gen_api_md_module
 from build_scripts.gen_api_md import (
+    ExampleReference,
     SymbolEntry,
+    _build_example_index,
     _build_symbol_index,
     _class_anchor,
+    _example_link_path,
     _format_bases,
     _format_reexport_alias,
     _format_reexport_target,
@@ -16,6 +23,10 @@ from build_scripts.gen_api_md import (
     render_function,
     render_module,
 )
+
+
+def test_docs_scripts_share_validate_docs_module() -> None:
+    assert example_index_module.validate_docs is gen_api_md_module.validate_docs
 
 
 def _fake_class(name: str, methods: list[str] | None = None) -> dict:
@@ -541,3 +552,236 @@ def test_render_module_label_uses_module_slug_for_nested_packages() -> None:
 
     assert "label: api-pyrit_executor_attack" in out
     assert "# pyrit.executor.attack" in out
+
+
+def _write_doc(doc_root: Path, relative_path: str, content: str) -> None:
+    path = doc_root / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _write_toc(doc_root: Path, *files: str) -> Path:
+    toc_path = doc_root / "myst.yml"
+    entries = "\n".join(f"    - file: {file}" for file in files)
+    toc_path.write_text(f"project:\n  toc:\n{entries}\n", encoding="utf-8")
+    return toc_path
+
+
+def test_build_example_index_scans_toc_user_docs_and_used_imports(tmp_path: Path) -> None:
+    symbol_index = _build_symbol_index(
+        [
+            _fake_module(
+                "pyrit.targets",
+                [
+                    _fake_class("DirectTarget"),
+                    _fake_class("AliasedTarget"),
+                    _fake_class("UnusedTarget"),
+                    _fake_class("LookalikeTarget"),
+                    _fake_function("used_function"),
+                    _fake_function("unused_function"),
+                    _fake_class("InternalTarget"),
+                ],
+            )
+        ]
+    )
+    toc_path = _write_toc(
+        tmp_path,
+        "guide/targets.md",
+        "guide/invalid.md",
+        "contributing/development.md",
+    )
+    _write_doc(
+        tmp_path,
+        "guide/targets.md",
+        """---
+title: Target examples
+---
+
+   ```python
+   from pyrit.targets import AliasedTarget as Target
+   from pyrit.targets import DirectTarget, UnusedTarget
+   from pyrit.targets import unused_function, used_function
+   from pyrite.targets import LookalikeTarget
+
+   DirectTarget()
+   Target()
+   used_function()
+   LookalikeTarget()
+   ```
+""",
+    )
+    _write_doc(tmp_path, "guide/invalid.md", "# Invalid\n\n```python\nthis is not valid Python !!!\n```\n")
+    _write_doc(
+        tmp_path,
+        "contributing/development.md",
+        "# Internal development\n\n```python\nfrom pyrit.targets import InternalTarget\nInternalTarget()\n```\n",
+    )
+    _write_doc(
+        tmp_path,
+        "guide/not-in-toc.md",
+        "# Orphan\n\n```python\nfrom pyrit.targets import UnusedTarget\nUnusedTarget()\n```\n",
+    )
+
+    result = _build_example_index(doc_root=tmp_path, toc_path=toc_path, symbol_index=symbol_index)
+    expected = [ExampleReference(title="Target examples", path="guide/targets.md")]
+
+    assert result[_class_anchor("pyrit.targets", "DirectTarget")] == expected
+    assert result[_class_anchor("pyrit.targets", "AliasedTarget")] == expected
+    assert _class_anchor("pyrit.targets", "UnusedTarget") not in result
+    assert _class_anchor("pyrit.targets", "LookalikeTarget") not in result
+    assert result[_function_anchor("pyrit.targets", "used_function")] == expected
+    assert _function_anchor("pyrit.targets", "unused_function") not in result
+    assert _class_anchor("pyrit.targets", "InternalTarget") not in result
+
+
+def test_build_example_index_uses_jupytext_companions_dedupes_and_sorts(tmp_path: Path) -> None:
+    symbol_index = _build_symbol_index([_fake_module("pyrit.targets", [_fake_class("PromptTarget")])])
+    toc_path = _write_toc(tmp_path, "guide/zulu.ipynb", "guide/alpha.ipynb")
+    for stem in ("zulu", "alpha"):
+        _write_doc(tmp_path, f"guide/{stem}.ipynb", "{}")
+    _write_doc(
+        tmp_path,
+        "guide/zulu.py",
+        """# %% [markdown]
+# # Zulu guide
+
+# %%
+from pyrit.targets import PromptTarget as Target
+
+# %%
+Target()
+Target()
+""",
+    )
+    _write_doc(
+        tmp_path,
+        "guide/alpha.py",
+        """# %% [markdown]
+# # Alpha guide
+
+# %%
+from pyrit.targets import PromptTarget
+
+# %%
+PromptTarget()
+""",
+    )
+
+    result = _build_example_index(doc_root=tmp_path, toc_path=toc_path, symbol_index=symbol_index)
+
+    assert result[_class_anchor("pyrit.targets", "PromptTarget")] == [
+        ExampleReference(title="Alpha guide", path="guide/alpha.ipynb"),
+        ExampleReference(title="Zulu guide", path="guide/zulu.ipynb"),
+    ]
+
+
+def test_build_example_index_resolves_module_alias_and_unique_short_name(tmp_path: Path) -> None:
+    symbol_index = _build_symbol_index(
+        [
+            _fake_module(
+                "pyrit.targets",
+                [_fake_class("ModuleTarget"), _fake_class("DeepTarget"), _fake_function("execute")],
+            ),
+            _fake_module("pyrit.prompt_target", [_fake_class("TargetCapabilities")]),
+            _fake_module("pyrit.models", [_fake_class("TargetCapabilities")]),
+            _fake_module("pyrit.first", [_fake_class("AmbiguousTarget")]),
+            _fake_module("pyrit.second", [_fake_class("AmbiguousTarget")]),
+        ]
+    )
+    toc_path = _write_toc(tmp_path, "guide/imports.md")
+    _write_doc(
+        tmp_path,
+        "guide/imports.md",
+        """# Import styles
+
+```python
+import pyrit.targets as targets
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.targets.internal.deep import AmbiguousTarget, DeepTarget
+
+targets.ModuleTarget.execute()
+TargetCapabilities()
+DeepTarget()
+AmbiguousTarget()
+```
+""",
+    )
+
+    result = _build_example_index(doc_root=tmp_path, toc_path=toc_path, symbol_index=symbol_index)
+    expected = [ExampleReference(title="Import styles", path="guide/imports.md")]
+
+    assert result[_class_anchor("pyrit.targets", "ModuleTarget")] == expected
+    assert result[_class_anchor("pyrit.targets", "DeepTarget")] == expected
+    assert result[_class_anchor("pyrit.prompt_target", "TargetCapabilities")] == expected
+    assert _class_anchor("pyrit.models", "TargetCapabilities") not in result
+    assert _function_anchor("pyrit.targets", "execute") not in result
+    assert _class_anchor("pyrit.first", "AmbiguousTarget") not in result
+    assert _class_anchor("pyrit.second", "AmbiguousTarget") not in result
+
+
+def test_build_example_index_reads_standalone_notebook_code_cells(tmp_path: Path) -> None:
+    symbol_index = _build_symbol_index([_fake_module("pyrit.targets", [_fake_class("NotebookTarget")])])
+    toc_path = _write_toc(tmp_path, "guide/notebook.ipynb")
+    _write_doc(
+        tmp_path,
+        "guide/notebook.ipynb",
+        """{
+  "cells": [
+    {"cell_type": "markdown", "source": ["# Notebook guide"]},
+    {"cell_type": "code", "source": ["from pyrit.targets import NotebookTarget\\n", "NotebookTarget()"]}
+  ]
+}""",
+    )
+
+    result = _build_example_index(doc_root=tmp_path, toc_path=toc_path, symbol_index=symbol_index)
+
+    assert result[_class_anchor("pyrit.targets", "NotebookTarget")] == [
+        ExampleReference(title="Notebook guide", path="guide/notebook.ipynb")
+    ]
+
+
+def test_render_module_adds_examples_to_functions_and_classes() -> None:
+    module = _fake_module(
+        "pyrit.examples",
+        [_fake_function("run_example"), _fake_class("ExampleTarget", methods=["run"])],
+    )
+    examples_by_anchor = {
+        _function_anchor("pyrit.examples", "run_example"): [
+            ExampleReference(title="Function guide", path="guide/function.md")
+        ],
+        _class_anchor("pyrit.examples", "ExampleTarget"): [
+            ExampleReference(title="Class guide", path="guide/class.ipynb")
+        ],
+    }
+
+    out = render_module(module, symbol_index={}, examples_by_anchor=examples_by_anchor)
+
+    assert out.count("**Examples:**") == 2
+    assert "- [Function guide](../guide/function.md)" in out
+    assert "- [Class guide](../guide/class.ipynb)" in out
+    class_section = out.split("## `ExampleTarget`", 1)[1]
+    assert class_section.index("- [Class guide]") < class_section.index("**Methods:**")
+
+
+def test_example_link_path_uses_configured_api_directory_depth() -> None:
+    assert (
+        _example_link_path(
+            "guide/example.md",
+            api_md_dir=Path("doc/reference/generated/api"),
+            doc_root=Path("doc"),
+        )
+        == "../../../guide/example.md"
+    )
+
+
+def test_render_module_does_not_attach_examples_to_methods() -> None:
+    module = _fake_module("pyrit.examples", [_fake_class("ExampleTarget", methods=["run"])])
+    examples_by_anchor = {
+        _method_anchor("pyrit.examples", "ExampleTarget", "run"): [
+            ExampleReference(title="Method guide", path="guide/method.md")
+        ]
+    }
+
+    out = render_module(module, symbol_index={}, examples_by_anchor=examples_by_anchor)
+
+    assert "Method guide" not in out

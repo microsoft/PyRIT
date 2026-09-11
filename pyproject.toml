@@ -1,6 +1,6 @@
 [project]
 name = "pyrit"
-version = "1.1.0.dev0"
+version = "1.2.0.dev0"
 description = "The Python Risk Identification Tool for LLMs (PyRIT) is a library used to assess the robustness of LLMs"
 authors = [
     { name = "Microsoft AI Red Team", email = "airedteam@microsoft.com" },
@@ -100,6 +100,7 @@ dev = [
 [project.optional-dependencies]
 # always make sure the individual ones are in sync with the all group
 huggingface = [
+    "sentencepiece>=0.2.0",
     "torch>=2.7.0",
 ]
 gcg = [
@@ -118,7 +119,7 @@ playwright = [
     "playwright>=1.49.0",
 ]
 fairness_bias = [
-    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
+    "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
 ]
 opencv = [
     "opencv-python>=4.11.0.86",
@@ -138,7 +139,7 @@ litellm = [
     # platforms cannot be pinned back selectively. 1.91.x is the last line with a
     # universal wheel that installs everywhere. Revisit once litellm ships macOS
     # and musllinux wheels.
-    "litellm>=1.83.0,<1.92.0",
+    "litellm>=1.84.0,<1.99.0",
 ]
 
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
@@ -149,12 +150,13 @@ all = [
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "litellm>=1.83.0,<1.92.0",  # 1.92.0+ drops the universal wheel (no mac/musl/old-glibc/win-arm64); see litellm group
+    "litellm>=1.84.0,<1.99.0",  # 1.92.0+ drops the universal wheel (no mac/musl/old-glibc/win-arm64); see litellm group
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
     "pyarrow>=22.0.0; python_version >= '3.14'",
-    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
+    "sentencepiece>=0.2.0",
+    "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
     "torch>=2.7.0",
 ]
 
@@ -170,6 +172,11 @@ addopts = [
 pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
+filterwarnings = [
+    # Keep the in-repo suite on the scorable/expectation contract. Tests that cover the
+    # shim itself opt back in with pytest.warns.
+    "error:Scorer\\.score_async:DeprecationWarning",
+]
 
 [tool.ty]
 [tool.ty.rules]
@@ -184,6 +191,7 @@ all = "error"
 # Annotating those generics is real code work, so keep the rule deferred until
 # that numpy-generics debt is addressed.
 missing-type-argument = "ignore"
+unsound-assignment = "ignore"
 # unused-type-ignore-comment is environment-dependent: a `# type: ignore`
 # on an optional-dependency import (torch, playwright, etc.) is "used" when the
 # extra is not installed but "unused" once it is. CI installs `--extra all`, so
@@ -274,6 +282,14 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["pyrit", "pyrit.*"]
+
+[tool.setuptools]
+license-files = [
+    "LICENSE",
+    "LICENSES/Apache-2.0.txt",
+    "THIRD_PARTY_NOTICES.txt",
+    "third_party/garak-provenance.json",
+]
 
 [tool.setuptools.package-data]
 pyrit = [

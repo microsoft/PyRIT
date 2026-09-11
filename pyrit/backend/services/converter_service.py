@@ -13,11 +13,12 @@ Converters can be:
 """
 
 import base64
+import binascii
 import mimetypes
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
@@ -36,6 +37,9 @@ from pyrit.backend.models.converters import (
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
 from pyrit.registry.components import ConverterRegistry
+
+if TYPE_CHECKING:
+    from pyrit.converter import ConverterResult
 
 
 class ConverterService:
@@ -196,20 +200,25 @@ class ConverterService:
                 )
                 await serializer.save_b64_image_async(data=value)
                 original_value = str(serializer.value)
-            # Already an existing file on disk — keep as-is
-            elif Path(original_value).is_file():
-                pass
             else:
-                # Treat as raw base64
-                ext = DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
+                try:
+                    is_existing_file = Path(original_value).is_file()
+                except (OSError, ValueError):
+                    if not self._is_raw_base64(original_value):
+                        raise
+                    is_existing_file = False
 
-                serializer = data_serializer_factory(
-                    category="prompt-memory-entries",
-                    data_type=data_type,
-                    extension=ext,
-                )
-                await serializer.save_b64_image_async(data=original_value)
-                original_value = str(serializer.value)
+                if not is_existing_file:
+                    # Treat as raw base64
+                    ext = DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
+
+                    serializer = data_serializer_factory(
+                        category="prompt-memory-entries",
+                        data_type=data_type,
+                        extension=ext,
+                    )
+                    await serializer.save_b64_image_async(data=original_value)
+                    original_value = str(serializer.value)
 
         converters = self._gather_converters(converter_ids=request.converter_ids)
         steps, final_value, final_type = await self._apply_converters_async(
@@ -336,13 +345,13 @@ class ConverterService:
         Returns:
             Tuple of (steps, final_value, final_type).
         """
-        current_value = initial_value
-        current_type = initial_type
+        current_value: str = initial_value
+        current_type: PromptDataType = initial_type
         steps: list[PreviewStep] = []
 
         for conv_id, conv_type, conv_obj in converters:
             input_value, input_type = current_value, current_type
-            result = await conv_obj.convert_async(prompt=current_value, input_type=current_type)
+            result: ConverterResult = await conv_obj.convert_async(prompt=current_value, input_type=current_type)
             current_value, current_type = result.output_text, result.output_type
 
             steps.append(
@@ -357,6 +366,20 @@ class ConverterService:
             )
 
         return steps, current_value, current_type
+
+    @staticmethod
+    def _is_raw_base64(value: str) -> bool:
+        """
+        Determine whether a value is syntactically valid raw base64.
+
+        Returns:
+            True when the value is valid raw base64, otherwise False.
+        """
+        try:
+            base64.b64decode(value, validate=True)
+        except binascii.Error:
+            return False
+        return True
 
 
 # ============================================================================

@@ -38,6 +38,27 @@ async def test_convert_async_success(sqlite_instance):
         os.remove(result.output_text)
 
 
+async def test_convert_async_stereo_audio(sqlite_instance):
+    """Frequency shifting should support multi-channel WAV files."""
+    sample_rate = 44100
+    mock_audio_data = np.tile(np.array([[1000, -1000], [500, -500]], dtype=np.int16), (sample_rate // 2, 1))
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav_file:
+        original_wav_path = temp_wav_file.name
+        wavfile.write(original_wav_path, sample_rate, mock_audio_data)
+
+    converter = AudioFrequencyConverter(shift_value=20000)
+    result = await converter.convert_async(prompt=original_wav_path)
+
+    out_rate, out_data = wavfile.read(result.output_text)
+    assert out_rate == sample_rate
+    assert out_data.shape == mock_audio_data.shape
+
+    os.remove(original_wav_path)
+    if os.path.exists(result.output_text):
+        os.remove(result.output_text)
+
+
 async def test_convert_async_file_not_found():
     # Create an instance of the converter
     converter = AudioFrequencyConverter(shift_value=20000)

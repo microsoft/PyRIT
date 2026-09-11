@@ -4,6 +4,7 @@ import {
   targetIdentifierHash,
   targetInfoMatchesTarget,
   targetModelName,
+  resolveTargetByIdentifierHash,
   targetType,
   targetUnderlyingModelName,
 } from './targetIdentity'
@@ -87,6 +88,67 @@ describe('targetIdentity', () => {
           target,
         ),
       ).toBe(false)
+    })
+  })
+
+  describe('resolveTargetByIdentifierHash', () => {
+    it('resolves only one exact full-hash match', () => {
+      const nearDuplicate = makeTarget({
+        target_registry_name: 'near_duplicate',
+        target_type: 'OpenAIChatTarget',
+        endpoint: 'https://example.test',
+        model_name: 'gpt-test',
+        identifier_hash: 'full-hash-1234-near',
+      })
+      const exact = makeTarget({
+        target_registry_name: 'exact',
+        target_type: 'OpenAIChatTarget',
+        endpoint: 'https://example.test',
+        model_name: 'gpt-test',
+        identifier_hash: 'full-hash-1234',
+      })
+
+      expect(resolveTargetByIdentifierHash('full-hash-1234', [nearDuplicate, exact])).toEqual({
+        status: 'resolved',
+        target: exact,
+      })
+    })
+
+    it('reports duplicate registry identities as ambiguous', () => {
+      const first = makeTarget({
+        target_registry_name: 'duplicate_a',
+        identifier_hash: 'same-full-hash',
+      })
+      const second = makeTarget({
+        target_registry_name: 'duplicate_b',
+        identifier_hash: 'same-full-hash',
+      })
+
+      expect(resolveTargetByIdentifierHash('same-full-hash', [first, second])).toEqual({
+        status: 'ambiguous',
+      })
+    })
+
+    it('does not resolve a Round Robin attack to an inner target', () => {
+      const composite = makeTarget({
+        target_registry_name: 'round_robin',
+        target_type: 'RoundRobinTarget',
+        identifier_hash: 'round-robin-root-hash',
+        inner_targets: [
+          {
+            target_registry_name: 'inner',
+            identifier_hash: 'inner-target-hash',
+          },
+        ],
+      })
+
+      expect(resolveTargetByIdentifierHash('inner-target-hash', [composite])).toEqual({
+        status: 'unavailable',
+      })
+      expect(resolveTargetByIdentifierHash('round-robin-root-hash', [composite])).toEqual({
+        status: 'resolved',
+        target: composite,
+      })
     })
   })
 

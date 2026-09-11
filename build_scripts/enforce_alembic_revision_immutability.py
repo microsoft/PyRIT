@@ -6,6 +6,8 @@ Migration history must be immutable. This hook enforces that by preventing delet
 
 Checks staged changes (local pre-commit), the full branch diff against origin/main (CI PRs),
 and the previous commit (CI merge-queue / push-to-main).
+
+The two history checks are skipped on release branches, which legitimately diverge from main.
 """
 
 import os
@@ -13,6 +15,7 @@ import subprocess
 import sys
 
 _VERSIONS_PATH = "pyrit/memory/alembic/versions/"
+_MERGE_QUEUE_REF_PREFIX = "refs/heads/gh-readonly-queue/"
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -42,6 +45,29 @@ def _fail_ci(reason: str) -> bool:
     return False
 
 
+def _on_release_branch() -> bool:
+    """
+    Report whether the checks below are running against a release branch.
+
+    A release branch is cut from an earlier tag and carries cherry-picked commits, so it
+    legitimately differs from ``main`` in ways the history checks below would read as
+    edits to already-released revisions.
+    """
+    # push events; pull_request events set GITHUB_REF to refs/pull/<n>/merge instead,
+    # which carries no branch name, so the target branch has to come from GITHUB_BASE_REF.
+    github_ref = os.environ.get("GITHUB_REF", "")
+    base_ref = os.environ.get("GITHUB_BASE_REF", "")
+    if github_ref or base_ref:
+        # merge_group events run on a temporary queue branch named
+        # refs/heads/gh-readonly-queue/<target branch>/pr-<n>-<sha> and leave GITHUB_BASE_REF
+        # unset, so the target branch has to be read back out of the ref itself.
+        if github_ref.startswith(_MERGE_QUEUE_REF_PREFIX):
+            github_ref = f"refs/heads/{github_ref[len(_MERGE_QUEUE_REF_PREFIX) :]}"
+        return github_ref.startswith("refs/heads/releases/") or base_ref.startswith("releases/")
+    # Neither variable is set outside CI, so fall back to the checked-out branch.
+    return _git_stdout("rev-parse", "--abbrev-ref", "HEAD").startswith("releases/")
+
+
 def has_revision_violations() -> bool:
     # Local pre-commit: check staged changes
     violations = _get_violations(["--cached"])
@@ -49,17 +75,29 @@ def has_revision_violations() -> bool:
         _report(violations)
         return True
 
-    # CI (PR): diff branch against its merge-base with origin/main.
+    # A release branch carries cherry-picked fixes that amend already-released revisions on
+    # purpose, so comparing it against `main` reports intentional work as violations. A pull
+    # request is still comparable against its own base, so only the push and merge queue paths
+    # are skipped. `git cherry-pick` does not run pre-commit, so the staged check above rarely
+    # fires on those paths either: review is the remaining control there.
+    base_ref = os.environ.get("GITHUB_BASE_REF", "")
+    if _on_release_branch() and not base_ref:
+        return False
+
+    # CI (PR): diff branch against its merge-base with the branch it targets. A pull request
+    # into a release branch has to compare against that branch, because everything the release
+    # branch already carries is not part of the change under review.
     # The three-dot syntax (A...B) resolves to ``git diff $(merge-base A B) B``
     # automatically, so we don't need a separate merge-base call.  When
-    # origin/main is missing (shallow clone) git exits non-zero.
-    pr_diff = _git("diff", "--name-status", "origin/main...HEAD", "--", _VERSIONS_PATH)
+    # the base is missing (shallow clone) git exits non-zero.
+    base = f"origin/{base_ref}" if base_ref else "origin/main"
+    pr_diff = _git("diff", "--name-status", f"{base}...HEAD", "--", _VERSIONS_PATH)
     if pr_diff.returncode == 0:
         violations = [line for line in pr_diff.stdout.strip().splitlines() if line and not line.startswith("A")]
         if violations:
             _report(violations)
             return True
-    elif _fail_ci("origin/main is not available (shallow clone?)"):
+    elif _fail_ci(f"{base} is not available (shallow clone?)"):
         return True
 
     # CI (merge-queue / push-to-main): on main the branch *is* origin/main, so

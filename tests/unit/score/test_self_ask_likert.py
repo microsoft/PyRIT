@@ -74,6 +74,16 @@ def _write_likert_yaml(
     return path
 
 
+def test_likert_harm_scorer_does_not_match_objective(likert_scale: LikertScale):
+    scorer = SelfAskLikertScorer.from_likert_scale(
+        chat_target=_mock_target(),
+        likert_scale=likert_scale,
+    )
+
+    assert scorer.matched_conditions() == frozenset()
+    assert scorer.required_conditions() == frozenset()
+
+
 async def test_likert_scorer_sets_system_prompt_and_scores(
     patch_central_database,
     scorer_likert_response: Message,
@@ -311,6 +321,21 @@ def test_likert_factory_applies_evaluation_metadata(patch_central_database):
 
     assert scorer.evaluation_file_mapping is not None
     assert scorer.evaluation_file_mapping.harm_category == scale.evaluation_files.harm_category
+
+
+@pytest.mark.parametrize(
+    ("preset", "expected_category"),
+    [
+        (LikertScalePaths.FAIRNESS_BIAS_SCALE, "REPRESENTATIONAL"),
+        (LikertScalePaths.SEXUAL_SCALE, "SEXUAL_CONTENT"),
+    ],
+)
+def test_likert_presets_use_canonical_harm_categories(preset, expected_category):
+    scale = preset.load()
+
+    assert scale.category == expected_category
+    assert scale.evaluation_files is not None
+    assert scale.evaluation_files.harm_category == expected_category
 
 
 @pytest.mark.parametrize(

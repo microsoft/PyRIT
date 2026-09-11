@@ -9,9 +9,10 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultsKeysetCursor, MemoryInterface
+from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
 from pyrit.memory.memory_interface import _AttackResultQuery
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
@@ -24,6 +25,7 @@ from pyrit.models import (
     IdentifierFilter,
     IdentifierType,
     MessagePiece,
+    ScenarioRunState,
     Score,
 )
 
@@ -85,15 +87,15 @@ def _make_attack_result(
     return AttackResult(**kwargs)
 
 
-def _after(page: "Sequence[AttackResult]") -> AttackResultsKeysetCursor:
+def _after(page: "Sequence[AttackResult]") -> AttackResultKeysetCursor:
     """Build the keyset anchor for the next page from the last row of ``page``."""
-    return AttackResultsKeysetCursor.from_attack_result(page[-1])
+    return AttackResultKeysetCursor.from_attack_result(page[-1])
 
 
 def _drain_keyset(memory: MemoryInterface, *, page_size: int, **filters) -> list[AttackResult]:
     """Page through get_attack_results with the keyset cursor until exhausted."""
     drained: list[AttackResult] = []
-    after: AttackResultsKeysetCursor | None = None
+    after: AttackResultKeysetCursor | None = None
     while True:
         page = list(memory.get_attack_results(limit=page_size, after=after, **filters))
         drained.extend(page)
@@ -122,12 +124,12 @@ def test_attack_result_query_snapshots_mutable_inputs():
 def test_attack_result_query_requires_keyword_arguments():
     """The internal query does not expose field ordering as a positional API."""
     with pytest.raises(TypeError):
-        _AttackResultQuery(["id"])  # type: ignore[misc]
+        _AttackResultQuery(["id"])  # ty: ignore[too-many-positional-arguments]
 
 
 def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: MemoryInterface):
     """The compatibility API maps every parameter onto the internal query."""
-    cursor = AttackResultsKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
+    cursor = AttackResultKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
     identifier_filter = IdentifierFilter(
         identifier_type=IdentifierType.ATTACK,
         property_path="$.hash",
@@ -146,6 +148,7 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
             converter_classes=["Converter"],
             converter_classes_match="any",
             has_converters=True,
+            include_scenario_attacks=False,
             labels={"operator": ["alice"]},
             targeted_harm_categories=["violence"],
             identifier_filters=[identifier_filter],
@@ -168,6 +171,7 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
     assert query.converter_classes == ("Converter",)
     assert query.converter_classes_match == "any"
     assert query.has_converters is True
+    assert query.include_scenario_attacks is False
     assert query.labels == {"operator": ("alice",)}
     assert query.targeted_harm_categories == ("violence",)
     assert query.identifier_filters == (identifier_filter,)
@@ -1627,6 +1631,31 @@ def test_get_attack_results_has_converters_false_combined_with_attack_classes(sq
     assert {r.conversation_id for r in results} == {"conv_2"}
 
 
+def test_get_attack_results_can_exclude_scenario_attacks(sqlite_instance: MemoryInterface) -> None:
+    """Manual-only queries exclude attacks carrying scenario attribution."""
+    scenario = make_scenario_result(
+        id=uuid.uuid4(),
+        scenario_name="Scenario",
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        labels={},
+        metadata={},
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+    )
+    manual_attack = create_attack_result("manual", 1)
+    scenario_attack = create_attack_result("scenario", 2)
+    scenario_attack.attribution_parent_id = str(scenario.id)
+    scenario_attack.attribution_data = {"parent_collection": "attack"}
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+    sqlite_instance.add_attack_results_to_memory(attack_results=[manual_attack, scenario_attack])
+
+    all_results = sqlite_instance.get_attack_results(include_scenario_attacks=True)
+    manual_results = sqlite_instance.get_attack_results(include_scenario_attacks=False)
+
+    assert {result.conversation_id for result in all_results} == {"manual", "scenario"}
+    assert [result.conversation_id for result in manual_results] == ["manual"]
+
+
 # ============================================================================
 # Unique attack class and converter class name tests
 # ============================================================================
@@ -1898,7 +1927,7 @@ def test_get_attack_results_paginated_empty_metadata_orders_newest_first(sqlite_
 
 def test_get_attack_results_pagination_with_ids_raises(sqlite_instance: MemoryInterface):
     """limit/keyset pagination cannot be combined with id-batched lookups."""
-    anchor = AttackResultsKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
+    anchor = AttackResultKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
     with pytest.raises(ValueError, match="pagination cannot be combined"):
         sqlite_instance.get_attack_results(attack_result_ids=[str(uuid.uuid4())], limit=10)
     with pytest.raises(ValueError, match="pagination cannot be combined"):
@@ -2055,7 +2084,7 @@ def test_attack_result_keyset_order_matches_sql_order(sqlite_instance: MemoryInt
     python_order = sorted(
         sqlite_instance.get_attack_results(),
         key=lambda ar: (
-            AttackResultsKeysetCursor.from_attack_result(ar).timestamp,
+            AttackResultKeysetCursor.from_attack_result(ar).timestamp,
             ar.attack_result_id,
         ),
         reverse=True,

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pyrit.cli import _banner as banner
+from pyrit.cli._auth import AUTH_MODES, AuthMode
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -62,6 +63,27 @@ def _strip_surrounding_quotes(token: str) -> str:
     return token
 
 
+def _print_shell_exception(*, exc: BaseException) -> None:
+    """
+    Print a user-facing error line for an exception raised by a shell command.
+
+    Mirrors ``pyrit_scan._print_cli_exception`` but never suggests ``--request-timeout``,
+    which the shell does not accept. A bare ``httpx.ReadTimeout`` stringifies to nothing,
+    so it needs its own line or the command reports an empty error.
+
+    Args:
+        exc (BaseException): The exception caught by the shell command.
+    """
+    from pyrit.cli.pyrit_scan import _is_read_timeout, _print_debug_traceback
+
+    if _is_read_timeout(exc):
+        print("\nError (ReadTimeout): server did not respond in time. Check the server logs for a blocked event loop.")
+    else:
+        print(f"\nError ({type(exc).__name__}): {str(exc) or repr(exc)}")
+
+    _print_debug_traceback(exc)
+
+
 class PyRITShell(cmd.Cmd):
     """
     Interactive shell for PyRIT (thin REST client).
@@ -71,9 +93,11 @@ class PyRITShell(cmd.Cmd):
         list-initializers          - List all available initializers
         list-targets               - List all available targets
         list-converters            - List all registered converter instances
+        add-initializer <file>...  - Register initializer(s) from Python script file(s)
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history [N]       - List the last N (default 10) scenario runs
-        print-scenario [id]        - Print detailed results for a scenario run
+        scenario-results [id]      - Inspect a run: --view overview|attacks|conversations|full
+        print-scenario [id]        - Deprecated alias for 'scenario-results'
         start-server               - Start a local backend server
         stop-server                - Stop the owned backend server
         help [command]             - Show help for a command
@@ -90,6 +114,7 @@ class PyRITShell(cmd.Cmd):
         server_url: str | None = None,
         config_file: Path | None = None,
         start_server: bool = False,
+        auth_mode: AuthMode | None = None,
     ) -> None:
         """
         Initialize the PyRIT shell.
@@ -99,12 +124,14 @@ class PyRITShell(cmd.Cmd):
             server_url: Optional explicit server URL.
             config_file: Optional config file path.
             start_server: If True, auto-start a local backend.
+            auth_mode: Optional backend authentication mode override.
         """
         super().__init__()
         self._no_animation = no_animation
         self._server_url = server_url
         self._config_file = config_file
         self._start_server = start_server
+        self._auth_mode = auth_mode
         self._api_client: Any = None  # PyRITApiClient (lazy)
         self._base_url: str | None = None
         self._launcher: Any = None  # ServerLauncher (lazy)
@@ -163,6 +190,57 @@ class PyRITShell(cmd.Cmd):
             return self._server_url
         return read_server_url(config_file=self._config_file) or DEFAULT_SERVER_URL
 
+    def _resolve_auth_mode(self) -> AuthMode:
+        """
+        Determine the backend authentication mode.
+
+        Returns:
+            The selected authentication mode.
+        """
+        from pyrit.cli._config_reader import read_server_settings
+
+        return self._auth_mode or read_server_settings(config_file=self._config_file).auth_mode
+
+    def _open_client(self, *, base_url: str) -> bool:
+        """
+        Open an API client while keeping connection failures inside the REPL.
+
+        Returns:
+            ``True`` when the client is ready, otherwise ``False``.
+        """
+        import httpx
+
+        from pyrit.cli._auth import CliAuthenticationError
+        from pyrit.cli._config_reader import ConfigError
+        from pyrit.cli._output import print_error_with_hint
+        from pyrit.cli.api_client import PyRITApiClient
+
+        self._base_url = base_url
+        try:
+            client = PyRITApiClient(base_url=base_url, auth_mode=self._resolve_auth_mode())
+            self._run_async(client.__aenter__(), timeout=None)
+        except CliAuthenticationError as exc:
+            self._api_client = None
+            print_error_with_hint(
+                message=str(exc),
+                hint="Use --auth-mode to select auto, device_code, azure_cli, or none.",
+            )
+            return False
+        except ConfigError as exc:
+            self._api_client = None
+            print(f"Error: {exc}")
+            return False
+        except httpx.HTTPError as exc:
+            self._api_client = None
+            print_error_with_hint(
+                message=f"Could not initialize the client for {base_url}: {exc}",
+                hint="Check the server's /api/auth/config endpoint and your network connection.",
+            )
+            return False
+
+        self._api_client = client
+        return True
+
     def _ensure_client(self) -> bool:
         """
         Ensure the API client is connected.
@@ -192,7 +270,10 @@ class PyRITShell(cmd.Cmd):
         if not healthy and self._start_server:
             self._launcher = ServerLauncher()
             try:
-                base_url = self._run_async(self._launcher.start_async(config_file=self._config_file))
+                base_url = self._run_async(
+                    self._launcher.start_async(config_file=self._config_file),
+                    timeout=None,
+                )
                 healthy = True
             except RuntimeError as exc:
                 print(f"Error starting server: {exc}")
@@ -207,11 +288,8 @@ class PyRITShell(cmd.Cmd):
             )
             return False
 
-        from pyrit.cli.api_client import PyRITApiClient
-
-        self._base_url = base_url
-        self._api_client = PyRITApiClient(base_url=base_url)
-        self._run_async(self._api_client.__aenter__())
+        if not self._open_client(base_url=base_url):
+            return False
         self._start_server = False  # only auto-start once
         return True
 
@@ -380,6 +458,7 @@ class PyRITShell(cmd.Cmd):
             print_scenario_run_progress,
             print_scenario_run_summary,
         )
+        from pyrit.cli.pyrit_scan import _is_read_timeout, _print_cli_exception, _print_debug_traceback
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import RunScenarioRequest
 
@@ -449,14 +528,26 @@ class PyRITShell(cmd.Cmd):
         request = RunScenarioRequest(**request_kwargs)
 
         # Start run
-        total_techniques = len(request.techniques or [])
         print(f"\nRunning scenario: {scenario_name}")
         sys.stdout.flush()
 
         try:
             run = self._run_async(self._api_client.start_scenario_run_async(request=request))
         except Exception as exc:
-            print(f"Error starting scenario: {exc}")
+            if _is_read_timeout(exc):
+                # The server keeps initializing after the client stops waiting, so whether the
+                # run started is unknown. The shell has no --request-timeout, so it handles the
+                # timeout itself rather than going through the shared printer.
+                print("\nERROR: The scenario start request timed out, so it is unknown whether the run started.")
+                print(
+                    "\nError (ReadTimeout): server did not respond in time. Check "
+                    "'scenario-history' before retrying, or the run may be started twice. Check "
+                    "the server logs for a blocked event loop."
+                )
+                _print_debug_traceback(exc)
+            else:
+                print("\nERROR: The scenario could not be started.")
+                _print_cli_exception(exc=exc)
             return
 
         scenario_result_id = run.scenario_result_id
@@ -467,7 +558,7 @@ class PyRITShell(cmd.Cmd):
         try:
             while True:
                 run = self._run_async(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
-                print_scenario_run_progress(run=run, total_techniques=total_techniques)
+                print_scenario_run_progress(run=run)
                 if run.status in {
                     ScenarioRunState.COMPLETED,
                     ScenarioRunState.FAILED,
@@ -493,13 +584,21 @@ class PyRITShell(cmd.Cmd):
                 )
                 self._run_async(print_scenario_result_async(result=detail))
             except Exception as exc:
-                from pyrit.cli.pyrit_scan import _print_cli_exception
-
                 print(
                     "\nERROR: The scenario completed, but its detailed results could not be "
                     "retrieved or parsed from the server."
                 )
-                _print_cli_exception(exc=exc)
+                if _is_read_timeout(exc):
+                    # The shell has no --request-timeout, so it must not reach the shared
+                    # printer, which advises it.
+                    print(
+                        f"\nError (ReadTimeout): server did not respond in time. Retry with "
+                        f"'scenario-results {scenario_result_id}', or check the server logs for a "
+                        "blocked event loop."
+                    )
+                    _print_debug_traceback(exc)
+                else:
+                    _print_cli_exception(exc=exc)
                 print_scenario_run_summary(run=run)
         else:
             print_scenario_run_summary(run=run)
@@ -534,30 +633,121 @@ class PyRITShell(cmd.Cmd):
             runs = self._run_async(self._api_client.list_scenario_runs_async(limit=limit))
             print_scenario_runs_list(runs=runs)
         except Exception as e:
-            print(f"Error: {e}")
+            _print_shell_exception(exc=e)
+
+    def do_scenario_results(self, arg: str) -> None:
+        """
+        Inspect the results of a completed scenario run.
+
+        Usage:
+            scenario-results <scenario_result_id>
+                [--view overview|attacks|conversations|full]
+                [--attack-result-ids <id> ...] [--limit N]
+
+        Views:
+            overview       Scenario-level aggregate: totals and per-group success
+                           rates (the default).
+            attacks        One row per attack result (id, objective, outcome,
+                           turns, score).
+            conversations  The main-conversation transcript for each attack
+                           (messages plus their scores and full rationale).
+            full           The attacks table followed by the transcripts.
+
+        For conversations/full, when neither --attack-result-ids nor --limit is
+        given, at most 5 attacks are shown to avoid dumping a whole run.
+        """
+        if not self._ensure_client():
+            return
+
+        import shlex
+
+        from pyrit.cli._cli_args import ScenarioResultView, build_scenario_results_parser
+        from pyrit.cli._output import print_conversations_async, print_scenario_result_async
+        from pyrit.cli._results import (
+            apply_view_limit_policy,
+            resolve_view,
+        )
+        from pyrit.output import output_scenario_attacks_async
+
+        try:
+            tokens = shlex.split(arg)
+        except ValueError as exc:
+            print(f"Error parsing arguments: {exc}")
+            return
+        if not tokens:
+            print(
+                "Usage: scenario-results <scenario_result_id> "
+                "[--view overview|attacks|conversations|full] [--attack-result-ids <id> ...] [--limit N]"
+            )
+            print("Use 'scenario-history' to see available run IDs.")
+            return
+
+        parser = build_scenario_results_parser()
+        try:
+            parsed = parser.parse_args(tokens)
+        except SystemExit:
+            return
+
+        view = resolve_view(view=parsed.view)
+        limit = apply_view_limit_policy(view=view, limit=parsed.limit, attack_result_ids=parsed.attack_result_ids)
+
+        try:
+            result = self._run_async(
+                self._api_client.get_scenario_run_results_async(scenario_result_id=parsed.scenario_result_id)
+            )
+        except Exception as exc:
+            _print_shell_exception(exc=exc)
+            return
+
+        if view is ScenarioResultView.OVERVIEW:
+            self._run_async(print_scenario_result_async(result=result))
+            return
+
+        if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
+            self._run_async(
+                output_scenario_attacks_async(
+                    result,
+                    attack_result_ids=parsed.attack_result_ids,
+                    limit=limit,
+                )
+            )
+            if view is ScenarioResultView.ATTACKS:
+                return
+
+        try:
+            self._run_async(
+                print_conversations_async(
+                    result=result,
+                    client=self._api_client,
+                    scenario_result_id=parsed.scenario_result_id,
+                    attack_result_ids=parsed.attack_result_ids,
+                    limit=limit,
+                )
+            )
+        except Exception as exc:
+            _print_shell_exception(exc=exc)
+            return
 
     def do_print_scenario(self, arg: str) -> None:
         """
-        Print detailed results for a scenario run.
+        Print a scenario run's overview (deprecated alias for ``scenario-results``).
+
+        Equivalent to ``scenario-results <id>``, whose default ``overview`` view
+        produces the same output.
 
         Usage:
             print-scenario <scenario_result_id>
         """
-        if not self._ensure_client():
-            return
-        from pyrit.cli._output import print_scenario_result_async
+        from pyrit.common.deprecation import print_deprecation_message
 
-        arg = arg.strip()
-        if not arg:
-            print("Usage: print-scenario <scenario_result_id>")
-            print("Use 'scenario-history' to see available run IDs.")
-            return
-
-        try:
-            detail = self._run_async(self._api_client.get_scenario_run_results_async(scenario_result_id=arg))
-            self._run_async(print_scenario_result_async(result=detail))
-        except Exception as e:
-            print(f"Error: {e}")
+        print_deprecation_message(
+            old_item="print-scenario",
+            new_item="scenario-results",
+            removed_in="1.3.0",
+        )
+        # DeprecationWarning is suppressed by default in the REPL, so also print a visible note.
+        print("Note: 'print-scenario' is deprecated; use 'scenario-results <id>' instead.")
+        self.do_scenario_results(arg.strip())
 
     # ------------------------------------------------------------------
     # Server management
@@ -569,7 +759,6 @@ class PyRITShell(cmd.Cmd):
             print(f"Error: start-server does not accept arguments, got: {arg.strip()}")
             return
         from pyrit.cli._server_launcher import ServerLauncher
-        from pyrit.cli.api_client import PyRITApiClient
 
         base_url = self._resolve_base_url()
 
@@ -577,20 +766,21 @@ class PyRITShell(cmd.Cmd):
         if self._run_async(ServerLauncher.probe_health_async(base_url=base_url)):
             print(f"Server already running at {base_url}")
             if self._api_client is None:
-                self._base_url = base_url
-                self._api_client = PyRITApiClient(base_url=base_url)
-                self._run_async(self._api_client.__aenter__())
+                self._open_client(base_url=base_url)
             return
 
         self._launcher = ServerLauncher()
         try:
-            new_url = self._run_async(self._launcher.start_async(config_file=self._config_file))
+            new_url = self._run_async(
+                self._launcher.start_async(config_file=self._config_file),
+                timeout=None,
+            )
             self._base_url = new_url
             # Create new client for the started server
             if self._api_client is not None:
                 self._run_async(self._api_client.close_async())
-            self._api_client = PyRITApiClient(base_url=new_url)
-            self._run_async(self._api_client.__aenter__())
+                self._api_client = None
+            self._open_client(base_url=new_url)
         except RuntimeError as exc:
             print(f"Error: {exc}")
 
@@ -599,26 +789,30 @@ class PyRITShell(cmd.Cmd):
         if arg.strip():
             print(f"Error: stop-server does not accept arguments, got: {arg.strip()}")
             return
-        from pyrit.cli._server_launcher import ServerLauncher, stop_server_on_port
+        from pyrit.cli._server_launcher import ServerLauncher, parse_local_server_address, stop_server_on_port
 
         # If we own the launcher, use it directly
         if self._launcher is not None:
-            self._launcher.stop()
+            if not self._launcher.stop():
+                print("Server could not be stopped.")
+                return
             print("Server stopped.")
         else:
             # Find and kill by port. Probe first so we don't SIGTERM a non-pyrit
             # process that happens to be listening on this port.
-            from urllib.parse import urlparse
-
             base_url = self._base_url or self._resolve_base_url()
-            port = urlparse(base_url).port or 8000
+            local_address = parse_local_server_address(base_url=base_url)
+            if local_address is None:
+                print(f"Cannot stop non-local server {base_url}. Stop it on its host instead.")
+                return
+            _, port = local_address
             if not self._run_async(ServerLauncher.probe_health_async(base_url=base_url)):
                 print(f"No pyrit backend responding at {base_url}; not stopping anything.")
                 return
             if stop_server_on_port(port=port):
                 print(f"Server on port {port} stopped.")
             else:
-                print(f"No server found on port {port}.")
+                print(f"Server on port {port} could not be stopped.")
                 return
 
         # Close the API client since the server is gone
@@ -725,6 +919,12 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--auth-mode",
+        choices=AUTH_MODES,
+        help="Backend authentication mode (default: server.auth_mode or auto)",
+    )
+
+    parser.add_argument(
         "--log-level",
         type=str,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -765,6 +965,7 @@ def main() -> int:
             server_url=args.server_url,
             config_file=args.config_file,
             start_server=args.start_server,
+            auth_mode=args.auth_mode,
         )
         shell.cmdloop(intro=intro)
         return 0

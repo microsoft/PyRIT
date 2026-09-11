@@ -11,7 +11,7 @@ import av
 
 from pyrit.converter import AzureSpeechAudioToTextConverter
 from pyrit.memory import CentralMemory
-from pyrit.models import MessagePiece, Score
+from pyrit.models import MessagePiece, MessageScorable, Score, ScoringExpectation
 from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)
@@ -185,7 +185,10 @@ class AudioTranscriptHelper:
         memory.add_message_to_memory(request=text_message)
 
         # Score the transcript
-        transcript_scores = await self.text_scorer.score_async(message=text_message, objective=objective)
+        transcript_scores = await self.text_scorer.score_async(
+            scorable=MessageScorable.from_message(text_message),
+            expectation=ScoringExpectation(objective=objective),
+        )
 
         # Add context to indicate this was scored from audio transcription
         for score in transcript_scores:

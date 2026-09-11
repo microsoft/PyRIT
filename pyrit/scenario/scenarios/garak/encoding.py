@@ -24,7 +24,14 @@ from pyrit.converter.ecoji_converter import EcojiConverter
 from pyrit.converter.nato_converter import NatoConverter
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+    Seed,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -172,13 +179,16 @@ class Encoding(Scenario):
                 successfully decoded the payload. Defaults to DecodingScorer with encoding_scenario
                 category.
             encoding_templates (Sequence[str] | None): Templates used to construct the decoding
-                prompts. Defaults to AskToDecodeConverter.garak_templates.
+                prompts. An empty list is supported and will pass the raw encoded prompts.
+                Defaults to AskToDecodeConverter.garak_templates if None.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         objective_scorer = objective_scorer or DecodingScorer(categories=["encoding_scenario"])
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
-        self._encoding_templates = encoding_templates or AskToDecodeConverter.garak_templates
+        self._encoding_templates = (
+            AskToDecodeConverter.garak_templates if encoding_templates is None else encoding_templates
+        )
 
         super().__init__(
             version=self.VERSION,
@@ -220,6 +230,72 @@ class Encoding(Scenario):
         atomic_attacks.extend(self._get_converter_attacks(context=context))
         return atomic_attacks
 
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+        """
+        Estimate converter variants crossed with raw and decode-template prompt configurations.
+
+        Returns:
+            ScenarioRunSizeEstimate: Exact converter-variant estimate.
+        """
+        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
+        seed_group_count = sum(len(groups) for groups in selected_groups.values())
+        selected_encoding_names = {technique.value for technique in self._scenario_techniques}
+        variant_count = sum(1 for _, name, _ in self._converter_variants() if name in selected_encoding_names)
+        prompt_configuration_count = 1 + len(self._encoding_templates)
+        components = [
+            ScenarioRunSizeComponent(
+                label="Encoding converter variants",
+                count=seed_group_count * variant_count * prompt_configuration_count,
+                note=(
+                    f"{seed_group_count} selected seed groups x {variant_count} concrete converter variants x "
+                    f"{prompt_configuration_count} prompt configurations. Base64 and ASCII85 each map to two "
+                    "converter variants."
+                ),
+            )
+        ]
+        if self._include_baseline:
+            components.append(
+                ScenarioRunSizeComponent(
+                    label="Baseline",
+                    count=seed_group_count,
+                    is_baseline=True,
+                )
+            )
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=sum(component.count for component in components),
+            components=components,
+            datasets=datasets,
+            note=(
+                "Each visible encoding technique can expand into converter variants and raw or decode-template "
+                "prompt configurations. Retries are excluded."
+            ),
+        )
+
+    @staticmethod
+    def _converter_variants() -> list[tuple[list[Converter], str, str]]:
+        """Return the canonical converter implementations and their catalog technique names."""
+        return [
+            ([Base64Converter()], "base64", "base64"),
+            ([Base64Converter(encoding_func="urlsafe_b64encode")], "base64", "base64_urlsafe"),
+            ([Base2048Converter()], "base2048", "base2048"),
+            ([Base64Converter(encoding_func="b16encode")], "base16", "base16"),
+            ([Base64Converter(encoding_func="b32encode")], "base32", "base32"),
+            ([Base64Converter(encoding_func="a85encode")], "ascii85", "ascii85_a85"),
+            ([Base64Converter(encoding_func="b85encode")], "ascii85", "ascii85_b85"),
+            ([BinAsciiConverter(encoding_func="hex")], "hex", "hex"),
+            ([BinAsciiConverter(encoding_func="quoted-printable")], "quoted_printable", "quoted_printable"),
+            ([BinAsciiConverter(encoding_func="UUencode")], "uuencode", "uuencode"),
+            ([ROT13Converter()], "rot13", "rot13"),
+            ([BrailleConverter()], "braille", "braille"),
+            ([AtbashConverter()], "atbash", "atbash"),
+            ([MorseConverter()], "morse_code", "morse_code"),
+            ([NatoConverter()], "nato", "nato"),
+            ([EcojiConverter()], "ecoji", "ecoji"),
+            ([ZalgoConverter()], "zalgo", "zalgo"),
+            ([LeetspeakConverter()], "leet_speak", "leet_speak"),
+            ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
+        ]
+
     # These are the same as Garak encoding attacks
     def _get_converter_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
@@ -242,33 +318,11 @@ class Encoding(Scenario):
         # (``standard_b64encode`` is byte-identical to the default ``b64encode``; ``b2a_base64``
         # only appends a trailing newline). We keep the default encoding plus the url-safe alphabet,
         # which is a genuinely distinct representation.
-        all_converters_with_encodings: list[tuple[list[Converter], str, str]] = [
-            ([Base64Converter()], "base64", "base64"),
-            ([Base64Converter(encoding_func="urlsafe_b64encode")], "base64", "base64_urlsafe"),
-            ([Base2048Converter()], "base2048", "base2048"),
-            ([Base64Converter(encoding_func="b16encode")], "base16", "base16"),
-            ([Base64Converter(encoding_func="b32encode")], "base32", "base32"),
-            ([Base64Converter(encoding_func="a85encode")], "ascii85", "ascii85_a85"),
-            ([Base64Converter(encoding_func="b85encode")], "ascii85", "ascii85_b85"),
-            ([BinAsciiConverter(encoding_func="hex")], "hex", "hex"),
-            ([BinAsciiConverter(encoding_func="quoted-printable")], "quoted_printable", "quoted_printable"),
-            ([BinAsciiConverter(encoding_func="UUencode")], "uuencode", "uuencode"),
-            ([ROT13Converter()], "rot13", "rot13"),
-            ([BrailleConverter()], "braille", "braille"),
-            ([AtbashConverter()], "atbash", "atbash"),
-            ([MorseConverter()], "morse_code", "morse_code"),
-            ([NatoConverter()], "nato", "nato"),
-            ([EcojiConverter()], "ecoji", "ecoji"),
-            ([ZalgoConverter()], "zalgo", "zalgo"),
-            ([LeetspeakConverter()], "leet_speak", "leet_speak"),
-            ([AsciiSmugglerConverter()], "ascii_smuggler", "ascii_smuggler"),
-        ]
-
         # Filter to only include selected techniques
         selected_encoding_names = {s.value for s in context.scenario_techniques}
         converters_with_encodings = [
             (conv, name, variant_slug)
-            for conv, name, variant_slug in all_converters_with_encodings
+            for conv, name, variant_slug in self._converter_variants()
             if name in selected_encoding_names
         ]
 

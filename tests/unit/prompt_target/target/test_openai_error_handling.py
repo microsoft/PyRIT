@@ -6,8 +6,18 @@ import pytest
 from pyrit.exceptions import CONTENT_FILTER_MARKERS
 from pyrit.prompt_target.openai.openai_error_handling import (
     SAFETY_MESSAGE_MARKERS,
+    _extract_error_payload,
     _is_content_filter_error,
 )
+
+
+class _FakeBodyError(Exception):
+    """A minimal exception stand-in exposing a ``body`` attribute like the OpenAI SDK's errors."""
+
+    def __init__(self, body: object) -> None:
+        super().__init__("fake error")
+        self.body = body
+
 
 # Tests for _is_content_filter_error helper
 
@@ -109,3 +119,47 @@ def test_is_content_filter_error_no_filter():
 def test_is_content_filter_error_string_no_filter():
     """String input without any marker returns False."""
     assert _is_content_filter_error("connection timed out") is False
+
+
+# Tests for _extract_error_payload helper
+
+
+def test_extract_error_payload_body_dict():
+    """When exc.body is a dict, it's returned as-is with content-filter detection applied."""
+    exc = _FakeBodyError({"error": {"code": "content_filter"}})
+    payload, is_filter = _extract_error_payload(exc)
+    assert payload == {"error": {"code": "content_filter"}}
+    assert is_filter is True
+
+
+def test_extract_error_payload_body_json_string_decodes_to_dict():
+    """When exc.body is a JSON string that decodes to a dict, the parsed dict is returned."""
+    exc = _FakeBodyError('{"error": {"code": "content_filter"}}')
+    payload, is_filter = _extract_error_payload(exc)
+    assert payload == {"error": {"code": "content_filter"}}
+    assert is_filter is True
+
+
+def test_extract_error_payload_body_json_string_decodes_to_non_dict():
+    """When exc.body is a JSON string that decodes to a non-dict (e.g. a list), the original
+    string body is returned rather than the parsed value."""
+    exc = _FakeBodyError('["not", "a", "dict"]')
+    payload, is_filter = _extract_error_payload(exc)
+    assert payload == '["not", "a", "dict"]'
+    assert is_filter is False
+
+
+def test_extract_error_payload_body_non_json_string():
+    """When exc.body is a non-JSON string, the original string is returned unparsed."""
+    exc = _FakeBodyError("not json at all")
+    payload, is_filter = _extract_error_payload(exc)
+    assert payload == "not json at all"
+    assert is_filter is False
+
+
+def test_extract_error_payload_falls_back_to_str_of_exception():
+    """When exc has neither a response nor a body, the payload falls back to str(exc)."""
+    exc = Exception("plain failure")
+    payload, is_filter = _extract_error_payload(exc)
+    assert payload == "plain failure"
+    assert is_filter is False

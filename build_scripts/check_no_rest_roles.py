@@ -12,7 +12,7 @@ known PyRIT symbols at render time.
 This hook flags any newly introduced reST role inside ``pyrit/`` so it can
 be replaced before landing. Run it manually with::
 
-    uv run python build_scripts/check_no_rest_roles.py
+    uv run python -m build_scripts.check_no_rest_roles
 
 or rely on the ``check-no-rest-roles`` pre-commit hook in
 ``.pre-commit-config.yaml``.

@@ -11,13 +11,13 @@ from unit.mocks import get_mock_scorer_identifier
 
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
-class MockTextTrueFalseScorer(TrueFalseScorer):
+class MockTextTrueFalseScorer(MessageTrueFalseScorer):
     """Mock TrueFalseScorer for testing audio transcription scoring"""
 
     def __init__(self, *, return_value: bool = True):
@@ -44,7 +44,7 @@ class MockTextTrueFalseScorer(TrueFalseScorer):
         ]
 
 
-class MockTextFloatScaleScorer(FloatScaleScorer):
+class MockTextFloatScaleScorer(MessageFloatScaleScorer):
     """Mock FloatScaleScorer for testing audio transcription scoring"""
 
     def __init__(self, *, return_value: float = 0.8):

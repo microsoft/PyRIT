@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import abc
 import json
+import math
 from abc import abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -146,7 +147,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
     ``json.loads`` the text, then read the score value, rationale, optional description,
     category, and metadata from configurable keys. It also owns the response contract: the
     optional JSON schema handed to the target, and (when ``numeric_value`` is set) validating
-    that the parsed score value is numeric.
+    that the parsed score value is finite and numeric.
     """
 
     def __init__(
@@ -173,7 +174,8 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 should honor. Exposed via ``response_schema`` and forwarded to the target by the
                 LLM round-trip. Defaults to None.
             numeric_value (bool): When True, ``parse`` requires the parsed score value to be
-                parsable as a float and raises ``InvalidJsonException`` otherwise. Defaults to False.
+                parsable as a finite float and raises ``InvalidJsonException`` otherwise. Defaults
+                to False.
         """
         self._score_value_output_key = score_value_output_key
         self._rationale_output_key = rationale_output_key
@@ -219,7 +221,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 parsed category is not a string or a list of strings.
             InvalidJsonException: If the response is invalid JSON, is not a top-level JSON object,
                 is missing a required key, or (when this handler is numeric) the score value is not
-                parsable as a float.
+                parsable as a finite float.
         """
         response_json = remove_markdown_json(response_text)
         try:
@@ -251,11 +253,15 @@ class JsonSchemaResponseHandler(ResponseHandler):
             try:
                 # A numeric handler requires the score value to be parsable as a float; a
                 # well-formed-but-non-numeric value is treated as an invalid response.
-                float(score.raw_score_value)
+                parsed_value = float(score.raw_score_value)
             except ValueError:
                 raise InvalidJsonException(
                     message=f"Invalid JSON response, score_value should be a float not this: {score.raw_score_value}"
                 ) from None
+            if not math.isfinite(parsed_value):
+                raise InvalidJsonException(
+                    message=f"Invalid JSON response, score_value must be a finite float: {score.raw_score_value}"
+                )
 
         return score
 
@@ -303,7 +309,10 @@ class TrueFalseResponseHandler(ResponseHandler):
             objective=objective,
         )
 
-        normalized_value = score.raw_score_value.lower()
+        # Strip surrounding whitespace before comparing: a judge that returns
+        # "true\n" or " false" is giving a valid verdict, and should not be
+        # rejected as out-of-domain over incidental whitespace.
+        normalized_value = score.raw_score_value.strip().lower()
         if normalized_value not in {"true", "false"}:
             raise InvalidJsonException(
                 message=f"True/false score_value must be 'true' or 'false', not {score.raw_score_value!r}."

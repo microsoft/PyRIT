@@ -8,7 +8,7 @@ import os
 import uuid
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from huggingface_hub import hf_hub_download
 from typing_extensions import override
@@ -25,6 +25,34 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
+
+
+def _cache_is_valid(*, json_path: Path, image_dir: Path) -> bool:
+    """
+    Check whether both cached metadata and extracted images are available.
+
+    Args:
+        json_path: Path to the cached metadata file.
+        image_dir: Path to the extracted image directory.
+
+    Returns:
+        bool: True when the complete cache is available.
+    """
+    return json_path.exists() and image_dir.exists() and any(image_dir.iterdir())
+
+
+def _load_metadata(json_path: Path) -> list[dict[str, str]]:
+    """
+    Load VLGuard metadata from its JSON file.
+
+    Args:
+        json_path: Path to the metadata file.
+
+    Returns:
+        list[dict[str, str]]: Parsed VLGuard metadata.
+    """
+    with open(json_path, encoding="utf-8") as file:
+        return cast("list[dict[str, str]]", json.load(file))
 
 
 class VLGuardCategory(Enum):
@@ -221,7 +249,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
                 continue
 
             image_path = image_dir / image_filename
-            if not image_path.exists():
+            if not await asyncio.to_thread(image_path.exists):
                 logger.warning(f"Image not found: {image_path}")
                 continue
 
@@ -317,16 +345,15 @@ class _VLGuardDataset(_RemoteDatasetLoader):
             tuple[list[dict], Path]: Tuple of (metadata list, image directory path).
         """
         cache_dir = DB_DATA_PATH / "seed-prompt-entries" / "vlguard"
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(cache_dir.mkdir, parents=True, exist_ok=True)
 
         json_path = cache_dir / "test.json"
         image_dir = cache_dir / "test"
 
         # Use cache if available
-        if cache and json_path.exists() and image_dir.exists() and any(image_dir.iterdir()):
+        if cache and await asyncio.to_thread(_cache_is_valid, json_path=json_path, image_dir=image_dir):
             logger.info("Using cached VLGuard dataset")
-            with open(json_path, encoding="utf-8") as f:
-                metadata = json.load(f)
+            metadata = await asyncio.to_thread(_load_metadata, json_path)
             return metadata, image_dir
 
         logger.info("Downloading VLGuard dataset from HuggingFace...")
@@ -352,11 +379,10 @@ class _VLGuardDataset(_RemoteDatasetLoader):
 
         # Extract images from zip
         zip_path = cache_dir / "test.zip"
-        if zip_path.exists():
+        if await asyncio.to_thread(zip_path.exists):
             logger.info("Extracting VLGuard test images...")
             await asyncio.to_thread(safe_extract_zip, source=zip_path, dest_dir=cache_dir)
 
-        with open(json_path, encoding="utf-8") as f:
-            metadata = json.load(f)
+        metadata = await asyncio.to_thread(_load_metadata, json_path)
 
         return metadata, image_dir

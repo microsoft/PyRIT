@@ -99,6 +99,7 @@ class SelectiveTextConverter(Converter):
         return self._create_identifier(
             params={
                 "selection_strategy": self._selection_strategy.__class__.__name__,
+                "selection_strategy_params": self._selection_strategy.get_identifier_params(),
                 "preserve_tokens": self._preserve_tokens,
                 "start_token": self._start_token,
                 "end_token": self._end_token,

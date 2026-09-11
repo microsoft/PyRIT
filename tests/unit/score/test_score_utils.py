@@ -194,6 +194,22 @@ class TestCombineMetadataAndCategories:
         assert metadata == {"key1": "value1", "key2": "value2"}
         assert categories == ["cat1", "cat2"]
 
+    def test_omits_conflicting_metadata(self) -> None:
+        """Metadata with different values must not depend on score order."""
+        score1 = MagicMock()
+        score1.score_metadata = {"shared": "first", "same": 1}
+        score1.score_category = []
+
+        score2 = MagicMock()
+        score2.score_metadata = {"shared": "second", "same": 1}
+        score2.score_category = []
+
+        metadata, _ = combine_metadata_and_categories([score1, score2])
+        reversed_metadata, _ = combine_metadata_and_categories([score2, score1])
+
+        assert metadata == {"same": 1}
+        assert reversed_metadata == metadata
+
     def test_deduplicates_categories(self) -> None:
         """Duplicate categories should be removed."""
         score1 = MagicMock()

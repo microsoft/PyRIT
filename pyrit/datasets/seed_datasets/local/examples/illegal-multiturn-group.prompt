@@ -18,7 +18,7 @@ seeds:
     data_type: text
     sequence: 1
     prompt_group_alias: group_1
-    role: system
+    role: assistant
   - dataset_name: pyrit_example_dataset
     harm_categories:
       - illegal
@@ -27,4 +27,4 @@ seeds:
     data_type: text
     sequence: 2
     prompt_group_alias: group_1
-    role: assistant
+    role: user

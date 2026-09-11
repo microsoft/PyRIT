@@ -12,7 +12,7 @@ import random
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -29,6 +29,7 @@ from pyrit.models.seeds.seed_group import (  # runtime-required by Pydantic fiel
 )
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -344,10 +345,15 @@ class SeedDataset(BaseModel):
             prompt_group_id. Each group will be ordered by the sequence number of
             the seeds, if available.
 
+        Raises:
+            ValueError: If a seed has an unsupported concrete type.
+
         """
         # Group seeds by `prompt_group_id`
-        grouped_seeds: dict[uuid.UUID, list[Seed]] = defaultdict(list)
+        grouped_seeds: dict[uuid.UUID, list[SeedUnion]] = defaultdict(list)
         for seed in seeds:
+            if not isinstance(seed, (SeedPrompt, SeedObjective, SeedSimulatedConversation)):
+                raise ValueError(f"Unsupported seed type: {type(seed).__name__}")
             if seed.prompt_group_id:
                 grouped_seeds[seed.prompt_group_id].append(seed)
             else:
@@ -361,10 +367,10 @@ class SeedDataset(BaseModel):
 
             # Try to create a AttackSeedGroup first; fall back to SeedGroup if validation fails
             try:
-                attack_group = AttackSeedGroup(seeds=cast("list[SeedUnion]", group_seeds))
+                attack_group = AttackSeedGroup(seeds=group_seeds)
                 seed_groups.append(attack_group)
             except ValueError:
-                seed_groups.append(SeedGroup(seeds=cast("list[SeedUnion]", group_seeds)))
+                seed_groups.append(SeedGroup(seeds=group_seeds))
 
         return seed_groups
 

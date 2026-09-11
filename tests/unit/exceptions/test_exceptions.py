@@ -14,6 +14,7 @@ from pyrit.exceptions import (
     BadRequestException,
     EmptyResponseException,
     InvalidJsonException,
+    KeyVaultInitializationException,
     MissingPromptPlaceholderException,
     PyritException,
     RateLimitException,
@@ -57,6 +58,14 @@ def test_empty_response_exception_initialization():
     assert ex.status_code == 204
     assert ex.message == "No Content"
     assert str(ex) == "Status Code: 204, Message: No Content"
+
+
+def test_key_vault_initialization_exception_is_value_error_compatible():
+    ex = KeyVaultInitializationException(status_code=403, message="Key Vault access denied")
+
+    assert isinstance(ex, ValueError)
+    assert ex.status_code == 403
+    assert ex.message == "Key Vault access denied"
 
 
 def test_invalid_json_exception_initialization():

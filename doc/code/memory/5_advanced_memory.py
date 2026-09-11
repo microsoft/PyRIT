@@ -246,7 +246,7 @@ for piece in labeled_and_filtered:
 # retrieve only the scores produced by a specific scorer.
 
 # %%
-from pyrit.models import Message
+from pyrit.models import Message, MessageScorable
 from pyrit.score import SubStringScorer
 
 # Create three scorers with different substrings
@@ -267,9 +267,10 @@ assistant_messages = [Message(message_pieces=[piece]) for piece in assistant_pie
 
 # Score every response with both scorers — scores are automatically persisted in memory
 for msg in assistant_messages:
-    await scorer_molotov.score_async(msg)  # type: ignore
-    await scorer_launder.score_async(msg)  # type: ignore
-    await scorer_assist.score_async(msg)  # type: ignore
+    scorable = MessageScorable.from_message(msg)
+    await scorer_molotov.score_async(scorable=scorable)  # type: ignore
+    await scorer_launder.score_async(scorable=scorable)  # type: ignore
+    await scorer_assist.score_async(scorable=scorable)  # type: ignore
 
 print(f"Scored {len(assistant_messages)} messages with all three scorers.")
 

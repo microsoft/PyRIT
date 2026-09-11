@@ -199,11 +199,15 @@ class TestOdinNdayDatasets:
         dataset = SeedDataset.from_yaml_file(file_path)
 
         assert len(dataset.seeds) == 3
-        # Verify seeds are SeedPrompt with sequential sequence numbers
         for seed in dataset.seeds:
             assert isinstance(seed, SeedPrompt), f"Expected SeedPrompt, got: {type(seed)}"
         sequences = [seed.sequence for seed in dataset.prompts]
         assert sequences == [0, 1, 2], f"Expected sequences [0, 1, 2], got: {sequences}"
+        assert len({seed.prompt_group_id for seed in dataset.prompts}) == 1
+        assert len(dataset.seed_groups) == 1
+        assert [message.get_value() for message in dataset.seed_groups[0].user_messages] == [
+            seed.value for seed in dataset.prompts
+        ]
 
     def test_get_values_returns_all_prompts(self):
         """Verify get_values() works for all 0DIN datasets."""

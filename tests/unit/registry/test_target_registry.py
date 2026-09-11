@@ -347,6 +347,15 @@ class TestClassMetadata:
         assert "supported_auth_modes" in meta.class_attributes
         assert meta.class_attributes["supported_auth_modes"] == ("api_key", "identity")
 
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_instance_registration_does_not_invalidate_class_metadata(self, registry: TargetRegistry) -> None:
+        registry.get_all_registered_class_metadata()
+        initial_cache = registry._metadata_cache
+
+        registry.instances.register(MockPromptTarget(), name="runtime-instance")
+
+        assert registry._metadata_cache is initial_cache
+
     def test_openai_metadata_includes_forwarded_base_parameters(self, registry: TargetRegistry) -> None:
         params = {param.name: param for param in self._metadata_for(registry, "OpenAIChatTarget").parameters}
 

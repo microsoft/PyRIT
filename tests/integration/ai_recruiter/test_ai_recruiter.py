@@ -11,7 +11,7 @@ import time
 import pytest
 import requests
 
-from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, HOME_PATH
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, DB_DATA_PATH, HOME_PATH
 from pyrit.converter import PDFConverter
 from pyrit.exceptions import PyritException
 from pyrit.executor.core import StrategyConverterConfig
@@ -193,6 +193,7 @@ async def test_ai_recruiter_workflow():
     upload_target = HTTPXAPITarget(
         http_url="http://localhost:8000/upload/",
         method="POST",
+        allowed_upload_directory=DB_DATA_PATH,
         timeout=180,
     )
 

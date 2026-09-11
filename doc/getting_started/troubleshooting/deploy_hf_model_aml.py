@@ -106,7 +106,6 @@ print(f"Liveness probe initial delay in secs: {liveness_probe_initial_delay}")
 # Set up the `DefaultAzureCredential` for seamless authentication with Azure services. This method should handle most authentication scenarios. If you encounter issues, refer to the [Azure Identity documentation](https://docs.microsoft.com/en-us/python/api/azure-identity/azure.identity?view=azure-python) for alternative credentials.
 #
 # %%
-
 from azure.ai.ml import MLClient
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential, InteractiveBrowserCredential

@@ -20,6 +20,7 @@ from pyrit.models.catalog import (
     AttackRetrySummary,
     RegisteredInitializer,
     RegisteredScenario,
+    ScenarioRunListItem,
     ScenarioRunSummary,
     TargetInstance,
 )
@@ -278,7 +279,7 @@ def test_print_target_list_empty(capsys):
     _output.print_target_list(items=[])
     captured = capsys.readouterr()
     assert "No targets found in registry" in captured.out
-    assert "--initializers target" in captured.out
+    assert "config file" in captured.out
 
 
 def test_print_target_list_full(capsys):
@@ -380,13 +381,11 @@ def test_print_scenario_run_progress_with_known_totals(capsys):
         objective_achieved_rate=30,
         techniques_used=["s1", "s2"],
     )
-    _output.print_scenario_run_progress(run=run, total_techniques=4)
+    _output.print_scenario_run_progress(run=run)
     captured = capsys.readouterr()
-    assert "techniques: 2/4 (50%)" in captured.out
+    assert "units: 5/10 (50%)" in captured.out
     assert "IN_PROGRESS" in captured.out
     assert "30%" in captured.out
-    # Attacks are no longer surfaced in the progress line.
-    assert "attacks" not in captured.out
 
 
 def test_print_scenario_run_progress_uses_ascii_for_limited_console():
@@ -401,13 +400,13 @@ def test_print_scenario_run_progress_uses_ascii_for_limited_console():
     stdout.encoding = "cp1252"
 
     with patch.object(_output.sys, "stdout", stdout):
-        _output.print_scenario_run_progress(run=run, total_techniques=2)
+        _output.print_scenario_run_progress(run=run)
 
     line = stdout.write.call_args.args[0]
     assert "[###############---------------]" in line
 
 
-def test_print_scenario_run_progress_no_techniques(capsys):
+def test_print_scenario_run_progress_no_units(capsys):
     run = _make_run(
         status=ScenarioRunState.CREATED,
         total_attacks=0,
@@ -415,23 +414,23 @@ def test_print_scenario_run_progress_no_techniques(capsys):
         objective_achieved_rate=0,
         techniques_used=[],
     )
-    _output.print_scenario_run_progress(run=run, total_techniques=0)
+    _output.print_scenario_run_progress(run=run)
     captured = capsys.readouterr()
-    assert "techniques: 0" in captured.out
+    assert "units: 0" in captured.out
     assert "CREATED" in captured.out
 
 
-def test_print_scenario_run_progress_techniques_done_only(capsys):
+def test_print_scenario_run_progress_completed_units_without_plan(capsys):
     run = _make_run(
         status=ScenarioRunState.IN_PROGRESS,
         total_attacks=0,
-        completed_attacks=0,
+        completed_attacks=1,
         objective_achieved_rate=0,
         techniques_used=["s1"],
     )
-    _output.print_scenario_run_progress(run=run, total_techniques=0)
+    _output.print_scenario_run_progress(run=run)
     captured = capsys.readouterr()
-    assert "techniques: 1" in captured.out
+    assert "units: 1" in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +666,101 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
 
 
 # ---------------------------------------------------------------------------
+# print_conversations_async (reuses the framework conversation printer)
+# ---------------------------------------------------------------------------
+
+
+class _FakeMessagesClient:
+    def __init__(self, by_conversation=None):
+        self._by_conversation = by_conversation or {}
+
+    async def get_conversation_messages_async(self, *, attack_result_id, conversation_id):
+        return self._by_conversation.get(conversation_id, {"messages": []})
+
+
+def _piece(*, role, text, scores=None):
+    piece = {"role": role, "sequence": 0, "conversation_id": "conv-1", "original_value": text, "converted_value": text}
+    if scores is not None:
+        piece["scores"] = scores
+    return piece
+
+
+def _result_with_attacks(attacks, *, objective_scorer=None):
+    from pyrit.models import AttackOutcome, AttackResult
+
+    attack_results = {
+        name: [AttackResult(conversation_id=cid, objective=obj, outcome=AttackOutcome.SUCCESS) for cid, obj in items]
+        for name, items in attacks.items()
+    }
+    return make_scenario_result(attack_results=attack_results, objective_scorer_identifier=objective_scorer)
+
+
+async def test_print_conversations_async_empty(capsys):
+    result = _result_with_attacks({})
+    await _output.print_conversations_async(result=result, client=_FakeMessagesClient(), scenario_result_id="SID")
+    out = capsys.readouterr().out
+    assert "No conversations found" in out
+    assert "SID" in out
+
+
+async def test_print_conversations_async_renders_messages_and_objective_score(capsys):
+    from pyrit.models import ComponentIdentifier
+
+    objective = ComponentIdentifier(class_name="ObjScorer", class_module="tests.unit.mocks")
+    result = _result_with_attacks({"tech_a": [("conv-1", "extract secrets")]}, objective_scorer=objective)
+    attack = next(iter(result.attack_results["tech_a"]))
+    response = {
+        "messages": [
+            {"role": "user", "turn_number": 0, "message_pieces": [_piece(role="user", text="please comply")]},
+            {
+                "role": "assistant",
+                "turn_number": 1,
+                "message_pieces": [
+                    _piece(
+                        role="assistant",
+                        text="sure thing",
+                        scores=[
+                            {
+                                "score_value": "true",
+                                "score_type": "true_false",
+                                "score_rationale": "clearly harmful",
+                                "scorer_type": "ObjScorer",
+                                "scorer_class_identifier": {"hash": objective.hash},
+                            }
+                        ],
+                    )
+                ],
+            },
+        ]
+    }
+    client = _FakeMessagesClient({"conv-1": response})
+
+    await _output.print_conversations_async(result=result, client=client, scenario_result_id="SID")
+
+    out = capsys.readouterr().out
+    assert attack.attack_result_id in out
+    assert "extract secrets" in out
+    assert "USER" in out
+    assert "please comply" in out
+    assert "sure thing" in out
+    # The objective score renders in the framework's own style.
+    assert "Scores" in out
+    assert "clearly harmful" in out
+    assert "Total attacks: 1" in out
+
+
+async def test_print_conversations_async_truncation_note(capsys):
+    result = _result_with_attacks({"tech_a": [(f"conv-{i}", f"obj-{i}") for i in range(5)]})
+
+    await _output.print_conversations_async(
+        result=result, client=_FakeMessagesClient(), scenario_result_id="SID", limit=1
+    )
+
+    out = capsys.readouterr().out
+    assert "Showing 1 of 5" in out
+
+
+# ---------------------------------------------------------------------------
 # print_scenario_runs_list
 # ---------------------------------------------------------------------------
 
@@ -679,21 +773,20 @@ def test_print_scenario_runs_list_empty(capsys):
 
 def test_print_scenario_runs_list_populated(capsys):
     runs = [
-        _make_run(
+        ScenarioRunListItem(
             status=ScenarioRunState.COMPLETED,
             scenario_name="scen-a",
             scenario_result_id="abcdefgh1234",
             total_attacks=4,
-            objective_achieved_rate=75,
             created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         ),
-        _make_run(
+        ScenarioRunListItem(
             status=ScenarioRunState.IN_PROGRESS,
             scenario_name="scen-b",
             scenario_result_id="ijklmnop5678",
-            total_attacks=0,
-            objective_achieved_rate=0,
             created_at=datetime(2024, 2, 2, tzinfo=UTC),
+            updated_at=datetime(2024, 2, 2, tzinfo=UTC),
         ),
     ]
     _output.print_scenario_runs_list(runs=runs)
@@ -702,6 +795,8 @@ def test_print_scenario_runs_list_populated(capsys):
     assert "scen-b" in captured.out
     assert "abcdefgh1234" in captured.out
     assert "ijklmnop5678" in captured.out
+    assert "success" not in captured.out
+    assert "planned attacks unknown" in captured.out
     assert "…" not in captured.out
     assert "Total runs: 2" in captured.out
 

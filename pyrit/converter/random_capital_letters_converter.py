@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import random
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
@@ -16,15 +15,17 @@ class RandomCapitalLettersConverter(Converter):
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
 
-    def __init__(self, *, percentage: float = 100.0) -> None:
+    def __init__(self, *, percentage: float = 100.0, seed: int | None = None) -> None:
         """
         Initialize the converter with the specified percentage of randomization.
 
         Args:
             percentage (float): The percentage of characters to capitalize in the prompt. Must be between 1 and 100.
                 Defaults to 100.0. This includes decimal points in that range.
+            seed (int | None): Optional seed for reproducible output. Defaults to None.
         """
         self.percentage = percentage
+        self._seed = seed
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -36,6 +37,7 @@ class RandomCapitalLettersConverter(Converter):
         return self._create_identifier(
             params={
                 "percentage": self.percentage,
+                "seed": self._seed,
             }
         )
 
@@ -77,7 +79,7 @@ class RandomCapitalLettersConverter(Converter):
             )
 
         # Generate a list of unique random positions
-        return random.sample(range(total_length), set_number)
+        return self._get_random_generator(stream="capital-positions").sample(range(total_length), set_number)
 
     def string_to_upper_case_by_percentage(self, percentage: float, prompt: str) -> str:
         """

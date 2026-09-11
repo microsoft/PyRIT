@@ -463,6 +463,36 @@ async def test_run_async_propagates_dispatcher_failure_via_failure_callback():
             await asyncio.gather(_consume(), _fire_failure())
 
 
+async def test_run_async_propagates_audio_source_failure_and_cleans_up():
+    """A failing audio source surfaces its error after preserving session teardown."""
+    target = _build_target()
+    normalizer = _build_normalizer()
+    connection = target._connect_async.return_value
+
+    async def _failing_chunks():
+        yield b"\x01" * 100
+        raise RuntimeError("audio source disconnected")
+
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_failing_chunks(),
+        prompt_normalizer=normalizer,
+    )
+    _mock_session_wire(session)
+
+    with _patched_dispatcher() as captured:
+        with pytest.raises(RuntimeError, match="audio source disconnected"):
+            async for _ in session.run_async():
+                pytest.fail("no message should be yielded after the audio source fails")
+
+    session._push_audio_chunk_async.assert_awaited_once_with(b"\x01" * 100)
+    captured["dispatcher"].drain_callbacks_async.assert_not_awaited()
+    captured["dispatcher"].stop_async.assert_awaited_once()
+    connection.input_audio_buffer.commit.assert_not_awaited()
+    connection.close.assert_awaited_once()
+    normalizer.hash_and_persist_message_async.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # 7b. Forced final commit is gated on the server's minimum buffer size
 # ---------------------------------------------------------------------------

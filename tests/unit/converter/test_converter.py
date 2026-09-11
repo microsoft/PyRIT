@@ -48,6 +48,7 @@ from pyrit.converter import (
     UnicodeSubstitutionConverter,
     UrlConverter,
     VariationConverter,
+    VigenereConverter,
 )
 from pyrit.executor.promptgen.fuzzer import FuzzerConverter
 from pyrit.memory import CentralMemory, SQLiteMemory
@@ -442,6 +443,7 @@ async def test_convert_async_unsupported_input_type():
         SuffixAppendConverter(suffix="!!!"),
         UnicodeSubstitutionConverter(),
         UrlConverter(),
+        VigenereConverter(key="key"),
     ],
 )
 def test_input_supported_text_only(converter_class):
@@ -512,6 +514,7 @@ def is_speechsdk_installed():
         (UnicodeConfusableConverter(), ["text"], ["text"]),
         (UnicodeSubstitutionConverter(), ["text"], ["text"]),
         (UrlConverter(), ["text"], ["text"]),
+        (VigenereConverter(key="key"), ["text"], ["text"]),
     ],
 )
 def test_simple_converters_supported_types(converter, expected_input_types, expected_output_types):
