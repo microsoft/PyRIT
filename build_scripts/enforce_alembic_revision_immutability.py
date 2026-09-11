@@ -16,6 +16,9 @@ import sys
 
 _VERSIONS_PATH = "pyrit/memory/alembic/versions/"
 _MERGE_QUEUE_REF_PREFIX = "refs/heads/gh-readonly-queue/"
+# Temporary: remove this exception immediately after #2583 merges.
+_APPROVED_REWRITE_PATH = f"{_VERSIONS_PATH}1b3d5f7a9c2e_persist_scored_expectation.py"
+_APPROVED_REWRITE_BLOB = "3cb40abf25ffafe4cbd1ddfda213e02e54458d91"
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -26,10 +29,23 @@ def _git_stdout(*args: str) -> str:
     return _git(*args).stdout.strip()
 
 
+def _find_violations(*, output: str, diff_spec: list[str]) -> list[str]:
+    changes = [line for line in output.splitlines() if line and not line.startswith("A")]
+    return [change for change in changes if not _is_approved_rewrite(change=change, diff_spec=diff_spec)]
+
+
+def _is_approved_rewrite(*, change: str, diff_spec: list[str]) -> bool:
+    if change != f"M\t{_APPROVED_REWRITE_PATH}":
+        return False
+
+    object_spec = f":{_APPROVED_REWRITE_PATH}" if diff_spec == ["--cached"] else f"HEAD:{_APPROVED_REWRITE_PATH}"
+    return _git_stdout("rev-parse", "--verify", object_spec) == _APPROVED_REWRITE_BLOB
+
+
 def _get_violations(diff_spec: list[str]) -> list[str]:
     """Return lines from ``git diff --name-status`` that are not pure additions."""
     output = _git_stdout("diff", "--name-status", *diff_spec, "--", _VERSIONS_PATH)
-    return [line for line in output.splitlines() if line and not line.startswith("A")]
+    return _find_violations(output=output, diff_spec=diff_spec)
 
 
 def _in_ci() -> bool:
@@ -91,9 +107,10 @@ def has_revision_violations() -> bool:
     # automatically, so we don't need a separate merge-base call.  When
     # the base is missing (shallow clone) git exits non-zero.
     base = f"origin/{base_ref}" if base_ref else "origin/main"
-    pr_diff = _git("diff", "--name-status", f"{base}...HEAD", "--", _VERSIONS_PATH)
+    diff_spec = [f"{base}...HEAD"]
+    pr_diff = _git("diff", "--name-status", *diff_spec, "--", _VERSIONS_PATH)
     if pr_diff.returncode == 0:
-        violations = [line for line in pr_diff.stdout.strip().splitlines() if line and not line.startswith("A")]
+        violations = _find_violations(output=pr_diff.stdout, diff_spec=diff_spec)
         if violations:
             _report(violations)
             return True

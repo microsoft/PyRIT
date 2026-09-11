@@ -9,15 +9,63 @@ from unittest.mock import patch
 import pytest
 
 from build_scripts.enforce_alembic_revision_immutability import (
+    _APPROVED_REWRITE_BLOB,
+    _APPROVED_REWRITE_PATH,
+    _find_violations,
     _on_release_branch,
     has_revision_violations,
 )
 
 MODIFIED_REVISION = "M\tpyrit/memory/alembic/versions/b2f4c6a8d1e3_add_conversations_table.py"
+APPROVED_REWRITE = f"M\t{_APPROVED_REWRITE_PATH}"
 
 
 def _completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=["git"], returncode=returncode, stdout=stdout, stderr="")
+
+
+@pytest.mark.parametrize(
+    "diff_spec, expected_object",
+    [
+        pytest.param(["--cached"], f":{_APPROVED_REWRITE_PATH}", id="staged"),
+        pytest.param(["origin/main...HEAD"], f"HEAD:{_APPROVED_REWRITE_PATH}", id="pull-request"),
+        pytest.param(["HEAD~1..HEAD"], f"HEAD:{_APPROVED_REWRITE_PATH}", id="post-merge"),
+    ],
+)
+def test_approved_rewrite_passes_each_check(diff_spec: list[str], expected_object: str) -> None:
+    def _git_result(*args: str) -> subprocess.CompletedProcess:
+        if args[:2] == ("diff", "--name-status"):
+            stdout = APPROVED_REWRITE if diff_spec[0] in args else ""
+            return _completed(stdout=stdout)
+        if args == ("rev-parse", "--verify", expected_object):
+            return _completed(stdout=_APPROVED_REWRITE_BLOB)
+        return _completed()
+
+    environment = {"GITHUB_REF": "refs/heads/main", "GITHUB_BASE_REF": ""}
+    with patch.dict(os.environ, environment, clear=True):
+        with patch(
+            "build_scripts.enforce_alembic_revision_immutability._git",
+            side_effect=_git_result,
+        ) as mock_git:
+            assert has_revision_violations() is False
+
+    assert _APPROVED_REWRITE_BLOB == "3cb40abf25ffafe4cbd1ddfda213e02e54458d91"
+    assert any(call.args == ("rev-parse", "--verify", expected_object) for call in mock_git.call_args_list)
+
+
+def test_approved_rewrite_with_different_content_fails() -> None:
+    with patch(
+        "build_scripts.enforce_alembic_revision_immutability._git_stdout",
+        return_value="0000000000000000000000000000000000000000",
+    ):
+        assert _find_violations(output=APPROVED_REWRITE, diff_spec=["--cached"]) == [APPROVED_REWRITE]
+
+
+def test_different_revision_still_fails() -> None:
+    with patch("build_scripts.enforce_alembic_revision_immutability._git_stdout") as mock_git_stdout:
+        assert _find_violations(output=MODIFIED_REVISION, diff_spec=["HEAD~1..HEAD"]) == [MODIFIED_REVISION]
+
+    mock_git_stdout.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -107,7 +155,7 @@ def test_release_pull_request_reports_modified_revision() -> None:
 
     def _modified(*args, **kwargs):
         if "diff" in args and any(arg == "origin/releases/v1.1.0...HEAD" for arg in args):
-            return SimpleNamespace(returncode=0, stdout=f"M\t{MODIFIED_REVISION}\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout=f"{MODIFIED_REVISION}\n", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     with patch.dict(os.environ, {"GITHUB_BASE_REF": "releases/v1.1.0"}, clear=False):
