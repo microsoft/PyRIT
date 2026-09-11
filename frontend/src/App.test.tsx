@@ -1109,6 +1109,13 @@ describe("App", () => {
       conversation_id: "conv-main",
       labels: {},
       related_conversation_ids: ["conv-related"],
+      related_conversations: [
+        {
+          conversation_id: "conv-related",
+          conversation_type: "pruned",
+          description: "Previous main conversation",
+        },
+      ],
     });
     renderApp("/attacks/ar-1/conversations/conv-related");
 

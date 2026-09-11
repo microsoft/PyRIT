@@ -5,7 +5,7 @@
 Add preparation conversation references to attack results.
 
 Revision ID: 2c4e6a8b0d14
-Revises: 1b3d5f7a9c2e
+Revises: a4c6e8f0b2d1
 Create Date: 2026-09-10 17:00:00.000000
 """
 
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "2c4e6a8b0d14"
-down_revision: str | None = "1b3d5f7a9c2e"
+down_revision: str | None = "a4c6e8f0b2d1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

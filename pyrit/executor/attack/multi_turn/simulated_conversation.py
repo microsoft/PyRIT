@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
     _AdversarialConversationManager,
@@ -205,18 +206,35 @@ async def _generate_simulated_conversation_result_async(
     # Filter out system messages - keep the actual conversation
     # System prompts are set separately on each target during attack execution
     conversation_messages: list[Message] = [msg for msg in raw_messages if msg.api_role != "system"]
+    related_conversations = {
+        ConversationReference(
+            conversation_id=result.conversation_id,
+            conversation_type=ConversationType.PREPARATION,
+            description="simulated preparation conversation",
+        ),
+        *result.related_conversations,
+    }
 
     # If next_message_system_prompt_path is provided, generate a final user message
     if next_message_system_prompt_path:
+        next_message_conversation_id = str(uuid4())
         next_message = await _generate_next_message_async(
             objective=objective,
             conversation_messages=conversation_messages,
             adversarial_chat=adversarial_chat,
+            conversation_id=next_message_conversation_id,
             next_message_system_prompt_path=next_message_system_prompt_path,
             prompt_normalizer=PromptNormalizer(),
             memory_labels=memory_labels,
         )
         conversation_messages.append(next_message)
+        related_conversations.add(
+            ConversationReference(
+                conversation_id=next_message_conversation_id,
+                conversation_type=ConversationType.ADVERSARIAL,
+                description="simulated next-message generation",
+            )
+        )
 
     # Convert to SeedPrompts for the return value
     seed_prompts = SeedPrompt.from_messages(conversation_messages, starting_sequence=starting_sequence)
@@ -226,14 +244,6 @@ async def _generate_simulated_conversation_result_async(
         f"(starting_sequence={starting_sequence}, outcome: {result.outcome.name})"
     )
 
-    related_conversations = {
-        ConversationReference(
-            conversation_id=result.conversation_id,
-            conversation_type=ConversationType.PREPARATION,
-            description="simulated preparation conversation",
-        ),
-        *result.related_conversations,
-    }
     return _SimulatedConversationResult(
         seed_prompts=seed_prompts,
         related_conversations=frozenset(related_conversations),
@@ -245,6 +255,7 @@ async def _generate_next_message_async(
     objective: str,
     conversation_messages: list[Message],
     adversarial_chat: PromptTarget,
+    conversation_id: str,
     next_message_system_prompt_path: str | Path,
     prompt_normalizer: PromptNormalizer,
     memory_labels: dict[str, str] | None = None,
@@ -262,12 +273,13 @@ async def _generate_next_message_async(
         objective: The objective to work toward.
         conversation_messages: The conversation generated so far as Messages.
         adversarial_chat: The LLM to use for generation.
+        conversation_id: The conversation ID for the adversarial generation exchange.
         next_message_system_prompt_path: Path to the system prompt template.
         prompt_normalizer: The normalizer the manager sends the adversarial turn through.
         memory_labels: Optional memory labels to attach to the request.
 
     Returns:
-        Message: The generated next message, as a user message.
+        The generated next message, as a user message.
 
     Raises:
         ValueError: If no response is received from the adversarial chat.
@@ -289,6 +301,7 @@ async def _generate_next_message_async(
         adversarial_target=adversarial_chat,
         adversarial_system_prompt=template,
         prompt_normalizer=prompt_normalizer,
+        conversation_id=conversation_id,
         objective=objective,
         attack_strategy_name="SimulatedConversation",
         memory_labels=memory_labels,
