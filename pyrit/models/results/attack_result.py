@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
@@ -138,7 +138,7 @@ class AttackResult(StrategyResult):
     outcome_reason: str | None = None
 
     # Wall-clock time the result was created or persisted.
-    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
     # Flexible conversation refs (nothing unused)
     related_conversations: set[ConversationReference] = Field(default_factory=set)

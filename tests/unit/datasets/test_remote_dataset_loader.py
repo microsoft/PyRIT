@@ -4,7 +4,7 @@
 import io
 import json
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -161,10 +161,10 @@ class TestRemoteDatasetLoader:
             (None, None),
             ("", None),
             ("not-a-date", None),
-            ("2026-06-15T14:54:11.981Z", datetime(2026, 6, 15, 14, 54, 11, 981000, tzinfo=timezone.utc)),
+            ("2026-06-15T14:54:11.981Z", datetime(2026, 6, 15, 14, 54, 11, 981000, tzinfo=UTC)),
             (
                 "2025-09-20T04:09:11.080923+00:00",
-                datetime(2025, 9, 20, 4, 9, 11, 80923, tzinfo=timezone.utc),
+                datetime(2025, 9, 20, 4, 9, 11, 80923, tzinfo=UTC),
             ),
         ],
     )

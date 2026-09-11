@@ -285,7 +285,7 @@ class _OpenAIRealtimeStreamingSession:
             if force_commit_accepted:
                 try:
                     await asyncio.wait_for(self._commit_observed.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(
                         "Forced final commit was accepted but no committed event observed within 5s; "
                         "the final user turn may have been dropped by the server."

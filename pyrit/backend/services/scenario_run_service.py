@@ -19,7 +19,7 @@ from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -696,7 +696,7 @@ class ScenarioRunService:
         active = self._active_tasks.get(scenario_result_id)
         if active is not None and active.task is not None and not active.task.done():
             active.task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+            with contextlib.suppress(asyncio.CancelledError, TimeoutError):
                 await asyncio.wait_for(active.task, timeout=5.0)
 
         # The run can reach a terminal state during the await above, so only cancel a run that
@@ -1371,7 +1371,7 @@ class ScenarioRunService:
         """Return a deterministic chronological key for one hydrated result attempt."""
         timestamp = attack_result.timestamp
         if not isinstance(timestamp, datetime):
-            timestamp = datetime.min.replace(tzinfo=timezone.utc)
+            timestamp = datetime.min.replace(tzinfo=UTC)
         return timestamp, str(attack_result.attack_result_id)
 
     def get_run_progress(

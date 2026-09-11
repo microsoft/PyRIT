@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Any, Literal, cast, get_args, get_origin
 from pydantic import BaseModel, ConfigDict, model_validator
 
 if TYPE_CHECKING:
+    from typing import Self
+
     from pydantic.config import ExtraValues
-    from typing_extensions import Self
 
 #: Maps each condition's stable discriminator to its type. A condition is persisted under
 #: its ``condition_type`` discriminator rather than its import path, so a stored score survives

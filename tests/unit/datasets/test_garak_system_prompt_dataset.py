@@ -77,7 +77,7 @@ async def test_drh_coerces_non_json_metadata_to_str():
     """HuggingFace returns ``creation_date`` as a ``datetime``; it must be coerced so the
     metadata stays JSON-serializable for persistence to memory."""
     loader = _GarakDrhSystemPromptDataset()
-    created = datetime.datetime(2024, 1, 1, 12, 30, tzinfo=datetime.timezone.utc)
+    created = datetime.datetime(2024, 1, 1, 12, 30, tzinfo=datetime.UTC)
     rows = [
         {
             "systemprompt": "You are a helpful assistant.",

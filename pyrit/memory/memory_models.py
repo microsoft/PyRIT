@@ -7,8 +7,8 @@ import uuid
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, ClassVar, Generic, Literal, TypeVar, get_args, get_origin
+from datetime import UTC, datetime
+from typing import Any, ClassVar, Generic, Literal, Self, TypeVar, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
@@ -33,7 +33,6 @@ from sqlalchemy.orm import (
     relationship,
 )
 from sqlalchemy.types import Uuid
-from typing_extensions import Self
 
 import pyrit
 from pyrit.common.utils import to_sha256
@@ -218,7 +217,7 @@ class UTCDateTime(TypeDecorator[datetime]):
             datetime | None: The value with UTC tzinfo if it was naive, otherwise unchanged.
         """
         if value is not None and value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=UTC)
         return value
 
 
@@ -1879,7 +1878,7 @@ class AttackResultEntry(Base):
             ref.conversation_id for ref in entry.get_conversations_by_type(ConversationType.ADVERSARIAL)
         ] or None
 
-        self.timestamp = entry.timestamp or datetime.now(tz=timezone.utc)
+        self.timestamp = entry.timestamp or datetime.now(tz=UTC)
         self.pyrit_version = pyrit.__version__
 
         # Error information
@@ -1998,7 +1997,7 @@ class AttackResultEntry(Base):
             outcome_reason=self.outcome_reason,
             related_conversations=related_conversations,
             metadata=self.attack_metadata or {},
-            timestamp=self.timestamp or datetime.now(tz=timezone.utc),
+            timestamp=self.timestamp or datetime.now(tz=UTC),
             operator=self.operator,
             operation=self.operation,
             labels=self.labels or {},

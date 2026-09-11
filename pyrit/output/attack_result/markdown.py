@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyrit.models import AttackResult, ConversationType, Message, Score
 from pyrit.output.attack_result.base import AttackResultPrinterBase
@@ -127,7 +127,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
                     pass
 
         markdown_lines.append("\n---")
-        timestamp_utc = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        timestamp_utc = datetime.now(tz=UTC).isoformat().replace("+00:00", "Z")
         markdown_lines.append(f"*Report generated at {timestamp_utc}*")
 
         return "\n".join(markdown_lines)

@@ -11,7 +11,7 @@ import logging
 import random
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -94,7 +94,7 @@ class SeedDataset(BaseModel):
     authors: list[str] | None = Field(default_factory=list)
     groups: list[str] | None = Field(default_factory=list)
     source: str | None = None
-    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=UTC))
     added_by: str | None = None
     # The default seed type for items that don't specify their own ("prompt", "objective", ...).
     seed_type: SeedType | None = None
