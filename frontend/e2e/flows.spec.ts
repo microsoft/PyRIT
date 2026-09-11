@@ -218,7 +218,7 @@ async function openAttackInHistory(
   page: Page,
   attackResultId: string,
 ): Promise<void> {
-  await page.getByTitle("Attack History").click();
+  await page.getByTitle("History").click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({
     timeout: 10_000,
   });

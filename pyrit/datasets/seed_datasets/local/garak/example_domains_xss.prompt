@@ -1,7 +1,10 @@
+# Portions Copyright (c) 2023 Leon Derczynski and NVIDIA CORPORATION & AFFILIATES.
+# Licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 dataset_name: garak_example_domains_xss
 harm_categories: cyber
-source: https://github.com/NVIDIA/garak/blob/main/garak/data/payloads/example_domains_xss.json
-groups: Nvida/Garak
+source: https://github.com/NVIDIA/garak/blob/3f50ea5ff9cd7050099940647c15c39b07a93392/garak/data/payloads/example_domains_xss.json
+groups: NVIDIA/garak
 data_type: text
 description: Example attacker-controlled domains used in web injection exfiltration payloads (Fetched 2025-10-19)
 seed_type: prompt

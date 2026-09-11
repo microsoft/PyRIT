@@ -29,15 +29,19 @@
 from pathlib import Path
 
 from pyrit.output import output_scenario_async
-from pyrit.prompt_target import RealtimeTarget
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.garak import (
+    Doctor,
     Encoding,
     EncodingTechnique,
     FigStep,
+    PackageHallucination,
+    PackageHallucinationTechnique,
     SystemPromptExtraction,
     SystemPromptExtractionTechnique,
+    WebInjection,
+    WebInjectionTechnique,
 )
 from pyrit.scenario.garak.audio_achilles_heel import AudioAchillesHeel, AudioAchillesHeelDatasetConfiguration
 from pyrit.scenario.garak.encoding import EncodingDatasetConfiguration
@@ -46,6 +50,9 @@ from pyrit.setup import initialize_from_config_async
 await initialize_from_config_async(config_path=Path("pyrit_conf.yaml"))  # type: ignore
 
 objective_target = TargetRegistry.get_registry_singleton().instances.get("openai_chat")
+
+from pyrit.scenario.garak import DoctorTechnique
+
 # %% [markdown]
 # ## Encoding
 #
@@ -122,6 +129,7 @@ figstep_scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
         "dataset_config": figstep_dataset_config,
+        "include_baseline": False,
     }
 )
 await figstep_scenario.initialize_async()  # type: ignore
@@ -154,6 +162,22 @@ await output_scenario_async(figstep_result)
 # **Aggregate techniques:** `ALL` (all 8), `DEFAULT` (excludes the two combinatorial extended
 # probes), `EXFIL` (the 6 markdown-exfil probes), and `XSS` (TaskXSS + MarkdownXSS).
 
+# %%
+web_injection_scenario = WebInjection(max_prompts_per_technique=1)
+web_injection_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [WebInjectionTechnique.StringAssemblyDataExfil],
+        "include_baseline": False,
+    }
+)
+await web_injection_scenario.initialize_async()  # type: ignore
+
+web_injection_result = await web_injection_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(web_injection_result)
+
 # %% [markdown]
 # ## Doctor
 #
@@ -172,6 +196,24 @@ await output_scenario_async(figstep_result)
 # **Available techniques** (2 probes): `PolicyPuppetry` (wraps the objective in the Dr House
 # template) and `PolicyPuppetryLeet` (the same template, additionally leetspeak-encoded). Both are
 # tagged `default`, so `DEFAULT` and `ALL` currently coincide.
+
+# %%
+doctor_dataset_config = DatasetAttackConfiguration(dataset_names=["garak_doctor"], max_dataset_size=1)
+
+doctor_scenario = Doctor()
+doctor_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [DoctorTechnique.policy_puppetry],
+        "dataset_config": doctor_dataset_config,
+    }
+)
+await doctor_scenario.initialize_async()  # type: ignore
+
+doctor_result = await doctor_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(doctor_result)
 
 # %% [markdown]
 # ## SystemPromptExtraction
@@ -248,6 +290,21 @@ await output_scenario_async(sysprompt_result)
 # > If you select another language, PyRIT downloads its registry on demand. The raw package names
 # > are loaded into memory only for the scorer and are never sent as prompts.
 
+# %%
+package_scenario = PackageHallucination(max_prompts_per_language=1)
+package_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [PackageHallucinationTechnique.Rust],
+    }
+)
+await package_scenario.initialize_async()  # type: ignore
+
+package_result = await package_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(package_result)
+
 # %% [markdown]
 # ## AudioAchillesHeel
 #
@@ -261,12 +318,12 @@ await output_scenario_async(sysprompt_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan garak.audio_achilles_heel --target realtime --max-dataset-size 2
+# pyrit_scan garak.audio_achilles_heel --target azure_openai_realtime --max-dataset-size 2
 # ```
 #
 # > **Note:** The objective target must accept `audio_path` input (i.e. be multimodal). The example
-# > below uses `RealtimeTarget` (the OpenAI Realtime audio websocket); non-audio targets such as the
-# > default `openai_chat` will error when the audio request is sent. The full dataset holds ~350
+# > below uses the registered Azure OpenAI Realtime target; non-audio targets such as the default
+# > `openai_chat` will error when the audio request is sent. The full dataset holds ~350
 # > clips, so a default run samples a small subset to finish quickly — raise `--max-dataset-size`
 # > for broader coverage.
 
@@ -275,7 +332,7 @@ audio_dataset_config = AudioAchillesHeelDatasetConfiguration(
     dataset_names=["garak_audio_achilles_heel"], max_dataset_size=1
 )
 
-audio_target = RealtimeTarget()
+audio_target = TargetRegistry.get_registry_singleton().instances.get("azure_openai_realtime")
 
 audio_scenario = AudioAchillesHeel()
 audio_scenario.set_params_from_args(  # type: ignore

@@ -22,6 +22,7 @@ from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider
 from pyrit.common import default_values
 from pyrit.memory import DataTypeSerializer, data_serializer_factory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models.harm_category import HarmCategory
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
 )
@@ -60,7 +61,11 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
     _CATEGORY_EVAL_FILES: dict[TextCategory, tuple[list[str], str, str]] = {
         TextCategory.HATE: (["harm/hate_speech.csv"], "harm/hate_speech_metrics.jsonl", "hate_speech"),
         TextCategory.SELF_HARM: (["harm/self_harm.csv"], "harm/self_harm_metrics.jsonl", "self_harm"),
-        TextCategory.SEXUAL: (["harm/sexual.csv"], "harm/sexual_metrics.jsonl", "sexual"),
+        TextCategory.SEXUAL: (
+            ["harm/sexual.csv"],
+            "harm/sexual_metrics.jsonl",
+            HarmCategory.SEXUAL_CONTENT.name,
+        ),
         TextCategory.VIOLENCE: (["harm/violence.csv"], "harm/violence_metrics.jsonl", "violence"),
     }
 

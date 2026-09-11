@@ -25,8 +25,8 @@ from pyrit.backend.services.scenario_run_service import (
 from pyrit.converter import Converter
 from pyrit.memory import (
     AzureSQLMemory,
+    ScenarioHistoryAggregate,
     ScenarioHistoryRunRecord,
-    ScenarioHistoryUnitRecord,
     ScenarioRunStateRecord,
     SQLiteMemory,
 )
@@ -179,7 +179,8 @@ def mock_memory():
     """Patch CentralMemory.get_memory_instance to return a mock."""
     mock = MagicMock(spec=SQLiteMemory)
     mock.get_scenario_results.return_value = []
-    mock.get_scenario_result_headers.return_value = []
+    mock.get_scenario_run_history_page.return_value = ([], {}, False)
+    mock.get_scenario_history_aggregates.return_value = {}
     # Default: no error AttackResults linked to any scenario. Tests that exercise
     # the error fallback path explicitly set get_attack_results.return_value.
     mock.get_attack_results.return_value = []
@@ -1485,7 +1486,7 @@ class TestScenarioRunServiceListRuns:
             _make_history_record(result_id="sr-1", run_state=ScenarioRunState.COMPLETED),
             _make_history_record(result_id="sr-2", run_state=ScenarioRunState.IN_PROGRESS),
         ]
-        mock_memory.get_scenario_run_history_page.return_value = (records, {"sr-1": [], "sr-2": []}, False)
+        mock_memory.get_scenario_run_history_page.return_value = (records, {}, False)
 
         service = ScenarioRunService()
         result = service.list_runs()
@@ -1506,19 +1507,19 @@ class TestScenarioRunServiceListRuns:
             limit=10,
         )
 
-    def test_history_cursor_is_filter_bound_and_rejects_malformed_values(self, mock_memory) -> None:
+    def test_history_cursor_is_filter_bound_and_invalid_values_restart_pagination(self, mock_memory) -> None:
         record = _make_history_record(result_id=str(uuid.uuid4()), run_state=ScenarioRunState.COMPLETED)
-        mock_memory.get_scenario_run_history_page.return_value = ([record], {record.scenario_result_id: []}, True)
+        mock_memory.get_scenario_run_history_page.return_value = ([record], {}, True)
         service = ScenarioRunService()
 
         first_page = service.list_runs(scenario_names=["first"], labels={"operator": ["alice", "bob"]})
 
         assert first_page.pagination.has_more is True
         assert first_page.pagination.next_cursor is not None
-        with pytest.raises(ValueError, match="filters"):
-            service.list_runs(scenario_names=["second"], cursor=first_page.pagination.next_cursor)
-        with pytest.raises(ValueError, match="Malformed scenario history cursor"):
-            service.list_runs(cursor="not-a-cursor")
+        service.list_runs(scenario_names=["second"], cursor=first_page.pagination.next_cursor)
+        assert mock_memory.get_scenario_run_history_page.call_args.kwargs["cursor"] is None
+        service.list_runs(cursor="not-a-cursor")
+        assert mock_memory.get_scenario_run_history_page.call_args.kwargs["cursor"] is None
 
     def test_history_uses_plan_and_latest_non_error_attempt_per_unit(self, mock_memory) -> None:
         record = _make_history_record(result_id="sr-aggregate", run_state=ScenarioRunState.COMPLETED)
@@ -1545,33 +1546,20 @@ class TestScenarioRunServiceListRuns:
             plan_seed_id_map=[{"id": seed.id, "objective_sha256": seed.objective_sha256} for seed in plan.seed_groups],
         )
         timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
-        units = [
-            ScenarioHistoryUnitRecord(
-                scenario_result_id=record.scenario_result_id,
-                atomic_attack_name="attack",
-                technique_eval_hash="eval-1",
-                seed_group_id="hash-1",
-                objective_sha256="hash-1",
-                latest_outcome=AttackOutcome.ERROR.value,
-                latest_timestamp=timestamp - timedelta(seconds=1),
-                total_retries=0,
-                error_count=1,
-            ),
-            ScenarioHistoryUnitRecord(
-                scenario_result_id=record.scenario_result_id,
-                atomic_attack_name="attack",
-                technique_eval_hash="eval-1",
-                seed_group_id="seed-1",
-                objective_sha256="hash-1",
-                latest_outcome=AttackOutcome.SUCCESS.value,
-                latest_timestamp=timestamp,
-                total_retries=2,
-                error_count=0,
-            ),
-        ]
         mock_memory.get_scenario_run_history_page.return_value = (
             [record],
-            {record.scenario_result_id: units},
+            {
+                record.scenario_result_id: ScenarioHistoryAggregate(
+                    scenario_result_id=record.scenario_result_id,
+                    unit_count=1,
+                    completed_units=1,
+                    successful_units=1,
+                    error_attempts=1,
+                    total_retries=3,
+                    latest_attempt_timestamp=timestamp,
+                    atomic_attack_names=("attack",),
+                )
+            },
             False,
         )
 
@@ -1584,6 +1572,7 @@ class TestScenarioRunServiceListRuns:
         assert summary.total_retries == 3
         assert summary.planned_total_available is True
         assert summary.attack_details_available is False
+        assert summary.updated_at >= timestamp
 
     def test_history_metadata_is_allow_listed_and_secret_free(self, mock_memory) -> None:
         scenario_result = make_scenario_result(
@@ -1610,7 +1599,7 @@ class TestScenarioRunServiceListRuns:
             scenario_name=scenario_result.scenario_name,
             scenario_identifier=scenario_result.scenario_identifier.model_dump(mode="json"),
         )
-        mock_memory.get_scenario_run_history_page.return_value = ([record], {record.scenario_result_id: []}, False)
+        mock_memory.get_scenario_run_history_page.return_value = ([record], {}, False)
 
         summary = ScenarioRunService().list_runs().items[0]
         serialized = summary.model_dump_json()
@@ -1638,12 +1627,12 @@ class TestScenarioRunServiceListRuns:
             plan_atomic_groups="{}",
             plan_seed_id_map="[]",
         )
-        mock_memory.get_scenario_run_history_page.return_value = ([record], {record.scenario_result_id: []}, False)
+        mock_memory.get_scenario_run_history_page.return_value = ([record], {}, False)
 
         summary = ScenarioRunService().list_runs().items[0]
 
         assert summary.planned_total_available is False
-        assert summary.total_attacks == 0
+        assert summary.total_attacks is None
         assert summary.completed_attacks == 0
 
     def test_history_discards_duplicate_plan_groups_before_legacy_fallback(self, mock_memory) -> None:
@@ -1660,12 +1649,125 @@ class TestScenarioRunServiceListRuns:
             plan_atomic_groups=[group, group],
             plan_seed_id_map=[{"id": "seed-1", "objective_sha256": "hash-1"}],
         )
-        mock_memory.get_scenario_run_history_page.return_value = ([record], {record.scenario_result_id: []}, False)
+        mock_memory.get_scenario_run_history_page.return_value = ([record], {}, False)
 
         summary = ScenarioRunService().list_runs().items[0]
 
         assert summary.planned_total_available is False
-        assert summary.total_attacks == 0
+        assert summary.total_attacks is None
+
+    def test_history_scopes_duplicate_objective_hashes_to_atomic_groups(self, mock_memory) -> None:
+        record = _make_history_record(result_id="sr-duplicate-objective", run_state=ScenarioRunState.COMPLETED)
+        groups = [
+            ScenarioRunPlanAtomicGroup(
+                id=f"group-{index}",
+                atomic_attack_name=f"attack-{index}",
+                display_group=f"Attack {index}",
+                technique_eval_hash=f"eval-{index}",
+                seed_group_ids=[f"seed-{index}"],
+            )
+            for index in (1, 2)
+        ]
+        record = replace(
+            record,
+            plan_atomic_groups=[group.model_dump(mode="json") for group in groups],
+            plan_seed_id_map=[
+                {"id": "seed-1", "objective_sha256": "shared-hash"},
+                {"id": "seed-2", "objective_sha256": "shared-hash"},
+            ],
+        )
+        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+        mock_memory.get_scenario_run_history_page.return_value = (
+            [record],
+            {
+                record.scenario_result_id: ScenarioHistoryAggregate(
+                    scenario_result_id=record.scenario_result_id,
+                    unit_count=2,
+                    completed_units=2,
+                    successful_units=2,
+                    error_attempts=0,
+                    total_retries=0,
+                    latest_attempt_timestamp=timestamp,
+                    atomic_attack_names=("attack-1", "attack-2"),
+                )
+            },
+            False,
+        )
+
+        summary = ScenarioRunService().list_runs().items[0]
+
+        assert summary.planned_total_available is True
+        assert summary.total_attacks == 2
+        assert summary.completed_attacks == 2
+        assert summary.successful_attacks == 2
+        mock_memory.get_scenario_history_aggregates.assert_not_called()
+
+    def test_history_falls_back_for_duplicate_objective_hashes_within_one_group(self, mock_memory) -> None:
+        record = _make_history_record(result_id="sr-ambiguous-objective", run_state=ScenarioRunState.COMPLETED)
+        group = ScenarioRunPlanAtomicGroup(
+            id="group-1",
+            atomic_attack_name="attack",
+            display_group="Attack",
+            technique_eval_hash="eval",
+            seed_group_ids=["seed-1", "seed-2"],
+        )
+        record = replace(
+            record,
+            plan_atomic_groups=[group.model_dump(mode="json")],
+            plan_seed_id_map=[
+                {"id": "seed-1", "objective_sha256": "shared-hash"},
+                {"id": "seed-2", "objective_sha256": "shared-hash"},
+            ],
+        )
+        mock_memory.get_scenario_run_history_page.return_value = ([record], {}, False)
+
+        summary = ScenarioRunService().list_runs().items[0]
+
+        assert summary.planned_total_available is False
+        assert summary.total_attacks is None
+
+    def test_history_requeries_legacy_aggregates_when_plan_is_rejected(self, mock_memory) -> None:
+        """A plan the service cannot trust forces a plan-free aggregate re-query."""
+        record = _make_history_record(result_id="sr-rejected-plan", run_state=ScenarioRunState.COMPLETED)
+        record = replace(record, plan_atomic_groups="{}", plan_seed_id_map="[]")
+        mock_memory.get_scenario_run_history_page.return_value = (
+            [record],
+            {record.scenario_result_id: ScenarioHistoryAggregate.empty(scenario_result_id=record.scenario_result_id)},
+            False,
+        )
+        mock_memory.get_scenario_history_aggregates.return_value = {
+            record.scenario_result_id: ScenarioHistoryAggregate(
+                scenario_result_id=record.scenario_result_id,
+                unit_count=3,
+                completed_units=2,
+                successful_units=1,
+                error_attempts=1,
+                total_retries=4,
+                latest_attempt_timestamp=datetime(2026, 8, 7, tzinfo=timezone.utc),
+                atomic_attack_names=("attack",),
+            )
+        }
+
+        summary = ScenarioRunService().list_runs().items[0]
+
+        mock_memory.get_scenario_history_aggregates.assert_called_once_with(
+            scenario_result_ids=[record.scenario_result_id]
+        )
+        assert summary.planned_total_available is False
+        assert summary.total_attacks == 3
+        assert summary.completed_attacks == 2
+        assert summary.successful_attacks == 1
+        assert summary.total_retries == 4
+        assert summary.techniques_used == ["attack"]
+
+    def test_list_runs_reports_unknown_total_without_plan(self, mock_memory) -> None:
+        """Test that legacy runs do not report a false zero planned total."""
+        record = _make_history_record(result_id="sr-no-plan", run_state=ScenarioRunState.COMPLETED)
+        mock_memory.get_scenario_run_history_page.return_value = ([record], {}, False)
+
+        result = ScenarioRunService().list_runs()
+
+        assert result.items[0].total_attacks is None
 
 
 class TestScenarioRunServiceCancelRun:
@@ -2506,36 +2608,24 @@ def test_history_and_detail_retry_work_match_across_attempt_partitions(mock_memo
         plan_atomic_groups=[group.model_dump(mode="json") for group in plan.atomic_groups],
         plan_seed_id_map=[{"id": "seed-1", "objective_sha256": _svc_mod.to_sha256(objective)}],
     )
-    units = [
-        ScenarioHistoryUnitRecord(
-            scenario_result_id=str(scenario_result.id),
-            atomic_attack_name="attack",
-            technique_eval_hash="eval",
-            seed_group_id=_svc_mod.to_sha256(objective),
-            objective_sha256=_svc_mod.to_sha256(objective),
-            latest_outcome=AttackOutcome.ERROR.value,
-            latest_timestamp=timestamp + timedelta(seconds=1),
-            total_retries=2,
-            error_count=2,
-            attempt_count=2,
-        ),
-        ScenarioHistoryUnitRecord(
-            scenario_result_id=str(scenario_result.id),
-            atomic_attack_name="attack",
-            technique_eval_hash="eval",
-            seed_group_id="seed-1",
-            objective_sha256=_svc_mod.to_sha256(objective),
-            latest_outcome=AttackOutcome.SUCCESS.value,
-            latest_timestamp=timestamp + timedelta(seconds=2),
-            total_retries=2,
-            error_count=0,
-            attempt_count=1,
-        ),
-    ]
+    aggregate = ScenarioHistoryAggregate(
+        scenario_result_id=str(scenario_result.id),
+        unit_count=1,
+        completed_units=1,
+        successful_units=1,
+        error_attempts=2,
+        total_retries=5,
+        latest_attempt_timestamp=timestamp + timedelta(seconds=2),
+        atomic_attack_names=("attack",),
+    )
     service = ScenarioRunService()
 
     detail = service._build_response_from_db(scenario_result=scenario_result)
-    history = service._build_history_summary(record=record, units=units)
+    history = service._build_history_summary(
+        record=record,
+        atomic_groups=plan.atomic_groups,
+        aggregate=aggregate,
+    )
     assert detail.total_retries == 5
     assert history.total_retries == detail.total_retries
 
@@ -2767,7 +2857,7 @@ def test_get_progress_exposes_persisted_started_at(mock_memory) -> None:
     assert progress.run.started_at == started_at
 
 
-def test_get_progress_rejects_duplicate_stored_plan_groups(mock_memory) -> None:
+def test_get_progress_treats_duplicate_stored_plan_groups_as_incomplete(mock_memory) -> None:
     group = ScenarioRunPlanAtomicGroup(
         id="duplicate",
         atomic_attack_name="attack",
@@ -2794,12 +2884,16 @@ def test_get_progress_rejects_duplicate_stored_plan_groups(mock_memory) -> None:
     mock_memory.get_scenario_result_header.return_value = header
     mock_memory.get_scenario_attack_result_deltas.return_value = ([], False)
 
-    with pytest.raises(ValueError, match="duplicate atomic group IDs"):
-        ScenarioRunService().get_run_progress(
-            scenario_result_id=str(header.id),
-            since=None,
-            limit=25,
-        )
+    progress = ScenarioRunService().get_run_progress(
+        scenario_result_id=str(header.id),
+        since=None,
+        limit=25,
+    )
+
+    assert progress is not None
+    assert progress.plan_complete is False
+    assert progress.plan is not None
+    assert progress.plan.atomic_groups == []
 
 
 def test_progress_prefers_persisted_logical_seed_group_attribution() -> None:
@@ -3016,6 +3110,28 @@ def test_get_progress_synthesizes_incomplete_legacy_plan(mock_memory) -> None:
     assert progress.plan is not None
     assert len(progress.plan.atomic_groups) == 1
     assert len(progress.results) == 1
+
+
+def test_get_progress_treats_invalid_persisted_plan_as_incomplete(mock_memory, caplog) -> None:
+    header = make_scenario_result(
+        attack_results={},
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: {"atomic_groups": "invalid"}},
+    )
+    mock_memory.get_scenario_result_header.return_value = header
+    mock_memory.get_scenario_attack_result_deltas.return_value = ([], False)
+
+    progress = ScenarioRunService().get_run_progress(
+        scenario_result_id=str(header.id),
+        since=None,
+        limit=25,
+    )
+
+    assert progress is not None
+    assert progress.plan_complete is False
+    assert progress.plan is not None
+    assert progress.plan.atomic_groups == []
+    assert "treating the plan as unavailable" in caplog.text
 
 
 def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None:

@@ -67,7 +67,9 @@ const defaultProps = {
 function renderHistory(props = defaultProps) {
   return render(
     <FluentProvider theme={webLightTheme}>
-      <ScenarioHistory {...props} />
+      <main>
+        <ScenarioHistory {...props} />
+      </main>
     </FluentProvider>,
   )
 }
@@ -106,17 +108,22 @@ describe('ScenarioHistory', () => {
     renderHistory({ ...defaultProps, onOpenRun })
 
     const row = await screen.findByTestId('scenario-history-row-run-1')
+    expect(screen.getAllByRole('main')).toHaveLength(1)
     expect(screen.getByText('foundry.red_team')).toBeInTheDocument()
     expect(screen.getByText('RedTeamScenario · v3')).toBeInTheDocument()
     expect(screen.getByText('gpt-4o')).toBeInTheDocument()
     expect(screen.getByText('2/2')).toBeInTheDocument()
     expect(screen.getByText('1/2 (50%)')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Runtime' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Attacks Complete' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Attack Success' })).toBeInTheDocument()
+    expect(screen.getByText('55s (completed)')).toBeInTheDocument()
     expect(screen.getByText('operator: alice')).toBeInTheDocument()
 
     await user.click(row)
     expect(onOpenRun).toHaveBeenLastCalledWith('run-1')
     const link = screen.getByRole('link', { name: 'Open foundry.red_team scenario run' })
-    expect(link).toHaveAttribute('href', '/scenario-history/run-1')
+    expect(link).toHaveAttribute('href', '/scanner-history/run-1')
     link.focus()
     await user.keyboard('{Enter}')
     expect(onOpenRun).toHaveBeenCalledTimes(2)
@@ -179,8 +186,7 @@ describe('ScenarioHistory', () => {
     })).toBeInTheDocument()
     expect(screen.getByText('v1')).toBeInTheDocument()
     expect(screen.getAllByText('TextTarget')).toHaveLength(2)
-    expect(screen.getByText('Not yet')).toBeInTheDocument()
-    expect(screen.getByText('10s elapsed')).toBeInTheDocument()
+    expect(screen.getByText('10s (in progress)')).toBeInTheDocument()
     expect(screen.getAllByText('0/0')).toHaveLength(2)
     expect(screen.getByText('1 / 0')).toBeInTheDocument()
   })
@@ -199,7 +205,7 @@ describe('ScenarioHistory', () => {
     renderHistory()
 
     expect(await screen.findByText('Not started')).toBeInTheDocument()
-    expect(screen.queryByText(/\d+(?:s|m|h).*elapsed$/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/\d+(?:s|m|h).*(?:elapsed|in progress)$/)).not.toBeInTheDocument()
   })
 
   it('does not display queue wait for a terminal run that never started', async () => {
@@ -215,7 +221,7 @@ describe('ScenarioHistory', () => {
     renderHistory()
 
     expect(await screen.findByText('Execution time unavailable')).toBeInTheDocument()
-    expect(screen.queryByText(/\d+(?:s|m|h).*elapsed$/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/\d+(?:s|m|h).*(?:elapsed|in progress)$/)).not.toBeInTheDocument()
   })
 
   it('isolates option-loading failures from the primary history request', async () => {
@@ -266,6 +272,22 @@ describe('ScenarioHistory', () => {
     })
     expect(await screen.findByText('Try adjusting your filters.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Browse scenarios' })).not.toBeInTheDocument()
+  })
+
+  it('enables the single reset icon only when filters are active', () => {
+    const history = renderHistory()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeDisabled()
+
+    history.rerender(
+      <FluentProvider theme={webLightTheme}>
+        <ScenarioHistory
+          {...defaultProps}
+          filters={{ ...DEFAULT_SCENARIO_HISTORY_FILTERS, statuses: ['FAILED'] }}
+        />
+      </FluentProvider>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeEnabled()
   })
 
   it('serializes filters, paginates by cursor, and refreshes from the first page', async () => {
@@ -355,7 +377,7 @@ describe('ScenarioHistory', () => {
     )
 
     expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument()
-    expect(screen.getByText('Loading scenario history...')).toBeInTheDocument()
+    expect(screen.getByText('Loading scanner history...')).toBeInTheDocument()
     await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
     expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: undefined, run_statuses: ['FAILED'] }),

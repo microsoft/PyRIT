@@ -6,10 +6,11 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
-from pydantic import AwareDatetime, Field, field_serializer
+from pydantic import AwareDatetime, Field, field_serializer, model_validator
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.messages.message_piece import MessagePiece
@@ -17,7 +18,60 @@ from pyrit.models.results.strategy_result import StrategyResult
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
 AttackResultT = TypeVar("AttackResultT", bound="AttackResult")
+
+ATTRIBUTION_FIELDS: tuple[str, str] = ("operator", "operation")
+ATTRIBUTION_VALUE_MAX_LENGTH: int = 128
+
+
+def normalize_legacy_attack_attribution(
+    *,
+    labels: Mapping[str, Any],
+    operator: str | None,
+    operation: str | None,
+) -> tuple[dict[str, Any], str | None, str | None]:
+    """
+    Move scalar legacy label aliases to dedicated attribution fields.
+
+    TODO(PyRIT 1.4): Remove this helper with legacy attribution label aliases.
+
+    Args:
+        labels (Mapping[str, Any]): Labels that may still carry the legacy aliases.
+        operator (str | None): Dedicated operator value.
+        operation (str | None): Dedicated operation value.
+
+    Returns:
+        tuple[dict[str, Any], str | None, str | None]: Arbitrary labels and resolved attribution.
+
+    Raises:
+        ValueError: If an alias is invalid or disagrees with its dedicated value.
+    """
+    remaining = dict(labels)
+    resolved: dict[str, Any] = {"operator": operator, "operation": operation}
+    for field in ATTRIBUTION_FIELDS:
+        current = resolved[field]
+        if current is not None and not isinstance(current, str):
+            raise ValueError(f"{field} must be a string")
+        if current is not None and len(current) > ATTRIBUTION_VALUE_MAX_LENGTH:
+            raise ValueError(f"{field} must be at most {ATTRIBUTION_VALUE_MAX_LENGTH} characters")
+        if field in remaining:
+            legacy_value = remaining.pop(field)
+            if not isinstance(legacy_value, str):
+                raise ValueError(f"labels.{field} must be a string")
+            if len(legacy_value) > ATTRIBUTION_VALUE_MAX_LENGTH:
+                raise ValueError(f"labels.{field} must be at most {ATTRIBUTION_VALUE_MAX_LENGTH} characters")
+            if current is not None and current != legacy_value:
+                raise ValueError(f"{field} conflicts with legacy labels.{field}: {current!r} != {legacy_value!r}")
+            print_deprecation_message(
+                old_item=f"labels.{field}",
+                new_item=field,
+                removed_in="1.4.0",
+            )
+            resolved[field] = legacy_value
+    return remaining, resolved["operator"], resolved["operation"]
 
 
 class AttackOutcome(str, Enum):
@@ -43,6 +97,8 @@ class AttackOutcome(str, Enum):
 
 class AttackResult(StrategyResult):
     """Base class for all attack results."""
+
+    ATTRIBUTION_VALUE_MAX_LENGTH: ClassVar[int] = ATTRIBUTION_VALUE_MAX_LENGTH
 
     # Identity
     # Unique identifier of the conversation that produced this result
@@ -90,6 +146,11 @@ class AttackResult(StrategyResult):
     # Arbitrary metadata
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    # First-class attribution fields. These are deliberately separate from
+    # arbitrary labels so they can be indexed and queried efficiently.
+    operator: str | None = Field(default=None, max_length=ATTRIBUTION_VALUE_MAX_LENGTH)
+    operation: str | None = Field(default=None, max_length=ATTRIBUTION_VALUE_MAX_LENGTH)
+
     # labels associated with this attack result
     labels: dict[str, str] = Field(default_factory=dict)
 
@@ -114,6 +175,32 @@ class AttackResult(StrategyResult):
     # and the corresponding DB columns remain NULL.
     attribution_parent_id: str | None = None
     attribution_data: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_attribution_labels(cls, data: Any) -> Any:
+        """
+        Move legacy attribution label aliases to their dedicated fields.
+
+        Returns:
+            The normalized model input.
+
+        Raises:
+            ValueError: If an alias is not a string or conflicts with a dedicated field.
+        """
+        if not isinstance(data, dict) or not isinstance(data.get("labels"), dict):
+            return data
+
+        normalized = dict(data)
+        remaining, operator, operation = normalize_legacy_attack_attribution(
+            labels=normalized["labels"],
+            operator=normalized.get("operator"),
+            operation=normalized.get("operation"),
+        )
+        normalized["labels"] = remaining
+        normalized["operator"] = operator
+        normalized["operation"] = operation
+        return normalized
 
     def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """
