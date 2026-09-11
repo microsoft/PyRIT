@@ -25,6 +25,9 @@ if TYPE_CHECKING:
         is_azure_openai_endpoint,
     )
     from pyrit.auth.azure_storage_auth import AzureStorageAuth
+    from pyrit.auth.browser_session_copilot_authenticator import (
+        BrowserSessionCopilotAuthenticator,
+    )
     from pyrit.auth.copilot_authenticator import CopilotAuthenticator
     from pyrit.auth.manual_copilot_authenticator import ManualCopilotAuthenticator
     from pyrit.auth.openai_auth import resolve_openai_auth
@@ -34,6 +37,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "Authenticator": "pyrit.auth.authenticator",
     "AzureAuth": "pyrit.auth.azure_auth",
     "AzureStorageAuth": "pyrit.auth.azure_storage_auth",
+    "BrowserSessionCopilotAuthenticator": "pyrit.auth.browser_session_copilot_authenticator",
     "CopilotAuthenticator": "pyrit.auth.copilot_authenticator",
     "ManualCopilotAuthenticator": "pyrit.auth.manual_copilot_authenticator",
     "resolve_openai_auth": "pyrit.auth.openai_auth",

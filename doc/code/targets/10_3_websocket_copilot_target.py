@@ -16,7 +16,7 @@
 # - `COPILOT_USERNAME` and `COPILOT_PASSWORD` environment variables
 # - Playwright installed: `pip install playwright && playwright install chromium`
 #
-# Some environments are not suited for automated authentication (e.g. they have security policies with retrieving tokens or have MFA). See the [Alternative Authentication](#alternative-authentication-with-manualcopilotauthenticator) section below.
+# Some environments are not suited for automated authentication (e.g. they have security policies with retrieving tokens or have MFA). For interactive authentication compatible with MFA and Conditional Access, see [Browser Session Authentication](#browser-session-authentication). To provide a token manually, see [Alternative Authentication](#alternative-authentication-with-manualcopilotauthenticator).
 
 # %% [markdown]
 # ## Basic Usage with `PromptSendingAttack`
@@ -78,6 +78,39 @@ result = await multi_turn_attack.execute_async(
 await output_attack_async(result)
 
 # %% [markdown]
+# ## Browser Session Authentication
+#
+# `BrowserSessionCopilotAuthenticator` captures a token from a persistent Edge session.
+# Complete account selection when prompted. The browser remains minimized for token
+# renewal and closes when the context exits.
+
+# Captured tokens remain in memory. Supply a different `profile_path` for each persona.
+#
+# Install the optional dependency before using this authenticator:
+#
+# ```bash
+# pip install "pyrit[playwright]"
+# ```
+#
+# The authenticator uses a locally installed Microsoft Edge browser.
+# %%
+from pyrit.auth import BrowserSessionCopilotAuthenticator
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import output_attack_async
+from pyrit.prompt_target import WebSocketCopilotTarget
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+
+await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=True)
+
+objective = "What is your favorite color?"
+
+async with BrowserSessionCopilotAuthenticator() as auth:
+    target = WebSocketCopilotTarget(authenticator=auth)
+    attack = PromptSendingAttack(objective_target=target)
+    result = await attack.execute_async(objective=objective)
+    await output_attack_async(result)
+
+# %% [markdown]
 # ## Alternative Authentication with `ManualCopilotAuthenticator`
 #
 # If browser automation is not suitable for your environment, you can use the `ManualCopilotAuthenticator` instead. This authenticator accepts a pre-obtained access token that you can extract from your browser's DevTools.
@@ -89,7 +122,7 @@ await output_attack_async(result)
 # 3. Go to the Network tab.
 # 4. Filter by "Socket" connections or search for "Chathub".
 # 5. Start typing in the chat to initiate a WebSocket connection.
-# 6. Look for the latest WebSocket connection to `substrate.office.com/m365Copilot/Chathub`.
+# 6. Look for the latest WebSocket connection to `substrate.svc.cloud.microsoft/m365Copilot/Chathub`.
 # 7. You may find the `access_token` in the request URL or in the request payload.
 #
 # You can either pass the token directly or set the `COPILOT_ACCESS_TOKEN` environment variable.
