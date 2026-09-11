@@ -23,6 +23,7 @@ from sqlalchemy import (
     String,
     TypeDecorator,
     Unicode,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.sqlite import CHAR
 from sqlalchemy.orm import (
@@ -53,7 +54,10 @@ from pyrit.models import (
     ConversationType,
     ConverterIdentifier,
     EvaluationIdentifier,
+    LlmJudgmentObservationPayload,
     MessagePiece,
+    MessageScorable,
+    Observation,
     PromptDataType,
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
@@ -1119,6 +1123,117 @@ class ScorableContentEntry(Base):
         return f"{self.id}"
 
 
+class ObservationEntry(Base):
+    """A durable scorer observation."""
+
+    __tablename__ = "ObservationEntries"
+    __table_args__ = (
+        Index("ix_ObservationEntries_scorable_content_id", "scorable_content_id"),
+        Index("ix_ObservationEntries_scored_message_piece_id", "scored_message_piece_id"),
+        {"extend_existing": True},
+    )
+
+    id = mapped_column(CustomUUID, nullable=False, primary_key=True)
+    source_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    acquisition = mapped_column(String(16), nullable=False)
+    observed_at = mapped_column(UTCDateTime, nullable=False)
+    scorable: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    scorable_content_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ScorableContentEntry.__tablename__}.id"),
+        nullable=True,
+    )
+    scored_message_piece_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"),
+        nullable=True,
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    metadata_json: Mapped[dict[str, str]] = mapped_column("metadata", JSON, nullable=False)
+    pyrit_version = mapped_column(String, nullable=True)
+    message_piece_links: Mapped[list["ObservationMessagePieceEntry"]] = relationship(
+        "ObservationMessagePieceEntry",
+        back_populates="observation",
+        cascade="all, delete-orphan",
+        order_by="ObservationMessagePieceEntry.position",
+        lazy="selectin",
+    )
+    score_links: Mapped[list["ScoreObservationEntry"]] = relationship(
+        "ScoreObservationEntry",
+        back_populates="observation",
+        cascade="all, delete-orphan",
+    )
+
+    def __init__(self, *, entry: Observation) -> None:
+        """Initialize a persisted observation from its canonical model."""
+        entry = Observation.model_validate(entry.model_dump())
+        self.id = entry.id
+        self.source_identifier = entry.source_identifier.model_dump(mode="json")
+        self.acquisition = entry.acquisition.value
+        self.observed_at = entry.observed_at
+        self.scorable = entry.scorable.model_dump(mode="json")
+        self.scorable_content_id = (
+            entry.scorable.content_id if isinstance(entry.scorable, ContentEntryScorable) else None
+        )
+        self.scored_message_piece_id = (
+            entry.payload.scored_piece_id if isinstance(entry.scorable, MessageScorable) else None
+        )
+        self.payload = entry.payload.model_dump(mode="json")
+        self.metadata_json = dict(entry.metadata)
+        self.pyrit_version = pyrit.__version__
+
+    def get_observation(self) -> Observation:
+        """
+        Reconstruct the canonical observation model.
+
+        Returns:
+            Observation: The reconstructed observation.
+
+        Raises:
+            ValueError: If the stored observation has no source identifier.
+        """
+        stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
+        source_identifier = _load_identifier(self.source_identifier, pyrit_version=stored_version)
+        if source_identifier is None:
+            raise ValueError(f"Observation {self.id} has no source identifier.")
+        return Observation(
+            id=self.id,
+            source_identifier=source_identifier,
+            acquisition=self.acquisition,
+            observed_at=self.observed_at,
+            scorable=scorable_from_dict(self.scorable),
+            payload=LlmJudgmentObservationPayload.model_validate(self.payload),
+            metadata=self.metadata_json or {},
+        )
+
+
+class ObservationMessagePieceEntry(Base):
+    """An ordered immutable message reference from an observation payload."""
+
+    __tablename__ = "ObservationMessagePieceEntries"
+    __table_args__ = (
+        UniqueConstraint("observation_id", "message_piece_id", name="uq_observation_message_pieces_piece"),
+        Index("ix_ObservationMessagePieceEntries_message_piece_id", "message_piece_id"),
+        {"extend_existing": True},
+    )
+
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ObservationEntry.__tablename__}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    message_piece_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"),
+        nullable=False,
+    )
+    observation: Mapped[ObservationEntry] = relationship(
+        "ObservationEntry",
+        back_populates="message_piece_links",
+    )
+
+
 class ScoreEntry(Base):
     """
     Represents the Score Memory Entry.
@@ -1157,6 +1272,13 @@ class ScoreEntry(Base):
     # Nullable for backwards compatibility with existing databases
     pyrit_version = mapped_column(String, nullable=True)
     prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="scores")
+    observation_links: Mapped[list["ScoreObservationEntry"]] = relationship(
+        "ScoreObservationEntry",
+        back_populates="score",
+        cascade="all, delete-orphan",
+        order_by="ScoreObservationEntry.position",
+        lazy="selectin",
+    )
 
     def __init__(self, *, entry: Score) -> None:
         """
@@ -1219,6 +1341,7 @@ class ScoreEntry(Base):
             scorer_class_identifier=scorer_identifier,
             message_piece_id=self.prompt_request_response_id,
             scorable=scorable_from_dict(self.scorable) if self.scorable else None,
+            observation_ids=[link.observation_id for link in self.observation_links],
             timestamp=self.timestamp,
             scored_expectation=(
                 ScoringExpectation.model_validate_persisted(self.scored_expectation)
@@ -1249,8 +1372,34 @@ class ScoreEntry(Base):
             "prompt_request_response_id": str(self.prompt_request_response_id),
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "scored_expectation": self.scored_expectation,
+            "observation_ids": [str(link.observation_id) for link in self.observation_links],
             "objective": self.scored_expectation.get("objective") if self.scored_expectation else None,
         }
+
+
+class ScoreObservationEntry(Base):
+    """An ordered many-to-many link between a score and its observations."""
+
+    __tablename__ = "ScoreObservationEntries"
+    __table_args__ = (
+        UniqueConstraint("score_id", "observation_id", name="uq_score_observations_observation"),
+        Index("ix_ScoreObservationEntries_observation_id", "observation_id"),
+        {"extend_existing": True},
+    )
+
+    score_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ScoreEntry.__tablename__}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ObservationEntry.__tablename__}.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    score: Mapped[ScoreEntry] = relationship("ScoreEntry", back_populates="observation_links")
+    observation: Mapped[ObservationEntry] = relationship("ObservationEntry", back_populates="score_links")
 
 
 class ConversationMessageWithSimilarity(BaseModel):

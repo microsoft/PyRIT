@@ -6,7 +6,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.llm_scoring import (
+    _format_string_references_message_piece,
+    _parse_llm_observation,
+    _run_llm_scoring_async,
+)
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -20,9 +24,12 @@ if TYPE_CHECKING:
         ComponentIdentifier,
         JsonSchemaDefinition,
         MessagePiece,
+        Observation,
         Score,
+        ScoringExpectation,
     )
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.observation import _ObservationEvidence
 
 
 class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
@@ -173,8 +180,39 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
             category=self._score_category,
-            objective=objective,
+            requires_message_piece_evidence=(
+                _format_string_references_message_piece(self._system_prompt_format_string)
+                or _format_string_references_message_piece(self._prompt_format_string)
+            ),
         )
 
-        score = unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")
+        score = unvalidated.to_score(score_value=unvalidated.raw_score_value.lower(), score_type="true_false")
         return [score]
+
+    def _score_llm_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained general true/false judgment evidence.
+
+        Returns:
+            list[Score]: The replayed true/false score.
+        """
+        unvalidated = _parse_llm_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            expectation=expectation,
+            category=self._score_category,
+        )
+        return [
+            unvalidated.to_score(
+                score_value=unvalidated.raw_score_value.lower(),
+                score_type="true_false",
+            )
+        ]

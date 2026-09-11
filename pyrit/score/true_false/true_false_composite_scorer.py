@@ -19,6 +19,7 @@ from pyrit.models import (
     ScoreStatus,
     ScoringExpectation,
 )
+from pyrit.score.observation import _merge_observation_ids
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -199,5 +200,6 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             scorer_class_identifier=self.get_identifier(),
             message_piece_id=message_piece_id,
             scorable=scorable,
+            observation_ids=_merge_observation_ids(scores=score_list),
             objective=expectation.objective if expectation else None,
         )

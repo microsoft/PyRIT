@@ -104,9 +104,6 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
             category=self._score_category,
-            objective=objective,
         )
 
-        score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
-
-        return [score]
+        return [self._convert_score(unvalidated_score)]

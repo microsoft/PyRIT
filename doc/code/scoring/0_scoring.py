@@ -121,6 +121,19 @@ print(df.to_string(index=False))
 # storage and stores its SHA-256 digest. The score remains resolvable after the source file is
 # removed.
 #
+# LLM-backed scorers over text evidence also persist an `Observation` that references and hashes
+# the retained response in the SCORE conversation. The observation and its first score are
+# committed together. Capture requires durable scored evidence. A custom general-scorer template
+# that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
+# In-hand messages keep their score-to-message links when storage rounds timestamps. Observation
+# evidence checks remain exact: a content-only snapshot cannot replay a metadata-dependent judgment.
+# `Score.scored_expectation` records the complete expectation used for the verdict, while
+# `Score.objective` remains a read-only compatibility view. `score_observation_async()` can
+# parse that stored judgment again without calling the target. Replay requires unchanged scored
+# evidence and response content, plus the exact original expectation, scorer configuration, and
+# response-handler contract. Media, tool-call observations, and coverage are deferred until
+# their evidence can be snapshotted before judgment.
+#
 # Scoring APIs return `list[Score]`. An empty list means that the scorer does not apply to the
 # evidence, such as a message with no supported role or data type. A non-empty list contains
 # completed or undetermined scores.

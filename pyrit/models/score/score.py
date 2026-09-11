@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal
@@ -121,6 +122,9 @@ class Score(BaseModel):
     # explicit value that disagrees with the expectation is rejected.
     objective: str | None = Field(default=None, frozen=True)
 
+    # The managed evidence records used to reach this verdict.
+    observation_ids: list[uuid.UUID] = Field(default_factory=list)
+
     # ------------------------------------------------------------------ #
     # Validators
     # ------------------------------------------------------------------ #
@@ -188,6 +192,23 @@ class Score(BaseModel):
         """
         return {} if value is None else value
 
+    @field_validator("observation_ids")
+    @classmethod
+    def _validate_observation_ids(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        """
+        Reject duplicate observation links while preserving their order.
+
+        Returns:
+            list[uuid.UUID]: The validated observation IDs.
+
+        Raises:
+            ValueError: If an observation ID is repeated.
+        """
+        normalized = [str(observation_id) for observation_id in value]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("A score must reference each observation once.")
+        return value
+
     @model_validator(mode="after")
     def _validate_score_value(self) -> Score:
         """
@@ -201,6 +222,8 @@ class Score(BaseModel):
                 score-type constraints.
         """
         self._check_score_value()
+        if self.observation_ids and self.scorable is None:
+            raise ValueError("A score with observations requires a scorable anchor.")
         return self
 
     @model_validator(mode="after")
@@ -341,6 +364,7 @@ class UnvalidatedScore:
     id: uuid.UUID | str | None = None
     timestamp: datetime | None = None
     scorable: ScorableUnion | None = None
+    observation_ids: list[uuid.UUID] = dataclass_field(default_factory=list)
 
     def __post_init__(self) -> None:
         """
@@ -386,4 +410,5 @@ class UnvalidatedScore:
             timestamp=self.timestamp if self.timestamp else datetime.now(tz=timezone.utc),
             scored_expectation=self.scored_expectation
             or (ScoringExpectation(objective=self.objective) if self.objective is not None else None),
+            observation_ids=self.observation_ids,
         )

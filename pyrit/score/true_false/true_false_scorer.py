@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models import Message, Score, ScoreStatus, UndeterminedScoreError
 from pyrit.score.message_scorer import MessageScorer
+from pyrit.score.observation import _merge_observation_ids
 from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
@@ -208,6 +209,8 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
                 score_rationale=result.rationale,
                 scorer_class_identifier=self.get_identifier(),
                 message_piece_id=score_list[0].message_piece_id,
+                scorable=score_list[0].scorable,
+                observation_ids=_merge_observation_ids(scores=score_list),
                 objective=objective,
             )
         ]

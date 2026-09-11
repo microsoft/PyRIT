@@ -4,11 +4,16 @@
 from __future__ import annotations
 
 import abc
+import inspect
 import json
 import math
 from abc import abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from enum import Enum
+from functools import partial
+from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
 from pyrit.models import JsonResponseConfig, UnvalidatedScore
@@ -16,9 +21,77 @@ from pyrit.models import JsonResponseConfig, UnvalidatedScore
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable
-    from typing import Any
 
     from pyrit.models import ComponentIdentifier, JsonSchemaDefinition
+
+_UNSTABLE_REPLAY_VALUE = object()
+
+
+def _stable_replay_value(value: Any) -> Any:
+    """
+    Normalize supported handler configuration into a stable JSON value.
+
+    Returns:
+        Any: The normalized value or an internal unstable-value sentinel.
+    """
+    if isinstance(value, Enum):
+        return {
+            "enum_type": f"{type(value).__module__}.{type(value).__qualname__}",
+            "value": _stable_replay_value(value.value),
+        }
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, BaseModel):
+        return {
+            "model_type": f"{type(value).__module__}.{type(value).__qualname__}",
+            "value": value.model_dump(mode="json"),
+        }
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            return _UNSTABLE_REPLAY_VALUE
+        normalized = {key: _stable_replay_value(item) for key, item in value.items()}
+        return _UNSTABLE_REPLAY_VALUE if _UNSTABLE_REPLAY_VALUE in normalized.values() else normalized
+    if isinstance(value, (list, tuple)):
+        normalized_items = [_stable_replay_value(item) for item in value]
+        if _UNSTABLE_REPLAY_VALUE in normalized_items:
+            return _UNSTABLE_REPLAY_VALUE
+        return {"sequence_type": type(value).__name__, "items": normalized_items}
+    if isinstance(value, (set, frozenset)):
+        normalized_items = [_stable_replay_value(item) for item in value]
+        if _UNSTABLE_REPLAY_VALUE in normalized_items:
+            return _UNSTABLE_REPLAY_VALUE
+        return {
+            "set_type": type(value).__name__,
+            "items": sorted(normalized_items, key=lambda item: json.dumps(item, sort_keys=True)),
+        }
+    return _UNSTABLE_REPLAY_VALUE
+
+
+def _callable_replay_identifier(parser: Callable[[str], dict[str, Any]]) -> dict[str, Any] | None:
+    """
+    Build a stable identity for a top-level parser or partial of one.
+
+    Returns:
+        dict[str, Any] | None: Stable callable configuration, or None when unavailable.
+    """
+    parser_args: tuple[Any, ...] = ()
+    parser_keywords: dict[str, Any] = {}
+    function = parser
+    if isinstance(parser, partial):
+        function = parser.func
+        parser_args = parser.args
+        parser_keywords = parser.keywords or {}
+    if not inspect.isfunction(function) or function.__name__ == "<lambda>" or "<locals>" in function.__qualname__:
+        return None
+    normalized_args = _stable_replay_value(parser_args)
+    normalized_keywords = _stable_replay_value(parser_keywords)
+    if _UNSTABLE_REPLAY_VALUE in (normalized_args, normalized_keywords):
+        return None
+    return {
+        "function": f"{function.__module__}.{function.__qualname__}",
+        "args": normalized_args,
+        "keywords": normalized_keywords,
+    }
 
 
 def _build_unvalidated_score(
@@ -109,6 +182,17 @@ class ResponseHandler(abc.ABC):
         """
         return JsonResponseConfig(enabled=False)
 
+    def _replay_identifier(self) -> dict[str, Any] | None:
+        """
+        Return stable parser configuration for observation replay.
+
+        Custom handlers must override this method to enable replay.
+
+        Returns:
+            dict[str, Any] | None: Stable parser configuration, or None when replay is unsafe.
+        """
+        return None
+
     @abstractmethod
     def parse(
         self,
@@ -189,6 +273,19 @@ class JsonSchemaResponseHandler(ResponseHandler):
     def json_response_config(self) -> JsonResponseConfig:
         """The JSON-response request: always JSON, carrying the optional configured schema."""
         return JsonResponseConfig(enabled=True, json_schema=self._response_schema)
+
+    def _replay_identifier(self) -> dict[str, Any]:
+        """Return all configuration that changes JSON parsing."""
+        return {
+            "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "score_value_output_key": self._score_value_output_key,
+            "rationale_output_key": self._rationale_output_key,
+            "description_output_key": self._description_output_key,
+            "metadata_output_key": self._metadata_output_key,
+            "category_output_key": self._category_output_key,
+            "response_schema": self._response_schema,
+            "numeric_value": self._numeric_value,
+        }
 
     def parse(
         self,
@@ -283,6 +380,16 @@ class TrueFalseResponseHandler(ResponseHandler):
         """The wrapped handler's JSON-response request."""
         return self._response_handler.json_response_config
 
+    def _replay_identifier(self) -> dict[str, Any] | None:
+        """Return the wrapped parser identity with the true/false constraint."""
+        wrapped = self._response_handler._replay_identifier()
+        if wrapped is None:
+            return None
+        return {
+            "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "wrapped": wrapped,
+        }
+
     def parse(
         self,
         *,
@@ -339,6 +446,7 @@ class CallableResponseHandler(ResponseHandler):
         self,
         *,
         parser: Callable[[str], dict[str, Any]],
+        parser_fingerprint: str | None = None,
         score_value_output_key: str = "score_value",
         rationale_output_key: str = "rationale",
         description_output_key: str = "description",
@@ -351,6 +459,8 @@ class CallableResponseHandler(ResponseHandler):
         Args:
             parser (Callable[[str], dict[str, Any]]): Maps the raw target text to a score
                 dictionary. It may raise ``InvalidJsonException`` to trigger a retry.
+            parser_fingerprint (str | None): Explicit versioned identity for parser behavior.
+                Replay is disabled when omitted. Defaults to None.
             score_value_output_key (str): Key holding the score value. Defaults to "score_value".
             rationale_output_key (str): Key holding the rationale. Defaults to "rationale".
             description_output_key (str): Key holding the description. Defaults to "description".
@@ -358,11 +468,30 @@ class CallableResponseHandler(ResponseHandler):
             category_output_key (str): Key holding the category. Defaults to "category".
         """
         self._parser = parser
+        self._parser_fingerprint = parser_fingerprint
         self._score_value_output_key = score_value_output_key
         self._rationale_output_key = rationale_output_key
         self._description_output_key = description_output_key
         self._metadata_output_key = metadata_output_key
         self._category_output_key = category_output_key
+
+    def _replay_identifier(self) -> dict[str, Any] | None:
+        """Return stable callable and output-key configuration when available."""
+        if not self._parser_fingerprint:
+            return None
+        parser = _callable_replay_identifier(self._parser)
+        if parser is None:
+            return None
+        return {
+            "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "parser_fingerprint": self._parser_fingerprint,
+            "parser": parser,
+            "score_value_output_key": self._score_value_output_key,
+            "rationale_output_key": self._rationale_output_key,
+            "description_output_key": self._description_output_key,
+            "metadata_output_key": self._metadata_output_key,
+            "category_output_key": self._category_output_key,
+        }
 
     def parse(
         self,

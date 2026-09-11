@@ -14,7 +14,9 @@ from pyrit.models import (
     JsonResponseConfig,
     JsonSchemaDefinition,
     MessagePiece,
+    Observation,
     Score,
+    ScoringExpectation,
     SeedPrompt,
     UnvalidatedScore,
 )
@@ -22,7 +24,7 @@ from pyrit.models.harm_category import HarmCategory
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEvalFiles
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_llm_observation, _run_llm_scoring_async
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -30,6 +32,8 @@ from pyrit.score.system_prompt import _render_system_prompt_template
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
+
+    from pyrit.score.observation import _ObservationEvidence
 
 _DEFAULT_LIKERT_SYSTEM_PROMPT_PATH = SCORER_LIKERT_PATH / "likert_system_prompt.yaml"
 
@@ -217,6 +221,17 @@ class _LikertScaleResponseHandler(ResponseHandler):
     def json_response_config(self) -> JsonResponseConfig:
         """The wrapped handler's JSON-response request."""
         return self._response_handler.json_response_config
+
+    def _replay_identifier(self) -> dict[str, object] | None:
+        """Return the wrapped parser and accepted Likert values."""
+        wrapped = self._response_handler._replay_identifier()
+        if wrapped is None:
+            return None
+        return {
+            "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "wrapped": wrapped,
+            "score_values": sorted(self._score_values),
+        }
 
     def parse(
         self,
@@ -409,20 +424,43 @@ class SelfAskLikertScorer(MessageFloatScaleScorer):
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
             category=self._likert_scale.category,
-            objective=objective,
         )
 
-        score = unvalidated_score.to_score(
+        return [self._convert_score(unvalidated_score)]
+
+    def _score_llm_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained Likert judgment evidence.
+
+        Returns:
+            list[Score]: The normalized replay score.
+        """
+        unvalidated = _parse_llm_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            expectation=expectation,
+            category=self._likert_scale.category,
+        )
+        return [self._convert_score(unvalidated)]
+
+    def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
+        score = unvalidated.to_score(
             score_value=str(
                 self.scale_value_float(
-                    float(unvalidated_score.raw_score_value),
+                    float(unvalidated.raw_score_value),
                     self._likert_scale.minimum_value,
                     self._likert_scale.maximum_value,
                 )
             ),
             score_type="float_scale",
         )
-
-        score.score_metadata = {"likert_value": int(float(unvalidated_score.raw_score_value))}
-
-        return [score]
+        score.score_metadata = {"likert_value": int(float(unvalidated.raw_score_value))}
+        return score

@@ -130,11 +130,14 @@ if TYPE_CHECKING:
         ScenarioTechniqueProgress,
     )
     from pyrit.models.score import (
+        Acquisition,
         Condition,
         ContentEntryScorable,
         ContentScorable,
+        LlmJudgmentObservationPayload,
         MatchesObjective,
         MessageScorable,
+        Observation,
         Scorable,
         ScorableUnion,
         Score,
@@ -178,6 +181,7 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "Acquisition": "pyrit.models.score",
     "ALLOWED_CHAT_MESSAGE_ROLES": "pyrit.models.messages.chat_message",
     "AtomicAttackEvaluationIdentifier": "pyrit.models.identifiers",
     "AtomicAttackIdentifier": "pyrit.models.identifiers",
@@ -234,6 +238,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "JSON_SCHEMA_METADATA_KEY": "pyrit.models.target",
     "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY": "pyrit.models.target",
     "JsonSchemaDefinition": "pyrit.models.target",
+    "LlmJudgmentObservationPayload": "pyrit.models.score",
     "MatchesObjective": "pyrit.models.score",
     "MEDIA_PATH_DATA_TYPES": "pyrit.models.literals",
     "Message": "pyrit.models.messages.message",
@@ -241,6 +246,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "MessageScorable": "pyrit.models.score",
     "Modality": "pyrit.models.literals",
     "NextMessageSystemPromptPaths": "pyrit.models.seeds",
+    "Observation": "pyrit.models.score",
     "ObjectiveTargetEvaluationIdentifier": "pyrit.models.identifiers",
     "Parameter": "pyrit.models.parameter",
     "ParameterDestination": "pyrit.models.parameter",

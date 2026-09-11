@@ -7,9 +7,19 @@ from pathlib import Path
 from typing import ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import ComponentIdentifier, JsonSchemaDefinition, Message, MessagePiece, Score, SeedPrompt
+from pyrit.models import (
+    ComponentIdentifier,
+    JsonSchemaDefinition,
+    Message,
+    MessagePiece,
+    Observation,
+    Score,
+    ScoringExpectation,
+    SeedPrompt,
+)
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_llm_observation, _run_llm_scoring_async
+from pyrit.score.observation import _ObservationEvidence
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -237,8 +247,35 @@ class SelfAskRefusalScorer(MessageTrueFalseScorer):
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
             category=self._score_category,
-            objective=objective,
         )
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
 
         return [score]
+
+    def _score_llm_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained refusal judgment evidence.
+
+        Returns:
+            list[Score]: The replayed refusal score.
+        """
+        unvalidated = _parse_llm_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            expectation=expectation,
+            category=self._score_category,
+        )
+        return [
+            unvalidated.to_score(
+                score_value=unvalidated.raw_score_value.lower(),
+                score_type="true_false",
+            )
+        ]

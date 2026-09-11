@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING
 
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.llm_scoring import (
+    _format_string_references_message_piece,
+    _parse_llm_observation,
+    _run_llm_scoring_async,
+)
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -16,10 +20,14 @@ if TYPE_CHECKING:
         ComponentIdentifier,
         JsonSchemaDefinition,
         MessagePiece,
+        Observation,
         Score,
+        ScoringExpectation,
+        UnvalidatedScore,
     )
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.float_scale.numeric_scale import NumericRange
+    from pyrit.score.observation import _ObservationEvidence
 
 
 class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
@@ -163,10 +171,39 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
             category=self._scale.category,
-            objective=objective,
+            requires_message_piece_evidence=(
+                _format_string_references_message_piece(self._system_prompt_format_string)
+                or _format_string_references_message_piece(self._prompt_format_string)
+            ),
         )
 
-        score = unvalidated.to_score(
+        return [self._convert_score(unvalidated)]
+
+    def _score_llm_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained general float-scale judgment evidence.
+
+        Returns:
+            list[Score]: The normalized replay score.
+        """
+        unvalidated = _parse_llm_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            expectation=expectation,
+            category=self._scale.category,
+        )
+        return [self._convert_score(unvalidated)]
+
+    def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
+        return unvalidated.to_score(
             score_value=str(
                 self.scale_value_float(
                     float(unvalidated.raw_score_value),
@@ -176,4 +213,3 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
             ),
             score_type="float_scale",
         )
-        return [score]

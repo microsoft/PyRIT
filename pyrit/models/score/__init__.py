@@ -20,6 +20,11 @@ if TYPE_CHECKING:
         ScoringExpectation,
         scoring_expectation_fingerprint,
     )
+    from pyrit.models.score.observation import (
+        Acquisition,
+        LlmJudgmentObservationPayload,
+        Observation,
+    )
     from pyrit.models.score.scorable import (
         ContentEntryScorable,
         ContentScorable,
@@ -38,12 +43,15 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "Acquisition": "pyrit.models.score.observation",
     "ComponentIdentifierField": "pyrit.models.score.score",
     "Condition": "pyrit.models.score.condition",
     "ContentEntryScorable": "pyrit.models.score.scorable",
     "ContentScorable": "pyrit.models.score.scorable",
+    "LlmJudgmentObservationPayload": "pyrit.models.score.observation",
     "MatchesObjective": "pyrit.models.score.condition",
     "MessageScorable": "pyrit.models.score.scorable",
+    "Observation": "pyrit.models.score.observation",
     "Scorable": "pyrit.models.score.scorable",
     "ScorableUnion": "pyrit.models.score.scorable",
     "Score": "pyrit.models.score.score",

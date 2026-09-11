@@ -19,12 +19,14 @@ from pyrit.models import (
     JsonResponseConfig,
     JsonSchemaDefinition,
     MessagePiece,
+    Observation,
     Score,
+    ScoringExpectation,
     SeedPrompt,
     UnvalidatedScore,
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_llm_observation, _run_llm_scoring_async
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -37,6 +39,8 @@ from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
+
+    from pyrit.score.observation import _ObservationEvidence
 
 _DEFAULT_CONTENT_CLASSIFIER_SYSTEM_PROMPT_PATH = (
     SCORER_CONTENT_CLASSIFIERS_PATH / "content_classifier_system_prompt.yaml"
@@ -148,6 +152,18 @@ class _ContentClassifierResponseHandler(ResponseHandler):
     def json_response_config(self) -> JsonResponseConfig:
         """The wrapped handler's JSON-response request."""
         return self._response_handler.json_response_config
+
+    def _replay_identifier(self) -> dict[str, object] | None:
+        """Return the wrapped parser and category validation contract."""
+        wrapped = self._response_handler._replay_identifier()
+        if wrapped is None:
+            return None
+        return {
+            "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "wrapped": wrapped,
+            "category_names": sorted(self._category_names),
+            "fallback_category": self._fallback_category,
+        }
 
     def parse(
         self,
@@ -354,9 +370,35 @@ class SelfAskCategoryScorer(MessageTrueFalseScorer):
             data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
-            objective=objective,
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
 
         return [score]
+
+    def _score_llm_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained category judgment evidence.
+
+        Returns:
+            list[Score]: The replayed category score.
+        """
+        unvalidated = _parse_llm_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            expectation=expectation,
+        )
+        return [
+            unvalidated.to_score(
+                score_value=unvalidated.raw_score_value.lower(),
+                score_type="true_false",
+            )
+        ]
