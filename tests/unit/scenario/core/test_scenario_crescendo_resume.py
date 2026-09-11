@@ -627,7 +627,8 @@ async def test_crescendo_scenario_cancellation_preserves_progress_and_resumes_on
             wraps=first_attack._teardown_async,
         ) as first_teardown:
             scenario_task = asyncio.create_task(first_scenario.run_async())
-            await asyncio.wait_for(cancellation_started.wait(), timeout=5)
+            await cancellation_started.wait()
+            assert not scenario_task.done()
             scenario_task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await scenario_task

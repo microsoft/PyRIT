@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -366,7 +366,7 @@ class Message(BaseModel):
 
         """
         new_pieces = copy.deepcopy(list(self.message_pieces))
-        new_timestamp = datetime.now(tz=timezone.utc)
+        new_timestamp = datetime.now(tz=UTC)
         for piece in new_pieces:
             piece.id = uuid.uuid4()
             piece.timestamp = new_timestamp

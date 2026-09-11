@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyrit.models import (
     ComponentIdentifier,
@@ -194,7 +194,7 @@ def test_scenario_result_to_dict_from_dict_roundtrip():
         outcome_reason="Objective achieved",
         executed_turns=3,
         execution_time_ms=1500,
-        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
         related_conversations={
             ConversationReference(
                 conversation_id="conv-2",
@@ -211,7 +211,7 @@ def test_scenario_result_to_dict_from_dict_roundtrip():
                 exception_type="TimeoutError",
                 exception_message="timed out",
                 component_role="target",
-                timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
             ),
         ],
         total_retries=1,
@@ -227,8 +227,8 @@ def test_scenario_result_to_dict_from_dict_roundtrip():
         attack_results={"crescendo": [attack_result]},
         display_group_map={"crescendo": "Crescendo Attack"},
         labels={"env": "test"},
-        creation_time=datetime(2026, 1, 15, 11, 0, 0, tzinfo=timezone.utc),
-        completion_time=datetime(2026, 1, 15, 12, 30, 0, tzinfo=timezone.utc),
+        creation_time=datetime(2026, 1, 15, 11, 0, 0, tzinfo=UTC),
+        completion_time=datetime(2026, 1, 15, 12, 30, 0, tzinfo=UTC),
         number_tries=1,
         error_attack_result_ids=["err-1"],
         error_message="partial failure",

@@ -3,17 +3,23 @@ import { Text } from '@fluentui/react-components'
 import type { ConfiguredInitializerSetting, RegisteredInitializer } from '@/types'
 
 import { formatInitializerParameters } from './initializerFormatting'
-import { resolveRegisteredInitializer } from './initializerLookup'
+import {
+  findRegisteredInitializer,
+  initializerFallbackDescription,
+  type CatalogStatus,
+} from './initializerLookup'
 import { useInitializersStyles } from './Initializers.styles'
 
 interface ConfiguredInitializersProps {
   items: ConfiguredInitializerSetting[]
   registeredInitializers: RegisteredInitializer[]
+  catalogStatus?: CatalogStatus
 }
 
 export default function ConfiguredInitializers({
   items,
   registeredInitializers,
+  catalogStatus = 'loaded',
 }: ConfiguredInitializersProps) {
   const styles = useInitializersStyles()
 
@@ -32,7 +38,7 @@ export default function ConfiguredInitializers({
       ) : (
         <div className={styles.configuredGroup} role="list" aria-label="Configured initializers">
           {items.map((item: ConfiguredInitializerSetting) => {
-            const initializer = resolveRegisteredInitializer(item.initializer_name, registeredInitializers)
+            const initializer = findRegisteredInitializer(item.initializer_name, registeredInitializers)
             const initializerKey = `${item.initializer_name}:${item.order_index}`
             return (
               <div
@@ -43,12 +49,18 @@ export default function ConfiguredInitializers({
               >
                 <div className={styles.titleGroup}>
                   <Text weight="semibold" size={400}>{item.initializer_name}</Text>
-                  <Text size={300}>{initializer.description || 'No description available.'}</Text>
-                  <Text size={200} className={styles.metadataText}>
-                    Required env vars: {initializer.required_env_vars.length > 0
-                      ? initializer.required_env_vars.join(', ')
-                      : 'None'}
+                  <Text size={300}>
+                    {initializer
+                      ? initializer.description || 'No description available.'
+                      : initializerFallbackDescription(catalogStatus)}
                   </Text>
+                  {initializer && (
+                    <Text size={200} className={styles.metadataText}>
+                      Required env vars: {initializer.required_env_vars.length > 0
+                        ? initializer.required_env_vars.join(', ')
+                        : 'None'}
+                    </Text>
+                  )}
                   <Text size={200} className={styles.metadataText}>Order: {item.order_index}</Text>
                 </div>
                 <div>

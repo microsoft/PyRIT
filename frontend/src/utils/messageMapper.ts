@@ -246,6 +246,18 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     if (isReasoningDataType(piece.converted_value_data_type)) {
       const summaries = extractReasoningSummaries(piece.converted_value)
       reasoningSummaries.push(...summaries)
+      const scores = piece.scores
+        .map((score) => scoreWithProvenance(score, { piece, pieceIndex }))
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      if (scores.length > 0) {
+        displayPieces.push({
+          type: 'text',
+          pieceId: piece.id,
+          pieceIndex,
+          content: '',
+          scores,
+        })
+      }
       continue
     }
 

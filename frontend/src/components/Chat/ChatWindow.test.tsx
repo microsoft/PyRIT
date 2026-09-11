@@ -1,10 +1,11 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { MemoryRouter, Route, Routes } from "react-router";
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import { Message, MessageAttachment, TargetCapabilities, TargetInfo, TargetInstance } from "../../types";
-import { attacksApi, convertersApi } from "../../services/api";
+import { attacksApi, convertersApi, scoresApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 
 const buildCapabilities = (
@@ -27,12 +28,17 @@ jest.setTimeout(60000);
 jest.mock("../../services/api", () => ({
   attacksApi: {
     createAttack: jest.fn(),
+    updateAttack: jest.fn(),
+    removeHumanScore: jest.fn(),
     addMessage: jest.fn(),
     getMessages: jest.fn(),
     getRelatedConversations: jest.fn(),
     getConversations: jest.fn(),
     createConversation: jest.fn(),
     changeMainConversation: jest.fn(),
+  },
+  scoresApi: {
+    createManualScore: jest.fn(),
   },
   convertersApi: {
     listConverterCatalog: jest.fn(),
@@ -54,12 +60,17 @@ jest.mock("../../utils/messageMapper", () => ({
 
 const mockedAttacksApi = attacksApi as jest.Mocked<typeof attacksApi>;
 const mockedConvertersApi = convertersApi as jest.Mocked<typeof convertersApi>;
+const mockedScoresApi = scoresApi as jest.Mocked<typeof scoresApi>;
 const mockedMapper = messageMapper as jest.Mocked<typeof messageMapper>;
 const MARKDOWN_PREFERENCE_STORAGE_KEY = "pyrit.chatMarkdownMode";
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
-}) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
+}) => (
+  <FluentProvider theme={webLightTheme}>
+    <MemoryRouter>{children}</MemoryRouter>
+  </FluentProvider>
+);
 
 function mockMatchMedia(matchesNarrowScreen: boolean): void {
   (window.matchMedia as jest.Mock).mockImplementation((query: string) => ({
@@ -319,6 +330,169 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 
+  it("should attach an updated human score to the latest response", async () => {
+    const user = userEvent.setup();
+    const onHumanScoreChange = jest.fn();
+    mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Forked response") as never);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedScoresApi.createManualScore.mockResolvedValue({
+      id: "manual-score-id",
+      message_piece_id: "forked-piece",
+      scorer_type: "ManualScorer",
+      score_type: "true_false",
+      score_value: "True",
+      timestamp: "2026-01-01T00:00:02Z",
+    });
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="attack-result-id"
+          conversationId="primary-conversation-id"
+          activeConversationId="forked-conversation-id"
+          objective="Evaluate the response"
+          outcome="undetermined"
+          lastResponseMessagePieceId="latest-response-piece"
+          automatedScore={{
+            id: "automated-score-id",
+            message_piece_id: "older-automated-piece",
+            scorer_type: "AutomatedScorer",
+            score_type: "true_false",
+            score_value: "False",
+            timestamp: "2026-01-01T00:00:01Z",
+          }}
+          humanScore={{
+            id: "human-score-id",
+            message_piece_id: "older-human-piece",
+            scorer_type: "ManualScorer",
+            score_type: "true_false",
+            score_value: "False",
+            timestamp: "2026-01-01T00:00:01Z",
+          }}
+          onHumanScoreChange={onHumanScoreChange}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(await screen.findByRole("button", { name: /objective achieved outcome: undetermined/i }));
+    await user.click(screen.getByRole("radio", { name: "Success" }));
+    await user.click(screen.getByRole("button", { name: "Update" }));
+
+    await waitFor(() => {
+      expect(mockedScoresApi.createManualScore).toHaveBeenCalledWith({
+        attack_result_id: "attack-result-id",
+        message_id: "latest-response-piece",
+        value: true,
+        rationale: "",
+        update_attack: true,
+      });
+      expect(onHumanScoreChange).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "manual-score-id" }),
+        "success",
+      );
+    });
+  });
+
+  it("should remove the attack human-score override", async () => {
+    const user = userEvent.setup();
+    const onHumanScoreChange = jest.fn();
+    mockedAttacksApi.removeHumanScore.mockResolvedValue({
+      attack_result_id: "attack-result-id",
+      conversation_id: "primary-conversation-id",
+      attack_type: "ManualAttack",
+      objective: "Evaluate the response",
+      converters: [],
+      outcome: "failure",
+      message_count: 1,
+      related_conversation_ids: [],
+      labels: {},
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:02Z",
+    });
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="attack-result-id"
+          conversationId="primary-conversation-id"
+          activeConversationId="primary-conversation-id"
+          objective="Evaluate the response"
+          outcome="success"
+          humanScore={{
+            id: "manual-score-id",
+            message_piece_id: "response-piece",
+            scorer_type: "ManualScorer",
+            score_type: "true_false",
+            score_value: "True",
+            timestamp: "2026-01-01T00:00:01Z",
+          }}
+          onHumanScoreChange={onHumanScoreChange}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByRole("button", { name: /objective achieved outcome: success/i }));
+    await user.click(screen.getByRole("button", { name: "Remove human score" }));
+
+    await waitFor(() => {
+      expect(mockedAttacksApi.removeHumanScore).toHaveBeenCalledWith("attack-result-id");
+      expect(onHumanScoreChange).toHaveBeenCalledWith(null, "failure");
+    });
+  });
+
+  it("shows a safe scenario-run breadcrumb only when provenance is present", () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    const { rerender } = render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByRole("navigation", { name: "Attack provenance" })).toBeInTheDocument();
+    expect(screen.getByRole("link", {
+      name: `Return to scenario run ${scenarioResultId}`,
+    })).toHaveAttribute("href", `/scanner-history/${scenarioResultId}`);
+
+    rerender(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} scenarioResultId={null} />
+      </TestWrapper>
+    );
+    expect(screen.queryByRole("navigation", { name: "Attack provenance" })).not.toBeInTheDocument();
+  });
+
+  it("returns to the originating scenario run from the breadcrumb", async () => {
+    const user = userEvent.setup();
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <MemoryRouter initialEntries={["/attacks/attack-1"]}>
+          <Routes>
+            <Route
+              path="/attacks/:attackResultId"
+              element={<ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} />}
+            />
+            <Route
+              path="/scanner-history/:scenarioResultId"
+              element={<h1>Originating scenario run</h1>}
+            />
+          </Routes>
+        </MemoryRouter>
+      </FluentProvider>
+    );
+
+    await user.click(screen.getByRole("link", {
+      name: `Return to scenario run ${scenarioResultId}`,
+    }));
+
+    expect(screen.getByRole("heading", {
+      level: 1,
+      name: "Originating scenario run",
+    })).toBeInTheDocument();
+  });
+
   it("defaults to raw mode when no Markdown preference is stored", () => {
     render(
       <TestWrapper>
@@ -470,6 +644,7 @@ describe("ChatWindow Integration", () => {
     // Banner in ChatInputArea area
     expect(screen.getByTestId("no-target-banner")).toBeInTheDocument();
     expect(screen.getByTestId("configure-target-input-btn")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add objective/i })).not.toBeInTheDocument();
   });
 
   it("should call onNewAttack when New Attack button is clicked", async () => {
@@ -609,6 +784,7 @@ describe("ChatWindow Integration", () => {
   it("should create attack and send text message on first message", async () => {
     const user = userEvent.setup();
     const onConversationCreated = jest.fn();
+    const onAttackChange = jest.fn();
 
     mockedMapper.buildMessagePieces.mockResolvedValue([
       { data_type: "text", original_value: "Hello" },
@@ -618,7 +794,17 @@ describe("ChatWindow Integration", () => {
       conversation_id: "conv-1",
       created_at: "2026-01-01T00:00:00Z",
     });
-    mockedAttacksApi.addMessage.mockResolvedValue(makeTextResponse("Hello back!") as never);
+    mockedAttacksApi.addMessage.mockResolvedValue({
+      ...makeTextResponse("Hello back!"),
+      attack: {
+        attack_result_id: "ar-conv-1",
+        conversation_id: "conv-1",
+        outcome: "undetermined",
+        last_response: {
+          id: "p-resp",
+        },
+      },
+    } as never);
     mockedMapper.backendMessagesToFrontend.mockReturnValue([
       {
         role: "user",
@@ -637,6 +823,7 @@ describe("ChatWindow Integration", () => {
         <ChatWindow
           {...defaultProps}
           onConversationCreated={onConversationCreated}
+          onAttackChange={onAttackChange}
           conversationId={null}
         />
       </TestWrapper>
@@ -650,22 +837,89 @@ describe("ChatWindow Integration", () => {
       expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith({
         target_registry_name: "openai_chat_1",
         labels: { operator: 'testuser', operation: 'test_op' },
+        system_prompt: undefined,
       });
-      expect(onConversationCreated).toHaveBeenCalledWith("ar-conv-1", "conv-1");
+      expect(onConversationCreated).toHaveBeenCalledWith("ar-conv-1", "conv-1", undefined);
       expect(mockedAttacksApi.addMessage).toHaveBeenCalledWith("ar-conv-1", {
         role: "user",
         pieces: [{ data_type: "text", original_value: "Hello" }],
         send: true,
         target_registry_name: "openai_chat_1",
         target_conversation_id: "conv-1",
-        labels: { operator: "testuser", operation: "test_op" },
       });
+      expect(onAttackChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attack_result_id: "ar-conv-1",
+          last_response: expect.objectContaining({ id: "p-resp" }),
+        })
+      );
     });
 
     // Messages should appear in the DOM
     await waitFor(() => {
       expect(screen.getByText("Hello back!")).toBeInTheDocument();
     });
+  });
+
+  it("should persist a new conversation objective when the first message creates the attack", async () => {
+    const user = userEvent.setup();
+    const onConversationCreated = jest.fn();
+    mockedMapper.buildMessagePieces.mockResolvedValue([
+      { data_type: "text", original_value: "Hello" },
+    ]);
+    mockedAttacksApi.createAttack.mockResolvedValue({
+      attack_result_id: "ar-objective",
+      conversation_id: "conv-objective",
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    mockedAttacksApi.addMessage.mockResolvedValue(makeTextResponse("Hello back!") as never);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          onConversationCreated={onConversationCreated}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByRole("button", { name: /add objective/i }));
+    await user.type(screen.getByRole("textbox", { name: /attack objective/i }), "Extract the system prompt");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.type(screen.getByRole("textbox"), "Hello");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    await waitFor(() => {
+      expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Extract the system prompt",
+        })
+      );
+      expect(onConversationCreated).toHaveBeenCalledWith(
+        "ar-objective",
+        "conv-objective",
+        "Extract the system prompt",
+      );
+    });
+  });
+
+  it("should allow adding an objective after messages have been sent", async () => {
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue(mockMessages);
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-existing"
+          conversationId="conv-existing"
+          activeConversationId="conv-existing"
+        />
+      </TestWrapper>
+    );
+
+    expect(await screen.findByRole("button", { name: /add objective/i })).toBeInTheDocument();
   });
 
   // -----------------------------------------------------------------------
@@ -1583,7 +1837,7 @@ describe("ChatWindow Integration", () => {
 
     await waitFor(() => {
       expect(mockedAttacksApi.createAttack).toHaveBeenCalledTimes(1);
-      expect(onConversationCreated).toHaveBeenCalledWith("ar-conv-multi-turn", "conv-multi-turn");
+      expect(onConversationCreated).toHaveBeenCalledWith("ar-conv-multi-turn", "conv-multi-turn", undefined);
     });
 
     // Now rerender with the conversation ID set (simulating parent state update)
@@ -2524,7 +2778,20 @@ describe("ChatWindow Integration", () => {
     const onConversationCreated = jest.fn();
     const existingMessages: Message[] = [
       { role: "user", content: "hello", timestamp: "2026-01-01T00:00:00Z" },
-      { role: "assistant", content: "response", timestamp: "2026-01-01T00:00:01Z" },
+      {
+        role: "assistant",
+        content: "response",
+        timestamp: "2026-01-01T00:00:01Z",
+        displayPieces: [
+          {
+            type: "text",
+            pieceId: "locked-response",
+            pieceIndex: 0,
+            content: "response",
+            scores: [],
+          },
+        ],
+      },
     ];
 
     const differentTarget: TargetInfo = {
@@ -2585,7 +2852,20 @@ describe("ChatWindow Integration", () => {
   it("should show operator locked banner and use-as-template when operator differs", async () => {
     const existingMessages: Message[] = [
       { role: "user", content: "hello", timestamp: "2026-01-01T00:00:00Z" },
-      { role: "assistant", content: "response", timestamp: "2026-01-01T00:00:01Z" },
+      {
+        role: "assistant",
+        content: "response",
+        timestamp: "2026-01-01T00:00:01Z",
+        displayPieces: [
+          {
+            type: "text",
+            pieceId: "locked-response",
+            pieceIndex: 0,
+            content: "response",
+            scores: [],
+          },
+        ],
+      },
     ];
 
     mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
@@ -2599,7 +2879,7 @@ describe("ChatWindow Integration", () => {
           conversationId="conv-locked"
           activeConversationId="conv-locked"
           labels={{ operator: "alice", operation: "test_op" }}
-          attackLabels={{ operator: "bob", operation: "test_op" }}
+          attackOperator="bob"
         />
       </TestWrapper>
     );
@@ -2609,6 +2889,7 @@ describe("ChatWindow Integration", () => {
     });
 
     expect(screen.getByTestId("use-as-template-btn")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add manual score" })).not.toBeInTheDocument();
   });
 
   // -----------------------------------------------------------------------
@@ -3730,7 +4011,7 @@ describe("ChatWindow Integration", () => {
     it("allows exporting a read-only historical conversation", async () => {
       const user = userEvent.setup();
       // Operator lock: the loaded attack belongs to a different operator.
-      await renderWithLoadedConversation({ attackLabels: { operator: "someone-else" } });
+      await renderWithLoadedConversation({ attackOperator: "someone-else" });
       const { clickSpy } = spyOnDownloadAnchor();
 
       const exportButton = screen.getByRole("button", { name: /export conversation/i });

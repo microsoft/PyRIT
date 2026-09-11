@@ -23,6 +23,7 @@ memory_db_type: sqlite
 #
 # Available initializers:
 # - target: Registers available prompt targets into the TargetRegistry
+# - converter: Registers the curated core converter presets
 # - scorer: Registers pre-configured scorers into the ScorerRegistry
 # - technique: Registers attack techniques into the AttackTechniqueRegistry
 # - load_default_datasets: Optionally preloads all registered datasets into memory
@@ -49,6 +50,7 @@ initializers:
       tags:
         - default
         - scorer
+  - name: converter
   - name: scorer
   - name: technique
   # Optional full preload/cache warming for offline or shared environments.
