@@ -183,6 +183,21 @@ class TestScorerRegistryRegisterInstance:
 
         assert registry.instances.get("same_name") is first
 
+    def test_create_named_instance_builds_and_stores_scorer(self, registry: ScorerRegistry):
+        registry.instances.register(MockTrueFalseScorer(), name="inner")
+
+        scorer = registry.create_named_instance(
+            name="composite",
+            type_name="TrueFalseCompositeScorer",
+            params={
+                "scorers": ["inner"],
+                "aggregator": TrueFalseScoreAggregator.OR,
+            },
+        )
+
+        assert isinstance(scorer, TrueFalseCompositeScorer)
+        assert registry.instances.get("composite") is scorer
+
     def test_register_instance_rejects_non_scorer(self, registry: ScorerRegistry):
         class NotAScorer:
             pass

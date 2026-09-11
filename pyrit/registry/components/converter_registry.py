@@ -24,12 +24,11 @@ is the registered converter-class surface. Pre-configured instances live under t
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pyrit.models.identifiers import ConverterIdentifier
 from pyrit.models.parameter import ComponentType
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
-from pyrit.registry.registry import Registry
+from pyrit.registry.registry import InstanceHoldingRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
@@ -70,7 +69,7 @@ class ConverterMetadata(RegistryMetadata):
         return any(p.is_reference_to(ComponentType.TARGET) for p in self.parameters)
 
 
-class ConverterRegistry(Registry["Converter", ConverterMetadata]):
+class ConverterRegistry(InstanceHoldingRegistry["Converter", ConverterMetadata]):
     """
     Registry that discovers, builds, and holds ``Converter`` instances.
 
@@ -93,37 +92,10 @@ class ConverterRegistry(Registry["Converter", ConverterMetadata]):
             lazy_discovery (bool): If True, class discovery is deferred until first
                 access. If False, discovery runs immediately.
         """
-        super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[Converter] = DefaultInstanceRegistry(
-            instance_type=self._base_type,
-            reserved_names={"catalog", "preview", "types"},
+        super().__init__(
+            lazy_discovery=lazy_discovery,
+            reserved_instance_names={"catalog", "preview", "types"},
         )
-
-    def create_named_instance(
-        self,
-        *,
-        name: str,
-        converter_type: str,
-        registry_metadata: dict[str, Any] | None = None,
-        **kwargs: object,
-    ) -> Converter:
-        """
-        Build and store a converter under an explicit registry name.
-
-        Args:
-            name (str): The unique registry name.
-            converter_type (str): The registered converter class name.
-            registry_metadata (dict[str, Any] | None): Per-entry lifecycle metadata
-                to store with the instance.
-            **kwargs (object): Constructor arguments.
-
-        Returns:
-            Converter: The constructed and registered converter.
-        """
-        self.instances.validate_name_available(name)
-        converter = self.create_instance(converter_type, **kwargs)
-        self.instances.register(converter, name=name, metadata=registry_metadata)
-        return converter
 
     def _base_type(self) -> type[Converter]:
         """Return the ``Converter`` base class, imported lazily."""

@@ -173,7 +173,7 @@ class TestConverterRegistryRegisterInstance:
         assert registry.instances.get("shared_name") is converter1
 
     def test_create_named_instance_builds_and_stores_converter(self, registry: ConverterRegistry):
-        converter = registry.create_named_instance(name="base64", converter_type="Base64Converter")
+        converter = registry.create_named_instance(name="base64", type_name="Base64Converter")
 
         assert isinstance(converter, Base64Converter)
         assert registry.instances.get("base64") is converter
@@ -181,7 +181,7 @@ class TestConverterRegistryRegisterInstance:
     def test_create_named_instance_stores_registry_metadata(self, registry: ConverterRegistry):
         converter = registry.create_named_instance(
             name="base64",
-            converter_type="Base64Converter",
+            type_name="Base64Converter",
             registry_metadata={"owned_artifact_paths": ["managed.dat"]},
         )
 
@@ -193,7 +193,7 @@ class TestConverterRegistryRegisterInstance:
     @pytest.mark.parametrize("name", ["catalog", "preview", "types"])
     def test_create_named_instance_rejects_reserved_name(self, registry: ConverterRegistry, name: str):
         with pytest.raises(ValueError, match="reserved"):
-            registry.create_named_instance(name=name, converter_type="Base64Converter")
+            registry.create_named_instance(name=name, type_name="Base64Converter")
 
     def test_register_instance_rejects_non_converter(self, registry: ConverterRegistry):
         class NotAConverter:

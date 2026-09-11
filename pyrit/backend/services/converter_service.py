@@ -225,9 +225,9 @@ class ConverterService:
         try:
             converter_obj = self._registry.create_named_instance(
                 name=converter_id,
-                converter_type=request.type,
+                type_name=request.type,
+                params=params,
                 registry_metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
-                **params,
             )
         except (Exception, asyncio.CancelledError):
             await self._remove_owned_artifacts_async(paths=owned_paths)

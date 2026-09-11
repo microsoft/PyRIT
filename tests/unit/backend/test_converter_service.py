@@ -399,8 +399,8 @@ class TestDeleteConverter:
         existing_pdf.write_bytes(b"%PDF-1.4\n")
         service._registry.create_named_instance(
             name="pdf",
-            converter_type="PDFConverter",
-            existing_pdf=existing_pdf,
+            type_name="PDFConverter",
+            params={"existing_pdf": existing_pdf},
         )
 
         assert await service.delete_converter_async(converter_id="pdf") is True
@@ -605,9 +605,11 @@ class TestConverterServiceCleanup:
         caller_file = tmp_path / "caller-owned.pdf"
         caller_file.write_bytes(b"%PDF-1.4\n")
         service._registry.create_named_instance(
-            name="caller-owned", converter_type="PDFConverter", existing_pdf=caller_file
+            name="caller-owned",
+            type_name="PDFConverter",
+            params={"existing_pdf": caller_file},
         )
-        service._registry.create_named_instance(name="no-upload", converter_type="Base64Converter")
+        service._registry.create_named_instance(name="no-upload", type_name="Base64Converter")
         request = CreateConverterRequest(
             name="owned",
             type="PDFConverter",

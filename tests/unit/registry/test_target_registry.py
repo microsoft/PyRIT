@@ -138,9 +138,14 @@ class TestTargetRegistryRegisterInstance:
     def test_create_named_instance_builds_and_stores_target(self, registry: TargetRegistry):
         registry.register_class(MockPromptTarget)
 
-        target = registry.create_named_instance(name="mock", target_type="MockPromptTarget")
+        target = registry.create_named_instance(
+            name="mock",
+            type_name="MockPromptTarget",
+            params={"model_name": "named-model"},
+        )
 
         assert isinstance(target, MockPromptTarget)
+        assert target.get_identifier().model_name == "named-model"
         assert registry.instances.get("mock") is target
 
     @pytest.mark.parametrize("name", ["catalog", "types"])
@@ -148,7 +153,7 @@ class TestTargetRegistryRegisterInstance:
         registry.register_class(MockPromptTarget)
 
         with pytest.raises(ValueError, match="reserved"):
-            registry.create_named_instance(name=name, target_type="MockPromptTarget")
+            registry.create_named_instance(name=name, type_name="MockPromptTarget")
 
     def test_register_instance_rejects_non_target(self, registry: TargetRegistry):
         class NotATarget:

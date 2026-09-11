@@ -27,8 +27,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pyrit.models.identifiers import TargetIdentifier
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
-from pyrit.registry.registry import Registry
+from pyrit.registry.registry import InstanceHoldingRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
@@ -57,7 +56,7 @@ class TargetMetadata(RegistryMetadata):
         return auth_modes
 
 
-class TargetRegistry(Registry["PromptTarget", TargetMetadata]):
+class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
     """
     Registry that discovers, builds, and holds ``PromptTarget`` instances.
 
@@ -80,28 +79,10 @@ class TargetRegistry(Registry["PromptTarget", TargetMetadata]):
             lazy_discovery (bool): If True, class discovery is deferred until first
                 access. If False, discovery runs immediately.
         """
-        super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[PromptTarget] = DefaultInstanceRegistry(
-            instance_type=self._base_type,
-            reserved_names={"catalog", "types"},
+        super().__init__(
+            lazy_discovery=lazy_discovery,
+            reserved_instance_names={"catalog", "types"},
         )
-
-    def create_named_instance(self, *, name: str, target_type: str, **kwargs: object) -> PromptTarget:
-        """
-        Build and store a target under an explicit registry name.
-
-        Args:
-            name (str): The unique registry name.
-            target_type (str): The registered target class name.
-            **kwargs (object): Constructor arguments.
-
-        Returns:
-            PromptTarget: The constructed and registered target.
-        """
-        self.instances.validate_name_available(name)
-        target = self.create_instance(target_type, **kwargs)
-        self.instances.register(target, name=name)
-        return target
 
     def _base_type(self) -> type[PromptTarget]:
         """Return the ``PromptTarget`` base class, imported lazily."""

@@ -239,8 +239,8 @@ class TargetService:
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
         target_obj = self._registry.create_named_instance(
             name=target_registry_name,
-            target_type=request.type,
-            **params,
+            type_name=request.type,
+            params=params,
         )
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
 
