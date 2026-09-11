@@ -103,8 +103,18 @@ Most users should enable the following initializers. These are what the `.pyrit_
 | Initializer | What It Registers | When You Need It |
 | --- | --- | --- |
 | `target` | Prompt targets (OpenAI, Azure, AML, etc.) into the `TargetRegistry` | Recommended for `pyrit_scan` and registry-based workflows |
+| `converter` | Curated core converter presets | Recommended when attaching registered converters to techniques |
 | `scorer` | Scorers (refusal, content safety, harm-category, Likert, etc.) into the `ScorerRegistry` | Recommended for automated scoring and `pyrit_scan` evaluations |
 | `technique` | Attack techniques into the `AttackTechniqueRegistry` | Recommended for scenarios that select registered techniques |
+
+The `converter` initializer registers a curated set of text, LLM, audio, and image converter presets. The
+LLM-backed presets use the registered `adversarial_chat` target and are skipped when that target is not available.
+The Azure Speech preset uses the standard Azure Speech environment variables and is skipped when they are not set.
+Use `pyrit_scan list-converters` to list the presets that were registered.
+
+Parameterized presets include past and future tense, professional and sarcastic tone, Spanish translation,
+whitespace replacement with underscores, the `jailbreak_1.yaml` text jailbreak template, the packaged blank
+canvas for text-to-image conversion, and the packaged benign cake image for the transparency attack.
 
 ```{note}
 **Execution order follows listing order.** Initializers execute in the order they appear in the config. Ensure dependencies are satisfied — for example, list `target` before `scorer` since scorers need targets to be registered first.
@@ -123,6 +133,7 @@ initializers:
       tags:
         - default
         - scorer
+  - name: converter
   - name: scorer
   - name: technique
 ```
@@ -143,9 +154,19 @@ initializers:
 
 Full preload can take several minutes and may require network access, provider credentials, or acceptance of gated dataset licenses. When preloading during local backend startup, increase `server.startup_timeout` if the configured timeout is not long enough.
 
+### `custom_initializers_source`
+
+Stores custom initializer Python files in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix, which behaves like a folder:
+
+```yaml
+custom_initializers_source: https://account.blob.core.windows.net/pyrit-storage/custom-initializers
+```
+
+With this configuration, PyRIT reads and writes scripts directly under the `custom-initializers/` prefix in the `pyrit-storage` container. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/custom_initializers`.
+
 ### `initialization_scripts`
 
-Paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.
+Local paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.
 
 | Value             | Behavior                           |
 | ----------------- | ---------------------------------- |
@@ -370,8 +391,8 @@ from pyrit.setup import ConfigurationLoader
 # Layer 2 and 3 overrides are optional keyword arguments:
 config = ConfigurationLoader.load_with_overrides(
     config_file=Path("./my_project.yaml"),  # Layer 2: explicit config file (omit to skip)
-    memory_db_type="in_memory",             # Layer 3: override database type
-    initializers=["target", "scorer"],      # Layer 3: override initializers
+    memory_db_type="in_memory",  # Layer 3: override database type
+    initializers=["target", "scorer"],  # Layer 3: override initializers
 )
 
 await config.initialize_pyrit_async()
@@ -394,6 +415,7 @@ initializers:
       tags:
         - default
         - scorer
+  - name: converter
   - name: scorer
   - name: technique
   # Optional full preload/cache warming; scenarios fetch requested datasets on demand.

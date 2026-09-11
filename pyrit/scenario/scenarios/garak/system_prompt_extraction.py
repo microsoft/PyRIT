@@ -204,6 +204,7 @@ class SystemPromptExtraction(Scenario):
         Raises:
             ValueError: If no system prompts or templates were found in memory.
         """
+        await self._dataset_config._collect_named_seeds_async()
         system_prompts = self._load_system_prompts()
         templates_by_category = self._load_templates_by_category()
 

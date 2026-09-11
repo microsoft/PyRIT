@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from pyrit.converter.binary_converter import BinaryConverter
     from pyrit.converter.braille_converter import BrailleConverter
     from pyrit.converter.caesar_converter import CaesarConverter
+    from pyrit.converter.char_noise_converter import CharNoiseConverter
     from pyrit.converter.character_space_converter import CharacterSpaceConverter
     from pyrit.converter.charswap_attack_converter import CharSwapConverter
     from pyrit.converter.code_attack_converter import CodeAttackConverter
@@ -165,6 +166,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "BinaryConverter": "pyrit.converter.binary_converter",
     "BrailleConverter": "pyrit.converter.braille_converter",
     "CaesarConverter": "pyrit.converter.caesar_converter",
+    "CharNoiseConverter": "pyrit.converter.char_noise_converter",
     "CharSwapConverter": "pyrit.converter.charswap_attack_converter",
     "CharacterSpaceConverter": "pyrit.converter.character_space_converter",
     "CodeAttackConverter": "pyrit.converter.code_attack_converter",

@@ -3,8 +3,6 @@ import { InteractionRequiredAuthError, type PublicClientApplication } from '@azu
 import { toApiError } from './errors'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
-  ApplyInitializerRequest,
-  ApplyInitializerResponse,
   TargetInstance,
   TargetListResponse,
   TargetCatalogResponse,
@@ -14,10 +12,10 @@ import type {
   CreateTargetRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
-  AdditionalInitializer,
-  CreateAdditionalInitializerRequest,
-  UpdateAdditionalInitializerRequest,
+  CustomInitializerListResponse,
+  RegisterInitializerRequest,
   CreateAttackRequest,
+  LabelOptionsResponse,
   CreateAttackResponse,
   AttackSummary,
   AttackListResponse,
@@ -28,6 +26,21 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   ChangeMainConversationResponse,
+  ListRegisteredScenariosResponse,
+  RegisteredScenario,
+  RunScenarioRequest,
+  ScenarioRunSizeEstimateResponse,
+  ScenarioRunSizeEstimateRequest,
+  ScenarioRunSummary,
+  ScenarioRunListResponse,
+  ScenarioRunProgress,
+  ScenarioRunState,
+  ConfigurationFileContent,
+  EnvironmentFileContent,
+  UpdateEnvironmentFileRequest,
+  EnvironmentFileListResponse,
+  UpdateConfigurationFileRequest,
+  AuthAccess,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -148,6 +161,43 @@ export const versionApi = {
   },
 }
 
+export const authApi = {
+  getAccess: async (): Promise<AuthAccess> => {
+    const response = await apiClient.get('/auth/access')
+    return response.data
+  },
+}
+
+export const configurationApi = {
+  getContent: async (): Promise<ConfigurationFileContent> => {
+    const response = await apiClient.get('/config')
+    return response.data
+  },
+
+  updateContent: async (request: UpdateConfigurationFileRequest): Promise<ConfigurationFileContent> => {
+    const response = await apiClient.put('/config', request)
+    return response.data
+  },
+
+  listEnvironmentFiles: async (): Promise<EnvironmentFileListResponse> => {
+    const response = await apiClient.get('/config/env-files')
+    return response.data
+  },
+
+  getEnvironmentFile: async (fileId: string): Promise<EnvironmentFileContent> => {
+    const response = await apiClient.get(`/config/env-files/${encodeURIComponent(fileId)}`)
+    return response.data
+  },
+
+  updateEnvironmentFile: async (
+    fileId: string,
+    request: UpdateEnvironmentFileRequest,
+  ): Promise<EnvironmentFileContent> => {
+    const response = await apiClient.put(`/config/env-files/${encodeURIComponent(fileId)}`, request)
+    return response.data
+  },
+}
+
 export const targetsApi = {
   listTargetCatalog: async (): Promise<TargetCatalogResponse> => {
     const response = await apiClient.get('/targets/catalog')
@@ -210,38 +260,19 @@ export const initializersApi = {
     return response.data
   },
 
-  createAdditional: async (
-    request: CreateAdditionalInitializerRequest,
-  ): Promise<AdditionalInitializer> => {
-    const response = await apiClient.post('/initializers/settings', request)
+  listCustom: async (): Promise<CustomInitializerListResponse> => {
+    const response = await apiClient.get('/initializers/custom')
     return response.data
   },
 
-  updateAdditional: async (
-    id: string,
-    request: UpdateAdditionalInitializerRequest,
-  ): Promise<AdditionalInitializer> => {
-    const response = await apiClient.put(
-      `/initializers/settings/${encodeURIComponent(id)}`,
-      request,
-    )
-    return response.data
+  register: async (request: RegisterInitializerRequest): Promise<void> => {
+    await apiClient.post('/initializers', request)
   },
 
-  deleteAdditional: async (id: string): Promise<void> => {
-    await apiClient.delete(`/initializers/settings/${encodeURIComponent(id)}`)
+  unregister: async (initializerName: string): Promise<void> => {
+    await apiClient.delete(`/initializers/${encodeURIComponent(initializerName)}`)
   },
 
-  applyNow: async (
-    initializerName: string,
-    request?: ApplyInitializerRequest,
-  ): Promise<ApplyInitializerResponse> => {
-    const response = await apiClient.post(
-      `/initializers/${encodeURIComponent(initializerName)}/apply`,
-      request ?? {},
-    )
-    return response.data
-  },
 }
 
 export const attacksApi = {
@@ -307,7 +338,10 @@ export const attacksApi = {
     converter_types?: string[]
     converter_types_match?: 'any' | 'all'
     has_converters?: boolean
+    include_scenario_attacks?: boolean
     outcome?: string
+    operator?: string[]
+    operation?: string[]
     label?: string[]
     min_turns?: number
     max_turns?: number
@@ -333,8 +367,108 @@ export const attacksApi = {
 }
 
 export const labelsApi = {
-  getLabels: async (source: string = 'attacks'): Promise<{ source: string; labels: Record<string, string[]> }> => {
-    const response = await apiClient.get('/labels', { params: { source } })
+  getLabels: async (
+    source: 'attacks' | 'scenarios' = 'attacks',
+    filters?: {
+      operator?: string[]
+      operation?: string[]
+      label?: string[]
+    },
+  ): Promise<LabelOptionsResponse> => {
+    const response = await apiClient.get('/labels', {
+      params: { source, ...filters },
+      paramsSerializer: {
+        indexes: null, // serialize arrays as ?key=val1&key=val2
+      },
+    })
+    return response.data
+  },
+}
+
+export const scenariosApi = {
+  /**
+   * Lists one page of the scenario catalog. Callers that need the full
+   * catalog should follow `pagination.next_cursor` until `has_more` is false.
+   */
+  listCatalog: async (
+    limit = 50,
+    cursor?: string,
+    includeEstimates = true,
+  ): Promise<ListRegisteredScenariosResponse> => {
+    const params: Record<string, string | number | boolean> = { limit }
+    if (cursor) params.cursor = cursor
+    if (!includeEstimates) params.include_estimates = false
+    const response = await apiClient.get('/scenarios/catalog', { params })
+    return response.data
+  },
+
+  getScenario: async (scenarioName: string): Promise<RegisteredScenario> => {
+    // The backend route is a single `{scenario_name:path}` segment, so a dotted
+    // or slash-bearing registry name (e.g. 'foundry/red_team_agent') must stay
+    // a single encoded path segment — encodeURIComponent (not raw interpolation)
+    // keeps '/' as '%2F', which the browser/Axios preserve and FastAPI's path
+    // converter decodes back to the original name server-side.
+    const response = await apiClient.get(`/scenarios/catalog/${encodeURIComponent(scenarioName)}`)
+    return response.data
+  },
+
+  startRun: async (request: RunScenarioRequest): Promise<ScenarioRunSummary> => {
+    const response = await apiClient.post('/scenarios/runs', request)
+    return response.data
+  },
+
+  estimateRun: async (
+    scenarioName: string,
+    request: ScenarioRunSizeEstimateRequest,
+    signal?: AbortSignal,
+  ): Promise<ScenarioRunSizeEstimateResponse> => {
+    const response = await apiClient.post(
+      `/scenarios/catalog/${encodeURIComponent(scenarioName)}/estimate`,
+      request,
+      { signal },
+    )
+    return response.data
+  },
+
+  getRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
+    const response = await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}`)
+    return response.data
+  },
+
+  listRuns: async (params?: {
+    limit?: number
+    cursor?: string
+    scenario_names?: string[]
+    run_statuses?: ScenarioRunState[]
+    label?: string[]
+  }): Promise<ScenarioRunListResponse> => {
+    const response = await apiClient.get('/scenarios/runs', {
+      params,
+      paramsSerializer: {
+        indexes: null,
+      },
+    })
+    return response.data
+  },
+
+  getRunProgress: async (
+    scenarioResultId: string,
+    params?: { since?: string; limit?: number },
+    signal?: AbortSignal,
+  ): Promise<ScenarioRunProgress> => {
+    const response = await apiClient.get(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/progress`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  cancelRun: async (scenarioResultId: string, signal?: AbortSignal): Promise<ScenarioRunSummary> => {
+    const response = await apiClient.post(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/cancel`,
+      undefined,
+      { signal },
+    )
     return response.data
   },
 }

@@ -19,6 +19,7 @@ from time import monotonic
 from typing import Any, ClassVar
 
 import httpx
+from fastapi import HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -45,6 +46,21 @@ class AuthenticatedUser:
     name: str
     email: str
     groups: list[str]
+    is_admin: bool = False
+
+
+def require_admin(request: Request) -> None:
+    """Require an administrator when authentication is enabled."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        allow_unauthenticated = os.getenv("PYRIT_ALLOW_UNAUTHENTICATED_ADMIN", "").strip().casefold() == "true"
+        if allow_unauthenticated:
+            return
+    if not isinstance(user, AuthenticatedUser) or not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access is required",
+        )
 
 
 class EntraAuthMiddleware(BaseHTTPMiddleware):
@@ -70,9 +86,11 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         tenant_raw = os.getenv("ENTRA_TENANT_ID", "")
         client_raw = os.getenv("ENTRA_CLIENT_ID", "")
         groups_raw = os.getenv("ENTRA_ALLOWED_GROUP_IDS", "")
+        admin_group_raw = os.getenv("ENTRA_ADMIN_GROUP_ID", "")
         self._tenant_id = tenant_raw.strip()
         self._client_id = client_raw.strip()
         self._allowed_group_ids: set[str] = {g.strip() for g in groups_raw.split(",") if g.strip()}
+        self._admin_group_id = admin_group_raw.strip()
         self._enabled = any((tenant_raw, client_raw, groups_raw))
         self._auth_cache: OrderedDict[str, tuple[float, AuthenticatedUser]] = OrderedDict()
 
@@ -88,6 +106,10 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             ]
             if missing_settings:
                 raise ValueError(f"Incomplete Entra ID configuration: {', '.join(missing_settings)} must be set")
+            if not self._admin_group_id:
+                logger.warning(
+                    "ENTRA_ADMIN_GROUP_ID is not set; authenticated users cannot access administrator routes."
+                )
             logger.info("Entra ID auth middleware enabled (tenant=%s)", self._tenant_id)
         else:
             logger.warning(
@@ -173,10 +195,22 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             return None
 
         self._auth_cache.move_to_end(cache_key)
-        return AuthenticatedUser(oid=user.oid, name=user.name, email=user.email, groups=list(user.groups))
+        return AuthenticatedUser(
+            oid=user.oid,
+            name=user.name,
+            email=user.email,
+            groups=list(user.groups),
+            is_admin=user.is_admin,
+        )
 
     def _cache_user(self, *, cache_key: str, user: AuthenticatedUser) -> None:
-        cached_user = AuthenticatedUser(oid=user.oid, name=user.name, email=user.email, groups=list(user.groups))
+        cached_user = AuthenticatedUser(
+            oid=user.oid,
+            name=user.name,
+            email=user.email,
+            groups=list(user.groups),
+            is_admin=user.is_admin,
+        )
         self._auth_cache[cache_key] = (monotonic() + self._AUTH_CACHE_TTL_SECONDS, cached_user)
         self._auth_cache.move_to_end(cache_key)
         while len(self._auth_cache) > self._AUTH_CACHE_MAX_ENTRIES:
@@ -218,6 +252,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
 
                 groups = await self._check_group_memberships_async(client=client, token=token)
                 user.groups = groups
+                user.is_admin = self._admin_group_id in groups
 
                 return user
         except (httpx.RequestError, ValueError) as error:
@@ -231,7 +266,9 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             True if the user's groups intersect with the allowed group IDs, False otherwise.
         """
-        return bool(self._allowed_group_ids & set(user.groups))
+        authorized_group_ids = self._allowed_group_ids | {self._admin_group_id}
+        authorized_group_ids.discard("")
+        return bool(authorized_group_ids & set(user.groups))
 
     async def _check_group_memberships_async(self, *, client: httpx.AsyncClient, token: str) -> list[str]:
         """
@@ -248,9 +285,11 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             AuthenticationError: If Graph rejects or cannot complete the lookup.
         """
         matched_group_ids: list[str] = []
-        allowed_group_ids = sorted(self._allowed_group_ids)
-        for offset in range(0, len(allowed_group_ids), self._GRAPH_MAX_GROUP_IDS_PER_REQUEST):
-            group_ids = allowed_group_ids[offset : offset + self._GRAPH_MAX_GROUP_IDS_PER_REQUEST]
+        allowed_group_ids = self._allowed_group_ids | {self._admin_group_id}
+        allowed_group_ids.discard("")
+        sorted_group_ids = sorted(allowed_group_ids)
+        for offset in range(0, len(sorted_group_ids), self._GRAPH_MAX_GROUP_IDS_PER_REQUEST):
+            group_ids = sorted_group_ids[offset : offset + self._GRAPH_MAX_GROUP_IDS_PER_REQUEST]
             response = await client.post(
                 self._GRAPH_CHECK_MEMBER_GROUPS_URL,
                 headers={

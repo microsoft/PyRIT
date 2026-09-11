@@ -5,7 +5,7 @@
 
 import random
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -131,6 +131,25 @@ class TestMultiPromptRunStateTracking:
         assert state.loss == 1.0
         assert state.candidate_loss == 5.0
         assert state.stop_reason == StopReason.MAX_STEPS_REACHED
+
+    def test_candidate_after_rejection_is_compared_with_active_loss(self) -> None:
+        attack = _bare_multi_prompt_attack([("worse", 5.0), ("still-worse", 4.5)])
+
+        with patch.object(random, "random", return_value=0.99):
+            control, loss, steps = attack.run(
+                n_steps=2,
+                prev_loss=1.0,
+                stop_on_success=False,
+                anneal=True,
+            )
+
+        assert (control, loss, steps) == ("initial", 1.0, 2)
+        state: OptimizationRunState = attack.last_run_state
+        assert state.control == "initial"
+        assert state.loss == 1.0
+        assert state.candidate_loss == 4.5
+        assert state.best_control == "initial"
+        assert state.best_loss == 1.0
 
     def test_failed_run_clears_stale_last_run_state(self) -> None:
         attack = _bare_multi_prompt_attack([("better", 1.0)])

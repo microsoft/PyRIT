@@ -10,9 +10,9 @@ This is the attack-centric API design where every user interaction targets a mod
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, Field, computed_field, field_serializer
+from pydantic import BaseModel, Field, computed_field, field_serializer, model_validator
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import PaginationInfo
@@ -22,8 +22,10 @@ from pyrit.models import (
     ConversationReference,
     Message,
     MessagePiece,
+    PromptDataType,
     Score,
 )
+from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
 
 
 class TargetInfo(BaseModel):
@@ -357,12 +359,47 @@ class PrependedMessageRequest(BaseModel):
     pieces: list[MessagePieceRequest] = Field(..., description="Message pieces (supports multimodal)", max_length=50)
 
 
+class _AttackAttributionInput(BaseModel):
+    """Shared first-class attribution input with temporary legacy label aliases."""
+
+    operator: str | None = Field(None, max_length=128, description="Operator responsible for the attack")
+    operation: str | None = Field(None, max_length=128, description="Operation associated with the attack")
+    labels: dict[str, str] | None = Field(None, description="Arbitrary user-defined labels for filtering")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_attribution_labels(cls, data: Any) -> Any:
+        """
+        Normalize deprecated label aliases without mutating the caller's dictionaries.
+
+        TODO(PyRIT 1.4): Remove this validator with legacy attribution label aliases.
+
+        Returns:
+            The normalized model input.
+
+        Raises:
+            ValueError: If an alias is not a string or conflicts with a dedicated field.
+        """
+        if not isinstance(data, dict) or not isinstance(data.get("labels"), dict):
+            return data
+        normalized = dict(data)
+        remaining, operator, operation = normalize_legacy_attack_attribution(
+            labels=normalized["labels"],
+            operator=normalized.get("operator"),
+            operation=normalized.get("operation"),
+        )
+        normalized["labels"] = remaining
+        normalized["operator"] = operator
+        normalized["operation"] = operation
+        return normalized
+
+
 # ============================================================================
 # Create Attack
 # ============================================================================
 
 
-class CreateAttackRequest(BaseModel):
+class CreateAttackRequest(_AttackAttributionInput):
     """
     Request to create a new attack.
 
@@ -387,7 +424,6 @@ class CreateAttackRequest(BaseModel):
     prepended_conversation: list[PrependedMessageRequest] | None = Field(
         None, description="Messages to prepend (system prompts, branching context)", max_length=200
     )
-    labels: dict[str, str] | None = Field(None, description="User-defined labels for filtering")
 
 
 class CreateAttackResponse(BaseModel):
@@ -472,6 +508,26 @@ class UpdateMainConversationResponse(BaseModel):
 # ============================================================================
 
 
+class ConverterConfigurationRequest(BaseModel):
+    """Registry-backed converter configuration for one ordered pipeline."""
+
+    converter_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Converter instance IDs to apply in order.",
+    )
+    indexes_to_apply: list[Annotated[int, Field(ge=0)]] | None = Field(
+        None,
+        min_length=1,
+        description="Zero-based message piece indexes to which this pipeline applies. Defaults to all indexes.",
+    )
+    prompt_data_types_to_apply: list[PromptDataType] | None = Field(
+        None,
+        min_length=1,
+        description="Prompt data types to which this pipeline applies. Defaults to all data types.",
+    )
+
+
 class AddMessageRequest(BaseModel):
     """
     Request to add a message to an attack.
@@ -492,18 +548,56 @@ class AddMessageRequest(BaseModel):
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
     converter_ids: list[str] | None = Field(
-        None, description="Converter instance IDs to apply (overrides attack-level)"
+        None,
+        description="Deprecated global request converter pipeline. Use request_converter_configurations instead.",
+    )
+    request_converter_configurations: list[ConverterConfigurationRequest] | None = Field(
+        None,
+        min_length=1,
+        description="Ordered registry-backed converter pipelines to apply to the request.",
+    )
+    response_converter_configurations: list[ConverterConfigurationRequest] | None = Field(
+        None,
+        min_length=1,
+        description="Ordered registry-backed converter pipelines to apply to the response.",
     )
     target_conversation_id: str = Field(
         ...,
         description="The conversation_id to store and send messages under. "
         "Usually the attack's main conversation, but can be a related conversation.",
     )
-    labels: dict[str, str] | None = Field(
-        None,
-        description="Request labels used for attack-level consistency checks. "
-        "When present, the operator must match the attack result's operator.",
-    )
+
+    @model_validator(mode="after")
+    def _validate_converter_configurations(self) -> "AddMessageRequest":
+        """
+        Validate converter configuration combinations and request indexes.
+
+        Returns:
+            AddMessageRequest: The validated request.
+
+        Raises:
+            ValueError: If converter fields conflict, cannot run, or contain an out-of-range request index.
+        """
+        if self.converter_ids and self.request_converter_configurations:
+            raise ValueError("converter_ids and request_converter_configurations cannot both be provided")
+
+        has_converter_configurations = bool(
+            self.converter_ids or self.request_converter_configurations or self.response_converter_configurations
+        )
+        if not self.send and has_converter_configurations:
+            raise ValueError("Converter configurations require send=True")
+
+        piece_count = len(self.pieces)
+        for configuration in self.request_converter_configurations or []:
+            if configuration.indexes_to_apply is None:
+                continue
+            invalid_indexes = [index for index in configuration.indexes_to_apply if index >= piece_count]
+            if invalid_indexes:
+                raise ValueError(
+                    f"Request converter indexes {invalid_indexes} are out of range for {piece_count} message pieces"
+                )
+
+        return self
 
 
 class AddMessageResponse(BaseModel):

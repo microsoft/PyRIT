@@ -128,10 +128,10 @@ async function mockBackendAPIs(page: Page) {
   });
 }
 
-/** Navigate to config, set the mock target as active, then return to chat. */
+/** Navigate to targets, set the mock target as active, then return to chat. */
 async function activateMockTarget(page: Page) {
-  // Click Configuration button in sidebar
-  await page.getByTitle("Configuration").click();
+  // Click Targets button in sidebar
+  await page.getByTitle("Targets").click();
   await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
 
   // Set the mock target active
@@ -853,7 +853,7 @@ test.describe("Target type scenarios", () => {
     });
 
     await page.goto("/");
-    await page.getByTitle("Configuration").click();
+    await page.getByTitle("Targets").click();
     await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
 
     await expect(page.locator("table").getByText("OpenAIChatTarget")).toBeVisible();
@@ -878,7 +878,7 @@ test.describe("Target type scenarios", () => {
     });
 
     await page.goto("/");
-    await page.getByTitle("Configuration").click();
+    await page.getByTitle("Targets").click();
     await expect(page.getByText("dall-e-3")).toBeVisible({ timeout: 10000 });
 
     // Activate the DALL-E target (second row)

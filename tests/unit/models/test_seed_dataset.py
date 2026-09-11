@@ -5,6 +5,7 @@ import uuid
 
 import pytest
 
+from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_dataset import SeedDataset
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
@@ -166,3 +167,8 @@ def test_seed_dataset_group_without_group_id():
     p2.prompt_group_id = None
     groups = SeedDataset.group_seed_prompts_by_prompt_group_id([p1, p2])
     assert len(groups) == 2
+
+
+def test_seed_dataset_group_rejects_unsupported_seed_type():
+    with pytest.raises(ValueError, match="Unsupported seed type: Seed"):
+        SeedDataset.group_seed_prompts_by_prompt_group_id([Seed(value="unsupported")])

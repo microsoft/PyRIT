@@ -5,10 +5,10 @@
 from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
-class AudioTrueFalseScorer(TrueFalseScorer):
+class AudioTrueFalseScorer(MessageTrueFalseScorer):
     """
     A scorer that processes audio files by transcribing them and scoring the transcript.
 
@@ -21,7 +21,7 @@ class AudioTrueFalseScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        text_capable_scorer: TrueFalseScorer,
+        text_capable_scorer: MessageTrueFalseScorer,
         validator: ScorerPromptValidator | None = None,
     ) -> None:
         """

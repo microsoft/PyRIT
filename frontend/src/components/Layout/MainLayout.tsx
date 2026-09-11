@@ -15,6 +15,7 @@ interface MainLayoutProps {
   currentView: ViewName
   onNavigate: (view: ViewName) => void
   onOpenFeedback: () => void
+  canManageConfiguration: boolean
   onStartTour?: () => void
 }
 
@@ -23,6 +24,7 @@ export default function MainLayout({
   currentView,
   onNavigate,
   onOpenFeedback,
+  canManageConfiguration,
   onStartTour,
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
@@ -34,11 +36,17 @@ export default function MainLayout({
     versionApi.getVersion()
       .then(data => {
         setVersion(data.version)
+        document.title = `Co-PyRIT ${data.version}`
         setCommit(data.version.includes('.dev') ? data.commit ?? null : null)
         setDatabaseInfo(data.database_info ?? null)
       })
-      .catch(() => setVersion('Unknown'))
+      .catch(() => {
+        setVersion('Unknown')
+        document.title = 'Co-PyRIT'
+      })
   }, [])
+
+  const title = version === 'Unknown' ? 'Co-PyRIT' : `Co-PyRIT ${version}`
 
   return (
     <div className={styles.root}>
@@ -59,7 +67,7 @@ export default function MainLayout({
             className={styles.logo}
           />
         </Tooltip>
-        <Text className={styles.title}>Co-PyRIT</Text>
+        <Text className={styles.title}>{title}</Text>
         <Text className={styles.subtitle}>Python Risk Identification Tool</Text>
         <div className={styles.spacer} />
         {onStartTour && (
@@ -81,6 +89,7 @@ export default function MainLayout({
             currentView={currentView}
             onNavigate={onNavigate}
             onOpenFeedback={onOpenFeedback}
+            canManageConfiguration={canManageConfiguration}
           />
         </aside>
         <main className={styles.main}>{children}</main>

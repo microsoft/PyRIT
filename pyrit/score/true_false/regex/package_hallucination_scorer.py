@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# Portions Copyright (c) 2023 Leon Derczynski and NVIDIA CORPORATION & AFFILIATES.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
 """
 Package-hallucination scorer, ported from garak's ``packagehallucination`` detector.
@@ -33,7 +36,7 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
 class PackageEcosystem(Enum):
@@ -54,7 +57,7 @@ class PackageEcosystem(Enum):
     RAKU = "raku"
 
 
-class PackageHallucinationScorer(TrueFalseScorer):
+class PackageHallucinationScorer(MessageTrueFalseScorer):
     """
     Scorer that flags references to non-existent (hallucinated) packages in code.
 

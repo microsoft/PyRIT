@@ -56,7 +56,7 @@ function groupAttacksByOperation(attacks: AttackSummary[]): OperationGroup[] {
   const groups = new Map<string, OperationGroup>()
 
   for (const attack of attacks) {
-    const opLabel = attack.labels?.operation
+    const opLabel = attack.operation
     const isUnlabeled = !opLabel
     const key = isUnlabeled ? NO_OPERATION_KEY : opLabel
     const updatedAt = new Date(attack.updated_at).getTime()
@@ -191,7 +191,7 @@ export default function Home({
                 appearance="primary"
                 icon={<ArrowRightRegular />}
                 iconPosition="after"
-                onClick={() => onNavigate('config')}
+                onClick={() => onNavigate('targets')}
                 data-testid="home-configure-target-btn"
               >
                 {activeTarget ? 'Manage targets' : 'Configure a target'}

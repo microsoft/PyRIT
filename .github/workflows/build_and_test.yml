@@ -9,17 +9,18 @@ on:
   push:
     branches:
       - "main"
+      - "releases/v*"
   pull_request:
     branches:
       - "main"
-      - "release/**"
+      - "releases/**"
   merge_group:
   workflow_dispatch:
 
 concurrency:
   # This ensures after each commit the old jobs are cancelled and the new ones
   # run instead.
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -75,8 +76,12 @@ jobs:
         # latent violations in untouched files, including the tests/integration,
         # tests/partner_integration, and tests/end_to_end tiers, are caught before
         # merge instead of only on the post-merge run against main.
+        shell: bash
         run: |
           git fetch origin main
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            git fetch origin "$GITHUB_BASE_REF"
+          fi
           uv run pre-commit run --all-files
 
   # Main job runs only if pre-commit succeeded

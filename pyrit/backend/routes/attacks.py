@@ -9,10 +9,10 @@ This is the attack-centric API design.
 """
 
 import logging
-from collections.abc import Sequence
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import Field
 
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
@@ -32,36 +32,13 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationResponse,
 )
 from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services.attack_service import get_attack_service
+from pyrit.common.deprecation import print_deprecation_message
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/attacks", tags=["attacks"])
-
-
-def _parse_labels(label_params: list[str] | None) -> dict[str, str | Sequence[str]] | None:
-    """
-    Parse 'key:value' label query params into a dict grouping values by key.
-
-    Repeating the same key produces OR-within-key semantics downstream
-    (e.g. ?label=operator:alice&label=operator:bob matches either operator).
-    Different keys are combined with AND.
-
-    Returns:
-        Dict mapping each label key to a list of values, or None if no valid labels.
-    """
-    if not label_params:
-        return None
-    labels: dict[str, list[str]] = {}
-    for param in label_params:
-        if ":" in param:
-            key, value = param.split(":", 1)
-            labels.setdefault(key.strip(), []).append(value.strip())
-    if not labels:
-        return None
-    # Widen value type to match the service signature (dict values are invariant).
-    widened: dict[str, str | Sequence[str]] = dict(labels)
-    return widened
 
 
 @router.get(
@@ -93,8 +70,18 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         description="Filter by converter presence. true = attacks with at least one converter; "
         "false = attacks with no converters. Omit for no filter.",
     ),
+    include_scenario_attacks: bool = Query(
+        True,
+        description="Include attacks created as part of scenario runs. Defaults to true.",
+    ),
     outcome: Literal["undetermined", "success", "failure", "error"] | None = Query(
         None, description="Filter by outcome"
+    ),
+    operator: list[Annotated[str, Field(max_length=128)]] | None = Query(
+        None, description="Filter by dedicated operator values"
+    ),
+    operation: list[Annotated[str, Field(max_length=128)]] | None = Query(
+        None, description="Filter by dedicated operation values"
     ),
     label: list[str] | None = Query(
         None,
@@ -121,8 +108,28 @@ async def list_attacks(  # pyrit-async-suffix-exempt
     Returns:
         AttackListResponse: Paginated list of attack summaries.
     """
-    service = get_attack_service()
-    labels = _parse_labels(label)
+    labels = parse_label_query_params(label) or {}
+    # TODO(PyRIT 1.4): Remove legacy attribution aliases from label query parameters.
+    legacy_operator = labels.pop("operator", None)
+    legacy_operation = labels.pop("operation", None)
+    if legacy_operator is not None:
+        print_deprecation_message(
+            old_item="GET /attacks?label=operator:...",
+            new_item="GET /attacks?operator=...",
+            removed_in="1.4.0",
+        )
+        if operator is not None and operator != legacy_operator:
+            raise HTTPException(status_code=422, detail="operator conflicts with legacy label=operator filter")
+        operator = legacy_operator
+    if legacy_operation is not None:
+        print_deprecation_message(
+            old_item="GET /attacks?label=operation:...",
+            new_item="GET /attacks?operation=...",
+            removed_in="1.4.0",
+        )
+        if operation is not None and operation != legacy_operation:
+            raise HTTPException(status_code=422, detail="operation conflicts with legacy label=operation filter")
+        operation = legacy_operation
     # Strip empty strings from the list-valued query params. The service layer
     # coerces an all-empty ``converter_types`` list to None ("no filter"); the
     # "attacks with no converters" case is expressed through ``has_converters``.
@@ -130,13 +137,17 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         converter_types = [c for c in converter_types if c]
     if attack_types is not None:
         attack_types = [a for a in attack_types if a]
+    service = get_attack_service()
     return await service.list_attacks_async(
         attack_types=attack_types,
         converter_types=converter_types,
         converter_types_match=converter_types_match,
         has_converters=has_converters,
+        include_scenario_attacks=include_scenario_attacks,
         outcome=outcome,
-        labels=labels,
+        operator=operator,
+        operation=operation,
+        labels=labels or None,
         min_turns=min_turns,
         max_turns=max_turns,
         limit=limit,
@@ -449,10 +460,10 @@ async def add_message(  # pyrit-async-suffix-exempt
     If send=False, just stores the message in memory without sending (useful for
     system messages, context injection, or replaying assistant responses).
 
-    Converters can be specified at three levels (in priority order):
-    1. request.converter_ids - per-message converter instances
-    2. request.converters - inline converter definitions
-    3. attack.converter_ids - attack-level defaults
+    Request and response converters can be supplied as ordered, registry-backed
+    configurations. Each configuration can target message piece indexes, prompt
+    data types, or both. The global ``converter_ids`` request pipeline remains
+    available for compatibility but is deprecated.
 
     Returns:
         AddMessageResponse: Updated attack with new message(s).

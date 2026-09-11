@@ -59,9 +59,10 @@ class LegacyStorageIO(StorageIO):
 
 def test_allowed_categories():
     entries = get_args(AllowedCategories)
-    assert len(entries) == 2
+    assert len(entries) == 3
     assert entries[0] == "seed-prompt-entries"
     assert entries[1] == "prompt-memory-entries"
+    assert entries[2] == "scorable-content-entries"
 
 
 def test_data_serializer_factory_text_no_data_throws(sqlite_instance):
@@ -114,7 +115,7 @@ async def test_data_serializer_error_save_data_throws(sqlite_instance):
 async def test_data_serializer_factory_missing_category_raises_value_error():
     expected_error_message = (
         "The 'category' argument is mandatory and must be one of the following: "
-        "('seed-prompt-entries', 'prompt-memory-entries')."
+        "('seed-prompt-entries', 'prompt-memory-entries', 'scorable-content-entries')."
     )
 
     escaped_message = re.escape(expected_error_message)

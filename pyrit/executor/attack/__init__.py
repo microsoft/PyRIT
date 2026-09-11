@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         AttackParameters,
         AttackScoringConfig,
         AttackStrategy,
+        attack_outcome_from_score,
     )
     from pyrit.executor.attack.multi_turn import (
         ChunkedRequestAttack,
@@ -65,6 +66,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AttackParameters": "pyrit.executor.attack.core",
     "AttackScoringConfig": "pyrit.executor.attack.core",
     "AttackStrategy": "pyrit.executor.attack.core",
+    "attack_outcome_from_score": "pyrit.executor.attack.core",
     "BargeInAttack": "pyrit.executor.attack.streaming",
     "BargeInAttackContext": "pyrit.executor.attack.streaming",
     "ChunkedRequestAttack": "pyrit.executor.attack.multi_turn",
