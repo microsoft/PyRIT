@@ -389,7 +389,7 @@ ignore = [
     "DOC502",  # Raised exception is not explicitly raised
     "PERF203",  # try-except-in-loop (intentional per-item error handling)
     "SIM117",  # multiple-with-statements (combining often exceeds line length)
-    "UP042",  # Replacing public str Enums with StrEnum changes their str() behavior
+    "UP042",  # replace-str-enum: StrEnum changes str(member) from "Class.MEMBER" to member.value
 ]
 extend-select = [
     "D204",  # 1 blank line required after class docstring
