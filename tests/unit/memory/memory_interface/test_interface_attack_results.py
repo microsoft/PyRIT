@@ -715,15 +715,20 @@ def test_attack_result_objective_sha256_auto_generation(sqlite_instance: MemoryI
 
 
 def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: MemoryInterface):
-    """Test attack result with related_conversations (PRUNED / ADVERSARIAL)."""
+    """Test attack result with persisted related conversations."""
     pruned_ids = {"pruned_conv_1", "pruned_conv_2"}
     adversarial_ids = {"adv_conv_1", "adv_conv_2", "adv_conv_3"}
+    preparation_ids = {"prep_conv_1", "prep_conv_2"}
 
     related_conversations: set[ConversationReference] = {
         *(ConversationReference(conversation_id=cid, conversation_type=ConversationType.PRUNED) for cid in pruned_ids),
         *(
             ConversationReference(conversation_id=cid, conversation_type=ConversationType.ADVERSARIAL)
             for cid in adversarial_ids
+        ),
+        *(
+            ConversationReference(conversation_id=cid, conversation_type=ConversationType.PREPARATION)
+            for cid in preparation_ids
         ),
     }
 
@@ -742,6 +747,7 @@ def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: 
 
     assert set(entry.pruned_conversation_ids) == pruned_ids  # type: ignore[arg-type]
     assert set(entry.adversarial_chat_conversation_ids) == adversarial_ids  # type: ignore[arg-type]
+    assert set(entry.preparation_conversation_ids) == preparation_ids  # type: ignore[arg-type]
 
     retrieved_result = entry.get_attack_result()
     assert {
@@ -750,6 +756,9 @@ def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: 
     assert {
         r.conversation_id for r in retrieved_result.get_conversations_by_type(ConversationType.ADVERSARIAL)
     } == adversarial_ids
+    assert {
+        r.conversation_id for r in retrieved_result.get_conversations_by_type(ConversationType.PREPARATION)
+    } == preparation_ids
 
 
 def test_attack_result_without_attack_generation_conversation_ids(sqlite_instance: MemoryInterface):
@@ -767,10 +776,12 @@ def test_attack_result_without_attack_generation_conversation_ids(sqlite_instanc
     entry: AttackResultEntry = sqlite_instance._query_entries(AttackResultEntry)[0]
     assert not entry.pruned_conversation_ids
     assert not entry.adversarial_chat_conversation_ids
+    assert not entry.preparation_conversation_ids
 
     retrieved_result = entry.get_attack_result()
     assert not retrieved_result.get_conversations_by_type(ConversationType.PRUNED)
     assert not retrieved_result.get_conversations_by_type(ConversationType.ADVERSARIAL)
+    assert not retrieved_result.get_conversations_by_type(ConversationType.PREPARATION)
 
 
 def test_update_attack_result_adversarial_chat_conversation_ids_round_trip(sqlite_instance: MemoryInterface):

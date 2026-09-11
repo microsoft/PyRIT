@@ -707,6 +707,18 @@ class TestAttackResultEntry:
         entry = AttackResultEntry(entry=result)
         assert entry.adversarial_chat_conversation_ids == ["adv1"]
 
+    def test_init_with_preparation_conversations(self):
+        refs = {
+            ConversationReference(
+                conversation_id="prep1",
+                conversation_type=ConversationType.PREPARATION,
+                description="preparation",
+            )
+        }
+        result = _make_attack_result(related_conversations=refs)
+        entry = AttackResultEntry(entry=result)
+        assert entry.preparation_conversation_ids == ["prep1"]
+
     def test_get_id_as_uuid_valid(self):
         obj = MagicMock()
         obj.id = str(uuid.uuid4())

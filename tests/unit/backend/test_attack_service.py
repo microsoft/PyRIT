@@ -2438,6 +2438,13 @@ class TestGetConversations:
                 description="Scoring conversation",
             )
         )
+        ar.related_conversations.add(
+            ConversationReference(
+                conversation_id="preparation-1",
+                conversation_type=ConversationType.PREPARATION,
+                description="Preparation conversation",
+            )
+        )
 
         mock_memory.get_attack_results.return_value = [ar]
 
@@ -2448,6 +2455,7 @@ class TestGetConversations:
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t1),
             "branch-1": ConversationStats(message_count=2, last_message_preview="test", created_at=t2),
             "score-1": ConversationStats(message_count=0),
+            "preparation-1": ConversationStats(message_count=2),
         }
 
         result = await attack_service.get_conversations_async(attack_result_id="attack-1")

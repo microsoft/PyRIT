@@ -1567,6 +1567,7 @@ class AttackResultEntry(Base):
         targeted_harm_categories (list[str]): Harm categories this attack targeted.
         pruned_conversation_ids (list[str]): List of conversation IDs that were pruned from the attack.
         adversarial_chat_conversation_ids (list[str]): List of conversation IDs used for adversarial chat.
+        preparation_conversation_ids (list[str]): List of conversations used to prepare the attack.
         timestamp (DateTime): The timestamp of the attack result entry.
         last_response (PromptMemoryEntry): Relationship to the last response prompt memory entry.
         last_score (ScoreEntry): Relationship to the last score entry.
@@ -1636,6 +1637,7 @@ class AttackResultEntry(Base):
     targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     adversarial_chat_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    preparation_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     timestamp = mapped_column(UTCDateTime, nullable=False)
     # Version of PyRIT used when this attack result was created
     # Nullable for backwards compatibility with existing databases
@@ -1730,6 +1732,10 @@ class AttackResultEntry(Base):
             ref.conversation_id for ref in entry.get_conversations_by_type(ConversationType.ADVERSARIAL)
         ] or None
 
+        self.preparation_conversation_ids = [
+            ref.conversation_id for ref in entry.get_conversations_by_type(ConversationType.PREPARATION)
+        ] or None
+
         self.timestamp = entry.timestamp or datetime.now(tz=timezone.utc)
         self.pyrit_version = pyrit.__version__
 
@@ -1820,6 +1826,15 @@ class AttackResultEntry(Base):
                     conversation_id=cid,
                     conversation_type=ConversationType.ADVERSARIAL,
                     description="adversarial chat conversation",
+                )
+            )
+
+        for cid in self.preparation_conversation_ids or []:
+            related_conversations.add(
+                ConversationReference(
+                    conversation_id=cid,
+                    conversation_type=ConversationType.PREPARATION,
+                    description="preparation conversation",
                 )
             )
 

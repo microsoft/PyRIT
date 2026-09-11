@@ -11,6 +11,7 @@ against a simulated (compliant) target before executing the actual attack.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
@@ -24,7 +25,13 @@ from pyrit.executor.attack.core.attack_config import (
 from pyrit.executor.attack.multi_turn.red_teaming import RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
-from pyrit.models import Message, SeedPrompt, SeedSimulatedConversation
+from pyrit.models import (
+    ConversationReference,
+    ConversationType,
+    Message,
+    SeedPrompt,
+    SeedSimulatedConversation,
+)
 from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
@@ -34,6 +41,14 @@ if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _SimulatedConversationResult:
+    """Generated prompts and the source conversations that produced them."""
+
+    seed_prompts: list[SeedPrompt]
+    related_conversations: frozenset[ConversationReference]
 
 
 async def generate_simulated_conversation_async(
@@ -91,6 +106,43 @@ async def generate_simulated_conversation_async(
     Raises:
         ValueError: If num_turns is not a positive integer.
     """
+    result = await _generate_simulated_conversation_result_async(
+        objective=objective,
+        adversarial_chat=adversarial_chat,
+        objective_scorer=objective_scorer,
+        num_turns=num_turns,
+        starting_sequence=starting_sequence,
+        adversarial_chat_system_prompt_path=adversarial_chat_system_prompt_path,
+        simulated_target_system_prompt_path=simulated_target_system_prompt_path,
+        next_message_system_prompt_path=next_message_system_prompt_path,
+        attack_converter_config=attack_converter_config,
+        memory_labels=memory_labels,
+    )
+    return result.seed_prompts
+
+
+async def _generate_simulated_conversation_result_async(
+    *,
+    objective: str,
+    adversarial_chat: PromptTarget,
+    objective_scorer: TrueFalseScorer,
+    num_turns: int = 3,
+    starting_sequence: int = 0,
+    adversarial_chat_system_prompt_path: str | Path,
+    simulated_target_system_prompt_path: str | Path | None = None,
+    next_message_system_prompt_path: str | Path | None = None,
+    attack_converter_config: AttackConverterConfig | None = None,
+    memory_labels: dict[str, str] | None = None,
+) -> _SimulatedConversationResult:
+    """
+    Generate setup prompts and retain their conversation lineage.
+
+    Returns:
+        The generated prompts and their source conversation references.
+
+    Raises:
+        ValueError: If ``num_turns`` is not positive.
+    """
     # Use the same LLM for both adversarial chat and simulated target
     # They get different system prompts to play different roles
     simulated_target = adversarial_chat
@@ -143,6 +195,7 @@ async def generate_simulated_conversation_async(
         objective=objective,
         prepended_conversation=prepended_conversation if prepended_conversation else None,
         memory_labels=memory_labels,
+        persist_attack_result=False,
     )
 
     # Extract the conversation from memory and filter for prepended_conversation use
@@ -173,7 +226,18 @@ async def generate_simulated_conversation_async(
         f"(starting_sequence={starting_sequence}, outcome: {result.outcome.name})"
     )
 
-    return seed_prompts
+    related_conversations = {
+        ConversationReference(
+            conversation_id=result.conversation_id,
+            conversation_type=ConversationType.PREPARATION,
+            description="simulated preparation conversation",
+        ),
+        *result.related_conversations,
+    }
+    return _SimulatedConversationResult(
+        seed_prompts=seed_prompts,
+        related_conversations=frozenset(related_conversations),
+    )
 
 
 async def _generate_next_message_async(

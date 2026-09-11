@@ -7,7 +7,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from pyrit.models import AttackSeedGroup, Message, SeedGroup
+from pyrit.models import AttackSeedGroup, ConversationReference, Message, SeedGroup
 
 if TYPE_CHECKING:
     from pyrit.models import SeedUnion
@@ -45,6 +45,9 @@ class AttackParameters:
     # Harm categories targeted by this attack, derived from the seed group's
     # seeds. Stamped onto the produced AttackResult.
     targeted_harm_categories: list[str] = field(default_factory=list)
+
+    # Conversations used to prepare this attack before its context was created.
+    source_conversations: frozenset[ConversationReference] = field(default_factory=frozenset)
 
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
@@ -112,7 +115,7 @@ class AttackParameters:
         """
         # Import here to avoid circular imports
         from pyrit.executor.attack.multi_turn.simulated_conversation import (
-            generate_simulated_conversation_async,
+            _generate_simulated_conversation_result_async,
         )
 
         if not isinstance(seed_group, AttackSeedGroup):
@@ -146,6 +149,9 @@ class AttackParameters:
         if "targeted_harm_categories" in valid_fields:
             params["targeted_harm_categories"] = list(seed_group.harm_categories)
 
+        if "source_conversations" in valid_fields:
+            params["source_conversations"] = frozenset()
+
         # Determine which group to use for extracting prepended_conversation/next_message
         extraction_group: SeedGroup = seed_group
 
@@ -159,8 +165,7 @@ class AttackParameters:
             if objective_scorer is None:
                 raise ValueError("objective_scorer is required when seed_group has a simulated conversation config")
 
-            # Generate the simulated conversation - returns list[SeedPrompt]
-            simulated_prompts = await generate_simulated_conversation_async(
+            simulated_result = await _generate_simulated_conversation_result_async(
                 objective=seed_group.objective.value,
                 adversarial_chat=adversarial_chat,
                 objective_scorer=objective_scorer,
@@ -170,6 +175,9 @@ class AttackParameters:
                 simulated_target_system_prompt_path=simulated_conversation_config.simulated_target_system_prompt_path,
                 next_message_system_prompt_path=simulated_conversation_config.next_message_system_prompt_path,
             )
+            simulated_prompts = simulated_result.seed_prompts
+            if "source_conversations" in valid_fields:
+                params["source_conversations"] = frozenset(simulated_result.related_conversations)
 
             # Merge simulated prompts with existing static prompts from the seed_group
             all_prompts: list[SeedUnion] = [*seed_group.prompts, *simulated_prompts]

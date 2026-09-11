@@ -1132,6 +1132,27 @@ describe("App", () => {
     );
   });
 
+  it("does not activate a preparation conversation from a deep link", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: ["conv-preparation"],
+      related_conversations: [
+        {
+          conversation_id: "conv-preparation",
+          conversation_type: "preparation",
+          description: "Simulated preparation",
+        },
+      ],
+    });
+    renderApp("/attacks/ar-1/conversations/conv-preparation");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
+    );
+  });
+
   it("retains validated provenance while canonicalizing an unknown conversation route", async () => {
     const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
     mockGetAttack.mockResolvedValue({
