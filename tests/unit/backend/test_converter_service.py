@@ -161,7 +161,7 @@ class TestListConverterCatalog:
         caesar_param = next(p for p in caesar_entry.parameters if p.name == "caesar_offset")
         assert caesar_param.type_name == "int"
 
-    async def test_catalog_exposes_video_input_as_path_without_output_path(self) -> None:
+    async def test_catalog_exposes_video_input_without_output_path(self) -> None:
         """The video converter accepts an uploaded input but no caller-controlled destination."""
         service = ConverterService()
 
@@ -169,7 +169,7 @@ class TestListConverterCatalog:
 
         video_entry = next(item for item in result.items if item.converter_type == "AddImageVideoConverter")
         video_path_param = next(parameter for parameter in video_entry.parameters if parameter.name == "video_path")
-        assert video_path_param.type_name == "Path"
+        assert video_path_param.type_name == "str"
         assert all(parameter.name != "output_path" for parameter in video_entry.parameters)
 
     async def test_catalog_excludes_non_coercible_params(self) -> None:

@@ -6,6 +6,7 @@ import contextlib
 import logging
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
 
@@ -39,7 +40,7 @@ class AddImageVideoConverter(Converter):
     def __init__(
         self,
         *,
-        video_path: Path,
+        video_path: str,
         img_position: tuple[int, int] = (10, 10),
         img_resize_size: tuple[int, int] = (500, 500),
     ) -> None:
@@ -47,10 +48,16 @@ class AddImageVideoConverter(Converter):
         Initialize the converter with the video path and image properties.
 
         Args:
-            video_path (Path): File path of video to add image to.
+            video_path (str): File path or Azure Blob URL of video to add image to.
             img_position (tuple): Position to place image in video. Defaults to (10, 10).
             img_resize_size (tuple): Size to resize image to. Defaults to (500, 500).
+
+        Raises:
+            ValueError: If ``video_path`` is empty.
         """
+        if not video_path:
+            raise ValueError("Please provide valid video path")
+
         self._img_position = img_position
         self._img_resize_size = img_resize_size
         self._video_path = video_path
@@ -97,7 +104,7 @@ class AddImageVideoConverter(Converter):
             category="prompt-memory-entries", data_type="image_path", value=image_path
         )
         input_video_data = data_serializer_factory(
-            category="prompt-memory-entries", data_type="video_path", value=str(self._video_path)
+            category="prompt-memory-entries", data_type="video_path", value=self._video_path
         )
 
         # Open the video to ensure it exists
@@ -130,7 +137,7 @@ class AddImageVideoConverter(Converter):
         """
         import cv2
 
-        file_extension = self._video_path.suffix.removeprefix(".").lower()
+        file_extension = self._get_video_extension()
         if file_extension not in video_encoding_map:
             raise ValueError(f"Unsupported video format: {file_extension}")
 
@@ -223,10 +230,13 @@ class AddImageVideoConverter(Converter):
         output_video_serializer = data_serializer_factory(
             category="prompt-memory-entries",
             data_type="video_path",
-            extension=self._video_path.suffix.removeprefix("."),
+            extension=self._get_video_extension(),
         )
         updated_video = await self._add_image_to_video_async(image_path=prompt)
         await output_video_serializer.save_data_async(data=updated_video)
         logger.info(f"Video saved as {output_video_serializer.value}")
 
         return ConverterResult(output_text=str(output_video_serializer.value), output_type="video_path")
+
+    def _get_video_extension(self) -> str:
+        return Path(urlparse(self._video_path).path).suffix.removeprefix(".").lower()
