@@ -15,10 +15,16 @@ from fastapi.testclient import TestClient
 
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.main import app
+from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
-from pyrit.backend.routes.scenarios import get_scenario_run_progress
+from pyrit.backend.routes.scenarios import get_scenario_run_progress, list_scenario_runs
 from pyrit.models import (
+    SCENARIO_RUN_PLAN_METADATA_KEY,
+    AttackOutcome,
+    AttackResult,
+    ScenarioProgressCounts,
     ScenarioProgressHeader,
+    ScenarioProgressSummary,
     ScenarioRunPlan,
     ScenarioRunProgress,
     ScenarioRunState,
@@ -170,7 +176,11 @@ class TestListScenarioRunsRoute:
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
             mock_service.list_runs.side_effect = lambda **_: (
-                route_thread.append(get_ident()) or ScenarioRunListResponse(items=[])
+                route_thread.append(get_ident())
+                or ScenarioRunListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=100, has_more=False),
+                )
             )
             mock_get.return_value = mock_service
 
@@ -186,6 +196,11 @@ class TestListScenarioRunsRoute:
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
+    async def test_list_runs_requires_keyword_arguments(self) -> None:
+        """Test that route parameters cannot be passed positionally."""
+        with pytest.raises(TypeError, match="positional"):
+            await list_scenario_runs(None, None, None, 100, None)
+
     def test_list_runs_returns_multiple_runs(self, client: TestClient) -> None:
         """Test that list runs returns all tracked runs."""
         runs = [
@@ -197,13 +212,43 @@ class TestListScenarioRunsRoute:
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.list_runs.return_value = ScenarioRunListResponse(items=runs)
+            mock_service.list_runs.return_value = ScenarioRunListResponse(
+                items=runs,
+                pagination=PaginationInfo(limit=100, has_more=False),
+            )
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs")
 
         assert response.status_code == status.HTTP_200_OK
         assert len(response.json()["items"]) == 2
+
+    def test_list_runs_passes_repeated_filters_and_labels(self, client: TestClient) -> None:
+        """Test that history query parameters preserve repeated values."""
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
+            mock_service = MagicMock()
+            mock_service.list_runs.return_value = ScenarioRunListResponse(
+                items=[],
+                pagination=PaginationInfo(limit=10, has_more=False),
+            )
+            mock_get.return_value = mock_service
+
+            response = client.get(
+                "/api/scenarios/runs"
+                "?scenario_names=first&scenario_names=second"
+                "&run_statuses=IN_PROGRESS&run_statuses=FAILED"
+                "&label=operator%3Aalice&label=operator%3Abob&label=team%3Asafety"
+                "&limit=10&cursor=opaque"
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_service.list_runs.assert_called_once_with(
+            scenario_names=["first", "second"],
+            statuses=[ScenarioRunState.IN_PROGRESS, ScenarioRunState.FAILED],
+            labels={"operator": ["alice", "bob"], "team": ["safety"]},
+            limit=10,
+            cursor="opaque",
+        )
 
 
 class TestGetScenarioRunRoute:
@@ -236,6 +281,40 @@ class TestGetScenarioRunRoute:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_get_run_with_forward_version_plan_returns_legacy_detail(self, client: TestClient) -> None:
+        attack_result = AttackResult(
+            conversation_id="conversation-1",
+            objective="objective",
+            outcome=AttackOutcome.SUCCESS,
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            attribution_data={"parent_collection": "legacy attack"},
+        )
+        db_result = make_scenario_result(
+            scenario_name="foundry.red_team_agent",
+            attack_results={"legacy attack": [attack_result]},
+            metadata={
+                SCENARIO_RUN_PLAN_METADATA_KEY: {
+                    "version": 2,
+                    "atomic_groups": [],
+                    "seed_groups": [],
+                }
+            },
+        )
+        memory = MagicMock()
+        memory.get_scenario_results.return_value = [db_result]
+        memory.get_attack_results.return_value = []
+        with patch.object(_svc_mod.CentralMemory, "get_memory_instance", return_value=memory):
+            service = _svc_mod.ScenarioRunService()
+
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=service):
+            response = client.get(f"/api/scenarios/runs/{db_result.id}")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["planned_total_available"] is False
+        assert response.json()["total_attacks"] == 1
+        assert response.json()["completed_attacks"] == 1
+        assert response.json()["techniques_used"] == ["legacy attack"]
+
     def test_progress_invalid_cursor_returns_400(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
@@ -263,7 +342,15 @@ class TestGetScenarioRunRoute:
                 atomic_groups=[],
                 seed_groups=[],
             ),
-            active_atomic_group_ids=["active-group"],
+            summary=ScenarioProgressSummary(
+                overall=ScenarioProgressCounts(
+                    completed=0,
+                    planned=0,
+                    succeeded=0,
+                    errors=0,
+                    retries=0,
+                )
+            ),
             plan_complete=True,
         )
         snapshot_thread: list[int] = []
@@ -282,7 +369,6 @@ class TestGetScenarioRunRoute:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["plan"]["scenario_registry_name"] == "test.scenario"
-        assert response.json()["active_atomic_group_ids"] == ["active-group"]
         mock_service.get_run_progress_from_storage.assert_called_once_with(
             scenario_result_id="test-run-id",
             since=None,
@@ -305,6 +391,15 @@ class TestGetScenarioRunRoute:
                 scenario_registry_name="test.scenario",
                 atomic_groups=[],
                 seed_groups=[],
+            ),
+            summary=ScenarioProgressSummary(
+                overall=ScenarioProgressCounts(
+                    completed=0,
+                    planned=0,
+                    succeeded=0,
+                    errors=0,
+                    retries=0,
+                )
             ),
             plan_complete=True,
         )

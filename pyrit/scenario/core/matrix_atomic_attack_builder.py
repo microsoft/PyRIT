@@ -428,6 +428,7 @@ class MatrixAtomicAttackBuilder:
                             objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
                             memory_labels=self._memory_labels,
                             display_group=display_group_fn(combo),
+                            technique_name=technique_name,
                         )
                     )
 

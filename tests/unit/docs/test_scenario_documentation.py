@@ -9,9 +9,11 @@ Mirrors ``test_converter_documentation.py``: every scenario discovered by the
 package. Scenarios are keyed by a dotted ``<package>.<module>`` registry name
 (e.g. ``garak.encoding``), and each package has a per-package scanner notebook
 under ``doc/scanner/<package>.py``. This keeps the docs in sync when a new
-scenario is added.
+scenario is added. Each notebook must also contain saved output for every
+documented scenario.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -23,19 +25,11 @@ from pyrit.registry import ScenarioRegistry
 _WORKSPACE_ROOT = Path(__file__).parent.parent.parent.parent
 _SCANNER_DOC_PATH = _WORKSPACE_ROOT / "doc" / "scanner"
 
-# Packages whose scenarios are documented outside doc/scanner. The adaptive
-# scenarios are covered in the scenarios programming guide rather than a
-# per-package scanner notebook. Values are directories; every ``*.py`` notebook
-# in the directory is searched.
-_SPECIAL_PACKAGE_DOC_DIRS: dict[str, Path] = {
-    "adaptive": _WORKSPACE_ROOT / "doc" / "code" / "scenarios",
-}
 
-
-def get_all_scenarios() -> list[tuple[str, str, str]]:
+def _get_all_scenarios() -> list[tuple[str, str, str]]:
     """Return ``(registry_name, package, class_name)`` for every registered scenario."""
     registry = ScenarioRegistry.get_registry_singleton()
-    scenarios = []
+    scenarios: list[tuple[str, str, str]] = []
     for registry_name in registry.get_class_names():
         package = registry_name.split(".")[0]
         class_name = registry.get_class(registry_name).__name__
@@ -43,22 +37,22 @@ def get_all_scenarios() -> list[tuple[str, str, str]]:
     return scenarios
 
 
-def _doc_files_for_package(package: str) -> list[Path]:
-    """Return the doc notebook(s) expected to document a package's scenarios."""
-    if package in _SPECIAL_PACKAGE_DOC_DIRS:
-        return sorted(_SPECIAL_PACKAGE_DOC_DIRS[package].glob("*.py"))
-    return [_SCANNER_DOC_PATH / f"{package}.py"]
+def _source_text(cell: dict[str, object]) -> str:
+    """Return a notebook cell's source as text."""
+    source = cell.get("source", "")
+    return "".join(source) if isinstance(source, list) else str(source)
 
 
-def test_all_scenarios_are_documented():
+def test_all_scenarios_are_documented() -> None:
     """Test that every scenario class is mentioned in its package documentation."""
-    undocumented = []
-    for registry_name, package, class_name in get_all_scenarios():
-        doc_files = _doc_files_for_package(package)
-        text = "\n".join(f.read_text(encoding="utf-8") for f in doc_files if f.exists())
-        if not re.search(rf"\b{re.escape(class_name)}\b", text):
-            expected = ", ".join(str(f.relative_to(_WORKSPACE_ROOT)) for f in doc_files)
-            undocumented.append(f"{registry_name} (class {class_name}) — expected in: {expected}")
+    undocumented: list[str] = []
+    for registry_name, package, class_name in _get_all_scenarios():
+        doc_file = _SCANNER_DOC_PATH / f"{package}.py"
+        text = doc_file.read_text(encoding="utf-8") if doc_file.exists() else ""
+        has_class_name = re.search(rf"\b{re.escape(class_name)}\b", text)
+        if not has_class_name or registry_name not in text:
+            expected = doc_file.relative_to(_WORKSPACE_ROOT)
+            undocumented.append(f"{registry_name} (class {class_name}) - expected in: {expected}")
 
     if undocumented:
         pytest.fail(
@@ -68,9 +62,33 @@ def test_all_scenarios_are_documented():
         )
 
 
-if __name__ == "__main__":
-    for name, pkg, cls in get_all_scenarios():
-        files = _doc_files_for_package(pkg)
-        joined = "\n".join(f.read_text(encoding="utf-8") for f in files if f.exists())
-        status = "OK" if re.search(rf"\b{re.escape(cls)}\b", joined) else "MISSING"
-        print(f"[{status}] {name} ({cls})")
+def test_all_scenario_notebooks_have_saved_output() -> None:
+    """Test that each scenario notebook contains one successful saved result per scenario."""
+    scenarios_by_package: dict[str, list[str]] = {}
+    for registry_name, package, _ in _get_all_scenarios():
+        scenarios_by_package.setdefault(package, []).append(registry_name)
+
+    failures: list[str] = []
+    for package, registry_names in scenarios_by_package.items():
+        notebook_path = _SCANNER_DOC_PATH / f"{package}.ipynb"
+        if not notebook_path.exists():
+            failures.append(f"{package}: missing {notebook_path.relative_to(_WORKSPACE_ROOT)}")
+            continue
+
+        notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+        code_cells = [cell for cell in notebook["cells"] if cell.get("cell_type") == "code"]
+        result_cells = [cell for cell in code_cells if "output_scenario_async(" in _source_text(cell)]
+        error_outputs = [
+            output for cell in code_cells for output in cell.get("outputs", []) if output.get("output_type") == "error"
+        ]
+        cells_without_output = [cell for cell in result_cells if not cell.get("outputs")]
+
+        if len(result_cells) != len(registry_names):
+            failures.append(f"{package}: expected {len(registry_names)} result cells, found {len(result_cells)}")
+        if cells_without_output:
+            failures.append(f"{package}: {len(cells_without_output)} result cells have no saved output")
+        if error_outputs:
+            failures.append(f"{package}: {len(error_outputs)} saved error outputs found")
+
+    if failures:
+        pytest.fail("Scenario notebook output checks failed:\n" + "\n".join(failures))

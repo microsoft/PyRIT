@@ -9,25 +9,27 @@ pool:
   vmImage: "ubuntu-latest"
 
 steps:
-  # Component Governance does not support pyproject.toml yet.
-  # For that reason, use toml-to-requirements to export the
-  # dependencies into a requirements.txt file.
-  - script: pip install --upgrade setuptools pip
-    name: UpgradePip
-
-  - script: pip install toml-to-requirements
-
-  - script: toml-to-req --toml-file pyproject.toml
-
   - task: ComponentGovernanceComponentDetection@0
-    env:
-      PIP_INDEX_URL: https://pypi.python.org/simple
+    displayName: Detect components
 
   - task: notice@0
     displayName: Generate NOTICE file
     inputs:
       outputfile: $(System.DefaultWorkingDirectory)/obj/NOTICE
       outputformat: text
+      additionaldata: $(System.DefaultWorkingDirectory)/THIRD_PARTY_NOTICES.txt
 
   - publish: $(System.DefaultWorkingDirectory)/obj/NOTICE
     artifact: NOTICE
+    displayName: Publish generated NOTICE
+
+  - bash: |
+      checked_in="$(System.DefaultWorkingDirectory)/NOTICE.txt"
+      generated="$(System.DefaultWorkingDirectory)/obj/NOTICE"
+
+      if diff --brief --strip-trailing-cr "$checked_in" "$generated" > /dev/null; then
+        echo "NOTICE.txt matches the generated artifact."
+      else
+        echo "NOTICE.txt differs from the generated artifact. The updated file is available in the NOTICE artifact."
+      fi
+    displayName: Compare NOTICE file

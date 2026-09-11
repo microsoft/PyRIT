@@ -5,7 +5,6 @@ import asyncio
 import logging
 from dataclasses import fields
 from pathlib import Path
-from typing import cast
 
 from typing_extensions import override
 
@@ -73,7 +72,9 @@ class _JailbreakTemplatesDataset(SeedDatasetProvider):
         if not seeds:
             raise ValueError(f"No jailbreak templates found in {self._templates_path}")
         logger.info(f"Loaded {len(seeds)} jailbreak templates from {self._templates_path}")
-        return SeedDataset(seeds=cast("list[SeedUnion]", seeds), dataset_name=self.dataset_name)
+        dataset_seeds: list[SeedUnion] = []
+        dataset_seeds.extend(seeds)
+        return SeedDataset(seeds=dataset_seeds, dataset_name=self.dataset_name)
 
     def _load_templates(self) -> list[SeedPrompt]:
         """

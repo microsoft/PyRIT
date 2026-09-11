@@ -12,7 +12,10 @@ from typing import ClassVar
 
 import pytest
 
-from pyrit.models.identifiers import ComponentIdentifier, compute_eval_hash
+from pyrit.models.identifiers import (
+    ComponentIdentifier,
+    compute_eval_hash,
+)
 from pyrit.models.identifiers.evaluation_identifier import ChildEvalRule, EvaluationIdentifier, _build_eval_dict
 
 # ---------------------------------------------------------------------------

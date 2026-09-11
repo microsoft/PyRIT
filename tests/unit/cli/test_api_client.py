@@ -6,7 +6,7 @@ Unit tests for pyrit.cli.api_client.PyRITApiClient.
 """
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
@@ -504,6 +504,33 @@ async def test_get_conversation_messages_async(client, mock_httpx_client):
     result = await client.get_conversation_messages_async(attack_result_id="a1", conversation_id="c1")
     assert result == payload
     mock_httpx_client.get.assert_awaited_once_with("/api/attacks/a1/messages", params={"conversation_id": "c1"})
+
+
+async def test_list_scenario_runs_async_follows_bounded_pages(client, mock_httpx_client):
+    first_page = [_run_summary_payload() for _ in range(100)]
+    second_page = [_run_summary_payload()]
+    mock_httpx_client.get.side_effect = [
+        _make_response(
+            json_data={
+                "items": first_page,
+                "pagination": {"limit": 100, "has_more": True, "next_cursor": "next-page"},
+            }
+        ),
+        _make_response(
+            json_data={
+                "items": second_page,
+                "pagination": {"limit": 1, "has_more": False},
+            }
+        ),
+    ]
+
+    result = await client.list_scenario_runs_async(limit=101)
+
+    assert len(result) == 101
+    assert mock_httpx_client.get.await_args_list == [
+        call("/api/scenarios/runs", params={"limit": 100}),
+        call("/api/scenarios/runs", params={"limit": 1, "cursor": "next-page"}),
+    ]
 
 
 # ---------------------------------------------------------------------------

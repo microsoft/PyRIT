@@ -45,6 +45,7 @@ from pyrit.models import (
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
+    ScenarioRunPlanSeedPrompt,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunState,
@@ -56,7 +57,7 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, read_only_dataset_resolution
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -788,12 +789,11 @@ class Scenario(ABC):
             tuple: Selected groups keyed by population and their catalog summaries.
         """
         configured_dataset = self._dataset_config
-        with read_only_dataset_resolution():
-            self._dataset_config = configured_dataset
-            full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
-            self._estimate_full_groups_by_dataset = full_groups
-            self._dataset_config = configured_dataset
-            selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
+        self._dataset_config = configured_dataset
+        full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+        self._estimate_full_groups_by_dataset = full_groups
+        self._dataset_config = configured_dataset
+        selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
 
         configured_caps = self._dataset_config.size_caps_by_dataset()
         datasets: list[ScenarioDatasetSummary] = []
@@ -802,7 +802,7 @@ class Scenario(ABC):
             selected_count = len(selected_groups.get(name, []))
             selection_note = None
             if selected_count != logical_count:
-                selection_note = f"The default selection uses {selected_count} of {logical_count} logical seed groups."
+                selection_note = f"The default selection uses {selected_count} of {logical_count} available objectives."
             datasets.append(
                 ScenarioDatasetSummary(
                     name=name,
@@ -964,7 +964,7 @@ class Scenario(ABC):
                 self._apply_persisted_objectives(stored_result=stored_result)
                 reconstructed_plan = self._build_run_plan()
                 metadata = dict(stored_result.metadata)
-                metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = reconstructed_plan.model_dump(mode="json")
+                metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = reconstructed_plan.model_dump(mode="json", exclude_none=True)
                 self._memory.update_scenario_metadata(
                     scenario_result_id=self._scenario_result_id,
                     metadata=metadata,
@@ -1020,7 +1020,7 @@ class Scenario(ABC):
                         seen.add(sha)
                         hashes.append(sha)
             metadata["objective_hashes"] = hashes
-        metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = self._build_run_plan().model_dump(mode="json")
+        metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = self._build_run_plan().model_dump(mode="json", exclude_none=True)
         return metadata
 
     def _build_run_plan(self) -> ScenarioRunPlan:
@@ -1033,6 +1033,13 @@ class Scenario(ABC):
         seed_groups: dict[str, ScenarioRunPlanSeedGroup] = {}
         atomic_groups: list[ScenarioRunPlanAtomicGroup] = []
         for atomic_attack in self._atomic_attacks:
+            technique_name = atomic_attack.technique_name
+            if not isinstance(technique_name, str):
+                technique_name = atomic_attack.display_group
+            technique = next(
+                (candidate for candidate in self._technique_class if candidate.value == technique_name),
+                None,
+            )
             seed_group_ids: list[str] = []
             seen_seed_group_ids: set[str] = set()
             for seed_group in atomic_attack.seed_groups:
@@ -1047,6 +1054,16 @@ class Scenario(ABC):
                         id=seed_group_id,
                         objective_sha256=to_sha256(seed_group.objective.value),
                         objective=seed_group.objective.value,
+                        prompts=[
+                            ScenarioRunPlanSeedPrompt(
+                                value=prompt.value,
+                                data_type=prompt.data_type,
+                                role=prompt.role,
+                                sequence=prompt.sequence,
+                                parameters=list(prompt.parameters or []),
+                            )
+                            for prompt in seed_group.prompts
+                        ],
                     ),
                 )
             technique_eval_hash = str(atomic_attack.technique_eval_hash)
@@ -1056,8 +1073,11 @@ class Scenario(ABC):
                     id=atomic_group_id,
                     atomic_attack_name=atomic_attack.atomic_attack_name,
                     display_group=atomic_attack.display_group,
+                    technique_name=technique_name if technique else None,
                     technique_eval_hash=technique_eval_hash,
                     seed_group_ids=seed_group_ids,
+                    description=technique.description if technique else None,
+                    tags=sorted(technique.tags) if technique else [],
                 )
             )
         return ScenarioRunPlan(
