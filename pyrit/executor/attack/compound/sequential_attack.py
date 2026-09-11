@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -270,7 +270,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             conversation_id="",
             objective=context.objective,
             attack_result_id=str(uuid.uuid4()),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             last_response=None,
             last_score=None,
             executed_turns=sum(r.executed_turns for r in results),

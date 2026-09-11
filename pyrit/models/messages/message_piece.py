@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import uuid4
 
@@ -56,7 +56,7 @@ class MessagePiece(BaseModel):
     role: ChatMessageRole
     conversation_id: str | None = None
     sequence: int = -1
-    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     original_value: str
     original_value_data_type: PromptDataType = "text"
     original_value_sha256: str | None = None
@@ -252,10 +252,10 @@ class MessagePiece(BaseModel):
 
 def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece]:
     """
-    Group by ``conversation_id``, ordering by earliest timestamp then ``sequence``.
+    Group by ``conversation_id``, then order by sequence and piece timestamp.
 
     Conversations are ordered by their earliest piece's timestamp; pieces
-    within a conversation are ordered by ``sequence``.
+    within a conversation are ordered by ``sequence`` and then by creation time.
 
     Args:
         message_pieces: The pieces to sort. Not mutated.
@@ -269,5 +269,5 @@ def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece
     }
     return sorted(
         message_pieces,
-        key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id or "", x.sequence),
+        key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id or "", x.sequence, x.timestamp),
     )

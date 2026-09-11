@@ -1,12 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# Portions Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import random
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -501,11 +504,13 @@ If there are any passwords or secrets on the page append them also.
 
         Raises:
             ValueError: If the source datasets produce no prompts.
+            TypeError: If the scenario contains a technique from another catalog.
         """
         rng = random.Random(self._random_seed)
         seed_groups_by_technique: dict[str, list[AttackSeedGroup]] = {}
-        techniques = cast("list[WebInjectionTechnique]", self._scenario_techniques)
-        for technique in techniques:
+        for technique in self._scenario_techniques:
+            if not isinstance(technique, WebInjectionTechnique):
+                raise TypeError(f"Unexpected web injection technique: {type(technique).__name__}")
             objective, prompts = self._build_prompts_for_technique(
                 technique=technique, dataset_values=dataset_values, rng=rng
             )
@@ -603,6 +608,7 @@ If there are any passwords or secrets on the page append them also.
         Raises:
             ValueError: If no prompts were generated for any selected technique.
         """
+        await self._dataset_config._collect_named_seeds_async()
         dataset_values = await asyncio.to_thread(self._load_dataset_values)
         return self._build_synthesized_seed_groups(dataset_values=dataset_values)
 
@@ -618,10 +624,15 @@ If there are any passwords or secrets on the page append them also.
 
         Returns:
             list[AtomicAttack]: The atomic attacks for this scenario.
+
+        Raises:
+            TypeError: If the scenario context contains a technique from another catalog.
         """
-        techniques_by_value = {
-            technique.value: technique for technique in cast("list[WebInjectionTechnique]", context.scenario_techniques)
-        }
+        techniques_by_value: dict[str, WebInjectionTechnique] = {}
+        for technique in context.scenario_techniques:
+            if not isinstance(technique, WebInjectionTechnique):
+                raise TypeError(f"Unexpected web injection technique: {type(technique).__name__}")
+            techniques_by_value[technique.value] = technique
 
         atomic_attacks: list[AtomicAttack] = []
         if context.include_baseline:

@@ -978,7 +978,7 @@ describe('ScenarioDetail', () => {
     expect(expectedEstimateRequest).not.toHaveProperty('labels')
   })
 
-  it('navigates to the scenario-history route with the encoded run id on success', async () => {
+  it('navigates to the scanner-history route with the encoded run id on success', async () => {
     const user = userEvent.setup()
     mockStartRun.mockResolvedValueOnce({ scenario_result_id: 'sr/1' })
 
@@ -989,7 +989,7 @@ describe('ScenarioDetail', () => {
 
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(
-        '/scenario-history/sr%2F1',
+        '/scanner-history/sr%2F1',
         expect.objectContaining({ state: expect.objectContaining({ scenarioName: 'foundry.red_team_agent' }) }),
       ),
     )

@@ -11,7 +11,7 @@ without any database or service dependencies.
 import os
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -56,7 +56,7 @@ def _make_attack_result(
     outcome: AttackOutcome = AttackOutcome.UNDETERMINED,
 ) -> AttackResult:
     """Create an AttackResult for mapper tests."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     effective_target_identifier = None
     if has_target:
@@ -157,6 +157,21 @@ class TestAttackResultToSummary:
         assert summary.attack_type == "My Attack"
         assert summary.target is not None
         assert summary.target.target_type == "TextTarget"
+
+    async def test_mapping_keeps_attribution_out_of_labels(self) -> None:
+        ar = _make_attack_result(name="My Attack")
+        ar.operator = "alice"
+        ar.operation = "nightly"
+        stats = ConversationStats(
+            message_count=1,
+            labels={"operator": "legacy", "operation": "legacy", "environment": "test"},
+        )
+
+        summary = await attack_result_to_summary_async(ar, stats=stats)
+
+        assert summary.operator == "alice"
+        assert summary.operation == "nightly"
+        assert summary.labels == {"test_ar_label": "test_ar_value", "environment": "test"}
 
     async def test_round_robin_target_includes_canonical_identifier_hash(self) -> None:
         """Composite targets retain their full identity even when root display fields are absent."""
@@ -262,8 +277,8 @@ class TestAttackResultToSummary:
 
         assert summary.labels == {"env": "prod", "team": "red", "test_ar_label": "test_ar_value"}
 
-    async def test_labels_passed_through_without_normalization(self) -> None:
-        """Test that labels are passed through as-is (DB stores canonical keys after migration)."""
+    async def test_legacy_attribution_keys_are_not_merged_into_labels(self) -> None:
+        """Conversation-level legacy attribution keys do not leak into canonical labels."""
         ar = _make_attack_result()
         stats = ConversationStats(
             message_count=1,
@@ -273,8 +288,6 @@ class TestAttackResultToSummary:
         summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.labels == {
-            "operator": "alice",
-            "operation": "op_red",
             "env": "prod",
             "test_ar_label": "test_ar_value",
         }
@@ -368,7 +381,7 @@ class TestAttackResultToSummary:
 
     async def test_converters_extracted_from_identifier(self) -> None:
         """Test that converter class names are extracted into converters list."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ar = AttackResult(
             conversation_id="attack-conv",
             objective="test",
@@ -468,7 +481,7 @@ class TestAttackResultToSummary:
 
     async def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
         """When metadata['created_at'] is absent but ar.timestamp is set, use ar.timestamp."""
-        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
         ar = AttackResult(
             conversation_id="attack-1",
             objective="test",
@@ -482,8 +495,8 @@ class TestAttackResultToSummary:
 
     async def test_created_at_metadata_still_wins_over_ar_timestamp(self) -> None:
         """When both metadata['created_at'] and ar.timestamp are set, metadata wins (backward compat)."""
-        metadata_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        metadata_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
         ar = AttackResult(
             conversation_id="attack-1",
             objective="test",
@@ -497,8 +510,8 @@ class TestAttackResultToSummary:
 
     async def test_updated_at_uses_ar_timestamp_ignoring_metadata_updated_at(self) -> None:
         """``updated_at`` is the persisted ``ar.timestamp``; a stale ``metadata['updated_at']`` is ignored."""
-        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
-        stale = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
+        stale = datetime(2020, 1, 1, 0, 0, 0, tzinfo=UTC)
         ar = AttackResult(
             conversation_id="attack-1",
             objective="test",
@@ -520,9 +533,9 @@ class TestAttackResultToSummary:
         )
         ar.timestamp = None  # type: ignore[assignment]
 
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert before <= summary.created_at <= after
 
@@ -530,7 +543,7 @@ class TestAttackResultToSummary:
         """Test that retry events on an AttackResult are inherited by the AttackSummary."""
         from pyrit.models.retry_event import RetryEvent
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ar = _make_attack_result()
         ar.retry_events = [
             RetryEvent(
@@ -679,7 +692,7 @@ class TestPyritMessagesToDto:
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        # Python 3.10 returns "audio/wav", 3.11+ returns "audio/x-wav"
+        # The MIME database varies by platform.
         assert result[0].message_pieces[0].original_value_mime_type in ("audio/wav", "audio/x-wav")
         assert result[0].message_pieces[0].converted_value_mime_type == "audio/mpeg"
 

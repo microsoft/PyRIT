@@ -597,7 +597,7 @@ class RealtimeTarget(OpenAITarget):
             RealtimeTargetResult with audio data and transcripts
 
         Raises:
-            asyncio.TimeoutError: If waiting for events times out.
+            TimeoutError: If waiting for events times out.
             ConnectionError: If connection is not valid
             RuntimeError: If server returns an error
         """
@@ -622,7 +622,7 @@ class RealtimeTarget(OpenAITarget):
 
                 try:
                     event = await asyncio.wait_for(event_iter.__anext__(), timeout=timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Soft-finish: audio.done was received but no response.done after grace period
                     if audio_done_deadline is not None:
                         logger.warning(

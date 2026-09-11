@@ -59,6 +59,7 @@ class AtomicAttack:
         *,
         atomic_attack_name: str,
         display_group: str | None = None,
+        technique_name: str | None = None,
         attack_technique: AttackTechnique,
         seed_groups: list[AttackSeedGroup],
         adversarial_chat: PromptTarget | None = None,
@@ -76,6 +77,8 @@ class AtomicAttack:
             display_group: Optional label for grouping results in user-facing
                 output (console printer, reports).  When ``None``, falls back
                 to ``atomic_attack_name``.
+            technique_name: Optional catalog name for the technique that built
+                this atomic attack.
             attack_technique: An AttackTechnique bundling the attack strategy and optional
                 technique seeds.
             seed_groups: List of seed attack groups. Each must be a
@@ -94,6 +97,7 @@ class AtomicAttack:
         """
         self.atomic_attack_name = atomic_attack_name
         self.display_group = display_group or atomic_attack_name
+        self._technique_name = technique_name
 
         self._attack_technique = attack_technique
 
@@ -177,6 +181,11 @@ class AtomicAttack:
     def attack_technique(self) -> AttackTechnique:
         """The attack technique for this atomic attack."""
         return self._attack_technique
+
+    @property
+    def technique_name(self) -> str | None:
+        """Catalog name of the technique that built this attack."""
+        return self._technique_name
 
     @property
     def technique_eval_hash(self) -> str:

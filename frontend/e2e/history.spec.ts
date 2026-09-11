@@ -15,6 +15,8 @@ interface MockAttackSummary {
   last_message_preview?: string | null;
   message_count: number;
   related_conversation_ids: string[];
+  operator?: string | null;
+  operation?: string | null;
   labels: Record<string, string>;
   created_at: string;
   updated_at: string;
@@ -30,6 +32,8 @@ function makeAttack(overrides: Partial<MockAttackSummary> & { attack_result_id: 
     last_message_preview: null,
     message_count: 0,
     related_conversation_ids: [],
+    operator: null,
+    operation: null,
     labels: {},
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -44,7 +48,8 @@ const ATTACKS: MockAttackSummary[] = [
     attack_type: "SingleTurnAttack",
     target: { target_type: "OpenAIChatTarget", model_name: "gpt-4o" },
     outcome: "success",
-    labels: { operator: "alice", operation: "test_a" },
+    operator: "alice",
+    operation: "test_a",
     message_count: 3,
     last_message_preview: "Hello from alice",
   }),
@@ -53,7 +58,8 @@ const ATTACKS: MockAttackSummary[] = [
     attack_type: "MultiTurnAttack",
     target: { target_type: "OpenAIImageTarget", model_name: "dall-e-3" },
     outcome: "failure",
-    labels: { operator: "bob", operation: "test_b" },
+    operator: "bob",
+    operation: "test_b",
     message_count: 5,
     last_message_preview: "Hello from bob",
   }),
@@ -62,7 +68,8 @@ const ATTACKS: MockAttackSummary[] = [
     attack_type: "SingleTurnAttack",
     target: { target_type: "OpenAIChatTarget", model_name: "gpt-4o" },
     outcome: "undetermined",
-    labels: { operator: "alice", operation: "test_b" },
+    operator: "alice",
+    operation: "test_b",
     message_count: 1,
   }),
   makeAttack({
@@ -70,7 +77,8 @@ const ATTACKS: MockAttackSummary[] = [
     attack_type: "MultiTurnAttack",
     target: { target_type: "OpenAIChatTarget", model_name: "gpt-4o" },
     outcome: "success",
-    labels: { operator: "bob", operation: "test_a" },
+    operator: "bob",
+    operation: "test_a",
     message_count: 2,
     last_message_preview: "Hello again from bob",
   }),
@@ -83,7 +91,7 @@ function generatePaginatedAttacks(count: number): MockAttackSummary[] {
       attack_result_id: `atk-page-${String(i).padStart(3, "0")}`,
       attack_type: i % 2 === 0 ? "SingleTurnAttack" : "MultiTurnAttack",
       outcome: "undetermined",
-      labels: { operator: "paginator" },
+      operator: "paginator",
       message_count: 1,
     }),
   );
@@ -143,10 +151,9 @@ async function mockHistoryAPIs(
       contentType: "application/json",
       body: JSON.stringify({
         source: "attacks",
-        labels: {
-          operator: operatorLabels,
-          operation: operationLabels,
-        },
+        labels: {},
+        operators: operatorLabels,
+        operations: operationLabels,
       }),
     });
   });
@@ -163,6 +170,8 @@ async function mockHistoryAPIs(
       const url = new URL(route.request().url());
       const attackTypeParams = url.searchParams.getAll("attack_types");
       const outcome = url.searchParams.get("outcome");
+      const operatorParams = url.searchParams.getAll("operator");
+      const operationParams = url.searchParams.getAll("operation");
       const labelParams = url.searchParams.getAll("label");
 
       let filtered = [...attacks];
@@ -171,6 +180,12 @@ async function mockHistoryAPIs(
       }
       if (outcome) {
         filtered = filtered.filter((a) => a.outcome === outcome);
+      }
+      if (operatorParams.length > 0) {
+        filtered = filtered.filter((a) => a.operator != null && operatorParams.includes(a.operator));
+      }
+      if (operationParams.length > 0) {
+        filtered = filtered.filter((a) => a.operation != null && operationParams.includes(a.operation));
       }
       if (labelParams.length > 0) {
         // Group repeated label keys into OR-sets; combine across keys with AND.
@@ -199,7 +214,7 @@ async function mockHistoryAPIs(
 /** Navigate to the Attack History view. */
 async function goToHistory(page: Page) {
   await page.goto("/");
-  await page.getByTitle("Attack History").click();
+  await page.getByTitle("History").click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({ timeout: 10_000 });
 }
 
@@ -371,7 +386,7 @@ test.describe("Attack History empty state", () => {
     await expect(page.getByRole("heading", { level: 1, name: "Target Configuration" })).toBeVisible();
 
     await page.goBack();
-    await expect(page).toHaveURL(/\/history$/);
+    await expect(page).toHaveURL(/\/history\/attacks$/);
     await expect(page.getByRole("button", { name: "Configure target" })).toBeVisible();
   });
 });

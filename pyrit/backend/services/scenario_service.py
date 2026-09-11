@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Scenario catalog and side-effect-free planning service."""
+"""Scenario catalog and run-size planning service."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from pyrit.models.catalog.scenario import (
     ScenarioRunSizeEstimateRequest,
 )
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
+from pyrit.scenario.core.dataset_configuration import read_only_dataset_resolution
 
 logger = logging.getLogger(__name__)
 _ESTIMATE_CACHE_SIZE = 128
@@ -258,7 +259,8 @@ class ScenarioService:
         async with semaphore:
             try:
                 scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name)
-                estimate = await scenario.get_default_run_size_estimate_async()
+                with read_only_dataset_resolution():
+                    estimate = await scenario.get_default_run_size_estimate_async()
             except Exception as exc:
                 logger.warning("Default-run estimate failed for scenario '%s': %s", scenario_name, exc)
                 estimate = ScenarioRunSizeEstimate.unavailable(

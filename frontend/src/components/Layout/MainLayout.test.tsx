@@ -66,15 +66,12 @@ describe("MainLayout", () => {
       </MainLayout>
     );
 
-    expect(screen.getByText("Co-PyRIT")).toBeInTheDocument();
     expect(
       screen.getByText("Python Risk Identification Tool")
     ).toBeInTheDocument();
 
-    // Wait for async useEffect to complete
-    await waitFor(() => {
-      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
-    });
+    expect(await screen.findByText("Co-PyRIT 1.0.0")).toBeInTheDocument();
+    expect(document.title).toBe("Co-PyRIT 1.0.0");
   });
 
   it("renders children content", async () => {
@@ -179,6 +176,8 @@ describe("MainLayout", () => {
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
     });
+    expect(screen.getByText("Co-PyRIT")).toBeInTheDocument();
+    expect(document.title).toBe("Co-PyRIT");
   });
 
   it("renders a 'Take a tour' button in the top bar when onStartTour is provided", async () => {

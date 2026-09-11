@@ -221,6 +221,29 @@ class TestScenarioServiceListScenarios:
         assert second.default_run_size.datasets == estimate.datasets
         service._registry.create_instance.assert_called_once_with("test.scenario")
 
+    async def test_default_catalog_estimate_uses_read_only_dataset_resolution(self) -> None:
+        """Bulk catalog estimates do not auto-fetch datasets into memory."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        scenario = MagicMock()
+        scenario.get_default_run_size_estimate_async = AsyncMock(return_value=estimate)
+
+        with (
+            patch.object(ScenarioService, "__init__", lambda self: None),
+            patch("pyrit.backend.services.scenario_service.read_only_dataset_resolution") as read_only_resolution,
+        ):
+            service = ScenarioService()
+            service._registry = MagicMock()
+            service._registry.create_instance.return_value = scenario
+
+            result = await service._get_default_run_size_estimate_async(metadata=metadata)
+
+        assert result == estimate
+        read_only_resolution.assert_called_once_with()
+
     async def test_concurrent_estimate_reads_share_one_task(self) -> None:
         """Concurrent catalog readers share one atomic single-flight estimate."""
         metadata = _make_scenario_metadata()

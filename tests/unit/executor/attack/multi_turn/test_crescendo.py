@@ -1873,6 +1873,89 @@ class TestAttackExecution:
         assert objective_messages[1].message_pieces[1].original_value == "/path/to/seed.png"
         assert objective_messages[2].message_pieces[1].original_value == "/tmp/accepted-base.png"
 
+    async def test_seeded_media_retry_survives_exhausted_backtrack_budget(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        refusal_score: Score,
+        no_refusal_score: Score,
+        failure_objective_score: Score,
+        success_objective_score: Score,
+    ):
+        """A refused concrete media seed remains available when backtracking is disabled."""
+        mock_objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
+        )
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            prompt_normalizer=mock_prompt_normalizer,
+            max_backtracks=0,
+            max_turns=2,
+        )
+        seed_message = Message(
+            message_pieces=[
+                MessagePiece(role="user", original_value="Apply this edit"),
+                MessagePiece(
+                    role="user",
+                    original_value="/path/to/seed.png",
+                    original_value_data_type="image_path",
+                ),
+            ]
+        )
+        context = CrescendoAttackContext(
+            params=AttackParameters(objective="goal", next_message=seed_message),
+            session=ConversationSession(),
+        )
+        refused_image = create_image_response(path="/tmp/refused.png")
+        accepted_image = create_image_response(path="/tmp/accepted.png")
+        mock_prompt_normalizer.send_prompt_async.side_effect = [
+            refused_image,
+            create_prompt_response(text=create_adversarial_json_response(question="Retry the edit")),
+            accepted_image,
+        ]
+
+        with (
+            patch.object(
+                attack,
+                "_check_refusal_async",
+                new_callable=AsyncMock,
+                side_effect=[refusal_score, no_refusal_score],
+            ),
+            patch.object(attack, "_backtrack_memory_async", new_callable=AsyncMock) as mock_backtrack,
+            patch(
+                "pyrit.score.MessageScorer.score_response_async",
+                new_callable=AsyncMock,
+                side_effect=[
+                    {"objective_scores": [failure_objective_score], "auxiliary_scores": []},
+                    {"objective_scores": [success_objective_score], "auxiliary_scores": []},
+                ],
+            ),
+        ):
+            result = await attack._perform_async(context=context)
+
+        first_objective_message = mock_prompt_normalizer.send_prompt_async.call_args_list[0].kwargs["message"]
+        adversarial_message = mock_prompt_normalizer.send_prompt_async.call_args_list[1].kwargs["message"]
+        retry_objective_message = mock_prompt_normalizer.send_prompt_async.call_args_list[2].kwargs["message"]
+        retry_media = [
+            piece for piece in retry_objective_message.message_pieces if piece.original_value_data_type == "image_path"
+        ]
+
+        assert result.outcome == AttackOutcome.SUCCESS
+        assert result.executed_turns == 2
+        assert result.backtrack_count == 0
+        mock_backtrack.assert_not_awaited()
+        assert [piece.original_value for piece in first_objective_message.message_pieces] == [
+            "Apply this edit",
+            "/path/to/seed.png",
+        ]
+        assert "input_mode=seed_media" in adversarial_message.get_value()
+        assert [piece.original_value for piece in retry_media] == ["/path/to/seed.png"]
+        assert context.pending_seed_message is None
+        assert context.last_accepted_response is accepted_image
+        assert context.related_conversations == set()
+
     async def test_placeholder_seed_is_consumed_after_first_live_turn_with_prepended_history(
         self,
         mock_objective_target: MagicMock,
