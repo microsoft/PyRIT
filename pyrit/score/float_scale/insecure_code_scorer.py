@@ -16,7 +16,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.llm_scoring import _parse_llm_observation, _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
 from pyrit.score.observation import _ObservationEvidence
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -200,12 +200,17 @@ class InsecureCodeScorer(MessageFloatScaleScorer):
             data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             category=self._harm_categories,
         )
 
         return [self._convert_score(unvalidated_score)]
 
-    def _score_llm_observation(
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared insecure-code conversion contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
         self,
         *,
         observation: Observation,
@@ -218,11 +223,12 @@ class InsecureCodeScorer(MessageFloatScaleScorer):
         Returns:
             list[Score]: The normalized replay score.
         """
-        unvalidated = _parse_llm_observation(
+        unvalidated = _parse_judgment_observation(
             observation=observation,
             evidence=evidence,
             response_handler=self._response_handler,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             expectation=expectation,
             category=self._harm_categories,
         )

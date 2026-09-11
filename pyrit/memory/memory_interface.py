@@ -54,6 +54,7 @@ from pyrit.memory.memory_models import (
     SeedIdentifierEntry,
     TargetIdentifierEntry,
 )
+from pyrit.memory.memory_session import _begin_sqlite_write, _lock_observations
 from pyrit.memory.storage import (
     DataTypeSerializer,
     StorageIO,
@@ -1917,6 +1918,50 @@ class MemoryInterface(abc.ABC):
             ValueError: If observation IDs, references, or managed anchors are invalid.
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
+        new_ids, referenced_ids = self._validate_score_inputs(scores=scores, observations=observations)
+        with closing(self.get_session()) as session:
+            try:
+                _begin_sqlite_write(session)
+                self._validate_observation_links(
+                    session=session,
+                    new_observation_ids=new_ids,
+                    referenced_observation_ids=referenced_ids,
+                )
+                canonical_scores = self._resolve_score_message_anchors(session=session, scores=scores)
+                content_entries, persisted_scores, persisted_observations = self._prepare_score_anchors(
+                    scores=canonical_scores,
+                    observations=observations,
+                    prepared_content_hashes=prepared_content_hashes,
+                )
+                session.add_all(content_entries)
+                session.flush()
+                self._validate_observation_evidence(session=session, observations=persisted_observations)
+                self._persist_score_rows(session=session, scores=persisted_scores, observations=persisted_observations)
+                session.commit()
+            except SQLAlchemyError:
+                session.rollback()
+                logger.exception("Error inserting scores")
+                raise
+            except ValueError:
+                session.rollback()
+                raise
+        for score, persisted in zip(scores, persisted_scores, strict=True):
+            score.message_piece_id = persisted.message_piece_id
+            score.scorable = persisted.scorable
+
+    @staticmethod
+    def _validate_score_inputs(
+        *, scores: Sequence[Score], observations: Sequence[Observation]
+    ) -> tuple[set[str], set[str]]:
+        """
+        Validate request-local IDs and digests without changing caller-owned scores.
+
+        Returns:
+            tuple[set[str], set[str]]: New and referenced observation IDs.
+
+        Raises:
+            ValueError: If new observations are unreferenced, duplicated, or invalid.
+        """
         observations_by_id = {str(observation.id): observation for observation in observations}
         if len(observations_by_id) != len(observations):
             raise ValueError("New observations must have unique IDs.")
@@ -1926,7 +1971,26 @@ class MemoryInterface(abc.ABC):
         unreferenced = set(observations_by_id) - referenced_observation_ids
         if unreferenced:
             raise ValueError(f"New observations are not referenced by a score: {sorted(unreferenced)}.")
+        for observation in observations:
+            if isinstance(observation.scorable, (ContentScorable, ContentEntryScorable)):
+                if observation.scorable.data_type in MEDIA_PATH_DATA_TYPES:
+                    raise ValueError(f"Media judgment observations are deferred: {observation.id}.")
+                if isinstance(
+                    observation.scorable, ContentScorable
+                ) and observation.payload.scored_evidence_digest != _content_scorable_digest(observation.scorable):
+                    raise ValueError(
+                        f"Content observations contain an invalid scored-evidence digest: {observation.id}."
+                    )
+        return set(observations_by_id), referenced_observation_ids
 
+    @classmethod
+    def _resolve_score_message_anchors(cls, *, session: Session, scores: Sequence[Score]) -> list[Score]:
+        """
+        Canonicalize legacy score anchors inside the transaction, not observation evidence.
+
+        Returns:
+            list[Score]: Score copies with original-message anchors.
+        """
         referenced_piece_ids = {str(score.message_piece_id) for score in scores if score.message_piece_id}
         referenced_piece_ids.update(
             str(piece_id)
@@ -1934,70 +1998,39 @@ class MemoryInterface(abc.ABC):
             if isinstance(score.scorable, MessageScorable)
             for piece_id in score.scorable.message_piece_ids
         )
-        referenced_piece_ids.update(
-            str(piece_id)
-            for observation in observations
-            if isinstance(observation.scorable, MessageScorable)
-            for piece_id in observation.scorable.message_piece_ids
-        )
-        referenced_piece_ids.update(
-            str(piece_id) for observation in observations for piece_id in observation.payload.message_piece_ids
-        )
-        pieces_by_id = {
-            str(piece.id): piece
-            for piece in (
-                self.get_message_pieces(prompt_ids=sorted(referenced_piece_ids)) if referenced_piece_ids else []
-            )
-        }
-        original_ids: dict[str, uuid.UUID] = {
-            piece_id: original_prompt_id
-            for piece_id, piece in pieces_by_id.items()
-            if (original_prompt_id := piece.original_prompt_id) is not None and original_prompt_id != piece.id
-        }
+        pieces_by_id = cls._load_score_message_pieces(session=session, piece_ids=sorted(referenced_piece_ids))
+        original_ids = {str(piece.id): piece.original_prompt_id or piece.id for piece in pieces_by_id.values()}
+        canonical_scores: list[Score] = []
         for score in scores:
-            if score.message_piece_id and str(score.message_piece_id) not in pieces_by_id:
+            canonical = score.model_copy()
+            if score.message_piece_id and uuid.UUID(str(score.message_piece_id)) not in pieces_by_id:
                 logger.error(f"MessagePiece with ID {score.message_piece_id} not found in memory.")
             if score.message_piece_id and (original_id := original_ids.get(str(score.message_piece_id))):
-                score.message_piece_id = original_id  # type: ignore[ty:invalid-assignment]
+                canonical.message_piece_id = original_id  # type: ignore[ty:invalid-assignment]
             if isinstance(score.scorable, MessageScorable):
                 mapped_piece_ids: tuple[uuid.UUID, ...] = tuple(
                     original_ids.get(str(piece_id), uuid.UUID(str(piece_id)))
                     for piece_id in score.scorable.message_piece_ids
                 )
                 if mapped_piece_ids != score.scorable.message_piece_ids:
-                    score.scorable = MessageScorable(message_piece_ids=mapped_piece_ids)
+                    canonical.scorable = MessageScorable(message_piece_ids=mapped_piece_ids)
+            canonical_scores.append(canonical)
+        return canonical_scores
 
-        missing_payload_piece_ids = {
-            str(piece_id)
-            for observation in observations
-            for piece_id in observation.payload.message_piece_ids
-            if str(piece_id) not in pieces_by_id
-        }
-        if missing_payload_piece_ids:
-            raise ValueError(
-                f"Observation payload references message pieces not found in memory: "
-                f"{sorted(missing_payload_piece_ids)}."
-            )
-        unsupported_media_observations = [
-            observation.id
-            for observation in observations
-            if (
-                isinstance(observation.scorable, ContentScorable)
-                and observation.scorable.data_type in MEDIA_PATH_DATA_TYPES
-            )
-            or (
-                isinstance(observation.scorable, ContentEntryScorable)
-                and observation.scorable.data_type in MEDIA_PATH_DATA_TYPES
-            )
-            or (
-                isinstance(observation.scorable, MessageScorable)
-                and (scored_piece := pieces_by_id.get(str(observation.payload.scored_piece_id))) is not None
-                and scored_piece.converted_value_data_type in MEDIA_PATH_DATA_TYPES
-            )
-        ]
-        if unsupported_media_observations:
-            raise ValueError(f"LLM media observations are deferred: {unsupported_media_observations}.")
+    @classmethod
+    def _prepare_score_anchors(
+        cls,
+        *,
+        scores: Sequence[Score],
+        observations: Sequence[Observation],
+        prepared_content_hashes: Mapping[ContentScorable, str],
+    ) -> tuple[list[ScorableContentEntry], list[Score], list[Observation]]:
+        """
+        Build content rows and replace loose anchors on persistence-only copies.
 
+        Returns:
+            tuple[list[ScorableContentEntry], list[Score], list[Observation]]: Rows and anchored copies.
+        """
         content_scorables = list(
             dict.fromkeys(
                 [score.scorable for score in scores if isinstance(score.scorable, ContentScorable)]
@@ -2008,20 +2041,10 @@ class MemoryInterface(abc.ABC):
                 ]
             )
         )
-        content_entries, content_anchors = self._store_scorable_content(
+        content_entries, content_anchors = cls._store_scorable_content(
             scorables=content_scorables,
             prepared_content_hashes=prepared_content_hashes,
         )
-        invalid_content_observations = [
-            observation.id
-            for observation in observations
-            if isinstance(observation.scorable, ContentScorable)
-            and observation.payload.scored_evidence_digest != _content_scorable_digest(observation.scorable)
-        ]
-        if invalid_content_observations:
-            raise ValueError(
-                f"Content observations contain an invalid scored-evidence digest: {invalid_content_observations}."
-            )
         persisted_scores = [
             score.model_copy(update={"scorable": content_anchors[score.scorable]})
             if isinstance(score.scorable, ContentScorable)
@@ -2034,15 +2057,21 @@ class MemoryInterface(abc.ABC):
             else observation
             for observation in observations
         ]
-        entries = [ScoreEntry(entry=score) for score in persisted_scores]
-        observation_entries = [ObservationEntry(entry=observation) for observation in persisted_observations]
+        return content_entries, persisted_scores, persisted_observations
+
+    def _persist_score_rows(
+        self, *, session: Session, scores: Sequence[Score], observations: Sequence[Observation]
+    ) -> None:
+        """Build score, observation, identifier, and ordered-link rows in one session."""
+        entries = [ScoreEntry(entry=score) for score in scores]
+        observation_entries = [ObservationEntry(entry=observation) for observation in observations]
         observation_message_links = [
             ObservationMessagePieceEntry(
                 observation_id=observation.id,
                 position=position,
                 message_piece_id=piece_id,
             )
-            for observation in persisted_observations
+            for observation in observations
             for position, piece_id in enumerate(observation.payload.message_piece_ids)
         ]
         score_observation_links = [
@@ -2051,43 +2080,19 @@ class MemoryInterface(abc.ABC):
                 position=position,
                 observation_id=observation_id,
             )
-            for score in persisted_scores
+            for score in scores
             for position, observation_id in enumerate(score.observation_ids)
         ]
-        with closing(self.get_session()) as session:
-            try:
-                self._validate_observation_links(
+        for entry in entries:
+            if entry.scorer_class_identifier:
+                self._persist_scorer_identifier(
                     session=session,
-                    new_observation_ids=set(observations_by_id),
-                    referenced_observation_ids=referenced_observation_ids,
+                    scorer_identifier=ScorerIdentifier.model_validate(entry.scorer_class_identifier),
                 )
-                session.add_all(content_entries)
-                session.flush()
-                self._validate_observation_evidence(
-                    session=session,
-                    observations=persisted_observations,
-                )
-                session.add_all(observation_entries)
-                session.add_all(observation_message_links)
-                for entry in entries:
-                    if entry.scorer_class_identifier:
-                        self._persist_scorer_identifier(
-                            session=session,
-                            scorer_identifier=ScorerIdentifier.model_validate(entry.scorer_class_identifier),
-                        )
-                session.add_all(entries)
-                session.add_all(score_observation_links)
-                session.commit()
-                for score in scores:
-                    if isinstance(score.scorable, ContentScorable):
-                        score.scorable = content_anchors[score.scorable]
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error inserting scores: {e}")
-                raise
-            except ValueError:
-                session.rollback()
-                raise
+        session.add_all(observation_entries)
+        session.add_all(observation_message_links)
+        session.add_all(entries)
+        session.add_all(score_observation_links)
 
     @staticmethod
     def _store_scorable_content(
@@ -2142,14 +2147,9 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If a new ID conflicts or a referenced observation does not exist.
         """
-        existing: set[str] = set()
-        requested = sorted(new_observation_ids | referenced_observation_ids)
-        for start in range(0, len(requested), cls._MAX_BIND_VARS):
-            batch = requested[start : start + cls._MAX_BIND_VARS]
-            existing.update(
-                str(observation_id)
-                for observation_id in session.scalars(select(ObservationEntry.id).where(ObservationEntry.id.in_(batch)))
-            )
+        existing = _lock_observations(
+            session=session, observation_ids=sorted(new_observation_ids | referenced_observation_ids)
+        )
         conflicts = new_observation_ids & existing
         if conflicts:
             raise ValueError(f"New observation IDs already exist: {sorted(conflicts)}.")
@@ -2178,19 +2178,18 @@ class MemoryInterface(abc.ABC):
                 *((observation.payload.scored_piece_id,) if isinstance(observation.scorable, MessageScorable) else ()),
             )
         }
-        pieces_by_id: dict[uuid.UUID, MessagePiece] = {}
-        piece_id_values = list(piece_ids)
-        for start in range(0, len(piece_id_values), cls._MAX_BIND_VARS):
-            batch = piece_id_values[start : start + cls._MAX_BIND_VARS]
-            statement = select(PromptMemoryEntry).where(PromptMemoryEntry.id.in_(batch))
-            if session.get_bind().dialect.name == "mssql":
-                statement = statement.with_hint(
-                    PromptMemoryEntry,
-                    "WITH (UPDLOCK, HOLDLOCK)",
-                    dialect_name="mssql",
-                )
-            entries = session.scalars(statement)
-            pieces_by_id.update({entry.id: entry.get_message_piece() for entry in entries})
+        pieces_by_id = cls._load_score_message_pieces(session=session, piece_ids=sorted(piece_ids, key=str))
+        missing_payload_piece_ids = {
+            str(piece_id)
+            for observation in observations
+            for piece_id in observation.payload.message_piece_ids
+            if piece_id not in pieces_by_id
+        }
+        if missing_payload_piece_ids:
+            raise ValueError(
+                f"Observation payload references message pieces not found in memory: "
+                f"{sorted(missing_payload_piece_ids)}."
+            )
 
         content_ids = {
             observation.scorable.content_id
@@ -2201,7 +2200,10 @@ class MemoryInterface(abc.ABC):
         content_id_values = list(content_ids)
         for start in range(0, len(content_id_values), cls._MAX_BIND_VARS):
             batch = content_id_values[start : start + cls._MAX_BIND_VARS]
-            entries = session.scalars(select(ScorableContentEntry).where(ScorableContentEntry.id.in_(batch)))
+            statement = select(ScorableContentEntry).where(ScorableContentEntry.id.in_(batch))
+            if session.get_bind().dialect.name == "mssql":
+                statement = statement.with_hint(ScorableContentEntry, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
+            entries = session.scalars(statement)
             content_by_id.update(
                 {
                     entry.id: (
@@ -2221,6 +2223,26 @@ class MemoryInterface(abc.ABC):
                 pieces_by_id=pieces_by_id,
                 content_by_id=content_by_id,
             )
+
+    @classmethod
+    def _load_score_message_pieces(
+        cls, *, session: Session, piece_ids: Sequence[uuid.UUID | str]
+    ) -> dict[uuid.UUID, MessagePiece]:
+        """
+        Read canonical message values while retaining SQL Server evidence locks.
+
+        Returns:
+            dict[uuid.UUID, MessagePiece]: Canonical pieces indexed by their exact IDs.
+        """
+        pieces_by_id: dict[uuid.UUID, MessagePiece] = {}
+        for start in range(0, len(piece_ids), cls._MAX_BIND_VARS):
+            statement = select(PromptMemoryEntry).where(
+                PromptMemoryEntry.id.in_(piece_ids[start : start + cls._MAX_BIND_VARS])
+            )
+            if session.get_bind().dialect.name == "mssql":
+                statement = statement.with_hint(PromptMemoryEntry, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
+            pieces_by_id.update({entry.id: entry.get_message_piece() for entry in session.scalars(statement)})
+        return pieces_by_id
 
     @staticmethod
     def _validate_one_observation_evidence(
@@ -2247,6 +2269,8 @@ class MemoryInterface(abc.ABC):
 
         if isinstance(observation.scorable, MessageScorable):
             scored_piece = pieces_by_id.get(payload.scored_piece_id)
+            if scored_piece and scored_piece.converted_value_data_type in MEDIA_PATH_DATA_TYPES:
+                raise ValueError(f"Media judgment observations are deferred: {observation.id}.")
             actual_digest = _message_piece_digest(scored_piece, include_id=False) if scored_piece else None
         elif isinstance(observation.scorable, ContentEntryScorable):
             stored_content = content_by_id.get(observation.scorable.content_id)

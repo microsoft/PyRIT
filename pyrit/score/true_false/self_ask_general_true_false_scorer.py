@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.llm_scoring import (
     _format_string_references_message_piece,
-    _parse_llm_observation,
+    _parse_judgment_observation,
     _run_llm_scoring_async,
 )
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
@@ -179,6 +179,7 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
             data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             category=self._score_category,
             requires_message_piece_evidence=(
                 _format_string_references_message_piece(self._system_prompt_format_string)
@@ -189,7 +190,11 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
         score = unvalidated.to_score(score_value=unvalidated.raw_score_value.lower(), score_type="true_false")
         return [score]
 
-    def _score_llm_observation(
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared general true/false judgment contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
         self,
         *,
         observation: Observation,
@@ -202,11 +207,12 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
         Returns:
             list[Score]: The replayed true/false score.
         """
-        unvalidated = _parse_llm_observation(
+        unvalidated = _parse_judgment_observation(
             observation=observation,
             evidence=evidence,
             response_handler=self._response_handler,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             expectation=expectation,
             category=self._score_category,
         )

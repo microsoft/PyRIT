@@ -5,9 +5,10 @@ import asyncio
 import uuid
 from collections.abc import Sequence
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,18 +33,28 @@ from pyrit.models import (
     ScoringExpectation,
     UnvalidatedScore,
 )
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     AudioTrueFalseScorer,
+    CallableResponseHandler,
     ContentClassifier,
     ContentClassifierPaths,
+    InsecureCodeScorer,
     JsonSchemaResponseHandler,
     LikertScalePaths,
     LlamaGuardScorer,
     NonReplayableObservationError,
+    NumericRange,
+    NumericRubric,
     ResponseHandler,
+    Scorer,
     SelfAskCategoryScorer,
+    SelfAskGeneralFloatScaleScorer,
     SelfAskGeneralTrueFalseScorer,
     SelfAskLikertScorer,
+    SelfAskQuestionAnswerScorer,
+    SelfAskRefusalScorer,
+    SelfAskScaleScorer,
     SelfAskTrueFalseScorer,
     ShieldGemmaGuideline,
     ShieldGemmaScorer,
@@ -140,9 +151,301 @@ class _MatchesObjectiveScorer(TrueFalseScorer):
         ]
 
 
-async def test_llm_observation_references_only_terminal_retry_response(
+class _NegatingPipelineScorer(SelfAskTrueFalseScorer):
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        scores = await super()._score_piece_async(message_piece, objective=objective)
+        for score in scores:
+            score.score_value = str(not score.get_value()).lower()
+        return scores
+
+
+class _PureNegatingScorer(SelfAskTrueFalseScorer):
+    def __init__(self, *, chat_target: PromptTarget, invert: bool) -> None:
+        super().__init__(chat_target=chat_target)
+        self._invert = invert
+
+    def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
+        score = super()._convert_score(unvalidated)
+        if self._invert:
+            score.score_value = str(not score.get_value()).lower()
+        return score
+
+
+class _ReplayableNegatingScorer(_PureNegatingScorer):
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        return {**super()._judgment_replay_identifier(), "negation_version": 1, "invert": self._invert}
+
+
+class _UndeclaredNegatingScorer(_ReplayableNegatingScorer):
+    def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
+        score = super()._convert_score(unvalidated)
+        score.score_value = str(not score.get_value()).lower()
+        return score
+
+
+class _ConfigurableJsonHandler(JsonSchemaResponseHandler):
+    def __init__(self, *, invert: bool) -> None:
+        super().__init__()
+        self._invert = invert
+
+    def parse(
+        self,
+        *,
+        response_text: str,
+        scorer_identifier: ComponentIdentifier,
+        scored_prompt_id: str | uuid.UUID,
+        category: Sequence[str] | str | None = None,
+        objective: str | None = None,
+    ) -> UnvalidatedScore:
+        score = super().parse(
+            response_text=response_text,
+            scorer_identifier=scorer_identifier,
+            scored_prompt_id=scored_prompt_id,
+            category=category,
+            objective=objective,
+        )
+        if self._invert:
+            score.raw_score_value = str(score.raw_score_value.lower() != "true").lower()
+        return score
+
+
+class _ReplayableJsonHandler(_ConfigurableJsonHandler):
+    def _replay_identifier(self) -> dict[str, object]:
+        return {**super()._replay_identifier(), "negation_version": 1, "invert": self._invert}
+
+
+class _UndeclaredJsonHandler(_ReplayableJsonHandler):
+    """Inherits a custom parser but must not silently inherit its replay opt-in."""
+
+
+class _UndeclaredParserOverrideHandler(_ReplayableJsonHandler):
+    def parse(self, **kwargs: Any) -> UnvalidatedScore:
+        score = super().parse(**kwargs)
+        score.score_rationale = "Custom parser override"
+        return score
+
+
+def _parse_configurable_verdict(response: str, *, invert: bool = False) -> dict[str, Any]:
+    value = response == "true"
+    return {"score_value": str(not value if invert else value).lower(), "rationale": "Callable parser"}
+
+
+@pytest.mark.parametrize("parser_fingerprint", [None, "configurable-verdict-v1"])
+async def test_callable_parser_requires_explicit_version_for_replay_async(
     sqlite_instance: MemoryInterface,
-):
+    parser_fingerprint: str | None,
+) -> None:
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.send_prompt_async = AsyncMock(return_value=_response("true"))
+    scorer = SelfAskTrueFalseScorer(
+        chat_target=target,
+        response_handler=CallableResponseHandler(
+            parser=partial(_parse_configurable_verdict, invert=True),
+            parser_fingerprint=parser_fingerprint,
+        ),
+    )
+    live = (await scorer.score_text_async("candidate response"))[0]
+    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+
+    if parser_fingerprint is None:
+        with pytest.raises(NonReplayableObservationError, match="stable replay contract"):
+            await scorer.score_observation_async(observation=observation)
+    else:
+        replay = (await scorer.score_observation_async(observation=observation))[0]
+        assert replay.score_value == live.score_value == "false"
+        for handler in (
+            CallableResponseHandler(
+                parser=partial(_parse_configurable_verdict, invert=False),
+                parser_fingerprint=parser_fingerprint,
+            ),
+            CallableResponseHandler(
+                parser=partial(_parse_configurable_verdict, invert=True),
+                parser_fingerprint="configurable-verdict-v2",
+            ),
+        ):
+            other = SelfAskTrueFalseScorer(chat_target=target, response_handler=handler)
+            with pytest.raises(NonReplayableObservationError, match="handler or category"):
+                await other.score_observation_async(observation=observation)
+    assert target.send_prompt_async.call_count == 1
+
+
+def test_callable_parser_cannot_use_lambda_as_stable_identity() -> None:
+    handler = CallableResponseHandler(
+        parser=lambda response: {"score_value": response, "rationale": "Lambda parser"},
+        parser_fingerprint="lambda-parser-v1",
+    )
+    assert handler._get_replay_identifier() is None
+
+
+@pytest.mark.parametrize(
+    "scorer_type",
+    [_NegatingPipelineScorer, _PureNegatingScorer, _UndeclaredNegatingScorer],
+)
+async def test_custom_scoring_requires_explicit_replay_contract_async(
+    sqlite_instance: MemoryInterface,
+    scorer_type: type[SelfAskTrueFalseScorer],
+) -> None:
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
+    scorer = (
+        scorer_type(chat_target=target, invert=True)
+        if issubclass(scorer_type, _PureNegatingScorer)
+        else scorer_type(chat_target=target)
+    )
+
+    live = (await scorer.score_text_async("candidate response"))[0]
+    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+
+    assert live.score_value == ("true" if scorer_type is _UndeclaredNegatingScorer else "false")
+    assert observation.payload.replay_contract_fingerprint is None
+    with pytest.raises(NonReplayableObservationError, match="explicitly declare a judgment replay contract"):
+        await scorer.score_observation_async(observation=observation)
+    assert target.send_prompt_async.call_count == 1
+    assert len(sqlite_instance._query_entries(ScoreEntry)) == 1
+
+
+@pytest.mark.parametrize("invert", [False, True])
+async def test_explicit_pure_conversion_replays_with_matching_configuration_async(
+    sqlite_instance: MemoryInterface,
+    invert: bool,
+) -> None:
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
+    scorer = _ReplayableNegatingScorer(chat_target=target, invert=invert)
+    live = (await scorer.score_text_async("candidate response"))[0]
+    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+    same_configuration = _ReplayableNegatingScorer(chat_target=target, invert=invert)
+    different_configuration = _ReplayableNegatingScorer(chat_target=target, invert=not invert)
+
+    assert scorer.get_identifier().hash == different_configuration.get_identifier().hash
+    for replay_scorer in (scorer, same_configuration):
+        replay = (await replay_scorer.score_observation_async(observation=observation))[0]
+        assert replay.score_value == live.score_value == str(not invert).lower()
+    with pytest.raises(NonReplayableObservationError, match="judgment configuration"):
+        await different_configuration.score_observation_async(observation=observation)
+    assert target.send_prompt_async.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "handler_type", [_ConfigurableJsonHandler, _UndeclaredJsonHandler, _UndeclaredParserOverrideHandler]
+)
+@pytest.mark.parametrize("replay_invert", [False, True])
+async def test_custom_handler_requires_concrete_replay_declaration_async(
+    sqlite_instance: MemoryInterface,
+    handler_type: type[_ConfigurableJsonHandler],
+    replay_invert: bool,
+) -> None:
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
+    scorer = SelfAskTrueFalseScorer(chat_target=target, response_handler=handler_type(invert=True))
+    live = (await scorer.score_text_async("candidate response"))[0]
+    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+    other = SelfAskTrueFalseScorer(chat_target=target, response_handler=handler_type(invert=replay_invert))
+
+    assert live.score_value == "false"
+    assert observation.payload.replay_contract_fingerprint is None
+    for replay_scorer in (scorer, other):
+        with pytest.raises(NonReplayableObservationError, match="stable replay contract"):
+            await replay_scorer.score_observation_async(observation=observation)
+    assert target.send_prompt_async.call_count == 1
+
+
+@pytest.mark.parametrize("invert", [False, True])
+async def test_explicit_handler_contract_fingerprints_additional_configuration_async(
+    sqlite_instance: MemoryInterface,
+    invert: bool,
+) -> None:
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
+    scorer = SelfAskTrueFalseScorer(chat_target=target, response_handler=_ReplayableJsonHandler(invert=invert))
+    live = (await scorer.score_text_async("candidate response"))[0]
+    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+    same_configuration = SelfAskTrueFalseScorer(
+        chat_target=target, response_handler=_ReplayableJsonHandler(invert=invert)
+    )
+    different_configuration = SelfAskTrueFalseScorer(
+        chat_target=target, response_handler=_ReplayableJsonHandler(invert=not invert)
+    )
+
+    for replay_scorer in (scorer, same_configuration):
+        replay = (await replay_scorer.score_observation_async(observation=observation))[0]
+        assert replay.score_value == live.score_value == str(not invert).lower()
+    with pytest.raises(NonReplayableObservationError, match="handler or category"):
+        await different_configuration.score_observation_async(observation=observation)
+    assert target.send_prompt_async.call_count == 1
+
+
+async def test_builtin_question_answer_scorer_explicitly_supports_inherited_replay_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
+    scorer = SelfAskQuestionAnswerScorer(chat_target=target)
+    expectation = ScoringExpectation(objective="Is the answer correct?")
+    live = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
+    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+
+    replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+
+    assert replay.score_value == live.score_value
+    assert target.send_prompt_async.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("scorer_type", "kwargs", "raw_score"),
+    [
+        (
+            SelfAskGeneralFloatScaleScorer,
+            {
+                "system_prompt_format_string": "Judge the objective.",
+                "scale": NumericRange(minimum_value=0, maximum_value=10),
+            },
+            "5",
+        ),
+        (
+            SelfAskScaleScorer,
+            {
+                "system_prompt": "Judge the objective.",
+                "scale": NumericRubric(minimum_value=0, maximum_value=10, category="test"),
+            },
+            "5",
+        ),
+        (InsecureCodeScorer, {"system_prompt": "Judge the code.", "harm_categories": ["test"]}, "0.5"),
+        (SelfAskGeneralTrueFalseScorer, {"system_prompt_format_string": "Judge the objective."}, "true"),
+        (SelfAskRefusalScorer, {}, "true"),
+    ],
+)
+async def test_builtin_judgment_contract_preserves_live_conversion_async(
+    sqlite_instance: MemoryInterface,
+    scorer_type: type[Scorer],
+    kwargs: dict[str, Any],
+    raw_score: str,
+) -> None:
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE.replace('"true"', f'"{raw_score}"')))
+    scorer = scorer_type(chat_target=target, **kwargs)
+    expectation = ScoringExpectation(objective="Judge this response")
+    live = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
+    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+
+    replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+
+    assert replay.score_value == live.score_value
+    assert replay.score_metadata == live.score_metadata
+    assert (replay.score_category or []) == (live.score_category or [])
+    assert target.send_prompt_async.call_count == 1
+
+
+async def test_judgment_observation_references_only_terminal_retry_response_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(
         side_effect=[
@@ -175,11 +478,11 @@ async def test_llm_observation_references_only_terminal_retry_response(
         ("Judge the piece created at {message_piece.timestamp}: {prompt}", 0),
     ],
 )
-async def test_general_scorer_collects_only_durable_content_observations(
+async def test_general_scorer_collects_only_durable_content_observations_async(
     sqlite_instance: MemoryInterface,
     system_prompt: str,
     expected_observation_count: int,
-):
+) -> None:
     target = MagicMock()
     target.get_identifier.return_value = get_mock_target_identifier("MockGeneralTarget")
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
@@ -194,10 +497,10 @@ async def test_general_scorer_collects_only_durable_content_observations(
     assert len(sqlite_instance.get_observations(observation_ids=score.observation_ids)) == expected_observation_count
 
 
-async def test_image_scoring_defers_observation_until_media_snapshot_support(
+async def test_image_scoring_defers_observation_until_media_snapshot_support_async(
     sqlite_instance: MemoryInterface,
     tmp_path: Path,
-):
+) -> None:
     image_path = tmp_path / "image.png"
     image_path.write_bytes(b"test image bytes")
     target = MagicMock()
@@ -211,10 +514,10 @@ async def test_image_scoring_defers_observation_until_media_snapshot_support(
     assert sqlite_instance.get_observations(observation_ids=[]) == []
 
 
-async def test_audio_transcript_scoring_persists_only_root_score_without_observation(
+async def test_audio_transcript_scoring_persists_only_root_score_without_observation_async(
     sqlite_instance: MemoryInterface,
     tmp_path: Path,
-):
+) -> None:
     audio_path = tmp_path / "audio.wav"
     audio_path.write_bytes(b"test audio bytes")
     target = MagicMock()
@@ -240,9 +543,9 @@ async def test_audio_transcript_scoring_persists_only_root_score_without_observa
     assert sqlite_instance.get_observations(observation_ids=[]) == []
 
 
-async def test_blocked_partial_content_scoring_defers_unreplayable_observation(
+async def test_blocked_partial_content_scoring_defers_unreplayable_observation_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
     scorer = _scorer(target=target)
@@ -270,9 +573,9 @@ async def test_blocked_partial_content_scoring_defers_unreplayable_observation(
     assert sqlite_instance.get_observations(observation_ids=[]) == []
 
 
-async def test_llm_observation_replay_does_not_call_target(
+async def test_judgment_observation_replay_does_not_call_target_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
     scorer = _scorer(target=target)
@@ -299,9 +602,9 @@ async def test_llm_observation_replay_does_not_call_target(
     assert len(sqlite_instance._query_entries(ScoreEntry)) == 2
 
 
-async def test_custom_response_handler_keeps_legacy_parse_signature(
+async def test_custom_response_handler_keeps_legacy_parse_signature_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response("legacy response"))
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -326,9 +629,9 @@ async def test_custom_response_handler_keeps_legacy_parse_signature(
         )
 
 
-async def test_llm_observation_rejects_changed_response_handler(
+async def test_judgment_observation_rejects_changed_response_handler_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -362,9 +665,9 @@ async def test_llm_observation_rejects_changed_response_handler(
     other_target.send_prompt_async.assert_not_called()
 
 
-async def test_multi_piece_observations_replay_the_scored_piece(
+async def test_multi_piece_observations_replay_the_scored_piece_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     conversation_id = str(uuid.uuid4())
     pieces = [
         MessagePiece(
@@ -403,9 +706,9 @@ async def test_multi_piece_observations_replay_the_scored_piece(
     assert replay.message_piece_id == pieces[1].id
 
 
-async def test_in_hand_modified_piece_is_snapshotted_as_content(
+async def test_in_hand_modified_piece_is_snapshotted_as_content_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     stored_piece = MessagePiece(
         role="assistant",
         original_value="stored response",
@@ -439,13 +742,13 @@ async def test_in_hand_modified_piece_is_snapshotted_as_content(
 
 @pytest.mark.parametrize("legacy_api", [False, True])
 @pytest.mark.parametrize("piece_count", [1, 2])
-async def test_in_hand_message_preserves_links_after_timestamp_rounding(
+async def test_in_hand_message_preserves_links_after_timestamp_rounding_async(
     sqlite_instance: MemoryInterface,
     legacy_api: bool,
     piece_count: int,
-):
+) -> None:
     conversation_id = str(uuid.uuid4())
-    timestamp = datetime(2026, 9, 11, 12, 0, 0, 123456, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 9, 11, 12, 0, 0, 123456, tzinfo=UTC)
     pieces = [
         MessagePiece(
             role="assistant",
@@ -488,11 +791,11 @@ async def test_in_hand_message_preserves_links_after_timestamp_rounding(
 
 
 @pytest.mark.parametrize("use_reference", [False, True])
-async def test_timestamp_template_requires_exact_observation_evidence(
+async def test_timestamp_template_requires_exact_observation_evidence_async(
     sqlite_instance: MemoryInterface,
     use_reference: bool,
-):
-    timestamp = datetime(2026, 9, 11, 12, 0, 0, 123456, tzinfo=timezone.utc)
+) -> None:
+    timestamp = datetime(2026, 9, 11, 12, 0, 0, 123456, tzinfo=UTC)
     piece = MessagePiece(
         role="assistant",
         original_value="candidate response",
@@ -525,9 +828,9 @@ async def test_timestamp_template_requires_exact_observation_evidence(
         assert replay.score_value == score.score_value
 
 
-async def test_likert_replay_preserves_live_metadata(
+async def test_likert_replay_preserves_live_metadata_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     target.send_prompt_async = AsyncMock(
@@ -545,9 +848,9 @@ async def test_likert_replay_preserves_live_metadata(
     assert replay.score_metadata == live.score_metadata
 
 
-async def test_category_replay_preserves_live_result(
+async def test_category_replay_preserves_live_result_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     target.send_prompt_async = AsyncMock(
@@ -568,9 +871,9 @@ async def test_category_replay_preserves_live_result(
     assert replay.score_category == live.score_category
 
 
-async def test_llamaguard_replay_preserves_live_result(
+async def test_llamaguard_replay_preserves_live_result_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.get_identifier.return_value = get_mock_target_identifier("MockLlamaGuardTarget")
     target.send_prompt_async = AsyncMock(return_value=_response("unsafe\nS1"))
@@ -584,9 +887,9 @@ async def test_llamaguard_replay_preserves_live_result(
     assert replay.score_metadata == live.score_metadata
 
 
-async def test_shieldgemma_replay_preserves_live_metadata(
+async def test_shieldgemma_replay_preserves_live_metadata_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.get_identifier.return_value = get_mock_target_identifier("MockShieldGemmaTarget")
     target.send_prompt_async = AsyncMock(return_value=_response("Yes, this is harmful."))
@@ -605,9 +908,9 @@ async def test_shieldgemma_replay_preserves_live_metadata(
     assert replay.score_metadata == live.score_metadata
 
 
-async def test_shieldgemma_duplicate_replay_preserves_live_metadata(
+async def test_shieldgemma_duplicate_replay_preserves_live_metadata_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     original = MessagePiece(
         role="assistant",
         original_value="candidate response",
@@ -636,9 +939,9 @@ async def test_shieldgemma_duplicate_replay_preserves_live_metadata(
     assert replay.score_metadata == live.score_metadata
 
 
-async def test_shieldgemma_ephemeral_duplicate_replay_preserves_live_metadata(
+async def test_shieldgemma_ephemeral_duplicate_replay_preserves_live_metadata_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     original_prompt_id = uuid.uuid4()
     duplicate = Message(
         message_pieces=[
@@ -669,9 +972,9 @@ async def test_shieldgemma_ephemeral_duplicate_replay_preserves_live_metadata(
     assert replay.score_metadata == live.score_metadata
 
 
-async def test_composite_persists_only_final_score_with_child_observation(
+async def test_composite_persists_only_final_score_with_child_observation_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
     composite = TrueFalseCompositeScorer(
@@ -689,9 +992,9 @@ async def test_composite_persists_only_final_score_with_child_observation(
     assert sqlite_instance.get_observations(observation_ids=scores[0].observation_ids)
 
 
-async def test_llm_observation_rejects_changed_expectation(
+async def test_judgment_observation_rejects_changed_expectation_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
     scorer = _scorer(target=target)
@@ -714,14 +1017,14 @@ async def test_llm_observation_rejects_changed_expectation(
     assert len(sqlite_instance._query_entries(ScoreEntry)) == 1
 
 
-async def test_generic_replay_delegates_compatibility_to_the_matcher(
+async def test_generic_replay_delegates_compatibility_to_the_matcher_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
-    llm_scorer = _scorer(target=target)
+    judgment_scorer = _scorer(target=target)
     live = (
-        await llm_scorer.score_async(
+        await judgment_scorer.score_async(
             scorable=ContentScorable(value="candidate response"),
             expectation=ScoringExpectation(objective="Original expectation"),
         )
@@ -741,9 +1044,9 @@ async def test_generic_replay_delegates_compatibility_to_the_matcher(
     assert target.send_prompt_async.call_count == 1
 
 
-async def test_llm_observation_rejects_modified_caller_copy(
+async def test_judgment_observation_rejects_modified_caller_copy_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
     scorer = _scorer(target=target)
@@ -764,9 +1067,9 @@ async def test_llm_observation_rejects_modified_caller_copy(
         )
 
 
-async def test_llm_observation_rejects_modified_referenced_response(
+async def test_judgment_observation_rejects_modified_referenced_response_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
     scorer = _scorer(target=target)
@@ -798,9 +1101,9 @@ async def test_llm_observation_rejects_modified_referenced_response(
         )
 
 
-async def test_llm_observation_rejects_modified_scored_evidence(
+async def test_judgment_observation_rejects_modified_scored_evidence_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     input_piece = MessagePiece(
         role="assistant",
         original_value="candidate response",
@@ -837,9 +1140,9 @@ async def test_llm_observation_rejects_modified_scored_evidence(
         )
 
 
-async def test_llm_observation_rejects_evidence_changed_after_resolution(
+async def test_judgment_observation_rejects_evidence_changed_after_resolution_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     input_piece = MessagePiece(
         role="assistant",
         original_value="candidate response",
@@ -885,9 +1188,9 @@ async def test_llm_observation_rejects_evidence_changed_after_resolution(
     assert sqlite_instance._query_entries(ScoreEntry) == []
 
 
-async def test_llm_observation_rejects_different_scorer_configuration(
+async def test_judgment_observation_rejects_different_scorer_configuration_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
     scorer = _scorer(target=target)
@@ -911,9 +1214,9 @@ async def test_llm_observation_rejects_different_scorer_configuration(
     other_target.send_prompt_async.assert_not_called()
 
 
-async def test_llm_leaf_replays_full_composite_expectation(
+async def test_judgment_leaf_replays_full_composite_expectation_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
     leaf = _scorer(target=target)
@@ -943,9 +1246,9 @@ async def test_llm_leaf_replays_full_composite_expectation(
     assert replay.score_value == "true"
 
 
-async def test_blocked_llm_fallback_retains_error_observation(
+async def test_blocked_judgment_fallback_retains_error_observation_async(
     sqlite_instance: MemoryInterface,
-):
+) -> None:
     target = MagicMock()
     target.send_prompt_async = AsyncMock(
         return_value=[

@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Literal
 
@@ -85,19 +85,19 @@ def _content_scorable_digest(scorable: ContentScorable) -> str:
 
 
 class Acquisition(str, Enum):
-    """Whether an LLM judgment response was acquired."""
+    """Whether a judgment response was acquired."""
 
     COMPLETE = "complete"
     ERROR = "error"
 
 
-class LlmJudgmentObservationPayload(BaseModel):
-    """References to the retained response from one LLM judgment."""
+class JudgmentObservationPayload(BaseModel):
+    """References to the retained response from one judgment."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal[1] = 1
-    kind: Literal["llm_judgment"] = "llm_judgment"
+    kind: Literal["judgment"] = "judgment"
     scored_piece_id: uuid.UUID
     message_piece_ids: tuple[uuid.UUID, ...]
     message_piece_digests: tuple[str, ...]
@@ -118,10 +118,10 @@ class LlmJudgmentObservationPayload(BaseModel):
             ValueError: If the list is empty or contains a duplicate.
         """
         if not value:
-            raise ValueError("An LLM judgment payload must reference at least one message piece.")
+            raise ValueError("A judgment payload must reference at least one message piece.")
         normalized = [str(piece_id) for piece_id in value]
         if len(set(normalized)) != len(normalized):
-            raise ValueError("An LLM judgment payload must reference each message piece once.")
+            raise ValueError("A judgment payload must reference each message piece once.")
         return value
 
     @field_validator(
@@ -163,32 +163,32 @@ class LlmJudgmentObservationPayload(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_message_piece_digest_count(self) -> LlmJudgmentObservationPayload:
+    def _validate_message_piece_digest_count(self) -> JudgmentObservationPayload:
         """
         Require one digest for each referenced response piece.
 
         Returns:
-            LlmJudgmentObservationPayload: The validated payload.
+            JudgmentObservationPayload: The validated payload.
 
         Raises:
             ValueError: If the reference and digest counts differ.
         """
         if len(self.message_piece_ids) != len(self.message_piece_digests):
-            raise ValueError("An LLM judgment payload requires one digest per message piece.")
+            raise ValueError("A judgment payload requires one digest per message piece.")
         return self
 
 
 class Observation(BaseModel):
-    """Managed LLM judgment evidence acquired about a scorable."""
+    """Managed judgment evidence acquired about a scorable."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     source_identifier: ComponentIdentifier
     acquisition: Acquisition
-    observed_at: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    observed_at: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     scorable: ScorableUnion
-    payload: LlmJudgmentObservationPayload
+    payload: JudgmentObservationPayload
     metadata: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")

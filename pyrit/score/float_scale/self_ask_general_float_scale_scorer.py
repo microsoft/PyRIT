@@ -9,7 +9,7 @@ from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.llm_scoring import (
     _format_string_references_message_piece,
-    _parse_llm_observation,
+    _parse_judgment_observation,
     _run_llm_scoring_async,
 )
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
@@ -170,6 +170,7 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
             data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             category=self._scale.category,
             requires_message_piece_evidence=(
                 _format_string_references_message_piece(self._system_prompt_format_string)
@@ -179,7 +180,11 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
 
         return [self._convert_score(unvalidated)]
 
-    def _score_llm_observation(
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared general float-scale conversion contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
         self,
         *,
         observation: Observation,
@@ -192,11 +197,12 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
         Returns:
             list[Score]: The normalized replay score.
         """
-        unvalidated = _parse_llm_observation(
+        unvalidated = _parse_judgment_observation(
             observation=observation,
             evidence=evidence,
             response_handler=self._response_handler,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             expectation=expectation,
             category=self._scale.category,
         )

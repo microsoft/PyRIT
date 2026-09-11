@@ -26,7 +26,7 @@ from pyrit.models import (
     UnvalidatedScore,
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.llm_scoring import _parse_llm_observation, _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -155,11 +155,12 @@ class _ContentClassifierResponseHandler(ResponseHandler):
 
     def _replay_identifier(self) -> dict[str, object] | None:
         """Return the wrapped parser and category validation contract."""
-        wrapped = self._response_handler._replay_identifier()
+        wrapped = self._response_handler._get_replay_identifier()
         if wrapped is None:
             return None
         return {
             "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "version": 1,
             "wrapped": wrapped,
             "category_names": sorted(self._category_names),
             "fallback_category": self._fallback_category,
@@ -370,13 +371,18 @@ class SelfAskCategoryScorer(MessageTrueFalseScorer):
             data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
 
         return [score]
 
-    def _score_llm_observation(
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared category judgment contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
         self,
         *,
         observation: Observation,
@@ -389,11 +395,12 @@ class SelfAskCategoryScorer(MessageTrueFalseScorer):
         Returns:
             list[Score]: The replayed category score.
         """
-        unvalidated = _parse_llm_observation(
+        unvalidated = _parse_judgment_observation(
             observation=observation,
             evidence=evidence,
             response_handler=self._response_handler,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             expectation=expectation,
         )
         return [

@@ -24,7 +24,7 @@ from pyrit.models.harm_category import HarmCategory
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEvalFiles
-from pyrit.score.llm_scoring import _parse_llm_observation, _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -224,11 +224,12 @@ class _LikertScaleResponseHandler(ResponseHandler):
 
     def _replay_identifier(self) -> dict[str, object] | None:
         """Return the wrapped parser and accepted Likert values."""
-        wrapped = self._response_handler._replay_identifier()
+        wrapped = self._response_handler._get_replay_identifier()
         if wrapped is None:
             return None
         return {
             "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "version": 1,
             "wrapped": wrapped,
             "score_values": sorted(self._score_values),
         }
@@ -423,12 +424,17 @@ class SelfAskLikertScorer(MessageFloatScaleScorer):
             data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             category=self._likert_scale.category,
         )
 
         return [self._convert_score(unvalidated_score)]
 
-    def _score_llm_observation(
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared Likert conversion and metadata contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
         self,
         *,
         observation: Observation,
@@ -441,11 +447,12 @@ class SelfAskLikertScorer(MessageFloatScaleScorer):
         Returns:
             list[Score]: The normalized replay score.
         """
-        unvalidated = _parse_llm_observation(
+        unvalidated = _parse_judgment_observation(
             observation=observation,
             evidence=evidence,
             response_handler=self._response_handler,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             expectation=expectation,
             category=self._likert_scale.category,
         )

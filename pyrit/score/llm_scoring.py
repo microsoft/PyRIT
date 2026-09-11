@@ -16,7 +16,7 @@ from pyrit.exceptions import (
 )
 from pyrit.models import (
     Acquisition,
-    LlmJudgmentObservationPayload,
+    JudgmentObservationPayload,
     Message,
     MessagePiece,
     MessageScorable,
@@ -86,6 +86,7 @@ async def _run_llm_scoring_async(
     normalizer: PromptNormalizer | None = None,
     observation_metadata: Mapping[str, str] | None = None,
     requires_message_piece_evidence: bool = False,
+    judgment_replay_identifier: Mapping[str, object] | None = None,
 ) -> UnvalidatedScore:
     """
     Perform a single scoring round-trip against an LLM target and delegate parsing.
@@ -133,6 +134,8 @@ async def _run_llm_scoring_async(
             reconstruct the response parser during replay. Defaults to None.
         requires_message_piece_evidence (bool): Whether the rendered request reads fields that a
             content-only observation cannot retain. Defaults to False.
+        judgment_replay_identifier (Mapping[str, object] | None): Explicit contract for the
+            scorer's shared pure judgment logic. None retains audit evidence without enabling replay.
 
     Returns:
         UnvalidatedScore: The parsed score, whose ``raw_score_value`` still needs to be
@@ -162,10 +165,11 @@ async def _run_llm_scoring_async(
     replay_contract_fingerprint = _replay_contract_fingerprint(
         response_handler=response_handler,
         category=category,
+        judgment_replay_identifier=judgment_replay_identifier,
     )
     active_scorable = _get_current_scorable()
     if active_scorable is not None and not isinstance(active_scorable, SCORABLE_TYPES):
-        raise TypeError(f"{type(active_scorable).__name__} cannot anchor an LLM observation.")
+        raise TypeError(f"{type(active_scorable).__name__} cannot anchor a judgment observation.")
     observation_scorable = cast("ScorableUnion | None", active_scorable)
     resolved_normalizer = normalizer or PromptNormalizer()
     scored_piece_id = uuid.UUID(str(scored_prompt_id)) if observation_scorable is not None else None
@@ -283,7 +287,7 @@ async def _run_llm_scoring_async(
         )
     except ScorerLLMResponseBlockedException as error:
         if terminal_response is not None and can_collect_observation and _has_observation_collection():
-            observation = _build_llm_observation(
+            observation = _build_judgment_observation(
                 acquisition=Acquisition.ERROR,
                 response=terminal_response,
                 scorable=observation_scorable,
@@ -312,7 +316,7 @@ async def _run_llm_scoring_async(
     unvalidated_score.scored_expectation = expectation
     unvalidated_score.objective = expectation.objective if expectation else None
     if can_collect_observation and _has_observation_collection():
-        observation = _build_llm_observation(
+        observation = _build_judgment_observation(
             acquisition=Acquisition.COMPLETE,
             response=terminal_response,
             scorable=observation_scorable,
@@ -329,7 +333,7 @@ async def _run_llm_scoring_async(
     return unvalidated_score
 
 
-def _build_llm_observation(
+def _build_judgment_observation(
     *,
     acquisition: Acquisition,
     response: Message,
@@ -342,7 +346,7 @@ def _build_llm_observation(
     metadata: dict[str, str] | None = None,
 ) -> Observation:
     """
-    Build an expectation-bound observation over one retained LLM response.
+    Build an expectation-bound observation over one retained judgment response.
 
     Returns:
         Observation: The managed judgment evidence.
@@ -351,7 +355,7 @@ def _build_llm_observation(
         source_identifier=scorer_identifier,
         acquisition=acquisition,
         scorable=scorable,
-        payload=LlmJudgmentObservationPayload(
+        payload=JudgmentObservationPayload(
             scored_piece_id=scored_piece_id,
             message_piece_ids=tuple(piece.id for piece in response.message_pieces),
             message_piece_digests=tuple(
@@ -365,14 +369,14 @@ def _build_llm_observation(
     )
 
 
-def _validate_llm_replay_compatibility(
+def _validate_judgment_replay_compatibility(
     *,
     observation: Observation,
     expectation: ScoringExpectation | None,
     scorer_identifier: ComponentIdentifier,
 ) -> None:
     """
-    Require the original scorer and expectation for retained LLM judgments.
+    Require the original scorer and expectation for retained judgments.
 
     Raises:
         NonReplayableObservationError: If the scorer or expectation changed.
@@ -382,17 +386,15 @@ def _validate_llm_replay_compatibility(
         or observation.source_identifier.pyrit_version != scorer_identifier.pyrit_version
     ):
         raise NonReplayableObservationError(
-            "An LLM judgment can only replay with the scorer configuration that acquired it."
+            "A judgment can only replay with the scorer configuration that acquired it."
         )
     if observation.payload.expectation_fingerprint != scoring_expectation_fingerprint(
         expectation or ScoringExpectation()
     ):
-        raise NonReplayableObservationError(
-            "An LLM judgment can only replay with the exact expectation used to acquire it."
-        )
+        raise NonReplayableObservationError("A judgment can only replay with the exact expectation used to acquire it.")
 
 
-def _parse_llm_observation(
+def _parse_judgment_observation(
     *,
     observation: Observation,
     evidence: _ObservationEvidence,
@@ -400,9 +402,10 @@ def _parse_llm_observation(
     scorer_identifier: ComponentIdentifier,
     expectation: ScoringExpectation | None,
     category: Sequence[str] | str | None = None,
+    judgment_replay_identifier: Mapping[str, object] | None = None,
 ) -> UnvalidatedScore:
     """
-    Parse one retained LLM response without calling a target.
+    Parse one retained judgment response without calling a target.
 
     Returns:
         UnvalidatedScore: The parsed replay result.
@@ -413,13 +416,16 @@ def _parse_llm_observation(
     replay_contract_fingerprint = _replay_contract_fingerprint(
         response_handler=response_handler,
         category=category,
+        judgment_replay_identifier=judgment_replay_identifier,
     )
     if observation.payload.replay_contract_fingerprint is None:
-        raise NonReplayableObservationError("The response handler does not declare a stable replay contract.")
+        raise NonReplayableObservationError("The scorer or response handler does not declare a stable replay contract.")
     if replay_contract_fingerprint != observation.payload.replay_contract_fingerprint:
-        raise NonReplayableObservationError("The response handler or category differs from the acquisition contract.")
+        raise NonReplayableObservationError(
+            "The judgment configuration, response handler or category differs from the acquisition contract."
+        )
     if not isinstance(evidence, Message):
-        raise NonReplayableObservationError("An LLM judgment requires resolved message evidence.")
+        raise NonReplayableObservationError("A judgment requires resolved message evidence.")
     text_piece = next(
         (piece for piece in evidence.message_pieces if piece.converted_value_data_type == "text"),
         None,
@@ -445,15 +451,16 @@ def _replay_contract_fingerprint(
     *,
     response_handler: ResponseHandler,
     category: Sequence[str] | str | None,
+    judgment_replay_identifier: Mapping[str, object] | None,
 ) -> str | None:
     """
-    Calculate a stable identity for response parsing and caller-supplied categories.
+    Calculate a stable identity for pure judgment logic, response parsing, and categories.
 
     Returns:
         str | None: The replay contract digest, or None when the handler is not stable.
     """
-    handler_identifier = response_handler._replay_identifier()
-    if handler_identifier is None:
+    handler_identifier = response_handler._get_replay_identifier()
+    if handler_identifier is None or judgment_replay_identifier is None:
         return None
     normalized_category = [category] if isinstance(category, str) else list(category) if category else None
     try:
@@ -461,6 +468,7 @@ def _replay_contract_fingerprint(
             {
                 "handler": handler_identifier,
                 "category": normalized_category,
+                "judgment": dict(judgment_replay_identifier),
             },
             ensure_ascii=True,
             separators=(",", ":"),

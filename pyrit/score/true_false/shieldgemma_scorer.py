@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Observation, Score, ScoringExpectation, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.llm_scoring import _parse_llm_observation, _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
 from pyrit.score.response_handler import CallableResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -243,6 +243,7 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
             data_type="text",
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             category=self.SCORE_CATEGORY,
             observation_metadata={"shieldgemma_scope": parser_scope},
         )
@@ -253,7 +254,11 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
             )
         ]
 
-    def _score_llm_observation(
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared ShieldGemma parsing and verdict-metadata contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
         self,
         *,
         observation: Observation,
@@ -275,11 +280,12 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
             ),
             parser_fingerprint=self.RESPONSE_PARSER_FINGERPRINT,
         )
-        unvalidated = _parse_llm_observation(
+        unvalidated = _parse_judgment_observation(
             observation=observation,
             evidence=evidence,
             response_handler=response_handler,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             expectation=expectation,
             category=self.SCORE_CATEGORY,
         )

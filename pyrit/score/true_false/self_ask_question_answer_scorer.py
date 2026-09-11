@@ -78,6 +78,10 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
             score_aggregator=score_aggregator,
         )
 
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the parent's contract for the shared pure true/false conversion."""
+        return super()._judgment_replay_identifier()
+
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score the message piece using question answering evaluation.
@@ -103,6 +107,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
             data_type="text",
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             category=self._score_category,
         )
 

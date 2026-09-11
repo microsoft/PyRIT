@@ -194,7 +194,7 @@ class Score(BaseModel):
 
     @field_validator("observation_ids")
     @classmethod
-    def _validate_observation_ids(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+    def _validate_observation_ids(cls, observation_ids: list[uuid.UUID]) -> list[uuid.UUID]:
         """
         Reject duplicate observation links while preserving their order.
 
@@ -204,10 +204,10 @@ class Score(BaseModel):
         Raises:
             ValueError: If an observation ID is repeated.
         """
-        normalized = [str(observation_id) for observation_id in value]
+        normalized = [str(observation_id) for observation_id in observation_ids]
         if len(set(normalized)) != len(normalized):
             raise ValueError("A score must reference each observation once.")
-        return value
+        return observation_ids
 
     @model_validator(mode="after")
     def _validate_score_value(self) -> Score:

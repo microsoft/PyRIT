@@ -28,6 +28,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioResultEntry,
 )
+from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import DiskStorageIO
 from pyrit.models import ConversationStats
 
@@ -81,7 +82,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         self._connection_lock: threading.RLock | None = threading.RLock() if self.db_path == ":memory:" else None
 
         self.engine = self._create_engine(has_echo=verbose)
-        self.SessionFactory = sessionmaker(bind=self.engine)
+        self.SessionFactory = sessionmaker(bind=self.engine, class_=MemorySession)
         if not skip_schema_migration:
             self._run_schema_migration(silent=silent)
 

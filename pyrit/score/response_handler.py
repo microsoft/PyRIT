@@ -182,11 +182,21 @@ class ResponseHandler(abc.ABC):
         """
         return JsonResponseConfig(enabled=False)
 
+    def _get_replay_identifier(self) -> dict[str, Any] | None:
+        """Return a replay contract only when the concrete handler explicitly declares one."""
+        if "_replay_identifier" not in type(self).__dict__:
+            return None
+        return self._replay_identifier()
+
     def _replay_identifier(self) -> dict[str, Any] | None:
         """
         Return stable parser configuration for observation replay.
 
-        Custom handlers must override this method to enable replay.
+        Every concrete subclass must override this method to enable replay, even when
+        inheriting a parser or another replay-enabled handler. The returned JSON-serializable
+        configuration must include a behavior version and all state that affects parsing.
+        Override this method and extend ``super()._replay_identifier()`` when adding parser
+        configuration; a class name alone does not identify instance-specific behavior.
 
         Returns:
             dict[str, Any] | None: Stable parser configuration, or None when replay is unsafe.
@@ -278,6 +288,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
         """Return all configuration that changes JSON parsing."""
         return {
             "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "version": 1,
             "score_value_output_key": self._score_value_output_key,
             "rationale_output_key": self._rationale_output_key,
             "description_output_key": self._description_output_key,
@@ -382,11 +393,12 @@ class TrueFalseResponseHandler(ResponseHandler):
 
     def _replay_identifier(self) -> dict[str, Any] | None:
         """Return the wrapped parser identity with the true/false constraint."""
-        wrapped = self._response_handler._replay_identifier()
+        wrapped = self._response_handler._get_replay_identifier()
         if wrapped is None:
             return None
         return {
             "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "version": 1,
             "wrapped": wrapped,
         }
 
@@ -484,6 +496,7 @@ class CallableResponseHandler(ResponseHandler):
             return None
         return {
             "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "version": 1,
             "parser_fingerprint": self._parser_fingerprint,
             "parser": parser,
             "score_value_output_key": self._score_value_output_key,

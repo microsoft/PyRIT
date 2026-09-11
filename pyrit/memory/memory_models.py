@@ -53,7 +53,7 @@ from pyrit.models import (
     ConversationType,
     ConverterIdentifier,
     EvaluationIdentifier,
-    LlmJudgmentObservationPayload,
+    JudgmentObservationPayload,
     MessagePiece,
     MessageScorable,
     Observation,
@@ -1201,7 +1201,7 @@ class ObservationEntry(Base):
             acquisition=self.acquisition,
             observed_at=self.observed_at,
             scorable=scorable_from_dict(self.scorable),
-            payload=LlmJudgmentObservationPayload.model_validate(self.payload),
+            payload=JudgmentObservationPayload.model_validate(self.payload),
             metadata=self.metadata_json or {},
         )
 

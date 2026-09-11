@@ -50,7 +50,7 @@ def _scored_evidence_digest(
     scored_message_piece: MessagePiece | None = None,
 ) -> str | None:
     """
-    Resolve and hash the canonical input evidence used for one LLM judgment.
+    Resolve and hash the canonical input evidence used for one judgment.
 
     Returns:
         str | None: The digest, or None when media replay is deferred.
@@ -86,7 +86,7 @@ def _scored_evidence_digest(
         if _content_scorable_digest(content) != content_digest:
             raise NonReplayableObservationError(f"Scored content {scorable.content_id} was modified.")
         return content_digest
-    raise NonReplayableObservationError(f"Scorable type {type(scorable).__name__} cannot replay LLM evidence.")
+    raise NonReplayableObservationError(f"Scorable type {type(scorable).__name__} cannot replay judgment evidence.")
 
 
 class _ObservationCollector:

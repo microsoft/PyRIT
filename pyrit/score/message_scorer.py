@@ -29,7 +29,7 @@ from pyrit.models import (
 )
 from pyrit.models.score.observation import _message_piece_digest
 from pyrit.models.score.scorable import SCORABLE_TYPES
-from pyrit.score.llm_scoring import _validate_llm_replay_compatibility
+from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation import (
     NonReplayableObservationError,
@@ -999,6 +999,29 @@ class MessageScorer(Scorer):
             objective=expectation.objective if expectation else None,
         )
 
+    def _get_judgment_replay_identifier(self) -> dict[str, object] | None:
+        """Return a judgment contract only when the concrete scorer explicitly declares one."""
+        if "_judgment_replay_identifier" not in type(self).__dict__:
+            return None
+        return self._judgment_replay_identifier()
+
+    def _judgment_replay_identifier(self) -> dict[str, object] | None:
+        """
+        Declare the version and additional configuration of a pure judgment implementation.
+
+        Replay is opt-in for each concrete scorer class, not inherited by subclasses.
+        Implementations must share pure judgment logic between live scoring and
+        ``_score_judgment_observation`` and include every additional setting that affects
+        that logic in this JSON-serializable identifier. For example, extend the parent's
+        identifier when overriding ``_convert_score`` with a configurable conversion.
+        Postprocessing in ``_score_piece_async`` or another async pipeline hook is NOT
+        replayed: move it into shared pure logic before declaring this contract.
+
+        Returns:
+            dict[str, object] | None: The explicit judgment contract, or None to disable replay.
+        """
+        return None
+
     def _score_observation(
         self,
         *,
@@ -1007,19 +1030,28 @@ class MessageScorer(Scorer):
         expectation: ScoringExpectation | None,
     ) -> list[Score]:
         """
-        Replay an LLM judgment through the leaf scorer's pure parser.
+        Replay a judgment through the leaf scorer's pure parser.
 
         Returns:
             list[Score]: Replayed or undetermined scores.
 
         Raises:
-            NonReplayableObservationError: If blocked-response policy differs from acquisition.
+            NonReplayableObservationError: If no explicit replay contract exists or policy differs.
         """
-        _validate_llm_replay_compatibility(
+        if self._get_judgment_replay_identifier() is None:
+            raise NonReplayableObservationError(
+                f"{type(self).__name__} must explicitly declare a judgment replay contract "
+                "with shared pure scoring logic."
+            )
+        _validate_judgment_replay_compatibility(
             observation=observation,
             expectation=expectation,
             scorer_identifier=self.get_identifier(),
         )
+        if observation.payload.replay_contract_fingerprint is None:
+            raise NonReplayableObservationError(
+                "The scorer or response handler did not declare a stable replay contract at acquisition."
+            )
         if observation.acquisition is Acquisition.ERROR:
             if observation.metadata.get("reason") == "scorer_response_blocked" and self.raise_if_scorer_blocks:
                 raise NonReplayableObservationError(
@@ -1027,19 +1059,19 @@ class MessageScorer(Scorer):
                 )
             return [
                 self._build_undetermined_score(
-                    rationale="The stored scorer LLM acquisition failed, so no verdict was reachable.",
+                    rationale="The stored scorer judgment acquisition failed, so no verdict was reachable.",
                     description="Stored scorer response was unavailable.",
                     message_piece_id=_replay_message_piece_id(observation),
                     scorable=observation.scorable,
                 )
             ]
-        return self._score_llm_observation(
+        return self._score_judgment_observation(
             observation=observation,
             evidence=evidence,
             expectation=expectation,
         )
 
-    def _score_llm_observation(
+    def _score_judgment_observation(
         self,
         *,
         observation: Observation,
@@ -1047,12 +1079,12 @@ class MessageScorer(Scorer):
         expectation: ScoringExpectation | None,
     ) -> list[Score]:
         """
-        Replay a retained LLM response for a concrete message scorer.
+        Replay a retained judgment response for a concrete message scorer.
 
         Raises:
-            NonReplayableObservationError: Always, unless a concrete LLM scorer overrides this hook.
+            NonReplayableObservationError: Always, unless a concrete judgment scorer overrides this hook.
         """
-        raise NonReplayableObservationError(f"{type(self).__name__} does not implement LLM observation replay.")
+        raise NonReplayableObservationError(f"{type(self).__name__} does not implement judgment observation replay.")
 
     async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         """
