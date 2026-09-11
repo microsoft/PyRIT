@@ -9,14 +9,11 @@ so the frontend can reference them by URL instead of requiring inline
 base64 data URIs.  For Azure deployments, media is served directly from
 Azure Blob Storage via signed URLs and this endpoint is not used.
 
-This route is the only place PyRIT hands stored bytes to a browser, so it is the
-only place that restricts content.  Storage stays unrestricted on purpose: any
-file type is a legitimate attack payload (uploading an ``.html`` file so an attack
-can push it to a blob target is a valid operation).  Files therefore keep their
-real name and extension on disk, and this route never renames them -- anything
-reading a stored path gets the original file.  Only the HTTP *response* is
-adjusted: a document type a browser would execute in this origin is returned as an
-opaque download instead of a rendered page.
+This route is the only place PyRIT hands stored bytes to a browser, so it controls
+whether the browser renders or downloads them. Storage and download support stay
+unrestricted on purpose: any file type is a legitimate attack payload. Only
+explicitly allowlisted media types render inline; every other type downloads as
+opaque bytes.
 """
 
 import logging
@@ -35,15 +32,9 @@ router = APIRouter()
 # Only serve files from known media subdirectories under results_path.
 _ALLOWED_SUBDIRECTORIES = {"prompt-memory-entries", "seed-prompt-entries"}
 
-# Types a browser executes in this origin. They are still stored and still served,
-# but always as an opaque download so stored content cannot script against the UI.
-_ACTIVE_DOCUMENT_EXTENSIONS = {".htm", ".html", ".svg", ".xhtml", ".xml"}
-
-# Types the browser is asked to download rather than render inline.
-_ATTACHMENT_EXTENSIONS = {".csv", ".md", ".pdf", ".txt"} | _ACTIVE_DOCUMENT_EXTENSIONS
-
-# Only serve known media file types (allowlist approach).
-_ALLOWED_EXTENSIONS = {
+# Only these known-safe media types render inline. Every other extension is
+# served as an application/octet-stream attachment.
+_INLINE_EXTENSIONS = {
     # Images
     ".png",
     ".jpg",
@@ -66,12 +57,7 @@ _ALLOWED_EXTENSIONS = {
     ".mov",
     ".avi",
     ".mkv",
-    # Text / documents
-    ".txt",
-    ".md",
-    ".csv",
-    ".pdf",
-} | _ACTIVE_DOCUMENT_EXTENSIONS
+}
 
 
 def _validate_media_path(*, path: str, allowed_root: Path) -> Path:
@@ -106,10 +92,6 @@ def _validate_media_path(*, path: str, allowed_root: Path) -> Path:
     if not relative_parts or relative_parts[0] not in _ALLOWED_SUBDIRECTORIES:
         raise HTTPException(status_code=403, detail="Access denied: path is not in a media subdirectory.")
 
-    # Only allow known media file extensions
-    if real_path.suffix.lower() not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=403, detail="Access denied: file type is not allowed.")
-
     return real_path
 
 
@@ -124,11 +106,10 @@ async def serve_media_async(
     configured results directory (e.g. ``dbdata/prompt-memory-entries/``)
     to prevent path traversal attacks and exfiltration of sensitive files.
 
-    The stored file is never modified or renamed. Active document types
-    (see ``_ACTIVE_DOCUMENT_EXTENSIONS``) are returned as opaque downloads so the
-    browser does not execute them in this origin; the bytes and the file name are
-    unchanged, so a caller that needs the real file (e.g. to attach an ``.html``
-    payload to a target) reads it from its stored path.
+    Upload storage and downloads accept any file type. Extensions in
+    ``_INLINE_EXTENSIONS`` use their inferred media type and can render inline.
+    Every other extension is returned as an ``application/octet-stream``
+    attachment with ``nosniff`` so the browser downloads rather than renders it.
 
     Args:
         path: Absolute path to the file.
@@ -137,7 +118,7 @@ async def serve_media_async(
         FileResponse with the file content and inferred MIME type.
 
     Raises:
-        HTTPException 403: If the path is outside the allowed directory or has a blocked extension.
+        HTTPException 403: If the path is outside the allowed directory.
         HTTPException 404: If the file does not exist.
         HTTPException 500: If memory is not initialized.
     """
@@ -155,15 +136,12 @@ async def serve_media_async(
         raise HTTPException(status_code=404, detail="File not found.")
 
     extension = validated_path.suffix.lower()
-    if extension in _ACTIVE_DOCUMENT_EXTENSIONS:
-        media_type = "application/octet-stream"
-    else:
-        guessed_type, _ = mimetypes.guess_type(validated_path)
-        media_type = guessed_type or "application/octet-stream"
+    render_inline = extension in _INLINE_EXTENSIONS
+    guessed_type, _ = mimetypes.guess_type(validated_path) if render_inline else (None, None)
     return FileResponse(
         path=validated_path,
-        media_type=media_type,
-        filename=validated_path.name if extension in _ATTACHMENT_EXTENSIONS else None,
+        media_type=guessed_type or "application/octet-stream",
+        filename=None if render_inline else validated_path.name,
         content_disposition_type="attachment",
         headers={"X-Content-Type-Options": "nosniff"},
     )
