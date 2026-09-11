@@ -2546,6 +2546,59 @@ def test_attack_attribution_migration_rejects_overlength_value() -> None:
         engine.dispose()
 
 
+def test_attack_attribution_migration_uses_set_based_mssql_update() -> None:
+    import importlib
+    from unittest.mock import MagicMock, patch
+
+    migration = importlib.import_module(
+        "pyrit.memory.alembic.versions.a4c6e8f0b2d1_add_attack_attribution_and_history_indexes"
+    )
+    bind = MagicMock()
+    bind.dialect.name = "mssql"
+    bind.exec_driver_sql.return_value.first.return_value = None
+
+    with patch.object(migration.op, "get_bind", return_value=bind):
+        migration._move_attribution_from_labels()
+
+    assert [call.args[0] for call in bind.exec_driver_sql.call_args_list] == [
+        migration._MSSQL_INVALID_ATTRIBUTION_QUERY,
+        migration._MSSQL_MOVE_ATTRIBUTION_QUERY,
+    ]
+    bind.execute.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("invalid_value", "error_match"),
+    [
+        (
+            {"row_id": "attack-1", "field_name": "operator", "value_type": 2},
+            "non-string labels.operator",
+        ),
+        (
+            {"row_id": "attack-2", "field_name": "operation", "value_type": 1},
+            "labels.operation longer than 128 characters",
+        ),
+    ],
+)
+def test_attack_attribution_mssql_migration_rejects_invalid_value(
+    invalid_value: dict[str, object], error_match: str
+) -> None:
+    import importlib
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    migration = importlib.import_module(
+        "pyrit.memory.alembic.versions.a4c6e8f0b2d1_add_attack_attribution_and_history_indexes"
+    )
+    bind = MagicMock()
+    bind.exec_driver_sql.return_value.first.return_value = SimpleNamespace(_mapping=invalid_value)
+
+    with pytest.raises(ValueError, match=error_match):
+        migration._move_attribution_from_labels_mssql(bind=bind)
+
+    bind.exec_driver_sql.assert_called_once_with(migration._MSSQL_INVALID_ATTRIBUTION_QUERY)
+
+
 def test_attack_attribution_downgrade_restores_legacy_labels() -> None:
     engine = create_engine("sqlite://")
     attack_id = str(uuid.uuid4())
@@ -2694,6 +2747,34 @@ def test_scored_expectation_migration_script_metadata():
     assert mig.down_revision == _SCORED_EXPECTATION_PREV_REV
     assert mig.branch_labels is None
     assert mig.depends_on is None
+
+
+@pytest.mark.parametrize(
+    ("function_name", "query_name"),
+    [
+        ("_backfill_scored_expectation", "_MSSQL_BACKFILL_SCORED_EXPECTATION_QUERY"),
+        ("_backfill_objective", "_MSSQL_RESTORE_OBJECTIVE_QUERY"),
+    ],
+)
+def test_scored_expectation_mssql_backfill_uses_set_based_update(function_name: str, query_name: str):
+    import importlib
+    from unittest.mock import MagicMock, patch
+
+    migration = importlib.import_module("pyrit.memory.alembic.versions.1b3d5f7a9c2e_persist_scored_expectation")
+    connection = MagicMock()
+    connection.dialect.name = "mssql"
+    connection.exec_driver_sql.return_value.rowcount = 12
+
+    with (
+        patch.object(migration.op, "get_bind", return_value=connection),
+        patch.object(migration, "_report_progress") as report_progress,
+    ):
+        getattr(migration, function_name)()
+
+    connection.exec_driver_sql.assert_called_once_with(getattr(migration, query_name))
+    connection.execute.assert_not_called()
+    assert report_progress.call_count == 2
+    assert "updated 12 row(s)" in report_progress.call_args_list[-1].args[0]
 
 
 def test_scored_expectation_upgrade_backfills_objective_into_expectation():

@@ -11,6 +11,7 @@ Create Date: 2026-09-04 18:48:00.000000
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
@@ -26,30 +27,85 @@ down_revision: str | Sequence[str] | None = "1b3d5f7a9c2e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+logger = logging.getLogger(__name__)
+
 _ATTRIBUTION_FIELDS = ("operator", "operation")
 _ATTRIBUTION_MAX_LENGTH = 128
 _BATCH_SIZE = 1000
+_MSSQL_INVALID_ATTRIBUTION_QUERY = f"""
+SELECT TOP (1)
+    attack_result.[id] AS row_id,
+    attribute.[key] AS field_name,
+    attribute.[type] AS value_type
+FROM [AttackResultEntries] AS attack_result
+CROSS APPLY OPENJSON(attack_result.[labels]) AS attribute
+WHERE attribute.[key] COLLATE Latin1_General_100_BIN2 IN (N'operator', N'operation')
+  AND (
+      attribute.[type] <> 1
+      OR DATALENGTH(attribute.[value]) > {_ATTRIBUTION_MAX_LENGTH * 2}
+  )
+"""
+_MSSQL_MOVE_ATTRIBUTION_QUERY = """
+UPDATE attack_result
+SET
+    [operator] = JSON_VALUE(attack_result.[labels], N'$.operator'),
+    [operation] = JSON_VALUE(attack_result.[labels], N'$.operation'),
+    [labels] = JSON_MODIFY(
+        JSON_MODIFY(attack_result.[labels], N'$.operator', NULL),
+        N'$.operation',
+        NULL
+    )
+FROM [AttackResultEntries] AS attack_result
+WHERE EXISTS (
+    SELECT 1
+    FROM OPENJSON(attack_result.[labels]) AS attribute
+    WHERE attribute.[key] COLLATE Latin1_General_100_BIN2 IN (N'operator', N'operation')
+)
+"""
+
+
+def _report_progress(message: str) -> None:
+    """Write migration progress to Alembic stdout, or the logger outside a migration context."""
+    try:
+        context = op.get_context()
+    except (AttributeError, NameError):
+        logger.info(message)
+        return
+    config = context.config
+    if config is not None:
+        config.print_stdout(message)
+    else:
+        logger.info(message)
 
 
 def upgrade() -> None:
     """Add attribution columns, migrate legacy labels, and replace history indexes."""
+    _report_progress("Attack history migration: adding attribution columns.")
     op.add_column("AttackResultEntries", sa.Column("operator", sa.Unicode(_ATTRIBUTION_MAX_LENGTH), nullable=True))
     op.add_column("AttackResultEntries", sa.Column("operation", sa.Unicode(_ATTRIBUTION_MAX_LENGTH), nullable=True))
+
+    _report_progress("Attack history migration: moving attribution values from labels.")
     _move_attribution_from_labels()
+
+    _report_progress("Attack history migration: validating and bounding indexed text columns.")
     _bound_indexed_text_columns()
 
+    _report_progress("Attack history migration: replacing AttackResultEntries indexes.")
     op.drop_index("ix_AttackResultEntries_conversation_id", table_name="AttackResultEntries")
+    _report_progress("Attack history migration: creating ix_AttackResultEntries_conversation_timestamp_id.")
     op.create_index(
         "ix_AttackResultEntries_conversation_timestamp_id",
         "AttackResultEntries",
         ["conversation_id", "timestamp", "id"],
     )
+    _report_progress("Attack history migration: creating ix_AttackResultEntries_operator_timestamp_id.")
     op.create_index(
         "ix_AttackResultEntries_operator_timestamp_id",
         "AttackResultEntries",
         ["operator", "timestamp", "id"],
         mssql_include=["conversation_id"],
     )
+    _report_progress("Attack history migration: creating ix_AttackResultEntries_operation_timestamp_id.")
     op.create_index(
         "ix_AttackResultEntries_operation_timestamp_id",
         "AttackResultEntries",
@@ -57,7 +113,9 @@ def upgrade() -> None:
         mssql_include=["conversation_id"],
     )
 
+    _report_progress("Attack history migration: replacing PromptMemoryEntries indexes.")
     _drop_index_if_exists(name="idx_conversation_id", table_name="PromptMemoryEntries")
+    _report_progress("Attack history migration: creating ix_PromptMemoryEntries_conversation_sequence_id.")
     op.create_index(
         "ix_PromptMemoryEntries_conversation_sequence_id",
         "PromptMemoryEntries",
@@ -65,22 +123,28 @@ def upgrade() -> None:
         mssql_include=["timestamp", "converted_value_data_type"],
     )
 
+    _report_progress("Attack history migration: creating ScenarioResultEntries indexes.")
+    _report_progress("Attack history migration: creating ix_ScenarioResultEntries_scenario_name_timestamp_id.")
     op.create_index(
         "ix_ScenarioResultEntries_scenario_name_timestamp_id",
         "ScenarioResultEntries",
         ["scenario_name", "timestamp", "id"],
     )
+    _report_progress("Attack history migration: creating ix_ScenarioResultEntries_scenario_run_state_timestamp_id.")
     op.create_index(
         "ix_ScenarioResultEntries_scenario_run_state_timestamp_id",
         "ScenarioResultEntries",
         ["scenario_run_state", "timestamp", "id"],
     )
+    _report_progress("Attack history migration: upgrade completed.")
 
 
 def downgrade() -> None:
     """Restore legacy labels and indexes, then remove attribution columns."""
+    _report_progress("Attack history migration: restoring attribution values to labels.")
     _restore_attribution_to_labels()
 
+    _report_progress("Attack history migration: restoring legacy indexes and text columns.")
     op.drop_index(
         "ix_ScenarioResultEntries_scenario_run_state_timestamp_id",
         table_name="ScenarioResultEntries",
@@ -116,6 +180,7 @@ def downgrade() -> None:
     _restore_unbounded_text_columns()
     op.drop_column("AttackResultEntries", "operation")
     op.drop_column("AttackResultEntries", "operator")
+    _report_progress("Attack history migration: downgrade completed.")
 
 
 def _attack_results_table(*, include_attribution: bool) -> sa.Table:
@@ -230,6 +295,49 @@ def _move_attribution_from_labels() -> None:
         ValueError: If a legacy attribution value is invalid or too long.
     """
     bind = op.get_bind()
+    if bind.dialect.name == "mssql":
+        _move_attribution_from_labels_mssql(bind=bind)
+        return
+
+    _move_attribution_from_labels_portable(bind=bind)
+
+
+def _move_attribution_from_labels_mssql(*, bind: Any) -> None:
+    """
+    Move attribution labels with set-based SQL Server JSON operations.
+
+    Raises:
+        ValueError: If a legacy attribution value is invalid or too long.
+    """
+    _report_progress("Attack attribution backfill: validating SQL Server JSON values.")
+    invalid_value = bind.exec_driver_sql(_MSSQL_INVALID_ATTRIBUTION_QUERY).first()
+    if invalid_value is not None:
+        invalid = invalid_value._mapping
+        if invalid["value_type"] != 1:
+            raise ValueError(
+                f"AttackResultEntries row {invalid['row_id']} has non-string labels.{invalid['field_name']}; "
+                "cannot migrate it to a first-class string column."
+            )
+        raise ValueError(
+            f"AttackResultEntries row {invalid['row_id']} has labels.{invalid['field_name']} longer than "
+            f"{_ATTRIBUTION_MAX_LENGTH} characters; migration will not truncate it."
+        )
+
+    _report_progress("Attack attribution backfill: applying set-based SQL Server update.")
+    result = bind.exec_driver_sql(_MSSQL_MOVE_ATTRIBUTION_QUERY)
+    if isinstance(result.rowcount, int) and result.rowcount >= 0:
+        _report_progress(f"Attack attribution backfill: updated {result.rowcount} row(s).")
+    else:
+        _report_progress("Attack attribution backfill: SQL Server update completed.")
+
+
+def _move_attribution_from_labels_portable(*, bind: Any) -> None:
+    """
+    Move attribution labels using portable SQLAlchemy operations.
+
+    Raises:
+        ValueError: If a legacy attribution value is invalid or too long.
+    """
     table = _attack_results_table(include_attribution=True)
     statement = (
         sa.update(table)
@@ -241,7 +349,10 @@ def _move_attribution_from_labels() -> None:
         )
     )
     rows = bind.execute(sa.select(table.c.id, table.c.labels)).all()
-    for start in range(0, len(rows), _BATCH_SIZE):
+    batch_count = (len(rows) + _BATCH_SIZE - 1) // _BATCH_SIZE
+    _report_progress(f"Attack attribution backfill: processing {len(rows)} row(s) in {batch_count} batch(es).")
+    updated_count = 0
+    for batch_number, start in enumerate(range(0, len(rows), _BATCH_SIZE), start=1):
         updates = []
         for row in rows[start : start + _BATCH_SIZE]:
             labels = row.labels
@@ -276,6 +387,9 @@ def _move_attribution_from_labels() -> None:
                 )
         if updates:
             bind.execute(statement, updates)
+            updated_count += len(updates)
+        _report_progress(f"Attack attribution backfill: completed batch {batch_number}/{batch_count}.")
+    _report_progress(f"Attack attribution backfill: updated {updated_count} row(s).")
 
 
 def _restore_attribution_to_labels() -> None:
@@ -289,7 +403,10 @@ def _restore_attribution_to_labels() -> None:
     table = _attack_results_table(include_attribution=True)
     statement = sa.update(table).where(table.c.id == sa.bindparam("row_id")).values(labels=sa.bindparam("new_labels"))
     rows = bind.execute(sa.select(table.c.id, table.c.labels, table.c.operator, table.c.operation)).all()
-    for start in range(0, len(rows), _BATCH_SIZE):
+    batch_count = (len(rows) + _BATCH_SIZE - 1) // _BATCH_SIZE
+    _report_progress(f"Attack attribution restore: processing {len(rows)} row(s) in {batch_count} batch(es).")
+    updated_count = 0
+    for batch_number, start in enumerate(range(0, len(rows), _BATCH_SIZE), start=1):
         updates = []
         for row in rows[start : start + _BATCH_SIZE]:
             labels = dict(row.labels) if isinstance(row.labels, dict) else {}
@@ -310,3 +427,6 @@ def _restore_attribution_to_labels() -> None:
                 updates.append({"row_id": row.id, "new_labels": labels})
         if updates:
             bind.execute(statement, updates)
+            updated_count += len(updates)
+        _report_progress(f"Attack attribution restore: completed batch {batch_number}/{batch_count}.")
+    _report_progress(f"Attack attribution restore: updated {updated_count} row(s).")
