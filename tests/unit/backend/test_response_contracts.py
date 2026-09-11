@@ -17,9 +17,11 @@ from datetime import datetime, timezone
 
 from pyrit.backend.models.attacks import (
     AttackSummary,
+    ConversationMessagesResponse,
     MessagePieceView,
     MessageView,
     ScoreView,
+    TargetResponseOutcome,
 )
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -152,6 +154,35 @@ class TestMessageViewContract:
         assert "created_at" in dumped
         assert len(dumped["message_pieces"]) == 1
         assert dumped["message_pieces"][0]["role"] == "assistant"
+
+
+class TestConversationMessagesResponseContract:
+    """JSON contract for target response outcome metadata."""
+
+    def test_dump_has_target_response_outcome(self) -> None:
+        """Test that target outcome and turn linkage are serialized for clients."""
+        response = ConversationMessagesResponse(
+            conversation_id="conv-1",
+            target_response_outcome=TargetResponseOutcome(
+                response_error="processing",
+                request_turn_number=2,
+                response_turn_number=3,
+            ),
+        )
+
+        dumped = response.model_dump(mode="json")
+
+        assert dumped["target_response_outcome"] == {
+            "response_error": "processing",
+            "request_turn_number": 2,
+            "response_turn_number": 3,
+        }
+
+    def test_dump_has_null_outcome_without_target_response(self) -> None:
+        """Test that conversations without a target response explicitly serialize null."""
+        response = ConversationMessagesResponse(conversation_id="conv-1")
+
+        assert response.model_dump(mode="json")["target_response_outcome"] is None
 
 
 class TestAttackSummaryContract:

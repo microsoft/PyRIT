@@ -8,7 +8,7 @@ import {
   mergeClasses,
 } from '@fluentui/react-components'
 import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular, OpenRegular, ArrowSyncRegular } from '@fluentui/react-icons'
-import type { AttackTargetResolutionStatus, MessageAttachment, TargetInstance } from '../../types'
+import type { AttackTargetResolutionStatus, ChatSendOutcome, MessageAttachment, TargetInstance } from '../../types'
 import { isTargetResolutionBlocking } from '../../utils/targetIdentity'
 import { useChatInputAreaStyles } from './ChatInputArea.styles'
 import SystemPromptSetup from './SystemPromptSetup'
@@ -406,10 +406,18 @@ const formatModalityLabel = (modality: string): string => modality.replace('_pat
 export interface ChatInputAreaHandle {
   addAttachment: (att: MessageAttachment) => void
   setText: (text: string) => void
+  restoreDraft: (text: string, attachments: MessageAttachment[]) => void
+  focus: () => void
+  getDraftRevision: () => number
 }
 
 interface ChatInputAreaProps {
-  onSend: (originalValue: string, convertedValue: string | undefined, attachments: MessageAttachment[]) => void
+  onSend: (
+    originalValue: string,
+    convertedValue: string | undefined,
+    attachments: MessageAttachment[],
+  ) => Promise<ChatSendOutcome>
+  conversionRevisionKey?: string
   disabled?: boolean
   activeTarget?: TargetInstance | null
   singleTurnLimitReached?: boolean
@@ -429,6 +437,7 @@ interface ChatInputAreaProps {
   convertedValue?: string | null
   originalValue?: string | null
   onClearConversion: () => void
+  onClearAllConversions?: () => void
   onConvertedValueChange: (value: string) => void
   converterOutputDataTypes?: string[]
   mediaConversions?: Array<{ pieceType: string; convertedValue: string; convertedDataType: string }>
@@ -444,13 +453,24 @@ interface ChatInputAreaProps {
   onSystemPromptChange?: (value: string) => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, conversionRevisionKey = '', disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onClearAllConversions = () => {}, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const convertedRef = useRef<HTMLTextAreaElement>(null)
+  const inputRef = useRef('')
+  const attachmentsRef = useRef<MessageAttachment[]>([])
+  const draftRevisionRef = useRef(0)
+  const previousConversionRevisionKeyRef = useRef(conversionRevisionKey)
+
+  useLayoutEffect(() => {
+    if (previousConversionRevisionKeyRef.current !== conversionRevisionKey) {
+      previousConversionRevisionKeyRef.current = conversionRevisionKey
+      draftRevisionRef.current += 1
+    }
+  }, [conversionRevisionKey])
 
   // Derive unsupported types from attachments AND converter outputs
   const unsupportedAttachmentTypes = getUnsupportedAttachmentTypes(attachments, activeTarget)
@@ -465,11 +485,28 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
 
   useImperativeHandle(ref, () => ({
     addAttachment: (att: MessageAttachment) => {
-      setAttachments(prev => [...prev, att])
+      const nextAttachments = [...attachmentsRef.current, att]
+      attachmentsRef.current = nextAttachments
+      draftRevisionRef.current += 1
+      setAttachments(nextAttachments)
     },
     setText: (text: string) => {
+      inputRef.current = text
+      draftRevisionRef.current += 1
       setInput(text)
     },
+    restoreDraft: (text: string, draftAttachments: MessageAttachment[]) => {
+      const restoredAttachments = draftAttachments.map((attachment) => ({ ...attachment }))
+      inputRef.current = text
+      attachmentsRef.current = restoredAttachments
+      draftRevisionRef.current += 1
+      setInput(text)
+      setAttachments(restoredAttachments)
+    },
+    focus: () => {
+      textareaRef.current?.focus()
+    },
+    getDraftRevision: () => draftRevisionRef.current,
   }))
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -497,27 +534,47 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       })
     }
 
-    setAttachments([...attachments, ...newAttachments])
+    const nextAttachments = [...attachmentsRef.current, ...newAttachments]
+    attachmentsRef.current = nextAttachments
+    draftRevisionRef.current += 1
+    setAttachments(nextAttachments)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
   }
 
   const removeAttachment = (index: number) => {
-    const newAttachments = [...attachments]
+    const newAttachments = [...attachmentsRef.current]
     URL.revokeObjectURL(newAttachments[index].url)
     newAttachments.splice(index, 1)
+    attachmentsRef.current = newAttachments
+    draftRevisionRef.current += 1
     setAttachments(newAttachments)
   }
 
-  const handleSend = () => {
-    if ((input || attachments.length > 0) && !disabled && !hasUnsupportedModalities) {
-      onSend(input, convertedValue ?? undefined, attachments)
-      setInput('')
-      setAttachments([])
-      onClearConversion()
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
+  const handleSend = async (): Promise<void> => {
+    if (
+      (input || attachments.length > 0)
+      && !disabled
+      && !hasUnsupportedModalities
+    ) {
+      const submittedInput = inputRef.current
+      const submittedAttachments = attachmentsRef.current
+      const submittedRevision = draftRevisionRef.current
+      const outcome = await onSend(submittedInput, convertedValue ?? undefined, submittedAttachments)
+      if (
+        outcome.clearDraft
+        && draftRevisionRef.current === submittedRevision
+      ) {
+        inputRef.current = ''
+        attachmentsRef.current = []
+        draftRevisionRef.current += 1
+        setInput('')
+        setAttachments([])
+        onClearAllConversions()
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto'
+        }
       }
     }
   }
@@ -532,7 +589,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      handleSend()
+      void handleSend()
     }
   }
 
@@ -587,6 +644,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   }, [attachments, onAttachmentsChange])
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    inputRef.current = e.target.value
+    draftRevisionRef.current += 1
     setInput(e.target.value)
   }
 
@@ -765,7 +824,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                   className={styles.sendButton}
                   appearance="primary"
                   icon={<SendRegular />}
-                  onClick={handleSend}
+                  onClick={() => { void handleSend() }}
                   disabled={disabled || (!input && attachments.length === 0) || hasUnsupportedModalities}
                   aria-label="Send message"
                   data-testid="send-message-btn"

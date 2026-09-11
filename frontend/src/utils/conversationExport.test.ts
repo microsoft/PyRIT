@@ -355,7 +355,7 @@ describe("conversationExport", () => {
       expect(JSON.parse(json).messages).toHaveLength(1);
     });
 
-    it("omits the in-memory File handle but keeps the other attachment fields", () => {
+    it("omits internal attachment values but keeps export-safe fields", () => {
       const file = new File(["x"], "local.png", { type: "image/png" });
       const json = conversationToJson(
         [
@@ -367,6 +367,8 @@ describe("conversationExport", () => {
                 url: "blob:local",
                 mimeType: "image/png",
                 pieceId: "piece-9",
+                sourceValue: "C:\\private\\raw-image.png",
+                sourceDataType: "image_path",
                 file,
               },
             ],
@@ -376,6 +378,8 @@ describe("conversationExport", () => {
       );
       const attachment = JSON.parse(json).messages[0].attachments[0];
       expect(attachment.file).toBeUndefined();
+      expect(attachment.sourceValue).toBeUndefined();
+      expect(attachment.sourceDataType).toBeUndefined();
       expect(attachment.name).toBe("local.png");
       expect(attachment.pieceId).toBe("piece-9");
     });
@@ -535,13 +539,20 @@ describe("conversationExport", () => {
       expect(attachment.metadata.video_id).toBe("v1");
     });
 
-    it("strips the File handle from original attachments too", () => {
+    it("strips all internal values from original attachments too", () => {
       const file = new File(["x"], "orig.png", { type: "image/png" });
       const json = conversationToJson(
         [
           message({
             originalAttachments: [
-              { type: "image", name: "orig.png", url: "blob:orig", mimeType: "image/png", file },
+              {
+                type: "image",
+                name: "orig.png",
+                url: "blob:orig",
+                mimeType: "image/png",
+                sourceValue: "C:\\private\\orig.png",
+                file,
+              },
             ],
           }),
         ],
@@ -549,6 +560,7 @@ describe("conversationExport", () => {
       );
       const attachment = JSON.parse(json).messages[0].originalAttachments[0];
       expect(attachment.file).toBeUndefined();
+      expect(attachment.sourceValue).toBeUndefined();
       expect(attachment.name).toBe("orig.png");
     });
 

@@ -27,6 +27,7 @@ import {
   ArrowReplyRegular,
   BranchForkRegular,
   ChatAddRegular,
+  EditRegular,
   MoreHorizontalRegular,
   OpenRegular,
 } from '@fluentui/react-icons'
@@ -34,6 +35,14 @@ import MarkdownContent from '@/components/Markdown/MarkdownContent'
 
 import type { DisplayScore, Message, MessageAttachment, MessageDisplayPiece } from '../../types'
 import { useMessageListStyles } from './MessageList.styles'
+
+interface ProcessingErrorRecovery {
+  messageIndex: number
+  actionLabel: string
+  description: string
+  disabled?: boolean
+  onRecover: () => void | Promise<void>
+}
 
 interface MessageListProps {
   messages: Message[]
@@ -57,6 +66,8 @@ interface MessageListProps {
   noTargetSelected?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
+  /** Recovery action for the processing error caused by the most recent send. */
+  processingErrorRecovery?: ProcessingErrorRecovery
 }
 
 /** Image that shows a spinner while loading. */
@@ -541,7 +552,7 @@ function getRenderMessagePieces(message: Message, messageIndex: number): RenderM
   return pieces
 }
 
-export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected, globalMarkdown = false }: MessageListProps) {
+export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected, globalMarkdown = false, processingErrorRecovery }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -595,6 +606,8 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
         const isSimulated = message.role === 'simulated_assistant'
         const timestamp = new Date(message.timestamp).toLocaleTimeString()
         const avatarName = isUser ? 'User' : isSimulated ? 'Simulated' : 'Assistant'
+        const canRecoverProcessingError = message.error?.type === 'processing'
+          && processingErrorRecovery?.messageIndex === index
         const renderPieces = getRenderMessagePieces(message, index)
 
         return (
@@ -618,6 +631,24 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                       <Text weight="semibold">{message.error.type}</Text>
                       {message.error.description && (
                         <Text>: {message.error.description}</Text>
+                      )}
+                      {canRecoverProcessingError && processingErrorRecovery && (
+                        <div className={styles.errorRecovery}>
+                          <Text block>
+                            {processingErrorRecovery.description}
+                          </Text>
+                          <Button
+                            appearance="primary"
+                            size="small"
+                            icon={<EditRegular />}
+                            className={styles.errorRecoveryButton}
+                            onClick={() => { void processingErrorRecovery.onRecover() }}
+                            disabled={processingErrorRecovery.disabled}
+                            data-testid={`recover-processing-error-btn-${index}`}
+                          >
+                            {processingErrorRecovery.actionLabel}
+                          </Button>
+                        </div>
                       )}
                     </MessageBarBody>
                   </MessageBar>
@@ -757,7 +788,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
               )}
 
               {/* Unified action buttons – shown on all non-user, non-loading messages */}
-              {!isUser && !message.isLoading && (
+              {!isUser && !message.isLoading && !message.error && (
                 <div className={styles.messageActions} data-testid={`message-actions-${index}`}>
                   {/* 1. Copy to input box in this conversation */}
                   {onCopyToInput && (() => {

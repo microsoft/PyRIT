@@ -23,6 +23,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    PromptResponseError,
     Score,
 )
 
@@ -295,11 +296,29 @@ class AttackSummary(AttackResult):
 # ============================================================================
 
 
+class TargetResponseOutcome(BaseModel):
+    """Outcome metadata for the latest real target response."""
+
+    response_error: PromptResponseError = Field(
+        ...,
+        description="Error category reported by the latest target response, or 'none' when it succeeded",
+    )
+    request_turn_number: int = Field(..., description="Turn number of the user request sent to the target")
+    response_turn_number: int = Field(..., description="Turn number of the target's assistant response")
+
+
 class ConversationMessagesResponse(BaseModel):
     """Response containing all messages for a conversation."""
 
     conversation_id: str = Field(..., description="Conversation identifier")
     messages: list[MessageView] = Field(default_factory=list, description="All messages in order")
+    target_response_outcome: TargetResponseOutcome | None = Field(
+        default=None,
+        description=(
+            "Outcome of the latest real assistant response and its associated user request. "
+            "None when the conversation does not end with a target response."
+        ),
+    )
 
 
 # ============================================================================

@@ -32,6 +32,14 @@ class TestFormatLastMessagePreview:
         result = format_last_message_preview(value="hello", data_type=None, max_len=100)
         assert result == "hello"
 
+    def test_error_value_hides_persisted_diagnostics(self) -> None:
+        traceback = "RuntimeError: target failed\nTraceback (most recent call last):\nsecret details"
+
+        result = format_last_message_preview(value=traceback, data_type="error", max_len=100)
+
+        assert result == "Target response error"
+        assert "Traceback" not in result
+
     def test_default_max_len_matches_conversation_stats_contract(self) -> None:
         # The formatter's default truncation length should track the model
         # constant so callers don't have to plumb it through manually.

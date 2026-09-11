@@ -24,6 +24,7 @@ from pyrit.backend.models.attacks import (
     CreateAttackResponse,
     MessagePieceView,
     MessageView,
+    TargetResponseOutcome,
 )
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.converters import (
@@ -319,6 +320,11 @@ class TestAttackRoutes:
                 _make_message_view(role="user", value="Hello", sequence=1),
                 _make_message_view(role="assistant", value="Hi there!", sequence=2),
             ],
+            target_response_outcome=TargetResponseOutcome(
+                response_error="none",
+                request_turn_number=1,
+                response_turn_number=2,
+            ),
         )
 
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
@@ -355,6 +361,11 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert len(data["messages"]["messages"]) == 2
+            assert data["messages"]["target_response_outcome"] == {
+                "response_error": "none",
+                "request_turn_number": 1,
+                "response_turn_number": 2,
+            }
             request = mock_service.add_message_async.await_args.kwargs["request"]
             assert request.request_converter_configurations[0].converter_ids == [
                 "request-1",
@@ -413,8 +424,8 @@ class TestAttackRoutes:
                     "converter_ids": ["legacy-converter"],
                 },
             )
-
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+            mock_get_service.return_value.add_message_async.assert_not_called()
             mock_get_service.return_value.add_message_async.assert_not_called()
 
     def test_update_attack_not_found(self, client: TestClient) -> None:
@@ -510,7 +521,13 @@ class TestAttackRoutes:
                     conversation_id="attack-1",
                     messages=[
                         _make_message_view(role="user", value="Hello", sequence=1),
+                        _make_message_view(role="assistant", value="Hi there!", sequence=2),
                     ],
+                    target_response_outcome=TargetResponseOutcome(
+                        response_error="none",
+                        request_turn_number=1,
+                        response_turn_number=2,
+                    ),
                 )
             )
             mock_get_service.return_value = mock_service
@@ -520,7 +537,10 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["conversation_id"] == "attack-1"
-            assert len(data["messages"]) == 1
+            assert len(data["messages"]) == 2
+            assert data["target_response_outcome"]["response_error"] == "none"
+            assert data["target_response_outcome"]["request_turn_number"] == 1
+            assert data["target_response_outcome"]["response_turn_number"] == 2
 
     def test_get_conversation_messages_not_found(self, client: TestClient) -> None:
         """Test getting messages for non-existent attack returns 404."""

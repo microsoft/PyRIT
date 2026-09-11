@@ -11,9 +11,14 @@ const MOCK_CONV_ID = "err-conv-001";
 function buildSuccessMessageMock(userText: string) {
   return {
     messages: {
+      target_response_outcome: {
+        response_error: "none",
+        request_turn_number: 0,
+        response_turn_number: 1,
+      },
       messages: [
         {
-          turn_number: 1,
+          turn_number: 0,
           role: "user",
           created_at: new Date().toISOString(),
           message_pieces: [
@@ -49,6 +54,53 @@ function buildSuccessMessageMock(userText: string) {
   };
 }
 
+function buildProcessingFailureMock(userText: string) {
+  return {
+    messages: {
+      target_response_outcome: {
+        response_error: "processing",
+        request_turn_number: 2,
+        response_turn_number: 3,
+      },
+      messages: [
+        {
+          turn_number: 2,
+          role: "user",
+          created_at: new Date().toISOString(),
+          message_pieces: [
+            {
+              id: "p-processing-user",
+              original_value_data_type: "text",
+              converted_value_data_type: "text",
+              original_value: userText,
+              converted_value: userText,
+              scores: [],
+              response_error: "none",
+            },
+          ],
+        },
+        {
+          turn_number: 3,
+          role: "assistant",
+          created_at: new Date().toISOString(),
+          message_pieces: [
+            {
+              id: "p-processing-error",
+              original_value_data_type: "text",
+              converted_value_data_type: "error",
+              original_value: "",
+              converted_value:
+                "RuntimeError: target failed\nTraceback (most recent call last): ...",
+              scores: [],
+              response_error: "processing",
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 /**
  * Set up all the mocks needed for a full chat flow.
  *
@@ -60,6 +112,19 @@ async function mockAllAPIs(
   page: Page,
   addMessageHandler?: (route: Route) => Promise<void>,
 ) {
+  // Authentication config
+  await page.route(/\/api\/auth\/config/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        clientId: "",
+        tenantId: "",
+        allowedGroupIds: "",
+      }),
+    });
+  });
+
   // Targets
   await page.route(/\/api\/targets/, async (route) => {
     if (route.request().method() === "GET") {
@@ -205,6 +270,107 @@ async function triggerVisibilityChange(page: Page) {
     document.dispatchEvent(new Event("visibilitychange"));
   });
 }
+
+// ---------------------------------------------------------------------------
+// Error scenario: persisted target processing failure returned with HTTP 200
+// ---------------------------------------------------------------------------
+
+test.describe("Error: target processing failure returned with HTTP 200", () => {
+  test("should preserve the draft and offer edit recovery", async ({ page }) => {
+    let callCount = 0;
+    let recoveryRequest: Record<string, unknown> | undefined;
+    let recoveryCreated = false;
+    await mockAllAPIs(page, async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      const userText =
+        body?.pieces?.find(
+          (piece: Record<string, string>) => piece.data_type === "text",
+        )?.original_value || "message";
+      callCount++;
+      const response = callCount === 1
+        ? buildSuccessMessageMock(userText)
+        : buildProcessingFailureMock(userText);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(response),
+      });
+    });
+    await page.route(/\/api\/attacks\/[^/]+\/conversations/, async (route) => {
+      if (route.request().method() === "GET" && recoveryCreated) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            attack_result_id: "err-ar-001",
+            main_conversation_id: MOCK_CONV_ID,
+            conversations: [
+              {
+                conversation_id: MOCK_CONV_ID,
+                message_count: 4,
+                last_message_preview: "Target response error",
+                created_at: "2026-01-01T00:00:00.000Z",
+              },
+              {
+                conversation_id: "err-conv-recovery",
+                message_count: 2,
+                last_message_preview: "Reply to: Setup message",
+                created_at: "2026-01-01T00:00:01.000Z",
+              },
+            ],
+          }),
+        });
+        return;
+      }
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+      recoveryRequest = JSON.parse(route.request().postData() ?? "{}");
+      recoveryCreated = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          conversation_id: "err-conv-recovery",
+          created_at: "2026-01-01T00:00:01.000Z",
+        }),
+      });
+    });
+
+    await page.goto("/");
+    await activateMockTarget(page);
+    await sendAndWait(page, "Setup message", "Reply to: Setup message");
+
+    const input = page.getByRole("textbox");
+    await input.fill("Preserve this draft");
+    await page.getByRole("button", { name: /send/i }).click();
+
+    await expect(
+      page.getByText(/target could not process this message/i),
+    ).toBeVisible();
+    const recoveryButton = page.getByRole("button", {
+      name: /edit in clean conversation/i,
+    });
+    await expect(recoveryButton).toHaveCount(1);
+    await expect(input).toHaveValue("Preserve this draft");
+    await expect(input).toBeDisabled();
+    await expect(page.getByText(/Traceback \(most recent call last\)/i)).toHaveCount(0);
+
+    await recoveryButton.click();
+    await expect.poll(() => recoveryRequest).toEqual({
+      source_conversation_id: MOCK_CONV_ID,
+      cutoff_index: 1,
+    });
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("Preserve this draft");
+    await expect(page.getByTestId(`conversation-item-${MOCK_CONV_ID}`)).toBeVisible();
+    await expect(
+      page.getByTestId("conversation-item-err-conv-recovery"),
+    ).toBeVisible();
+    expect(callCount).toBe(2);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Error scenario: backend returns 500 on send message
