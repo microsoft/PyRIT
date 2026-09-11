@@ -139,7 +139,7 @@ class TestPromptInjectAtomicAttacks:
             scenario,
             target=mock_objective_target,
             dataset_config=PromptInjectDatasetConfiguration(
-                dataset_names=["prompt_inject_contexts"],
+                dataset_names=PromptInject.required_datasets(),
                 max_dataset_size=None,
             ),
         )
@@ -157,7 +157,7 @@ class TestPromptInjectAtomicAttacks:
             techniques=[PromptInjectTechnique.IgnorePrint, PromptInjectTechnique.IgnoreSay],
             goal_texts=["goal one", "goal two"],
             dataset_config=PromptInjectDatasetConfiguration(
-                dataset_names=["prompt_inject_contexts"],
+                dataset_names=PromptInject.required_datasets(),
                 max_dataset_size=10,
             ),
         )
@@ -222,8 +222,8 @@ class TestPromptInjectAtomicAttacks:
 
     async def test_dataset_cap_smaller_than_goal_count_raises(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
-        config = DatasetAttackConfiguration(
-            dataset_names=["prompt_inject_contexts"],
+        config = PromptInjectDatasetConfiguration(
+            dataset_names=PromptInject.required_datasets(),
             max_dataset_size=1,
         )
 
@@ -238,6 +238,30 @@ class TestPromptInjectAtomicAttacks:
                 dataset_config=config,
             )
 
+    async def test_custom_dataset_validator_is_preserved(self, mock_objective_target: PromptTarget) -> None:
+        scenario = PromptInject()
+
+        def reject_dataset(_: object) -> None:
+            raise DatasetConstraintError("custom validator ran")
+
+        config = PromptInjectDatasetConfiguration(
+            dataset_names=PromptInject.required_datasets(),
+            validators=[reject_dataset],
+        )
+
+        with pytest.raises(DatasetConstraintError, match="custom validator ran"):
+            await _initialize_async(scenario, target=mock_objective_target, dataset_config=config)
+
+    async def test_unsupported_dataset_configuration_type_raises(self, mock_objective_target: PromptTarget) -> None:
+        scenario = PromptInject()
+        config = DatasetAttackConfiguration(dataset_names=["prompt_inject_contexts"])
+
+        with pytest.raises(
+            DatasetConstraintError,
+            match="only supports PromptInjectDatasetConfiguration",
+        ):
+            await _initialize_async(scenario, target=mock_objective_target, dataset_config=config)
+
     async def test_unsupported_dataset_selection_raises(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
         config = PromptInjectDatasetConfiguration(
@@ -245,12 +269,12 @@ class TestPromptInjectAtomicAttacks:
             max_dataset_size=1,
         )
 
-        with pytest.raises(DatasetConstraintError, match="only supports"):
+        with pytest.raises(DatasetConstraintError, match="requires exactly"):
             await _initialize_async(scenario, target=mock_objective_target, dataset_config=config)
 
     async def test_inline_dataset_is_rejected(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
-        inline_config = DatasetAttackConfiguration(
+        inline_config = PromptInjectDatasetConfiguration(
             seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="custom goal")])]
         )
 

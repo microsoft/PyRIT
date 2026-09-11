@@ -60,6 +60,15 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
         """
         super().__init__(**kwargs)
         goal_texts = _DEFAULT_GOAL_TEXTS if goal_texts is None else goal_texts
+        self._set_goal_texts(goal_texts=goal_texts)
+
+    def _set_goal_texts(self, *, goal_texts: Sequence[str]) -> None:
+        """
+        Set the goal texts used to build attack groups.
+
+        Raises:
+            ValueError: If goal texts are empty or duplicated.
+        """
         if not goal_texts or any(not goal.strip() for goal in goal_texts):
             raise ValueError("goal_texts must contain non-empty strings.")
         if len(goal_texts) != len(set(goal_texts)):
@@ -271,37 +280,32 @@ class PromptInject(Scenario):
             PromptInjectDatasetConfiguration: The PromptInject dataset configuration.
 
         Raises:
-            DatasetConstraintError: If the dataset selection is unsupported or
+            DatasetConstraintError: If the configuration type or dataset selection is unsupported, or
                 ``max_dataset_size`` is smaller than the number of goals.
         """
-        dataset_names = self._dataset_config.dataset_names
+        config = self._dataset_config
+        if type(config) is not PromptInjectDatasetConfiguration:
+            raise DatasetConstraintError(
+                f"PromptInject only supports PromptInjectDatasetConfiguration; received {type(config).__name__}."
+            )
+        dataset_names = config.dataset_names
         if not dataset_names:
             raise DatasetConstraintError(
                 "PromptInject requires the prompt_inject_contexts dataset; inline seeds are not supported."
             )
-        allowed_dataset_names = {
-            PromptInjectDatasetConfiguration.CONTEXT_DATASET_NAME,
-            self.TECHNIQUE_DATASET_NAME,
-        }
-        if PromptInjectDatasetConfiguration.CONTEXT_DATASET_NAME not in dataset_names or not set(
-            dataset_names
-        ).issubset(allowed_dataset_names):
+        required_dataset_names = set(self.required_datasets())
+        if set(dataset_names) != required_dataset_names:
             raise DatasetConstraintError(
-                "PromptInject dataset selection only supports prompt_inject_contexts; "
-                "technique templates are loaded automatically."
+                f"PromptInject requires exactly these datasets: {sorted(required_dataset_names)}."
             )
-        max_dataset_size = self._dataset_config.max_dataset_size
+        max_dataset_size = config.max_dataset_size
         if max_dataset_size is not None and max_dataset_size < len(goal_texts):
             raise DatasetConstraintError(
                 f"PromptInject max_dataset_size ({max_dataset_size}) must be at least the number of goal_texts "
                 f"({len(goal_texts)})."
             )
-        return PromptInjectDatasetConfiguration(
-            dataset_names=self.required_datasets(),
-            max_dataset_size=max_dataset_size,
-            filters=self._dataset_config.filters,
-            goal_texts=goal_texts,
-        )
+        config._set_goal_texts(goal_texts=goal_texts)
+        return config
 
     def _load_technique_templates(self) -> dict[str, SeedPrompt]:
         """
