@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer, render_scale_system_prompt
     from pyrit.score.float_scale.system_prompt_extraction_scorer import SystemPromptExtractionScorer
     from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
+    from pyrit.score.float_scale.violence_classifier_scorer import ViolenceClassifierScorer
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.message_scorer import MessageScorer
     from pyrit.score.response_handler import CallableResponseHandler, JsonSchemaResponseHandler, ResponseHandler
@@ -248,6 +249,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
     "VideoFloatScaleScorer": "pyrit.score.float_scale.video_float_scale_scorer",
     "VideoTrueFalseScorer": "pyrit.score.true_false.video_true_false_scorer",
+    "ViolenceClassifierScorer": "pyrit.score.float_scale.violence_classifier_scorer",
     "XSSOutputScorer": "pyrit.score.true_false.regex.xss_output_scorer",
     "XXEOutputScorer": "pyrit.score.true_false.regex.xxe_output_scorer",
 }
