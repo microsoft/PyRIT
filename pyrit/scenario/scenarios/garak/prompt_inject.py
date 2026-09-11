@@ -271,7 +271,8 @@ class PromptInject(Scenario):
             PromptInjectDatasetConfiguration: The PromptInject dataset configuration.
 
         Raises:
-            DatasetConstraintError: If the caller supplied inline seeds.
+            DatasetConstraintError: If the dataset selection is unsupported or
+                ``max_dataset_size`` is smaller than the number of goals.
         """
         dataset_names = self._dataset_config.dataset_names
         if not dataset_names:
@@ -289,9 +290,15 @@ class PromptInject(Scenario):
                 "PromptInject dataset selection only supports prompt_inject_contexts; "
                 "technique templates are loaded automatically."
             )
+        max_dataset_size = self._dataset_config.max_dataset_size
+        if max_dataset_size is not None and max_dataset_size < len(goal_texts):
+            raise DatasetConstraintError(
+                f"PromptInject max_dataset_size ({max_dataset_size}) must be at least the number of goal_texts "
+                f"({len(goal_texts)})."
+            )
         return PromptInjectDatasetConfiguration(
             dataset_names=self.required_datasets(),
-            max_dataset_size=self._dataset_config.max_dataset_size,
+            max_dataset_size=max_dataset_size,
             filters=self._dataset_config.filters,
             goal_texts=goal_texts,
         )

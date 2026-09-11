@@ -220,6 +220,24 @@ class TestPromptInjectAtomicAttacks:
         with pytest.raises(ValueError, match=message):
             await _initialize_async(scenario, target=mock_objective_target, goal_texts=goal_texts)
 
+    async def test_dataset_cap_smaller_than_goal_count_raises(self, mock_objective_target: PromptTarget) -> None:
+        scenario = PromptInject()
+        config = DatasetAttackConfiguration(
+            dataset_names=["prompt_inject_contexts"],
+            max_dataset_size=1,
+        )
+
+        with pytest.raises(
+            DatasetConstraintError,
+            match=r"max_dataset_size \(1\) must be at least the number of goal_texts \(2\)",
+        ):
+            await _initialize_async(
+                scenario,
+                target=mock_objective_target,
+                goal_texts=["goal one", "goal two"],
+                dataset_config=config,
+            )
+
     async def test_unsupported_dataset_selection_raises(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
         config = PromptInjectDatasetConfiguration(

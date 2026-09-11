@@ -32,6 +32,7 @@
 # PromptInject tests whether a target follows injected instructions hidden in benign tasks.
 # `--techniques` selects the injection wording, and `--goal-texts` selects the requested output.
 # The default run uses all five techniques, the three Garak goal texts, and up to 60 attempts.
+# `--max-dataset-size` must be at least the number of selected goal texts.
 #
 # **CLI examples:**
 #
