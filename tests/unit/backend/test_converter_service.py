@@ -5,7 +5,9 @@
 Tests for backend converter service.
 """
 
+import asyncio
 import base64
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,6 +29,7 @@ from pyrit.converter import (
     SuffixAppendConverter,
 )
 from pyrit.converter.converter import get_converter_modalities
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.registry.components import ConverterRegistry
 
@@ -77,6 +80,15 @@ def reset_registry():
     ConverterRegistry.reset_registry_singleton()
     yield
     ConverterRegistry.reset_registry_singleton()
+
+
+@pytest.fixture
+async def upload_service() -> AsyncGenerator[ConverterService, None]:
+    service = ConverterService()
+    try:
+        yield service
+    finally:
+        await service.close_async()
 
 
 class TestListConverters:
@@ -363,21 +375,23 @@ class TestDeleteConverter:
 
         assert await service.delete_converter_async(converter_id="missing") is False
 
-    async def test_delete_converter_removes_only_explicitly_owned_uploads(self, tmp_path: Path) -> None:
-        service = ConverterService()
+    async def test_delete_converter_removes_only_explicitly_owned_uploads(
+        self, upload_service: ConverterService
+    ) -> None:
+        service = upload_service
         data_uri = _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")
         request = CreateConverterRequest(name="pdf", type="PDFConverter", params={"existing_pdf": data_uri})
 
-        with patch("pyrit.backend.services.converter_service._REGISTRY_UPLOAD_DIRECTORY", tmp_path):
-            await service.create_converter_async(request=request)
-            entry = service._registry.instances.get_entry("pdf")
-            assert entry is not None
-            owned_path = Path(entry.metadata["owned_artifact_paths"][0])
-            assert owned_path.is_file()
+        await service.create_converter_async(request=request)
+        entry = service._registry.instances.get_entry("pdf")
+        assert entry is not None
+        owned_path = Path(entry.metadata["owned_artifact_paths"][0])
+        assert owned_path.is_file()
 
-            assert await service.delete_converter_async(converter_id="pdf") is True
+        assert await service.delete_converter_async(converter_id="pdf") is True
 
         assert not owned_path.exists()
+        assert service._upload_path.is_dir()
 
     async def test_delete_converter_does_not_infer_ownership_from_instance_paths(self, tmp_path: Path) -> None:
         service = ConverterService()
@@ -396,13 +410,17 @@ class TestDeleteConverter:
 class TestPersistDataUriParams:
     """Tests for ConverterService._persist_data_uri_params_async (registry-metadata driven)."""
 
-    async def test_persist_data_uri_materializes_path_in_managed_local_directory(self, tmp_path: Path) -> None:
+    async def test_persist_data_uri_materializes_path_in_managed_local_directory(
+        self, upload_service: ConverterService
+    ) -> None:
         """A ``Path`` upload stays local even when CentralMemory storage is not local."""
-        service = ConverterService()
+        service = upload_service
+        memory = MagicMock(spec=MemoryInterface)
+        memory.results_path = "https://account.blob.core.windows.net/results"
         params = {"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")}
 
         with (
-            patch("pyrit.backend.services.converter_service._REGISTRY_UPLOAD_DIRECTORY", tmp_path),
+            patch.object(CentralMemory, "get_memory_instance", return_value=memory),
             patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory,
         ):
             result, owned_paths = await service._persist_data_uri_params_async(
@@ -410,7 +428,8 @@ class TestPersistDataUriParams:
                 params=params,
             )
 
-        assert result["existing_pdf"].parent == tmp_path
+        assert result["existing_pdf"].is_absolute()
+        assert result["existing_pdf"].parent == service._upload_path
         assert result["existing_pdf"].suffix == ".pdf"
         assert result["existing_pdf"].read_bytes() == b"%PDF-1.4\n"
         assert owned_paths == [result["existing_pdf"]]
@@ -499,61 +518,138 @@ class TestPersistDataUriParams:
         [("text/html", ".html"), ("image/svg+xml", ".svg"), ("application/x-not-real", ".bin")],
     )
     async def test_persist_data_uri_stores_any_content_type(
-        self, mime_type: str, expected_suffix: str, tmp_path: Path
+        self, mime_type: str, expected_suffix: str, upload_service: ConverterService
     ) -> None:
         """Uploads are stored verbatim; restricting content is the media route's job."""
-        service = ConverterService()
+        service = upload_service
         params = {"existing_pdf": _make_data_uri(mime_type=mime_type, content=b"<script>alert(1)</script>")}
 
-        with patch("pyrit.backend.services.converter_service._REGISTRY_UPLOAD_DIRECTORY", tmp_path):
-            result, owned_paths = await service._persist_data_uri_params_async(
-                converter_type="PDFConverter", params=params
-            )
+        result, owned_paths = await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
 
         assert result["existing_pdf"].suffix == expected_suffix
         assert result["existing_pdf"].read_bytes() == b"<script>alert(1)</script>"
         assert owned_paths == [result["existing_pdf"]]
 
-    async def test_persist_data_uri_rejects_invalid_base64(self, tmp_path: Path) -> None:
-        service = ConverterService()
+    async def test_persist_data_uri_rejects_invalid_base64(self, upload_service: ConverterService) -> None:
+        service = upload_service
         params = {"existing_pdf": "data:application/pdf;base64,not-base64!!"}
 
-        with (
-            patch("pyrit.backend.services.converter_service._REGISTRY_UPLOAD_DIRECTORY", tmp_path),
-            pytest.raises(ValueError, match="invalid base64 data"),
-        ):
+        with pytest.raises(ValueError, match="invalid base64 data"):
             await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
 
-        assert list(tmp_path.iterdir()) == []
+        assert list(service._upload_path.iterdir()) == []
 
-    async def test_persist_data_uri_rejects_non_base64_data_uri(self, tmp_path: Path) -> None:
-        service = ConverterService()
+    async def test_persist_data_uri_rejects_non_base64_data_uri(self, upload_service: ConverterService) -> None:
+        service = upload_service
         params = {"existing_pdf": "data:text/plain,hello"}
 
-        with (
-            patch("pyrit.backend.services.converter_service._REGISTRY_UPLOAD_DIRECTORY", tmp_path),
-            pytest.raises(ValueError, match="must be a base64 data URI"),
-        ):
+        with pytest.raises(ValueError, match="must be a base64 data URI"):
             await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
 
-        assert list(tmp_path.iterdir()) == []
+        assert list(service._upload_path.iterdir()) == []
 
-    async def test_create_converter_cleans_upload_when_construction_fails(self, tmp_path: Path) -> None:
-        service = ConverterService()
+    async def test_create_converter_cleans_upload_when_construction_fails(
+        self, upload_service: ConverterService
+    ) -> None:
+        service = upload_service
         params = {
             "existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n"),
             "font_color": [256, 0, 0],
         }
         request = CreateConverterRequest(name="invalid-pdf", type="PDFConverter", params=params)
 
-        with (
-            patch("pyrit.backend.services.converter_service._REGISTRY_UPLOAD_DIRECTORY", tmp_path),
-            pytest.raises(ValueError, match="Invalid font_color"),
-        ):
+        with pytest.raises(ValueError, match="Invalid font_color"):
             await service.create_converter_async(request=request)
 
         assert service._registry.instances.get("invalid-pdf") is None
-        assert list(tmp_path.iterdir()) == []
+        assert list(service._upload_path.iterdir()) == []
+
+    @pytest.mark.parametrize("error", [OSError("write failed"), asyncio.CancelledError()])
+    async def test_persist_data_uri_cleans_partial_write(
+        self, upload_service: ConverterService, error: BaseException
+    ) -> None:
+        async def fail_write_async(content: bytes) -> None:
+            file_path = mock_open.call_args.args[0]
+            await asyncio.to_thread(file_path.write_bytes, content[:3])
+            raise error
+
+        request = CreateConverterRequest(
+            name="failed-upload",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+        with patch("pyrit.backend.services.converter_service.aiofiles.open") as mock_open:
+            mock_file = mock_open.return_value.__aenter__.return_value
+            mock_file.write.side_effect = fail_write_async
+            with pytest.raises(type(error)):
+                await upload_service.create_converter_async(request=request)
+
+        assert upload_service._registry.instances.get("failed-upload") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_concurrent_uploads_share_one_temporary_directory(self, upload_service: ConverterService) -> None:
+        params = {"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")}
+        results = await asyncio.gather(
+            upload_service._persist_data_uri_params_async(converter_type="PDFConverter", params=params),
+            upload_service._persist_data_uri_params_async(converter_type="PDFConverter", params=params),
+        )
+        paths = [result["existing_pdf"] for result, _ in results]
+        assert paths[0] != paths[1]
+        assert all(path.parent == upload_service._upload_path for path in paths)
+        assert all(path.read_bytes() == b"%PDF-1.4\n" for path in paths)
+
+
+class TestConverterServiceCleanup:
+    async def test_close_removes_only_owned_inputs(self, upload_service: ConverterService, tmp_path: Path) -> None:
+        service = upload_service
+        caller_file = tmp_path / "caller-owned.pdf"
+        caller_file.write_bytes(b"%PDF-1.4\n")
+        service._registry.create_named_instance(
+            name="caller-owned", converter_type="PDFConverter", existing_pdf=caller_file
+        )
+        service._registry.create_named_instance(name="no-upload", converter_type="Base64Converter")
+        request = CreateConverterRequest(
+            name="owned",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+        await service.create_converter_async(request=request)
+        await service.close_async()
+
+        assert not service._upload_path.exists()
+        assert service._registry.instances.get("owned") is None
+        assert service._registry.instances.get("caller-owned") is not None
+        assert service._registry.instances.get("no-upload") is not None
+        assert caller_file.read_bytes() == b"%PDF-1.4\n"
+
+    async def test_close_keeps_other_service_uploads(self, upload_service: ConverterService) -> None:
+        other_service = ConverterService()
+        try:
+            assert upload_service._upload_path != other_service._upload_path
+            await other_service.create_converter_async(
+                request=CreateConverterRequest(
+                    name="other",
+                    type="PDFConverter",
+                    params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+                )
+            )
+            entry = other_service._registry.instances.get_entry("other")
+            assert entry is not None
+            owned_path = Path(entry.metadata["owned_artifact_paths"][0])
+
+            await upload_service.close_async()
+
+            assert owned_path.read_bytes() == b"%PDF-1.4\n"
+            assert other_service._registry.instances.get("other") is entry.instance
+        finally:
+            await other_service.close_async()
+
+    async def test_close_propagates_cleanup_errors(self, upload_service: ConverterService) -> None:
+        with patch.object(upload_service._upload_directory, "cleanup", side_effect=PermissionError("file in use")):
+            with pytest.raises(PermissionError, match="file in use"):
+                await upload_service.close_async()
+
+        assert upload_service._upload_path.is_dir()
 
 
 class TestPreviewConversion:

@@ -12,6 +12,7 @@ Converters can be:
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
+import asyncio
 import base64
 import binascii
 import mimetypes
@@ -19,6 +20,7 @@ import uuid
 from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
@@ -38,7 +40,6 @@ from pyrit.backend.models.converters import (
     CreateConverterRequest,
     PreviewStep,
 )
-from pyrit.common.path import DB_DATA_PATH
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
 from pyrit.registry.components import ConverterRegistry
@@ -48,7 +49,6 @@ if TYPE_CHECKING:
 
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
-_REGISTRY_UPLOAD_DIRECTORY = DB_DATA_PATH / "registry-uploads"
 _DEFAULT_UPLOAD_EXTENSION = ".bin"
 
 
@@ -63,6 +63,8 @@ class ConverterService:
     def __init__(self) -> None:
         """Initialize the converter service."""
         self._registry = ConverterRegistry.get_registry_singleton()
+        self._upload_directory = TemporaryDirectory(prefix="pyrit-registry-uploads-")
+        self._upload_path = Path(self._upload_directory.name).resolve()
 
     def _build_instance_from_object(self, *, converter_id: str, converter_obj: Any) -> ConverterInstance:
         """
@@ -85,6 +87,17 @@ class ConverterService:
     # ========================================================================
     # Public API Methods
     # ========================================================================
+
+    async def close_async(self) -> None:
+        """Remove this backend's temporary inputs after requests have stopped."""
+        owned_names = [
+            entry.name
+            for entry in self._registry.instances.get_all_instances()
+            if any(path.is_relative_to(self._upload_path) for path in self._get_owned_artifact_paths(entry.metadata))
+        ]
+        await asyncio.to_thread(self._upload_directory.cleanup)
+        for name in owned_names:
+            self._registry.instances.unregister(name)
 
     async def list_converters_async(self) -> ConverterInstanceListResponse:
         """
@@ -216,7 +229,7 @@ class ConverterService:
                 registry_metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
                 **params,
             )
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             await self._remove_owned_artifacts_async(paths=owned_paths)
             raise
 
@@ -332,6 +345,9 @@ class ConverterService:
         ``Path`` parameter is handled the same way, so a converter opts in simply by
         declaring the type; there is no per-converter or per-parameter table.
 
+        Inputs remain local until converter deletion or backend shutdown, even with
+        Azure-backed memory. Converter outputs still use the configured result storage.
+
         The set of constructor parameters (and their types) is sourced from the
         registry's derived ``Parameter`` metadata rather than re-introspecting the
         constructor signature, so the registry stays the single source of truth.
@@ -362,10 +378,12 @@ class ConverterService:
                     raise ValueError(f"Path parameter '{name}' must be uploaded as a data URI")
 
                 content, extension = self._decode_data_uri(parameter_name=name, data_uri=value)
-                file_path = await self._save_owned_artifact_async(content=content, extension=extension)
-                owned_paths.append(file_path)
+                file_path = self._upload_path / f"{uuid.uuid4().hex}{extension}"
+                async with aiofiles.open(file_path, "xb") as file:
+                    owned_paths.append(file_path)
+                    await file.write(content)
                 result[name] = file_path
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             await self._remove_owned_artifacts_async(paths=owned_paths)
             raise
 
@@ -405,20 +423,6 @@ class ConverterService:
         return content, extension or _DEFAULT_UPLOAD_EXTENSION
 
     @staticmethod
-    async def _save_owned_artifact_async(*, content: bytes, extension: str) -> Path:
-        """
-        Write one validated upload to the managed local registry directory.
-
-        Returns:
-            Path: The absolute path of the new local artifact.
-        """
-        await aiofiles.os.makedirs(_REGISTRY_UPLOAD_DIRECTORY, exist_ok=True)
-        file_path = (_REGISTRY_UPLOAD_DIRECTORY / f"{uuid.uuid4().hex}{extension}").resolve()
-        async with aiofiles.open(file_path, "xb") as file:
-            await file.write(content)
-        return file_path
-
-    @staticmethod
     def _get_owned_artifact_paths(metadata: dict[str, Any]) -> list[Path]:
         """
         Read explicit artifact ownership from registry-entry metadata.
@@ -431,14 +435,12 @@ class ConverterService:
             raise ValueError("Registry entry has invalid owned artifact metadata")
         return [Path(path) for path in raw_paths]
 
-    @staticmethod
-    async def _remove_owned_artifacts_async(*, paths: list[Path]) -> None:
+    async def _remove_owned_artifacts_async(self, *, paths: list[Path]) -> None:
         """Remove explicitly owned files, limited to the managed upload directory."""
-        allowed_root = _REGISTRY_UPLOAD_DIRECTORY.resolve()
         for path in paths:
-            resolved_path = path.resolve()
+            resolved_path = await asyncio.to_thread(path.resolve)
             try:
-                resolved_path.relative_to(allowed_root)
+                resolved_path.relative_to(self._upload_path)
             except ValueError as exc:
                 raise ValueError(f"Owned artifact path is outside the managed upload directory: {path}") from exc
             with suppress(FileNotFoundError):
