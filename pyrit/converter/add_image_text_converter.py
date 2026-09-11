@@ -3,6 +3,7 @@
 
 import base64
 import logging
+import math
 from io import BytesIO
 from typing import cast
 
@@ -59,13 +60,14 @@ class AddImageTextConverter(_BaseImageTextConverter):
             bounding_box (tuple[int, int, int, int] | None): Optional (x1, y1, x2, y2) region to constrain
                 text within. When not set, the full image is used with a default margin.
                 Defaults to None.
-            rotation (float): Rotation angle in degrees for the text. Defaults to 0.0.
+            rotation (float): Rotation angle in degrees for the text. Must be finite. Defaults to 0.0.
             center_text (bool): Whether to center text horizontally and vertically within the bounding box.
                 Defaults to False.
 
         Raises:
             ValueError: If img_to_add is empty, font_name doesn't end with ".ttf",
-                font_size is invalid, or bounding_box coordinates are invalid.
+                font_size is invalid, bounding_box coordinates are invalid,
+                or rotation is non-finite.
         """
         if not img_to_add:
             raise ValueError("Please provide valid image path")
@@ -76,6 +78,8 @@ class AddImageTextConverter(_BaseImageTextConverter):
             x1, y1, x2, y2 = bounding_box
             if x2 <= x1 or y2 <= y1:
                 raise ValueError("bounding_box must have x2 > x1 and y2 > y1")
+        if not math.isfinite(rotation):
+            raise ValueError(f"rotation must be finite, got {rotation}")
         self._img_to_add = img_to_add
         self._font_name = font_name
         self._font_size = self._font_size_max
