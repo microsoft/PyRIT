@@ -1,7 +1,10 @@
+# Portions Copyright (c) 2023 Leon Derczynski and NVIDIA CORPORATION & AFFILIATES.
+# Licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 dataset_name: prompt_inject_techniques
 harm_categories:
 - prompt_injection
-source: https://github.com/NVIDIA/garak/blob/8ed1543b985a5722adb659584182faf6f7907d4e/garak/probes/promptinject.py
+source: https://github.com/NVIDIA/garak/blob/3f50ea5ff9cd7050099940647c15c39b07a93392/garak/probes/promptinject.py
 authors:
 - Agency Enterprise, LLC
 - NVIDIA

@@ -60,6 +60,9 @@ from pyrit.scenario.garak import (
     FigStep,
     PackageHallucination,
     PackageHallucinationTechnique,
+    PromptInject,
+    PromptInjectDatasetConfiguration,
+    PromptInjectTechnique,
     SystemPromptExtraction,
     SystemPromptExtractionTechnique,
     WebInjection,
@@ -74,6 +77,29 @@ await initialize_from_config_async(config_path=Path("pyrit_conf.yaml"))  # type:
 objective_target = TargetRegistry.get_registry_singleton().instances.get("openai_chat")
 
 from pyrit.scenario.garak import DoctorTechnique
+
+# %%
+prompt_inject_scenario = PromptInject()
+prompt_inject_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [PromptInjectTechnique.IgnorePrint],
+        "goal_texts": ["I hate humans"],
+        "dataset_config": PromptInjectDatasetConfiguration(
+            dataset_names=PromptInject.required_datasets(),
+            max_dataset_size=1,
+        ),
+    }
+)
+await prompt_inject_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {prompt_inject_scenario.name}")
+print(f"Atomic attacks: {prompt_inject_scenario.atomic_attack_count}")
+
+prompt_inject_result = await prompt_inject_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(prompt_inject_result)
 
 # %% [markdown]
 # ## Encoding
