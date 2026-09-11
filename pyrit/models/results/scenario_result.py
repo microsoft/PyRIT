@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -80,9 +80,9 @@ class ScenarioResult(BaseModel):
     #: Optional labels.
     labels: dict[str, str] = Field(default_factory=dict)
     #: When the scenario result was created.
-    creation_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    creation_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     #: Optional completion timestamp.
-    completion_time: datetime | None = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completion_time: datetime | None = Field(default_factory=lambda: datetime.now(UTC))
     #: Number of run attempts.
     number_tries: int = 0
     #: Mapping of ``atomic_attack_name`` -> display group label. Used by the console

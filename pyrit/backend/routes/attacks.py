@@ -9,9 +9,10 @@ This is the attack-centric API design.
 """
 
 import logging
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import Field
 
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
@@ -32,7 +33,8 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.routes.common import parse_label_query_params
-from pyrit.backend.services.attack_service import get_attack_service
+from pyrit.backend.services.attack_service import AttackObjectiveConflictError, get_attack_service
+from pyrit.common.deprecation import print_deprecation_message
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,12 @@ async def list_attacks(  # pyrit-async-suffix-exempt
     outcome: Literal["undetermined", "success", "failure", "error"] | None = Query(
         None, description="Filter by outcome"
     ),
+    operator: list[Annotated[str, Field(max_length=128)]] | None = Query(
+        None, description="Filter by dedicated operator values"
+    ),
+    operation: list[Annotated[str, Field(max_length=128)]] | None = Query(
+        None, description="Filter by dedicated operation values"
+    ),
     label: list[str] | None = Query(
         None,
         description="Filter by labels (format: key:value). May be specified multiple times; "
@@ -100,8 +108,28 @@ async def list_attacks(  # pyrit-async-suffix-exempt
     Returns:
         AttackListResponse: Paginated list of attack summaries.
     """
-    service = get_attack_service()
-    labels = parse_label_query_params(label)
+    labels = parse_label_query_params(label) or {}
+    # TODO(PyRIT 1.4): Remove legacy attribution aliases from label query parameters.
+    legacy_operator = labels.pop("operator", None)
+    legacy_operation = labels.pop("operation", None)
+    if legacy_operator is not None:
+        print_deprecation_message(
+            old_item="GET /attacks?label=operator:...",
+            new_item="GET /attacks?operator=...",
+            removed_in="1.4.0",
+        )
+        if operator is not None and operator != legacy_operator:
+            raise HTTPException(status_code=422, detail="operator conflicts with legacy label=operator filter")
+        operator = legacy_operator
+    if legacy_operation is not None:
+        print_deprecation_message(
+            old_item="GET /attacks?label=operation:...",
+            new_item="GET /attacks?operation=...",
+            removed_in="1.4.0",
+        )
+        if operation is not None and operation != legacy_operation:
+            raise HTTPException(status_code=422, detail="operation conflicts with legacy label=operation filter")
+        operation = legacy_operation
     # Strip empty strings from the list-valued query params. The service layer
     # coerces an all-empty ``converter_types`` list to None ("no filter"); the
     # "attacks with no converters" case is expressed through ``has_converters``.
@@ -109,6 +137,7 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         converter_types = [c for c in converter_types if c]
     if attack_types is not None:
         attack_types = [a for a in attack_types if a]
+    service = get_attack_service()
     return await service.list_attacks_async(
         attack_types=attack_types,
         converter_types=converter_types,
@@ -116,7 +145,9 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         has_converters=has_converters,
         include_scenario_attacks=include_scenario_attacks,
         outcome=outcome,
-        labels=labels,
+        operator=operator,
+        operation=operation,
+        labels=labels or None,
         min_turns=min_turns,
         max_turns=max_turns,
         limit=limit,
@@ -226,6 +257,7 @@ async def get_attack(attack_result_id: str) -> AttackSummary:  # pyrit-async-suf
     response_model=AttackSummary,
     responses={
         404: {"model": ProblemDetail, "description": "Attack not found"},
+        409: {"model": ProblemDetail, "description": "Attack already has a different objective"},
     },
 )
 async def update_attack(  # pyrit-async-suffix-exempt
@@ -233,22 +265,47 @@ async def update_attack(  # pyrit-async-suffix-exempt
     request: UpdateAttackRequest,
 ) -> AttackSummary:
     """
-    Update an attack's outcome.
-
-    Used to mark attacks as success/failure/undetermined.
+    Update mutable attack fields.
 
     Returns:
         AttackSummary: Updated attack details.
     """
     service = get_attack_service()
 
-    attack = await service.update_attack_async(attack_result_id=attack_result_id, request=request)
+    try:
+        attack = await service.update_attack_async(attack_result_id=attack_result_id, request=request)
+    except AttackObjectiveConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not attack:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Attack '{attack_result_id}' not found",
         )
 
+    return attack
+
+
+@router.delete(
+    "/{attack_result_id}/human-score",
+    response_model=AttackSummary,
+    responses={
+        404: {"model": ProblemDetail, "description": "Attack not found"},
+    },
+)
+async def remove_human_score(attack_result_id: str) -> AttackSummary:  # pyrit-async-suffix-exempt
+    """
+    Remove the attack's human-score override.
+
+    Returns:
+        AttackSummary: Updated attack details.
+    """
+    service = get_attack_service()
+    attack = await service.remove_human_score_async(attack_result_id=attack_result_id)
+    if not attack:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Attack '{attack_result_id}' not found",
+        )
     return attack
 
 

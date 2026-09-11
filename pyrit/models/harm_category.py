@@ -5,23 +5,13 @@
 
 import logging
 import os
-import sys
 from collections.abc import Mapping
-from enum import Enum
+from enum import StrEnum
 from typing import cast
 
 import yaml
 
 logger = logging.getLogger(__name__)
-
-if sys.version_info >= (3, 11):
-    from enum import StrEnum
-else:  # Python 3.10 and below
-
-    class StrEnum(str, Enum):
-        """Minimal backport of enum.StrEnum for Python < 3.11."""
-
-        __str__ = str.__str__
 
 
 _HARM_CATEGORY_ALIASES: "dict[str, list[HarmCategory]]" = {}

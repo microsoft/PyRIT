@@ -37,7 +37,9 @@ function makeAttack(overrides: Partial<AttackSummary> = {}): AttackSummary {
     last_message_preview: "preview",
     message_count: 1,
     related_conversation_ids: [],
-    labels: { operator: "alice", operation: "op_alpha" },
+    operator: "alice",
+    operation: "op_alpha",
+    labels: {},
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
@@ -125,17 +127,20 @@ describe("Home", () => {
       items: [
         makeAttack({
           attack_result_id: "ar-1",
-          labels: { operator: "alice", operation: "op_alpha" },
+          operator: "alice",
+          operation: "op_alpha",
           updated_at: new Date(now).toISOString(),
         }),
         makeAttack({
           attack_result_id: "ar-2",
-          labels: { operator: "alice", operation: "op_alpha" },
+          operator: "alice",
+          operation: "op_alpha",
           updated_at: new Date(now - 60_000).toISOString(),
         }),
         makeAttack({
           attack_result_id: "ar-3",
-          labels: { operator: "alice", operation: "op_beta" },
+          operator: "alice",
+          operation: "op_beta",
           updated_at: new Date(now - 120_000).toISOString(),
         }),
       ],
@@ -161,19 +166,22 @@ describe("Home", () => {
         // the group's last-activity — exercising the "newer than current" branch.
         makeAttack({
           attack_result_id: "ar-old",
-          labels: { operator: "alice", operation: "op_time" },
+          operator: "alice",
+          operation: "op_time",
           last_message_preview: "older than a week",
           updated_at: new Date(now - 10 * DAY).toISOString(),
         }),
         makeAttack({
           attack_result_id: "ar-hours",
-          labels: { operator: "alice", operation: "op_time" },
+          operator: "alice",
+          operation: "op_time",
           last_message_preview: "a few hours ago",
           updated_at: new Date(now - 3 * HOUR).toISOString(),
         }),
         makeAttack({
           attack_result_id: "ar-days",
-          labels: { operator: "alice", operation: "op_time" },
+          operator: "alice",
+          operation: "op_time",
           last_message_preview: "a few days ago",
           updated_at: new Date(now - 3 * DAY).toISOString(),
         }),
@@ -199,21 +207,24 @@ describe("Home", () => {
       items: [
         makeAttack({
           attack_result_id: "f1",
-          labels: { operator: "alice", operation: "op_full" },
+          operator: "alice",
+          operation: "op_full",
           outcome: "success",
           last_message_preview: "first preview",
           updated_at: new Date(now - 60_000).toISOString(),
         }),
         makeAttack({
           attack_result_id: "f2",
-          labels: { operator: "alice", operation: "op_full" },
+          operator: "alice",
+          operation: "op_full",
           outcome: null, // unknown outcome -> default icon via the ?? 'undetermined' branch
           last_message_preview: null, // missing preview -> falls back to attack_type
           updated_at: new Date(now - 120_000).toISOString(),
         }),
         makeAttack({
           attack_result_id: "f3",
-          labels: { operator: "alice", operation: "op_full" },
+          operator: "alice",
+          operation: "op_full",
           // Outcome not present in the icon map -> exercises the icon fallback branch.
           outcome: "mystery" as unknown as AttackSummary["outcome"],
           last_message_preview: "third preview",
@@ -221,7 +232,8 @@ describe("Home", () => {
         }),
         makeAttack({
           attack_result_id: "f4",
-          labels: { operator: "alice", operation: "op_full" },
+          operator: "alice",
+          operation: "op_full",
           last_message_preview: "fourth preview",
           updated_at: new Date(now - 240_000).toISOString(),
         }),
@@ -246,7 +258,7 @@ describe("Home", () => {
       items: [
         makeAttack({
           attack_result_id: "ar-x",
-          labels: { operator: "alice" },
+          operation: null,
         }),
       ],
       pagination: { has_more: false, next_cursor: null },

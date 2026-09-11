@@ -21,7 +21,7 @@ def test_taxonomy_version_read_from_yaml() -> None:
 
 
 def test_str_returns_display_value() -> None:
-    # StrEnum (and the <3.11 backport) must render the value, not "HarmCategory.HATE_SPEECH".
+    # StrEnum must render the value, not "HarmCategory.HATE_SPEECH".
     assert str(HarmCategory.HATE_SPEECH) == "Hate Speech"
     assert f"{HarmCategory.VIOLENT_CONTENT}" == "Graphic Violence and Gore"
 

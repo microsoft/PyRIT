@@ -13,7 +13,7 @@ stable (sorted) order, and the removed wire aliases (``score_id``,
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyrit.backend.models.attacks import (
     AttackSummary,
@@ -158,11 +158,11 @@ class TestAttackSummaryContract:
     """JSON contract for AttackSummary, including set-ordering (R1)."""
 
     def _summary(self, ar: AttackResult) -> AttackSummary:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data = {name: getattr(ar, name) for name in AttackResult.model_fields}
         data.update(
             last_response=None,
-            last_score=None,
+            automated_score=None,
             labels={"env": "prod"},
             message_count=2,
             last_message_preview="hi",

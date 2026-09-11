@@ -218,7 +218,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             objective=context.objective,
             atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             last_response=(last_response.message_pieces[0] if last_response else None),
-            last_score=None,
+            automated_score=None,
             related_conversations=context.related_conversations,
             outcome=AttackOutcome.UNDETERMINED,
             outcome_reason=outcome_reason,

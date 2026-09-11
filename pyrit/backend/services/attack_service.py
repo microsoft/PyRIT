@@ -15,11 +15,12 @@ ARCHITECTURE:
 - AI-generated attacks may have multiple related conversations
 """
 
+import asyncio
 import logging
 import mimetypes
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -62,6 +63,7 @@ from pyrit.backend.services.pagination import (
 )
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory, data_serializer_factory
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -79,6 +81,10 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
 logger = logging.getLogger(__name__)
+
+
+class AttackObjectiveConflictError(Exception):
+    """The attack already has a different objective."""
 
 
 class AttackService:
@@ -106,6 +112,8 @@ class AttackService:
         include_scenario_attacks: bool = True,
         outcome: Literal["undetermined", "success", "failure", "error"] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
+        operator: Sequence[str] | None = None,
+        operation: Sequence[str] | None = None,
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int = 20,
@@ -134,6 +142,8 @@ class AttackService:
             include_scenario_attacks: Whether to include attacks created as part of scenario
                 runs. Defaults to ``True`` for API compatibility.
             outcome: Filter by attack outcome.
+            operator: Filter by dedicated operator values.
+            operation: Filter by dedicated operation values.
             labels: Filter by labels. See ``MemoryInterface.get_attack_results`` for
                 semantics (AND across label names; string equality or sequence OR within
                 each name).
@@ -162,19 +172,22 @@ class AttackService:
         # past the anchor, and limits in SQL, so only one page's worth of rows is materialized
         # instead of the full table.
         normalized_labels = normalize_label_filters(labels=labels)
-        filter_fingerprint = fingerprint_filters(
-            filters={
-                "attack_types": effective_attack_types,
-                "converter_types": effective_converter_types,
-                "converter_types_match": converter_types_match,
-                "has_converters": has_converters,
-                "include_scenario_attacks": include_scenario_attacks,
-                "outcome": outcome,
-                "labels": normalized_labels,
-                "min_turns": min_turns,
-                "max_turns": max_turns,
-            }
-        )
+        fingerprint_values: dict[str, Any] = {
+            "attack_types": effective_attack_types,
+            "converter_types": effective_converter_types,
+            "converter_types_match": converter_types_match,
+            "has_converters": has_converters,
+            "include_scenario_attacks": include_scenario_attacks,
+            "outcome": outcome,
+            "labels": normalized_labels,
+            "min_turns": min_turns,
+            "max_turns": max_turns,
+        }
+        if operator is not None:
+            fingerprint_values["operator"] = operator
+        if operation is not None:
+            fingerprint_values["operation"] = operation
+        filter_fingerprint = fingerprint_filters(filters=fingerprint_values)
         decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=filter_fingerprint)
         after = (
             AttackResultKeysetCursor(
@@ -186,6 +199,8 @@ class AttackService:
         )
         results = self._memory.get_attack_results(
             outcome=outcome,
+            operator=operator,
+            operation=operation,
             labels=normalized_labels,
             attack_classes=effective_attack_types,
             converter_classes=effective_converter_types,
@@ -279,7 +294,10 @@ class AttackService:
         Returns:
             AttackSummary if found, None otherwise.
         """
-        results = self._memory.get_attack_results(attack_result_ids=[attack_result_id])
+        results = await asyncio.to_thread(
+            self._memory.get_attack_results,
+            attack_result_ids=[attack_result_id],
+        )
         if not results:
             return None
 
@@ -354,7 +372,7 @@ class AttackService:
         target_obj = target_service.get_target_object(target_registry_name=request.target_registry_name)
         target_identifier = target_obj.get_identifier() if target_obj else None
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Merge source label with any user-supplied labels
         labels = dict(request.labels) if request.labels else {}
@@ -392,6 +410,8 @@ class AttackService:
                 "created_at": now.isoformat(),
                 "target_registry_name": request.target_registry_name,
             },
+            operator=request.operator,
+            operation=request.operation,
             labels=labels,
         )
 
@@ -424,7 +444,7 @@ class AttackService:
 
     async def update_attack_async(self, *, attack_result_id: str, request: UpdateAttackRequest) -> AttackSummary | None:
         """
-        Update an attack's outcome.
+        Update an attack's mutable fields.
 
         Updates the AttackResult in the database.
 
@@ -435,20 +455,67 @@ class AttackService:
         if not results:
             return None
 
-        # Map outcome
-        outcome_map = {
-            "undetermined": AttackOutcome.UNDETERMINED,
-            "success": AttackOutcome.SUCCESS,
-            "failure": AttackOutcome.FAILURE,
-            "error": AttackOutcome.ERROR,
-        }
-        new_outcome = outcome_map.get(request.outcome, AttackOutcome.UNDETERMINED)
+        update_fields: dict[str, Any] = {"timestamp": datetime.now(UTC)}
+        if request.outcome is not None:
+            outcome_map = {
+                "undetermined": AttackOutcome.UNDETERMINED,
+                "success": AttackOutcome.SUCCESS,
+                "failure": AttackOutcome.FAILURE,
+                "error": AttackOutcome.ERROR,
+            }
+            update_fields["outcome"] = outcome_map[request.outcome].value
+        if request.objective is not None:
+            existing_objective = results[0].objective
+            if existing_objective and existing_objective != request.objective:
+                raise AttackObjectiveConflictError(f"Attack '{attack_result_id}' already has an objective")
+            if not existing_objective:
+                update_fields["objective"] = request.objective
+                update_fields["objective_sha256"] = to_sha256(request.objective)
+            elif request.outcome is None:
+                return await self.get_attack_async(attack_result_id=attack_result_id)
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
+            update_fields=update_fields,
+        )
+
+        return await self.get_attack_async(attack_result_id=attack_result_id)
+
+    async def remove_human_score_async(self, *, attack_result_id: str) -> AttackSummary | None:
+        """
+        Remove the human-score override from an attack.
+
+        The immutable score remains in memory. The attack outcome falls back to
+        its automated true/false score, or to undetermined when none exists.
+
+        Returns:
+            Updated AttackSummary if found, None otherwise.
+        """
+        results = await asyncio.to_thread(
+            self._memory.get_attack_results,
+            attack_result_ids=[attack_result_id],
+        )
+        if not results:
+            return None
+
+        automated_score = results[0].automated_score
+        if automated_score is None or automated_score.score_value is None:
+            outcome = AttackOutcome.UNDETERMINED
+            outcome_reason = None
+        else:
+            outcome = (
+                AttackOutcome.SUCCESS if automated_score.score_value.casefold() == "true" else AttackOutcome.FAILURE
+            )
+            outcome_reason = automated_score.score_rationale
+
+        await asyncio.to_thread(
+            self._memory.update_attack_result_by_id,
+            attack_result_id=attack_result_id,
             update_fields={
-                "outcome": new_outcome.value,
-                "timestamp": datetime.now(timezone.utc),
+                "human_score_id": None,
+                "outcome": outcome.value,
+                "outcome_reason": outcome_reason,
+                "timestamp": datetime.now(UTC),
             },
         )
 
@@ -482,7 +549,7 @@ class AttackService:
             created_at = stats.created_at if stats else None
             # SQLite returns naive datetimes — normalize to UTC (same pattern as the UTCDateTime column type)
             if created_at is not None and created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
+                created_at = created_at.replace(tzinfo=UTC)
             conversations.append(
                 ConversationSummary(
                     conversation_id=conv_id,
@@ -499,7 +566,7 @@ class AttackService:
         # have no stored messages yet so created_at is None — treat them as the most
         # recent (they were just created) so they sort after older conversations
         # instead of jumping to an arbitrary position.
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         conversations.sort(key=lambda c: c.created_at or now)
 
         return AttackConversationsResponse(
@@ -527,7 +594,7 @@ class AttackService:
             return None
 
         ar = results[0]
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Validate that both or neither branching fields are provided
         if (request.source_conversation_id is None) != (request.cutoff_index is None):
@@ -589,7 +656,7 @@ class AttackService:
             return UpdateMainConversationResponse(
                 attack_result_id=attack_result_id,
                 conversation_id=target_conv_id,
-                updated_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(UTC),
             )
 
         # Verify the conversation belongs to this attack (main or related)
@@ -612,7 +679,7 @@ class AttackService:
         # visible in the GUI and fetchable via get_conversation_messages.
         updated_pruned.append(ar.conversation_id)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
@@ -649,7 +716,6 @@ class AttackService:
         main_conversation_id = ar.conversation_id
 
         self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), request=request)
-        self._validate_operator_match(attack_result=ar, request=request)
 
         msg_conversation_id = request.target_conversation_id
 
@@ -668,6 +734,7 @@ class AttackService:
         preconverted_indexes = {
             index for index, piece in enumerate(request.pieces) if piece.converted_value is not None
         }
+        last_response_id: str | None = None
 
         # Get existing messages to determine sequence.
         # NOTE: This read-then-write is not atomic (TOCTOU). Fine for the
@@ -678,6 +745,7 @@ class AttackService:
 
         if request.send:
             assert target_registry_name is not None  # validated above
+            prior_ids = {p.id for p in existing}
             try:
                 await self._send_and_store_message_async(
                     conversation_id=msg_conversation_id,
@@ -696,7 +764,6 @@ class AttackService:
                 # generic 500. If no new error piece was stored (the failure
                 # happened before the send, e.g. target lookup), re-raise so the
                 # route still reports a real error.
-                prior_ids = {p.id for p in existing}
                 current_pieces = self._memory.get_message_pieces(conversation_id=msg_conversation_id)
                 if not any(p.id not in prior_ids and p.has_error() for p in current_pieces):
                     raise
@@ -705,6 +772,15 @@ class AttackService:
                     attack_result_id,
                     msg_conversation_id,
                 )
+            current_pieces = await asyncio.to_thread(
+                self._memory.get_message_pieces,
+                conversation_id=msg_conversation_id,
+            )
+            last_response = next(
+                (piece for piece in current_pieces if piece.id not in prior_ids and piece.role == "assistant"),
+                None,
+            )
+            last_response_id = str(last_response.id) if last_response else None
         else:
             existing_metadata = self._memory._get_conversation(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
@@ -717,6 +793,7 @@ class AttackService:
         await self._update_attack_after_message_async(
             attack_result_id=attack_result_id,
             ar=ar,
+            last_response_id=last_response_id,
             request_converter_configurations=request_converter_configs,
             response_converter_configurations=response_converter_configs,
         )
@@ -763,33 +840,12 @@ class AttackService:
                 f"Create a new attack to use a different target."
             )
 
-    def _validate_operator_match(self, *, attack_result: AttackResult, request: AddMessageRequest) -> None:
-        """
-        Validate that the request operator matches the attack result's operator.
-
-        Raises:
-            ValueError: If the operator in the request doesn't match the attack result.
-        """
-        if not request.labels:
-            return
-
-        attack_operator = attack_result.labels.get("operator")
-        if not attack_operator:
-            return
-
-        request_operator = request.labels.get("operator")
-        if request_operator and request_operator != attack_operator:
-            raise ValueError(
-                f"Operator mismatch: attack belongs to operator '{attack_operator}' "
-                f"but request is from '{request_operator}'. "
-                f"Create a new attack to continue."
-            )
-
     async def _update_attack_after_message_async(
         self,
         *,
         attack_result_id: str,
         ar: AttackResult,
+        last_response_id: str | None,
         request_converter_configurations: list[ConverterConfiguration],
         response_converter_configurations: list[ConverterConfiguration],
     ) -> None:
@@ -802,10 +858,13 @@ class AttackService:
         Args:
             attack_result_id: The attack result to update.
             ar: The current attack result.
+            last_response_id: The latest target response piece ID, if one was stored.
             request_converter_configurations: Resolved request converter configurations used for this message.
             response_converter_configurations: Resolved response converter configurations used for this message.
         """
-        update_fields: dict[str, Any] = {"timestamp": datetime.now(timezone.utc)}
+        update_fields: dict[str, Any] = {"timestamp": datetime.now(UTC)}
+        if last_response_id:
+            update_fields["last_response_id"] = last_response_id
 
         request_converter_ids = self._get_converter_identifiers(configurations=request_converter_configurations)
         response_converter_ids = self._get_converter_identifiers(configurations=response_converter_configurations)

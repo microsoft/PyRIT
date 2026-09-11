@@ -5,11 +5,18 @@ import textwrap
 
 from colorama import Fore, Style
 
-from pyrit.models import AttackOutcome, ScenarioResult
+from pyrit.models import AttackOutcome, AttackResult, ScenarioResult
 from pyrit.output._formatting import _PrettyPrinterMixin
-from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
+from pyrit.output.scenario_result.base import ScenarioResultPrinterBase, ScenarioView
 from pyrit.output.scorer.base import ScorerPrinterBase
 from pyrit.output.sink import Sink
+
+# A successful attack is a failure for the defender, so success is shown in red.
+_ATTACK_OUTCOME_COLORS = {
+    AttackOutcome.SUCCESS: Fore.RED,
+    AttackOutcome.FAILURE: Fore.GREEN,
+    AttackOutcome.UNDETERMINED: Fore.YELLOW,
+}
 
 
 class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase):
@@ -117,12 +124,25 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
             return str(Fore.CYAN)
         return str(Fore.GREEN)
 
-    async def render_async(self, result: ScenarioResult) -> str:
+    async def render_async(
+        self,
+        result: ScenarioResult,
+        *,
+        view: ScenarioView = "overview",
+        attack_result_ids: list[str] | None = None,
+        limit: int | None = None,
+    ) -> str:
         """
-        Render the scenario result summary and return it as a string.
+        Render a scenario result and return it as a string.
 
         Args:
-            result (ScenarioResult): The scenario result to summarize.
+            result (ScenarioResult): The scenario result to render.
+            view (ScenarioView): Which projection to render — the aggregate ``"overview"``
+                or the per-attack ``"attacks"`` table. Defaults to ``"overview"``.
+            attack_result_ids (list[str] | None): For the ``"attacks"`` view, restrict to
+                these attack ids. Ignored by the overview. Defaults to None.
+            limit (int | None): For the ``"attacks"`` view, the maximum number of attacks
+                to show. Ignored by the overview. Defaults to None.
 
         Returns:
             str: The rendered scenario result text.
@@ -131,6 +151,9 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
             ValueError: If the result has an ``objective_scorer_identifier`` but no scorer printer
                 is configured.
         """
+        if view == "attacks":
+            return self._render_attacks(result, attack_result_ids=attack_result_ids, limit=limit)
+
         parts: list[str] = []
 
         lines: list[str] = []
@@ -224,6 +247,81 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
 
         return "".join(parts)
 
+    def _render_attacks(
+        self,
+        result: ScenarioResult,
+        *,
+        attack_result_ids: list[str] | None = None,
+        limit: int | None = None,
+    ) -> str:
+        """
+        Render a compact per-attack table for the scenario's results.
+
+        Reads the ``AttackResult`` objects embedded in *result* (no fetching), so
+        the framework and the thin CLI client render attacks identically.
+
+        Args:
+            result (ScenarioResult): The scenario result whose attacks to list.
+            attack_result_ids (list[str] | None): When provided, keep only attacks
+                whose id is in this set. Defaults to None (all attacks).
+            limit (int | None): Maximum number of attacks to show. Defaults to None.
+
+        Returns:
+            str: The rendered attacks table.
+        """
+        id_filter = set(attack_result_ids) if attack_result_ids else None
+        selected = [
+            (atomic_attack_name, attack)
+            for atomic_attack_name, attacks in result.attack_results.items()
+            for attack in attacks
+            if id_filter is None or attack.attack_result_id in id_filter
+        ]
+        total = len(selected)
+        if limit is not None:
+            selected = selected[:limit]
+
+        lines: list[str] = [self._render_section_header("Attack Results")]
+        if not selected:
+            lines.append(self._format_colored(f"{self._indent}No attack results.", Fore.YELLOW))
+            return "".join(lines)
+
+        for index, (name, attack) in enumerate(selected, start=1):
+            color = _ATTACK_OUTCOME_COLORS.get(attack.outcome, Fore.CYAN)
+            lines.append("\n")
+            lines.append(
+                self._format_colored(
+                    f"{self._indent}{index}. [{attack.outcome.value.upper()}] "
+                    f"turns={attack.executed_turns}  score={self._attack_score(attack)}",
+                    Style.BRIGHT,
+                    color,
+                )
+            )
+            lines.append(self._format_colored(f"{self._indent * 2}id:        {attack.attack_result_id}", Fore.CYAN))
+            lines.append(self._format_colored(f"{self._indent * 2}technique: {name}", Fore.CYAN))
+            lines.append(self._format_colored(f"{self._indent * 2}objective: {attack.objective}", Fore.CYAN))
+
+        shown = len(selected)
+        footer = f"Showing {shown} of {total} attacks." if shown < total else f"Total attacks: {total}"
+        lines.append("\n")
+        lines.append(self._format_colored(f"{self._indent}{footer}", Fore.GREEN))
+        return "".join(lines)
+
+    @staticmethod
+    def _attack_score(attack: AttackResult) -> str:
+        """
+        Return the attack's last score value (or status when undetermined).
+
+        Args:
+            attack: The attack result to read the score from.
+
+        Returns:
+            str: The score value, its status, or a dash when there is no score.
+        """
+        score = attack.last_score
+        if score is None:
+            return "—"
+        return score.score_value if score.score_value is not None else score.status.value
+
 
 class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
     """
@@ -267,14 +365,27 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
         )
         self._scorer_printer = scorer_printer
 
-    async def render_async(self, result: ScenarioResult) -> str:
+    async def render_async(
+        self,
+        result: ScenarioResult,
+        *,
+        view: ScenarioView = "overview",
+        attack_result_ids: list[str] | None = None,
+        limit: int | None = None,
+    ) -> str:
         """
-        Render the scenario result summary and return it as a string.
+        Render the scenario result and return it as a string.
 
         Args:
-            result (ScenarioResult): The scenario result to summarize.
+            result (ScenarioResult): The scenario result to render.
+            view (ScenarioView): Which projection to render — the aggregate ``"overview"``
+                or the per-attack ``"attacks"`` table. Defaults to ``"overview"``.
+            attack_result_ids (list[str] | None): For the ``"attacks"`` view, restrict to
+                these attack ids. Ignored by the overview. Defaults to None.
+            limit (int | None): For the ``"attacks"`` view, the maximum number of attacks
+                to show. Ignored by the overview. Defaults to None.
 
         Returns:
             str: The rendered scenario result text.
         """
-        return await super().render_async(result)
+        return await super().render_async(result, view=view, attack_result_ids=attack_result_ids, limit=limit)

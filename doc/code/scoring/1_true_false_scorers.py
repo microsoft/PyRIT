@@ -19,6 +19,9 @@
 # This page covers **leaf** true/false scorers, organized fast → slow. Wrapping and
 # combining them (composite, inverter, threshold, conversation) is on
 # [Combining & stacking scorers](3_combining_scorers.ipynb).
+#
+# `ManualScorer` records a human-supplied true/false verdict for a persisted message
+# piece. The PyRIT app uses it for attack-result adjudication; it does not evaluate content.
 # %%
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
