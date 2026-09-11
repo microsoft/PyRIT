@@ -158,6 +158,21 @@ class TestAttackResultToSummary:
         assert summary.target is not None
         assert summary.target.target_type == "TextTarget"
 
+    async def test_mapping_keeps_attribution_out_of_labels(self) -> None:
+        ar = _make_attack_result(name="My Attack")
+        ar.operator = "alice"
+        ar.operation = "nightly"
+        stats = ConversationStats(
+            message_count=1,
+            labels={"operator": "legacy", "operation": "legacy", "environment": "test"},
+        )
+
+        summary = await attack_result_to_summary_async(ar, stats=stats)
+
+        assert summary.operator == "alice"
+        assert summary.operation == "nightly"
+        assert summary.labels == {"test_ar_label": "test_ar_value", "environment": "test"}
+
     async def test_round_robin_target_includes_canonical_identifier_hash(self) -> None:
         """Composite targets retain their full identity even when root display fields are absent."""
         target_identifier = ComponentIdentifier(
@@ -262,8 +277,8 @@ class TestAttackResultToSummary:
 
         assert summary.labels == {"env": "prod", "team": "red", "test_ar_label": "test_ar_value"}
 
-    async def test_labels_passed_through_without_normalization(self) -> None:
-        """Test that labels are passed through as-is (DB stores canonical keys after migration)."""
+    async def test_legacy_attribution_keys_are_not_merged_into_labels(self) -> None:
+        """Conversation-level legacy attribution keys do not leak into canonical labels."""
         ar = _make_attack_result()
         stats = ConversationStats(
             message_count=1,
@@ -273,8 +288,6 @@ class TestAttackResultToSummary:
         summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.labels == {
-            "operator": "alice",
-            "operation": "op_red",
             "env": "prod",
             "test_ar_label": "test_ar_value",
         }

@@ -70,6 +70,36 @@ def test_add_message_pieces_to_memory(
     assert len(sqlite_instance.get_message_pieces()) == num_conversations
 
 
+def test_add_message_pieces_preserves_same_sequence_order(sqlite_instance: MemoryInterface):
+    conversation_id = str(uuid4())
+    timestamp = datetime.now(tz=UTC)
+    pieces = [
+        MessagePiece(
+            id="00000000-0000-4000-8000-0000000000ff",
+            role="user",
+            original_value="first",
+            conversation_id=conversation_id,
+            sequence=0,
+            timestamp=timestamp,
+        ),
+        MessagePiece(
+            id="00000000-0000-4000-8000-000000000001",
+            role="user",
+            original_value="second",
+            conversation_id=conversation_id,
+            sequence=0,
+            timestamp=timestamp,
+        ),
+    ]
+
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
+
+    persisted_pieces = sqlite_instance.get_message_pieces(conversation_id=conversation_id)
+    assert [piece.original_value for piece in persisted_pieces] == ["first", "second"]
+    assert persisted_pieces[0].timestamp < persisted_pieces[1].timestamp
+    assert pieces[0].timestamp == pieces[1].timestamp
+
+
 def test_add_message_pieces_persists_converter_identifier_graph(sqlite_instance: MemoryInterface):
     target = TargetIdentifier(
         class_name="ConverterTarget",

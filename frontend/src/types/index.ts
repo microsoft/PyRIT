@@ -306,6 +306,8 @@ export interface AttackSummary {
   last_message_preview?: string | null
   message_count: number
   related_conversation_ids: string[]
+  operator?: string | null
+  operation?: string | null
   labels: Record<string, string>
   created_at: string
   updated_at: string
@@ -314,6 +316,8 @@ export interface AttackSummary {
 export interface CreateAttackRequest {
   target_registry_name: string
   name?: string
+  operator?: string
+  operation?: string
   labels?: Record<string, string>
   source_conversation_id?: string
   cutoff_index?: number
@@ -401,7 +405,13 @@ export interface AddMessageRequest {
   target_registry_name?: string
   converter_ids?: string[]
   target_conversation_id: string
-  labels?: Record<string, string>
+}
+
+export interface LabelOptionsResponse {
+  source: string
+  operators?: string[]
+  operations?: string[]
+  labels: Record<string, string[]>
 }
 
 export interface AddMessageResponse {

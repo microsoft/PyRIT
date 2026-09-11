@@ -21,6 +21,7 @@ import {
   configurationApi,
   targetsApi,
   attacksApi,
+  labelsApi,
   scenariosApi,
 } from "./api";
 
@@ -542,6 +543,34 @@ describe("api service", () => {
 
       expect(apiClient.get).toHaveBeenCalledWith("/attacks", {
         params: { limit: 10, outcome: "success" },
+        paramsSerializer: {
+          indexes: null,
+        },
+      });
+    });
+
+    it("should get narrowed labels with repeated query parameters", async () => {
+      const mockResponse = {
+        data: {
+          source: "attacks",
+          labels: { team: ["red"] },
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await labelsApi.getLabels("attacks", {
+        operator: ["alice", "bob"],
+        operation: ["nightly"],
+        label: ["team:red"],
+      });
+
+      expect(apiClient.get).toHaveBeenCalledWith("/labels", {
+        params: {
+          source: "attacks",
+          operator: ["alice", "bob"],
+          operation: ["nightly"],
+          label: ["team:red"],
+        },
         paramsSerializer: {
           indexes: null,
         },

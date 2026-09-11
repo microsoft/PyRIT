@@ -644,6 +644,25 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
     assert sort_message_pieces(pieces) == expected
 
 
+def test_order_message_pieces_with_same_sequence_by_timestamp():
+    earlier_piece = MessagePiece(
+        role="user",
+        original_value="first",
+        conversation_id="conv1",
+        timestamp=datetime.now(tz=UTC) - timedelta(seconds=1),
+        sequence=1,
+    )
+    later_piece = MessagePiece(
+        role="user",
+        original_value="second",
+        conversation_id="conv1",
+        timestamp=datetime.now(tz=UTC),
+        sequence=1,
+    )
+
+    assert sort_message_pieces([later_piece, earlier_piece]) == [earlier_piece, later_piece]
+
+
 def test_message_piece_to_dict():
     entry = MessagePiece(
         role="user",
