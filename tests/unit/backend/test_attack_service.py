@@ -2588,7 +2588,7 @@ class TestUpdateMainConversation:
         ar.related_conversations = {
             ConversationReference(
                 conversation_id="branch-1",
-                conversation_type=ConversationType.ADVERSARIAL,
+                conversation_type=ConversationType.PRUNED,
                 description="Branch 1",
             ),
         }
@@ -2614,38 +2614,29 @@ class TestUpdateMainConversation:
         assert "attack-1" in pruned
         assert "branch-1" not in pruned
 
-    async def test_swaps_preparation_conversation_and_preserves_other_references(self, attack_service, mock_memory):
-        """Preparation conversations use the same promotion path as other related conversations."""
+    @pytest.mark.parametrize("conversation_type", ["preparation", "adversarial"])
+    async def test_rejects_promoting_diagnostic_conversation(
+        self, attack_service, mock_memory, conversation_type
+    ):
+        """Diagnostic conversations cannot replace the evaluated main conversation."""
         from pyrit.models import ConversationReference, ConversationType
 
         ar = make_attack_result(conversation_id="attack-1")
         ar.related_conversations = {
             ConversationReference(
-                conversation_id="preparation-1",
-                conversation_type=ConversationType.PREPARATION,
-            ),
-            ConversationReference(
-                conversation_id="preparation-2",
-                conversation_type=ConversationType.PREPARATION,
-            ),
-            ConversationReference(
-                conversation_id="adversarial-1",
-                conversation_type=ConversationType.ADVERSARIAL,
+                conversation_id="diagnostic-1",
+                conversation_type=ConversationType(conversation_type),
             ),
         }
         mock_memory.get_attack_results.return_value = [ar]
 
-        result = await attack_service.update_main_conversation_async(
-            attack_result_id="ar-attack-1",
-            request=UpdateMainConversationRequest(conversation_id="preparation-1"),
-        )
+        with pytest.raises(ValueError, match="not part of this attack"):
+            await attack_service.update_main_conversation_async(
+                attack_result_id="ar-attack-1",
+                request=UpdateMainConversationRequest(conversation_id="diagnostic-1"),
+            )
 
-        assert result is not None
-        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
-        assert update_fields["conversation_id"] == "preparation-1"
-        assert update_fields["preparation_conversation_ids"] == ["preparation-2"]
-        assert update_fields["adversarial_chat_conversation_ids"] == ["adversarial-1"]
-        assert update_fields["pruned_conversation_ids"] == ["attack-1"]
+        mock_memory.update_attack_result_by_id.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")

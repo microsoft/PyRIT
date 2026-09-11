@@ -12,7 +12,7 @@ from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
     _generate_next_message_async,
-    _generate_simulated_conversation_result_async,
+    SimulatedConversationResult,
     generate_simulated_conversation_async,
 )
 from pyrit.models import (
@@ -330,10 +330,9 @@ class TestGenerateSimulatedConversationAsync:
                 # Verify get_conversation_messages was called with the correct conversation_id
                 mock_memory.get_conversation_messages.assert_called_once_with(conversation_id=conversation_id)
 
-                # Verify the result is a list of SeedPrompts
-                assert isinstance(result, list)
-                assert len(result) == len(sample_conversation)
-                for seed_prompt in result:
+                assert isinstance(result, SimulatedConversationResult)
+                assert len(result.seed_prompts) == len(sample_conversation)
+                for seed_prompt in result.seed_prompts:
                     assert isinstance(seed_prompt, SeedPrompt)
 
     async def test_passes_system_prompt_via_prepended_conversation(
@@ -464,7 +463,7 @@ class TestGenerateSimulatedConversationAsync:
                 mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
-                result = await _generate_simulated_conversation_result_async(
+                result = await generate_simulated_conversation_async(
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
@@ -672,7 +671,7 @@ class TestGenerateSimulatedConversationAsync:
                 mock_normalizer.send_prompt_async = AsyncMock(return_value=next_message_reply)
                 mock_normalizer_class.return_value = mock_normalizer
 
-                result = await _generate_simulated_conversation_result_async(
+                result = await generate_simulated_conversation_async(
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
@@ -888,8 +887,8 @@ class TestGenerateSimulatedConversationAsync:
                 )
 
                 # Verify the first prompt starts at sequence 5
-                assert result[0].sequence == 5
-                assert result[1].sequence == 6
+                assert result.seed_prompts[0].sequence == 5
+                assert result.seed_prompts[1].sequence == 6
 
 
 class TestGenerateNextMessageAsync:

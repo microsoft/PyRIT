@@ -114,9 +114,7 @@ class AttackParameters:
                 conversation but adversarial_chat/scorer not provided.
         """
         # Import here to avoid circular imports
-        from pyrit.executor.attack.multi_turn.simulated_conversation import (
-            _generate_simulated_conversation_result_async,
-        )
+        from pyrit.executor.attack.multi_turn.simulated_conversation import generate_simulated_conversation_async
 
         if not isinstance(seed_group, AttackSeedGroup):
             raise TypeError(
@@ -165,7 +163,7 @@ class AttackParameters:
             if objective_scorer is None:
                 raise ValueError("objective_scorer is required when seed_group has a simulated conversation config")
 
-            simulated_result = await _generate_simulated_conversation_result_async(
+            simulated_result = await generate_simulated_conversation_async(
                 objective=seed_group.objective.value,
                 adversarial_chat=adversarial_chat,
                 objective_scorer=objective_scorer,

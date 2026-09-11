@@ -603,8 +603,8 @@ class AttackService:
                 updated_at=datetime.now(timezone.utc),
             )
 
-        # Verify the conversation belongs to this attack (main or related)
-        if not ar.includes_conversation(target_conv_id):
+        # Only user-visible conversations can become the main conversation.
+        if target_conv_id not in ar.get_active_conversation_ids():
             raise ValueError(f"Conversation '{target_conv_id}' is not part of this attack")
 
         # Build updated DB columns: remove target from its list, add old main

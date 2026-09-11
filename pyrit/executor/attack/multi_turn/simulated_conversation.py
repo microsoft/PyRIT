@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class _SimulatedConversationResult:
+class SimulatedConversationResult:
     """Generated prompts and the source conversations that produced them."""
 
     seed_prompts: list[SeedPrompt]
@@ -64,14 +64,14 @@ async def generate_simulated_conversation_async(
     next_message_system_prompt_path: str | Path | None = None,
     attack_converter_config: AttackConverterConfig | None = None,
     memory_labels: dict[str, str] | None = None,
-) -> list[SeedPrompt]:
+) -> SimulatedConversationResult:
     """
     Generate a simulated conversation between an adversarial chat and a target.
 
     This utility runs a RedTeamingAttack with `score_last_turn_only=True` against a simulated
     target (the same LLM as adversarial_chat, optionally configured with a system prompt).
-    The resulting conversation is returned as a list of SeedPrompts that can be merged with
-    other SeedPrompts in a SeedGroup for use as `prepended_conversation` and `next_message`.
+    The resulting prompts and their source conversation references are returned together so
+    downstream attacks can preserve the simulation lineage.
 
     Use cases:
     - Creating role-play scenarios dynamically (e.g., movie script, video game)
@@ -98,51 +98,11 @@ async def generate_simulated_conversation_async(
         memory_labels: Labels to associate with the conversation in memory. Defaults to None.
 
     Returns:
-        List of SeedPrompts representing the generated conversation, with sequence numbers
-        starting from `starting_sequence` and incrementing by 1 for each message.
-        User messages have role="user", assistant messages have role="assistant".
-        If next_message_system_prompt_path is provided, the last message will be a user message
-        generated to elicit the objective fulfillment.
+        The generated prompts and their source conversation references. Prompt sequence numbers
+        start from ``starting_sequence`` and increment by 1 for each message.
 
     Raises:
         ValueError: If num_turns is not a positive integer.
-    """
-    result = await _generate_simulated_conversation_result_async(
-        objective=objective,
-        adversarial_chat=adversarial_chat,
-        objective_scorer=objective_scorer,
-        num_turns=num_turns,
-        starting_sequence=starting_sequence,
-        adversarial_chat_system_prompt_path=adversarial_chat_system_prompt_path,
-        simulated_target_system_prompt_path=simulated_target_system_prompt_path,
-        next_message_system_prompt_path=next_message_system_prompt_path,
-        attack_converter_config=attack_converter_config,
-        memory_labels=memory_labels,
-    )
-    return result.seed_prompts
-
-
-async def _generate_simulated_conversation_result_async(
-    *,
-    objective: str,
-    adversarial_chat: PromptTarget,
-    objective_scorer: TrueFalseScorer,
-    num_turns: int = 3,
-    starting_sequence: int = 0,
-    adversarial_chat_system_prompt_path: str | Path,
-    simulated_target_system_prompt_path: str | Path | None = None,
-    next_message_system_prompt_path: str | Path | None = None,
-    attack_converter_config: AttackConverterConfig | None = None,
-    memory_labels: dict[str, str] | None = None,
-) -> _SimulatedConversationResult:
-    """
-    Generate setup prompts and retain their conversation lineage.
-
-    Returns:
-        The generated prompts and their source conversation references.
-
-    Raises:
-        ValueError: If ``num_turns`` is not positive.
     """
     # Use the same LLM for both adversarial chat and simulated target
     # They get different system prompts to play different roles
@@ -244,7 +204,7 @@ async def _generate_simulated_conversation_result_async(
         f"(starting_sequence={starting_sequence}, outcome: {result.outcome.name})"
     )
 
-    return _SimulatedConversationResult(
+    return SimulatedConversationResult(
         seed_prompts=seed_prompts,
         related_conversations=frozenset(related_conversations),
     )

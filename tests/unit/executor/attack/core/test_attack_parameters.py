@@ -9,7 +9,7 @@ import pytest
 from pyrit.executor.attack.core.attack_parameters import (
     AttackParameters,
 )
-from pyrit.executor.attack.multi_turn.simulated_conversation import _SimulatedConversationResult
+from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
 from pyrit.models import (
     AttackSeedGroup,
     ConversationReference,
@@ -154,7 +154,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         return MagicMock()
 
     @pytest.fixture
-    def mock_simulated_result(self) -> _SimulatedConversationResult:
+    def mock_simulated_result(self) -> SimulatedConversationResult:
         """Create a simulated conversation result with source lineage."""
         prompts = [
             SeedPrompt(value="Simulated user message", data_type="text", role="user", sequence=0),
@@ -165,7 +165,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
             conversation_id="preparation-1",
             conversation_type=ConversationType.PREPARATION,
         )
-        return _SimulatedConversationResult(
+        return SimulatedConversationResult(
             seed_prompts=prompts,
             related_conversations=frozenset({reference}),
         )
@@ -218,14 +218,14 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         with pytest.raises(ValueError, match="overlaps with SeedSimulatedConversation"):
             AttackSeedGroup(seeds=[seed_objective, prompt, simulated_conversation_config])
 
-    @patch("pyrit.executor.attack.multi_turn.simulated_conversation._generate_simulated_conversation_result_async")
+    @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
     async def test_generates_simulated_conversation(
         self,
         mock_generate: AsyncMock,
         seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        mock_simulated_result: _SimulatedConversationResult,
+        mock_simulated_result: SimulatedConversationResult,
     ) -> None:
         """Test that simulated conversation is generated when config is present."""
         mock_generate.return_value = mock_simulated_result
@@ -243,14 +243,14 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         assert call_kwargs["objective_scorer"] == mock_objective_scorer
         assert call_kwargs["num_turns"] == 3
 
-    @patch("pyrit.executor.attack.multi_turn.simulated_conversation._generate_simulated_conversation_result_async")
+    @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
     async def test_uses_generated_prepended_messages(
         self,
         mock_generate: AsyncMock,
         seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        mock_simulated_result: _SimulatedConversationResult,
+        mock_simulated_result: SimulatedConversationResult,
     ) -> None:
         """Test that prepended_conversation comes from the generated result."""
         mock_generate.return_value = mock_simulated_result
@@ -268,14 +268,14 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         assert params.prepended_conversation[1].get_value() == "Simulated assistant response"
         assert params.source_conversations == mock_simulated_result.related_conversations
 
-    @patch("pyrit.executor.attack.multi_turn.simulated_conversation._generate_simulated_conversation_result_async")
+    @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
     async def test_uses_generated_next_message(
         self,
         mock_generate: AsyncMock,
         seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        mock_simulated_result: _SimulatedConversationResult,
+        mock_simulated_result: SimulatedConversationResult,
     ) -> None:
         """Test that next_message comes from the generated result."""
         mock_generate.return_value = mock_simulated_result
