@@ -86,6 +86,7 @@ def test_update_entries_merges_missing_entry(sqlite_instance: MemoryInterface):
     entry = PromptMemoryEntry(entry=MessagePiece(conversation_id="conversation", role="user", original_value="before"))
     session = MagicMock()
     session.get.return_value = None
+    session.scalar.return_value = None
     session.merge.return_value = entry
 
     with patch.object(sqlite_instance, "get_session", return_value=session):
@@ -126,6 +127,7 @@ def test_update_entries_locks_sql_server_prompt_before_observation_check(sqlite_
 def test_update_entries_rolls_back_on_error(sqlite_instance: MemoryInterface):
     entry = PromptMemoryEntry(entry=MessagePiece(conversation_id="conversation", role="user", original_value="before"))
     session = MagicMock()
+    session.scalar.return_value = None
     session.get.side_effect = SQLAlchemyError("update failed")
 
     with patch.object(sqlite_instance, "get_session", return_value=session):
