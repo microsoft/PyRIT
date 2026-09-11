@@ -189,6 +189,32 @@ def test_scenario_progress_migration_adds_composite_index():
             engine.dispose()
 
 
+def test_preparation_conversation_migration_upgrades_and_downgrades():
+    """The preparation conversation column follows the migration lifecycle."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "preparation-conversations.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "1b3d5f7a9c2e")
+                assert "preparation_conversation_ids" not in {
+                    column["name"] for column in inspect(connection).get_columns("AttackResultEntries")
+                }
+
+                command.upgrade(config, "head")
+                assert "preparation_conversation_ids" in {
+                    column["name"] for column in inspect(connection).get_columns("AttackResultEntries")
+                }
+
+                command.downgrade(config, "1b3d5f7a9c2e")
+                assert "preparation_conversation_ids" not in {
+                    column["name"] for column in inspect(connection).get_columns("AttackResultEntries")
+                }
+        finally:
+            engine.dispose()
+
+
 def test_migration_head_removes_additional_initializers_table():
     """The migration head removes the obsolete second initializer configuration source."""
     with tempfile.TemporaryDirectory() as temp_dir:

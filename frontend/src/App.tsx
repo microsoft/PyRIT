@@ -337,7 +337,11 @@ function App() {
           labels: attack.labels ?? {},
           operator: attack.operator ?? null,
           target: attack.target ?? null,
-          relatedConversationIds: attack.related_conversation_ids ?? [],
+          relatedConversationIds: attack.related_conversations
+            ? attack.related_conversations
+                .filter((reference) => reference.conversation_type === 'pruned')
+                .map((reference) => reference.conversation_id)
+            : (attack.related_conversation_ids ?? []),
           objective: attack.objective ?? '',
           status: 'success',
         })

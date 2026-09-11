@@ -35,6 +35,15 @@ const OUTCOME_COLORS: Record<string, 'success' | 'danger' | 'informative' | 'war
   undetermined: 'informative',
 }
 
+function getHistoryConversationCount(attack: AttackSummary): number {
+  const relatedCount = attack.related_conversations
+    ? attack.related_conversations.filter(
+        reference => reference.conversation_type === 'pruned' || reference.conversation_type === 'preparation'
+      ).length
+    : attack.related_conversation_ids.length
+  return relatedCount + 1
+}
+
 interface AttackTableProps {
   attacks: AttackSummary[]
   onOpenAttack: (attackResultId: string) => void
@@ -113,7 +122,7 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
               <Text size={200}>{attack.message_count}</Text>
             </TableCell>
             <TableCell>
-              <Text size={200}>{(attack.related_conversation_ids?.length ?? 0) + 1}</Text>
+              <Text size={200}>{getHistoryConversationCount(attack)}</Text>
             </TableCell>
             <TableCell>
               {attack.converters.length > 0 ? (

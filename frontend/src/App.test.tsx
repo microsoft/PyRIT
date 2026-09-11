@@ -1109,6 +1109,13 @@ describe("App", () => {
       conversation_id: "conv-main",
       labels: {},
       related_conversation_ids: ["conv-related"],
+      related_conversations: [
+        {
+          conversation_id: "conv-related",
+          conversation_type: "pruned",
+          description: "Previous main conversation",
+        },
+      ],
     });
     renderApp("/attacks/ar-1/conversations/conv-related");
 
@@ -1127,6 +1134,27 @@ describe("App", () => {
     renderApp("/attacks/ar-1/conversations/bogus");
 
     // The unknown conversation segment is stripped and we fall back to main.
+    await waitFor(() =>
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
+    );
+  });
+
+  it("does not activate a preparation conversation from a deep link", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: ["conv-preparation"],
+      related_conversations: [
+        {
+          conversation_id: "conv-preparation",
+          conversation_type: "preparation",
+          description: "Simulated preparation",
+        },
+      ],
+    });
+    renderApp("/attacks/ar-1/conversations/conv-preparation");
+
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
     );

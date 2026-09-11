@@ -308,6 +308,11 @@ export interface AttackSummary {
   related_conversation_ids: string[]
   operator?: string | null
   operation?: string | null
+  related_conversations?: Array<{
+    conversation_id: string
+    conversation_type: 'adversarial' | 'preparation' | 'pruned' | 'score' | 'converter'
+    description?: string | null
+  }>
   labels: Record<string, string>
   created_at: string
   updated_at: string

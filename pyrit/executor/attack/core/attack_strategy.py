@@ -183,6 +183,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
     _error_result_persistence_error: Exception | None = field(default=None, init=False, repr=False)
+    _persist_attack_result: bool = field(default=True, init=False, repr=False, compare=False)
     _objective_target_conversation_lifecycle: _ObjectiveTargetConversationLifecycle | None = field(
         default=None,
         init=False,
@@ -203,6 +204,10 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     # and resume. Set by AttackExecutor per-task before scheduling. Stays None
     # for ad-hoc/direct attack execution outside any orchestrator.
     _attribution: AttackResultAttribution | None = None
+
+    def __post_init__(self) -> None:
+        """Copy preparation-time conversation references into mutable execution state."""
+        self.related_conversations.update(getattr(self.params, "source_conversations", ()))
 
     # Convenience properties that delegate to params or overrides
     @property
@@ -374,6 +379,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         # Stamp attribution onto the result before persistence so the
         # AttackResultEntry row records its lineage. Outside an orchestrator
         # _attribution is None and both attribution fields stay None.
+        event_data.result.related_conversations.update(event_data.context.related_conversations)
         self._apply_attribution(context=event_data.context, result=event_data.result)
         self._apply_targeted_harm_categories(context=event_data.context, result=event_data.result)
 
@@ -483,6 +489,9 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         error = event_data.error
         context = event_data.context
         if not error or not context:
+            return
+        if not context._persist_attack_result:
+            self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
             return
 
         # Collect retry events (visible via inherited ContextVar copy)
@@ -824,7 +833,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         finally:
             context._objective_target_conversation_lifecycle = None
 
-        self._default_event_handler._persist_result(result=result)
+        if context._persist_attack_result:
+            self._default_event_handler._persist_result(result=result)
         return result
 
     @overload
@@ -835,6 +845,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         next_message: Message | None = None,
         prepended_conversation: list[Message] | None = None,
         memory_labels: dict[str, str] | None = None,
+        persist_attack_result: bool = True,
         **kwargs: Any,
     ) -> AttackStrategyResultT: ...
 
@@ -861,14 +872,21 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             next_message (Message | None): Message to send to the target.
             prepended_conversation (list[Message] | None): Conversation to prepend.
             memory_labels (dict[str, str] | None): Memory labels for the attack context.
+            persist_attack_result (bool): Whether to persist the completed or error attack result.
+                Messages produced during execution are persisted independently.
             **kwargs: Additional context-specific parameters (conversation_id, metadata, etc.).
 
         Returns:
             AttackStrategyResultT: The result of the attack execution.
 
         Raises:
+            TypeError: If ``persist_attack_result`` is not a boolean.
             ValueError: If required parameters are missing or if unsupported parameters are provided.
         """
+        persist_attack_result = kwargs.pop("persist_attack_result", True)
+        if not isinstance(persist_attack_result, bool):
+            raise TypeError("persist_attack_result must be a bool")
+
         # Get valid field names for params and context
         params_fields = {f.name for f in dataclasses.fields(self._params_type)}
         context_fields = {f.name for f in dataclasses.fields(self._context_type)} - {"params"}
@@ -907,5 +925,6 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         # Note: We use cast here because the type checker doesn't know that _context_type
         # (which is AttackContext or a subclass) always accepts 'params' as a keyword argument.
         context = self._context_type(params=params, **context_kwargs)
+        context._persist_attack_result = persist_attack_result
 
         return await self.execute_with_context_async(context=context)
