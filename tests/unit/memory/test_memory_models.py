@@ -683,6 +683,16 @@ class TestAttackResultEntry:
         assert entry.outcome == "success"
         assert entry.outcome_reason == "jailbreak achieved"
 
+    def test_init_stores_automated_and_human_scores_separately(self):
+        automated_score = Score(id=uuid.uuid4(), score_value="False", score_type="true_false")
+        human_score = Score(id=uuid.uuid4(), score_value="True", score_type="true_false")
+        result = _make_attack_result(automated_score=automated_score, human_score=human_score)
+
+        entry = AttackResultEntry(entry=result)
+
+        assert entry.automated_score_id == automated_score.id
+        assert entry.human_score_id == human_score.id
+
     def test_init_with_pruned_conversations(self):
         refs = {
             ConversationReference(

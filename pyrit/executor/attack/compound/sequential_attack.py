@@ -272,7 +272,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             attack_result_id=str(uuid.uuid4()),
             timestamp=datetime.now(UTC),
             last_response=None,
-            last_score=None,
+            automated_score=None,
             executed_turns=sum(r.executed_turns for r in results),
             outcome=outcome,
             child_attack_results=results,

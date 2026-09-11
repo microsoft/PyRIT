@@ -90,7 +90,7 @@ def test_scenario_progress_deltas_page_equal_timestamps_by_id(
         ),
         timestamp=timestamp,
     )
-    rows[0].last_score = score
+    rows[0].automated_score = score
     sqlite_instance.add_scores_to_memory(scores=[score])
     sqlite_instance.add_attack_results_to_memory(attack_results=rows)
 
@@ -139,7 +139,7 @@ def test_scenario_progress_delta_uses_unknown_for_empty_scorer_identifier(
         score_type="true_false",
         scorer_class_identifier=None,
     )
-    attack_result.last_score = score
+    attack_result.automated_score = score
     sqlite_instance.add_scores_to_memory(scores=[score])
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
 

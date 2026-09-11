@@ -101,6 +101,13 @@ export const useMessageListStyles = makeStyles({
     flexShrink: 0,
     alignSelf: 'flex-end',
   },
+  scoreControls: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalXXS,
+  },
   scoreChip: {
     minWidth: '32px',
     maxWidth: 'min(160px, calc(100vw - 64px))',
@@ -194,9 +201,9 @@ export const useMessageListStyles = makeStyles({
     overflowY: 'hidden',
   },
   scoreTab: {
-    flex: '0 0 72px',
-    width: '72px',
-    minWidth: '72px',
+    flex: '0 0 152px',
+    width: '152px',
+    minWidth: '152px',
     padding: `0 ${tokens.spacingHorizontalM}`,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,

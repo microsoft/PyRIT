@@ -1345,7 +1345,8 @@ class MemoryInterface(abc.ABC):
                 elif model_class == AttackResultEntry:
                     query = query.options(
                         joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
-                        joinedload(AttackResultEntry.last_score),
+                        joinedload(AttackResultEntry.automated_score),
+                        joinedload(AttackResultEntry.human_score),
                     )
                 if conditions is not None:
                     query = query.filter(conditions)
@@ -4722,7 +4723,10 @@ class MemoryInterface(abc.ABC):
                 ScoreEntry.score_rationale,
                 ScoreEntry.scorer_class_identifier,
             )
-            .outerjoin(ScoreEntry, AttackResultEntry.last_score_id == ScoreEntry.id)
+            .outerjoin(
+                ScoreEntry,
+                func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id) == ScoreEntry.id,
+            )
             .where(and_(*conditions))
             .order_by(AttackResultEntry.timestamp.asc(), AttackResultEntry.id.asc())
             .limit(limit + 1)

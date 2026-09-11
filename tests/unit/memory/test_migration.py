@@ -189,6 +189,51 @@ def test_scenario_progress_migration_adds_composite_index():
             engine.dispose()
 
 
+def test_attack_result_score_migration_backfills_automated_score() -> None:
+    """The legacy last score becomes the automated score and human score starts empty."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "attack-result-scores.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "0f2e4d6c8b1a")
+                score_id = str(uuid.uuid4())
+                attack_id = str(uuid.uuid4())
+                connection.execute(
+                    text(
+                        'INSERT INTO "ScoreEntries" '
+                        "(id, score_value, score_type, score_metadata, scorer_class_identifier, status, timestamp) "
+                        "VALUES (:id, 'True', 'true_false', '{}', '{}', 'completed', '2026-09-10')"
+                    ),
+                    {"id": score_id},
+                )
+                connection.execute(
+                    text(
+                        'INSERT INTO "AttackResultEntries" '
+                        "(id, conversation_id, objective, objective_sha256, last_score_id, executed_turns, "
+                        "execution_time_ms, outcome, timestamp) "
+                        "VALUES (:id, :conversation_id, 'objective', 'sha', :score_id, 1, 0, 'success', '2026-09-10')"
+                    ),
+                    {"id": attack_id, "conversation_id": str(uuid.uuid4()), "score_id": score_id},
+                )
+
+                command.upgrade(config, "head")
+
+                columns = {column["name"] for column in inspect(connection).get_columns("AttackResultEntries")}
+                row = connection.execute(
+                    text('SELECT automated_score_id, human_score_id FROM "AttackResultEntries" WHERE id = :id'),
+                    {"id": attack_id},
+                ).one()
+
+            assert "last_score_id" not in columns
+            assert {"automated_score_id", "human_score_id"} <= columns
+            assert str(row.automated_score_id) == score_id
+            assert row.human_score_id is None
+        finally:
+            engine.dispose()
+
+
 def test_migration_head_removes_additional_initializers_table():
     """The migration head removes the obsolete second initializer configuration source."""
     with tempfile.TemporaryDirectory() as temp_dir:

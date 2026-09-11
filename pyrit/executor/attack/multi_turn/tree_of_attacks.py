@@ -2452,7 +2452,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             outcome_reason=outcome_reason,
             executed_turns=context.executed_turns,
             last_response=last_response,
-            last_score=context.best_objective_score,
+            automated_score=context.best_objective_score,
             related_conversations=context.related_conversations,
             labels=context.memory_labels,
         )

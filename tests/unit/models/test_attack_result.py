@@ -270,7 +270,7 @@ def test_to_dict_from_dict_roundtrip():
         sequence=1,
         timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
     )
-    last_score = Score(
+    automated_score = Score(
         score_value="true",
         score_value_description="met objective",
         score_type="true_false",
@@ -285,7 +285,7 @@ def test_to_dict_from_dict_roundtrip():
         attack_result_id="ar-001",
         atomic_attack_identifier=attack_id,
         last_response=last_response,
-        last_score=last_score,
+        automated_score=automated_score,
         executed_turns=5,
         execution_time_ms=2500,
         outcome=AttackOutcome.SUCCESS,
@@ -327,6 +327,32 @@ def test_to_dict_from_dict_roundtrip():
     dumped = original.model_dump(mode="json")
     roundtripped = AttackResult.model_validate(dumped)
     assert dumped == roundtripped.model_dump(mode="json")
+
+
+def test_last_score_prefers_human_score() -> None:
+    automated_score = Score(score_value="False", score_type="true_false")
+    human_score = Score(score_value="True", score_type="true_false")
+    result = AttackResult(
+        conversation_id="conv-1",
+        objective="test",
+        automated_score=automated_score,
+        human_score=human_score,
+    )
+
+    assert result.last_score is human_score
+
+
+def test_last_score_falls_back_to_automated_score() -> None:
+    automated_score = Score(score_value="True", score_type="true_false")
+    result = AttackResult(
+        conversation_id="conv-1",
+        objective="test",
+        automated_score=automated_score,
+    )
+
+    assert result.last_score is automated_score
+    with pytest.raises(AttributeError, match="has no setter|can't set attribute"):
+        result.last_score = None
 
 
 class TestAttackResultValidation:

@@ -2248,7 +2248,7 @@ class TestAttackLifecycle:
                             outcome=AttackOutcome.SUCCESS,
                             executed_turns=1,
                             last_response=sample_response.get_piece(),
-                            last_score=success_objective_score,
+                            automated_score=success_objective_score,
                             metadata={"backtrack_count": 0},
                         )
 
@@ -2314,7 +2314,7 @@ class TestAttackLifecycle:
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
             last_response=sample_response.get_piece(),
-            last_score=success_objective_score,
+            automated_score=success_objective_score,
             metadata={"backtrack_count": 0},
         )
 

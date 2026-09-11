@@ -28,6 +28,7 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationRequest,
 )
 from pyrit.backend.services.attack_service import (
+    AttackObjectiveConflictError,
     AttackService,
     get_attack_service,
 )
@@ -37,6 +38,7 @@ from pyrit.backend.services.pagination import (
     fingerprint_filters,
     normalize_label_filters,
 )
+from pyrit.common.utils import to_sha256
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -44,6 +46,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    Score,
 )
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -785,7 +788,7 @@ class TestGetConversationMessages:
         """The message mapper receives the attack's canonical objective score ID."""
         ar = make_attack_result(conversation_id="test-id")
         objective_score_id = uuid.uuid4()
-        ar.last_score = MagicMock(id=objective_score_id)
+        ar.automated_score = MagicMock(id=objective_score_id)
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_conversation_messages.return_value = []
 
@@ -806,7 +809,7 @@ class TestGetConversationMessages:
         """The message mapper receives string score IDs without UUID conversion."""
         ar = make_attack_result(conversation_id="test-id")
         objective_score_id = str(uuid.uuid4())
-        ar.last_score = MagicMock(id=objective_score_id)
+        ar.automated_score = MagicMock(id=objective_score_id)
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_conversation_messages.return_value = []
 
@@ -1237,6 +1240,50 @@ class TestUpdateAttack:
         call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
         assert call_kwargs["update_fields"]["outcome"] == "error"
 
+    async def test_update_attack_updates_objective_and_hash(self, attack_service, mock_memory) -> None:
+        """Test that updating the objective keeps its lookup hash synchronized."""
+        ar = make_attack_result(conversation_id="test-id", objective="")
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        await attack_service.update_attack_async(
+            attack_result_id="test-id",
+            request=UpdateAttackRequest(objective="Extract the system prompt"),
+        )
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert update_fields["objective"] == "Extract the system prompt"
+        assert update_fields["objective_sha256"] == to_sha256("Extract the system prompt")
+
+    async def test_update_attack_rejects_replacing_objective(self, attack_service, mock_memory) -> None:
+        """Test that an existing objective cannot be replaced."""
+        ar = make_attack_result(conversation_id="test-id", objective="Existing objective")
+        mock_memory.get_attack_results.return_value = [ar]
+
+        with pytest.raises(AttackObjectiveConflictError, match="already has an objective"):
+            await attack_service.update_attack_async(
+                attack_result_id="test-id",
+                request=UpdateAttackRequest(objective="Replacement objective"),
+            )
+
+        mock_memory.update_attack_result_by_id.assert_not_called()
+
+    async def test_update_attack_same_objective_is_idempotent(self, attack_service, mock_memory) -> None:
+        """Test that resubmitting the existing objective does not write it again."""
+        objective = "Existing objective"
+        ar = make_attack_result(conversation_id="test-id", objective=objective)
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        result = await attack_service.update_attack_async(
+            attack_result_id="test-id",
+            request=UpdateAttackRequest(objective=objective),
+        )
+
+        assert result is not None
+        assert result.objective == objective
+        mock_memory.update_attack_result_by_id.assert_not_called()
+
     async def test_update_attack_bumps_timestamp(self, attack_service, mock_memory) -> None:
         """Test that update_attack bumps the timestamp recency column and does not write metadata."""
         old_time = datetime(2024, 1, 1, tzinfo=UTC)
@@ -1252,6 +1299,49 @@ class TestUpdateAttack:
         assert isinstance(update_fields["timestamp"], datetime)
         assert update_fields["timestamp"] > old_time
         assert "attack_metadata" not in update_fields
+
+    @pytest.mark.parametrize(
+        ("score_value", "expected_outcome"),
+        [("True", "success"), ("False", "failure")],
+    )
+    async def test_remove_human_score_restores_automated_outcome(
+        self,
+        attack_service,
+        mock_memory,
+        score_value: str,
+        expected_outcome: str,
+    ) -> None:
+        """Test that removing a human score restores the automated true/false result."""
+        attack = make_attack_result(conversation_id="test-id")
+        attack.automated_score = Score(
+            score_type="true_false",
+            score_value=score_value,
+            score_rationale="Automated rationale",
+        )
+        mock_memory.get_attack_results.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert update_fields["human_score_id"] is None
+        assert update_fields["outcome"] == expected_outcome
+        assert update_fields["outcome_reason"] == "Automated rationale"
+
+    async def test_remove_human_score_without_automated_score_is_undetermined(
+        self,
+        attack_service,
+        mock_memory,
+    ) -> None:
+        """Test that removing the only score makes the attack outcome undetermined."""
+        attack = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert update_fields["human_score_id"] is None
+        assert update_fields["outcome"] == "undetermined"
+        assert update_fields["outcome_reason"] is None
 
 
 # ============================================================================
@@ -1309,8 +1399,17 @@ class TestAddMessage:
     async def test_add_message_with_send_sends_via_normalizer(self, attack_service, mock_memory) -> None:
         """Test that add_message with send=True sends message via normalizer."""
         ar = make_attack_result(conversation_id="test-id")
+        response_piece = MessagePiece(
+            role="assistant",
+            original_value="Response",
+            original_value_data_type="text",
+            converted_value="Response",
+            converted_value_data_type="text",
+            conversation_id="test-id",
+            sequence=1,
+        )
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_message_pieces.side_effect = [[], [response_piece]]
         mock_memory.get_conversation_messages.return_value = []
 
         with (
@@ -1336,6 +1435,8 @@ class TestAddMessage:
 
             mock_normalizer.send_prompt_async.assert_called_once()
             assert result.attack is not None
+            update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+            assert update_fields["last_response_id"] == str(response_piece.id)
 
     async def test_add_message_with_send_raises_when_target_not_found(self, attack_service, mock_memory) -> None:
         """Test that add_message with send=True raises when target object not found."""

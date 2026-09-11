@@ -41,6 +41,9 @@ import type {
   EnvironmentFileListResponse,
   UpdateConfigurationFileRequest,
   AuthAccess,
+  BackendScore,
+  ManualScoreRequest,
+  UpdateAttackRequest,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -286,6 +289,18 @@ export const attacksApi = {
     return response.data
   },
 
+  updateAttack: async (attackResultId: string, request: UpdateAttackRequest): Promise<AttackSummary> => {
+    const response = await apiClient.patch(`/attacks/${encodeURIComponent(attackResultId)}`, request)
+    return response.data
+  },
+
+  removeHumanScore: async (attackResultId: string): Promise<AttackSummary> => {
+    const response = await apiClient.delete(
+      `/attacks/${encodeURIComponent(attackResultId)}/human-score`
+    )
+    return response.data
+  },
+
   getMessages: async (attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
@@ -362,6 +377,13 @@ export const attacksApi = {
 
   getConverterOptions: async (): Promise<{ converter_types: string[] }> => {
     const response = await apiClient.get('/attacks/converter-options')
+    return response.data
+  },
+}
+
+export const scoresApi = {
+  createManualScore: async (request: ManualScoreRequest): Promise<BackendScore> => {
+    const response = await apiClient.post('/scores/manual', request)
     return response.data
   },
 }

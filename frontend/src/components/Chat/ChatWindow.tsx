@@ -33,14 +33,17 @@ import type { PieceConversion } from './converterTypes'
 import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
-import { attacksApi } from '../../services/api'
+import { attacksApi, scoresApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
 import { exportConversation } from '../../utils/conversationExport'
 import type { ExportFormat } from '../../utils/conversationExport'
 import type {
   AddMessageRequest,
+  AttackOutcome,
+  AttackSummary,
   AttackTargetResolutionStatus,
+  BackendScore,
   CreateAttackRequest,
   Message,
   MessageAttachment,
@@ -86,8 +89,11 @@ interface ChatWindowProps {
   attackResultId: string | null
   conversationId: string | null
   activeConversationId: string | null
-  onConversationCreated: (attackResultId: string, conversationId: string) => void
+  onConversationCreated: (attackResultId: string, conversationId: string, objective?: string) => void
   onSelectConversation: (conversationId: string) => void
+  onObjectiveChange?: (objective: string) => void
+  onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
+  onAttackChange?: (attack: AttackSummary) => void
   labels?: Record<string, string>
   onLabelsChange?: (labels: Record<string, string>) => void
   onNavigate?: (view: ViewName) => void
@@ -105,6 +111,11 @@ interface ChatWindowProps {
   relatedConversationCount?: number
   /** The loaded attack's objective (empty for new/manual attacks). */
   objective?: string
+  /** The loaded attack's current outcome. */
+  outcome?: AttackOutcome
+  automatedScore?: BackendScore | null
+  humanScore?: BackendScore | null
+  lastResponseMessagePieceId?: string | null
   /** Validated scenario-run provenance for attacks opened from a run dashboard. */
   scenarioResultId?: string | null
 }
@@ -117,6 +128,9 @@ export default function ChatWindow({
   activeConversationId,
   onConversationCreated,
   onSelectConversation,
+  onObjectiveChange,
+  onHumanScoreChange,
+  onAttackChange,
   labels,
   onLabelsChange,
   onNavigate,
@@ -127,12 +141,17 @@ export default function ChatWindow({
   isLoadingAttack,
   relatedConversationCount,
   objective = '',
+  outcome,
+  automatedScore,
+  humanScore,
+  lastResponseMessagePieceId,
   scenarioResultId,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const restoreFocusTargetAttributes = useRestoreFocusTarget()
   const restoreFocusSourceAttributes = useRestoreFocusSource()
   const [messages, setMessages] = useState<Message[]>([])
+  const [pendingObjective, setPendingObjective] = useState('')
   // Track sending state per conversation so parallel conversations can send independently
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
   /** True while an async message fetch is in-flight */
@@ -265,6 +284,7 @@ export default function ChatWindow({
       setMessages([])
       setLoadedConversationId(null)
       setSystemPrompt('')
+      setPendingObjective('')
     }
   }
 
@@ -431,6 +451,7 @@ export default function ChatWindow({
       if (!currentAttackResultId) {
         const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
+          name: pendingObjective || undefined,
           // TODO(PyRIT 1.4): Pass only dedicated attribution after legacy label aliases are removed.
           // The create-attack API normalizes these aliases through _AttackAttributionInput.
           labels,
@@ -450,7 +471,7 @@ export default function ChatWindow({
           pendingUserMessagesRef.current.delete('__pending__')
           pendingUserMessagesRef.current.set(currentConversationId!, pendingMsgs)
         }
-        onConversationCreated(currentAttackResultId, currentConversationId)
+        onConversationCreated(currentAttackResultId, currentConversationId, pendingObjective || undefined)
         // Update the viewed-conversation ref so the success/error guards
         // below recognise this as the active conversation.
         viewedConvRef.current = currentConversationId!
@@ -478,6 +499,7 @@ export default function ChatWindow({
         converter_ids: converterIds,
       }
       const response = await attacksApi.addMessage(currentAttackResultId!, addMessageRequest)
+      onAttackChange?.(response.attack)
 
       // Clear converter state after successful send
       setPieceConversions({})
@@ -694,6 +716,65 @@ export default function ChatWindow({
     isMutationLocked,
   ])
 
+  const handleHumanScoreUpdate = useCallback(async (value: boolean, rationale: string): Promise<void> => {
+    if (
+      !attackResultId
+      || !lastResponseMessagePieceId
+      || !(objective || pendingObjective).trim()
+      || isMutationLocked
+    ) {
+      return
+    }
+
+    const score = await scoresApi.createManualScore({
+      attack_result_id: attackResultId,
+      message_id: lastResponseMessagePieceId,
+      value,
+      rationale,
+      update_attack: true,
+    })
+    onHumanScoreChange?.(score, value ? 'success' : 'failure')
+    if (activeConversationId) {
+      await loadConversation(attackResultId, activeConversationId)
+    }
+  }, [
+    activeConversationId,
+    attackResultId,
+    isMutationLocked,
+    lastResponseMessagePieceId,
+    loadConversation,
+    objective,
+    onHumanScoreChange,
+    pendingObjective,
+  ])
+
+  const handleHumanScoreRemove = useCallback(async (): Promise<void> => {
+    if (!attackResultId || !humanScore || isMutationLocked) return
+
+    const attack = await attacksApi.removeHumanScore(attackResultId)
+    onHumanScoreChange?.(null, attack.outcome ?? 'undetermined')
+    if (activeConversationId) {
+      await loadConversation(attackResultId, activeConversationId)
+    }
+  }, [
+    activeConversationId,
+    attackResultId,
+    humanScore,
+    isMutationLocked,
+    loadConversation,
+    onHumanScoreChange,
+  ])
+
+  const handleAddObjective = useCallback(async (newObjective: string): Promise<void> => {
+    if (!attackResultId) {
+      setPendingObjective(newObjective)
+      return
+    }
+
+    const updatedAttack = await attacksApi.updateAttack(attackResultId, { objective: newObjective })
+    onObjectiveChange?.(updatedAttack.objective)
+  }, [attackResultId, onObjectiveChange])
+
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
 
   // "Continue with your target" — clone the current conversation into a new attack
@@ -873,7 +954,33 @@ export default function ChatWindow({
             </Tooltip>
           </div>
         </div>
-        <ObjectiveHeader key={objective} objective={objective} />
+        <ObjectiveHeader
+          key={`${attackResultId ?? 'new'}-${objective}-${pendingObjective}`}
+          objective={objective || pendingObjective}
+          outcome={outcome}
+          automatedScore={automatedScore}
+          humanScore={humanScore}
+          canUpdateOutcome={
+            Boolean(attackResultId)
+            && Boolean(lastResponseMessagePieceId)
+            && !isMutationLocked
+          }
+          canRemoveHumanScore={
+            Boolean(attackResultId)
+            && Boolean(humanScore)
+            && !isMutationLocked
+          }
+          onUpdateHumanScore={handleHumanScoreUpdate}
+          onRemoveHumanScore={handleHumanScoreRemove}
+          canAdd={
+            Boolean(activeTarget)
+            && !isLoadingAttack
+            && !isLoadingMessages
+            && !awaitingConversationLoad
+            && !isMutationLocked
+          }
+          onAdd={handleAddObjective}
+        />
         {systemMessage && <SystemPromptBanner content={systemMessage.content} />}
         <MessageList
           messages={messages}
