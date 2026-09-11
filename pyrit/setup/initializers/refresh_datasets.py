@@ -12,7 +12,7 @@ maintenance twin of ``LoadDefaultDatasets``: it is opt-in and never runs on the 
 
 import logging
 import textwrap
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -168,7 +168,7 @@ class RefreshDatasets(PyRITInitializer):
         if newest is None:
             return True
 
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
+        cutoff = datetime.now(tz=UTC) - timedelta(days=days)
         return newest <= cutoff
 
     async def _refresh_dataset_async(self, *, memory: MemoryInterface, dataset_name: str) -> None:

@@ -9,7 +9,7 @@ This is the attack-centric API design where every user interaction targets a mod
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
 from pydantic import BaseModel, Field, computed_field, field_serializer, model_validator
@@ -25,6 +25,7 @@ from pyrit.models import (
     PromptDataType,
     Score,
 )
+from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
 
 
 class TargetInfo(BaseModel):
@@ -203,7 +204,7 @@ class MessageView(Message):
     @property
     def created_at(self) -> datetime:
         """The timestamp of the first piece."""
-        return self.message_pieces[0].timestamp if self.message_pieces else datetime.now(timezone.utc)
+        return self.message_pieces[0].timestamp if self.message_pieces else datetime.now(UTC)
 
 
 class AttackSummary(AttackResult):
@@ -223,12 +224,8 @@ class AttackSummary(AttackResult):
     # Mapper-populated presentation fields (need external stats / metadata).
     message_count: int = Field(default=0, description="Total number of messages in the attack")
     last_message_preview: str | None = Field(default=None, description="Preview of the last message")
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc), description="Attack creation timestamp"
-    )
-    updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp"
-    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Attack creation timestamp")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Last update timestamp")
 
     @field_serializer("related_conversations")
     def _serialize_related_conversations(
@@ -358,12 +355,47 @@ class PrependedMessageRequest(BaseModel):
     pieces: list[MessagePieceRequest] = Field(..., description="Message pieces (supports multimodal)", max_length=50)
 
 
+class _AttackAttributionInput(BaseModel):
+    """Shared first-class attribution input with temporary legacy label aliases."""
+
+    operator: str | None = Field(None, max_length=128, description="Operator responsible for the attack")
+    operation: str | None = Field(None, max_length=128, description="Operation associated with the attack")
+    labels: dict[str, str] | None = Field(None, description="Arbitrary user-defined labels for filtering")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_attribution_labels(cls, data: Any) -> Any:
+        """
+        Normalize deprecated label aliases without mutating the caller's dictionaries.
+
+        TODO(PyRIT 1.4): Remove this validator with legacy attribution label aliases.
+
+        Returns:
+            The normalized model input.
+
+        Raises:
+            ValueError: If an alias is not a string or conflicts with a dedicated field.
+        """
+        if not isinstance(data, dict) or not isinstance(data.get("labels"), dict):
+            return data
+        normalized = dict(data)
+        remaining, operator, operation = normalize_legacy_attack_attribution(
+            labels=normalized["labels"],
+            operator=normalized.get("operator"),
+            operation=normalized.get("operation"),
+        )
+        normalized["labels"] = remaining
+        normalized["operator"] = operator
+        normalized["operation"] = operation
+        return normalized
+
+
 # ============================================================================
 # Create Attack
 # ============================================================================
 
 
-class CreateAttackRequest(BaseModel):
+class CreateAttackRequest(_AttackAttributionInput):
     """
     Request to create a new attack.
 
@@ -388,7 +420,6 @@ class CreateAttackRequest(BaseModel):
     prepended_conversation: list[PrependedMessageRequest] | None = Field(
         None, description="Messages to prepend (system prompts, branching context)", max_length=200
     )
-    labels: dict[str, str] | None = Field(None, description="User-defined labels for filtering")
 
 
 class CreateAttackResponse(BaseModel):
@@ -530,11 +561,6 @@ class AddMessageRequest(BaseModel):
         ...,
         description="The conversation_id to store and send messages under. "
         "Usually the attack's main conversation, but can be a related conversation.",
-    )
-    labels: dict[str, str] | None = Field(
-        None,
-        description="Request labels used for attack-level consistency checks. "
-        "When present, the operator must match the attack result's operator.",
     )
 
     @model_validator(mode="after")

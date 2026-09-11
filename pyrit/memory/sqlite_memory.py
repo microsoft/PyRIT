@@ -433,27 +433,30 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         sql = text(
             f"""
+            WITH aggregate_rows AS (
+                SELECT
+                    conversation_id,
+                    COUNT(DISTINCT sequence) AS msg_count,
+                    MIN(timestamp) AS created_at
+                FROM "PromptMemoryEntries"
+                WHERE conversation_id IN ({placeholders})
+                GROUP BY conversation_id
+            )
             SELECT
-                pme.conversation_id,
-                COUNT(DISTINCT pme.sequence) AS msg_count,
-                (
-                    SELECT SUBSTR(p2.converted_value, 1, {ConversationStats.PREVIEW_FETCH_MAX_LEN})
+                aggregate_rows.conversation_id,
+                aggregate_rows.msg_count,
+                SUBSTR(latest.converted_value, 1, {ConversationStats.PREVIEW_FETCH_MAX_LEN}) AS last_preview,
+                latest.converted_value_data_type AS last_data_type,
+                aggregate_rows.created_at
+            FROM aggregate_rows
+            LEFT JOIN "PromptMemoryEntries" latest
+                ON latest.id = (
+                    SELECT p2.id
                     FROM "PromptMemoryEntries" p2
-                    WHERE p2.conversation_id = pme.conversation_id
+                    WHERE p2.conversation_id = aggregate_rows.conversation_id
                     ORDER BY p2.sequence DESC, p2.id DESC
                     LIMIT 1
-                ) AS last_preview,
-                (
-                    SELECT p2b.converted_value_data_type
-                    FROM "PromptMemoryEntries" p2b
-                    WHERE p2b.conversation_id = pme.conversation_id
-                    ORDER BY p2b.sequence DESC, p2b.id DESC
-                    LIMIT 1
-                ) AS last_data_type,
-                MIN(pme.timestamp) AS created_at
-            FROM "PromptMemoryEntries" pme
-            WHERE pme.conversation_id IN ({placeholders})
-            GROUP BY pme.conversation_id
+                )
             """
         )
 

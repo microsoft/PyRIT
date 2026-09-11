@@ -2437,6 +2437,201 @@ def test_attack_recency_downgrade_restores_updated_at_and_drops_indexes():
             engine.dispose()
 
 
+# =============================================================================
+# First-class attack attribution and history indexes (a4c6e8f0b2d1)
+# =============================================================================
+
+
+_ATTACK_ATTRIBUTION_REV = "a4c6e8f0b2d1"
+_ATTACK_ATTRIBUTION_PREV_REV = "1b3d5f7a9c2e"
+
+
+def _seed_attack_result_with_labels(connection, *, attack_id: str, labels: dict[str, object]) -> None:
+    connection.execute(
+        text(
+            'INSERT INTO "AttackResultEntries" '
+            "(id, conversation_id, objective, executed_turns, execution_time_ms, outcome, timestamp, labels) "
+            "VALUES (:id, :conv, 'obj', 1, 0, 'success', '2026-09-04', :labels)"
+        ),
+        {"id": attack_id, "conv": f"conv-{attack_id}", "labels": json.dumps(labels)},
+    )
+
+
+def test_attack_attribution_migration_backfills_labels_and_indexes() -> None:
+    engine = create_engine("sqlite://")
+    attack_id = str(uuid.uuid4())
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, _ATTACK_ATTRIBUTION_PREV_REV)
+            _seed_attack_result_with_labels(
+                connection,
+                attack_id=attack_id,
+                labels={"operator": "alice", "operation": "nightly", "op": "keep", "team": "red"},
+            )
+
+            command.upgrade(config, _ATTACK_ATTRIBUTION_REV)
+
+            row = connection.execute(
+                text('SELECT operator, operation, labels FROM "AttackResultEntries" WHERE id = :attack_id'),
+                {"attack_id": attack_id},
+            ).one()
+            attack_indexes = {
+                index["name"]: index["column_names"] for index in inspect(connection).get_indexes("AttackResultEntries")
+            }
+            prompt_indexes = {
+                index["name"]: index["column_names"] for index in inspect(connection).get_indexes("PromptMemoryEntries")
+            }
+            scenario_indexes = {
+                index["name"]: index["column_names"]
+                for index in inspect(connection).get_indexes("ScenarioResultEntries")
+            }
+            prompt_columns = {
+                column["name"]: column["type"] for column in inspect(connection).get_columns("PromptMemoryEntries")
+            }
+
+        assert row.operator == "alice"
+        assert row.operation == "nightly"
+        assert json.loads(row.labels) == {"op": "keep", "team": "red"}
+        assert attack_indexes["ix_AttackResultEntries_conversation_timestamp_id"] == [
+            "conversation_id",
+            "timestamp",
+            "id",
+        ]
+        assert attack_indexes["ix_AttackResultEntries_operator_timestamp_id"] == [
+            "operator",
+            "timestamp",
+            "id",
+        ]
+        assert attack_indexes["ix_AttackResultEntries_operation_timestamp_id"] == [
+            "operation",
+            "timestamp",
+            "id",
+        ]
+        assert prompt_indexes["ix_PromptMemoryEntries_conversation_sequence_id"] == [
+            "conversation_id",
+            "sequence",
+            "id",
+        ]
+        assert prompt_columns["conversation_id"].length == 128
+        assert scenario_indexes["ix_ScenarioResultEntries_scenario_name_timestamp_id"] == [
+            "scenario_name",
+            "timestamp",
+            "id",
+        ]
+        assert scenario_indexes["ix_ScenarioResultEntries_scenario_run_state_timestamp_id"] == [
+            "scenario_run_state",
+            "timestamp",
+            "id",
+        ]
+    finally:
+        engine.dispose()
+
+
+def test_attack_attribution_migration_rejects_overlength_value() -> None:
+    engine = create_engine("sqlite://")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, _ATTACK_ATTRIBUTION_PREV_REV)
+            _seed_attack_result_with_labels(
+                connection,
+                attack_id=str(uuid.uuid4()),
+                labels={"operator": "x" * 129},
+            )
+
+            with pytest.raises(ValueError, match="will not truncate"):
+                command.upgrade(config, _ATTACK_ATTRIBUTION_REV)
+    finally:
+        engine.dispose()
+
+
+def test_attack_attribution_migration_uses_set_based_mssql_update() -> None:
+    import importlib
+    from unittest.mock import MagicMock, patch
+
+    migration = importlib.import_module(
+        "pyrit.memory.alembic.versions.a4c6e8f0b2d1_add_attack_attribution_and_history_indexes"
+    )
+    bind = MagicMock()
+    bind.dialect.name = "mssql"
+    bind.exec_driver_sql.return_value.first.return_value = None
+
+    with patch.object(migration.op, "get_bind", return_value=bind):
+        migration._move_attribution_from_labels()
+
+    assert [call.args[0] for call in bind.exec_driver_sql.call_args_list] == [
+        migration._MSSQL_INVALID_ATTRIBUTION_QUERY,
+        migration._MSSQL_MOVE_ATTRIBUTION_QUERY,
+    ]
+    bind.execute.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("invalid_value", "error_match"),
+    [
+        (
+            {"row_id": "attack-1", "field_name": "operator", "value_type": 2},
+            "non-string labels.operator",
+        ),
+        (
+            {"row_id": "attack-2", "field_name": "operation", "value_type": 1},
+            "labels.operation longer than 128 characters",
+        ),
+    ],
+)
+def test_attack_attribution_mssql_migration_rejects_invalid_value(
+    invalid_value: dict[str, object], error_match: str
+) -> None:
+    import importlib
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    migration = importlib.import_module(
+        "pyrit.memory.alembic.versions.a4c6e8f0b2d1_add_attack_attribution_and_history_indexes"
+    )
+    bind = MagicMock()
+    bind.exec_driver_sql.return_value.first.return_value = SimpleNamespace(_mapping=invalid_value)
+
+    with pytest.raises(ValueError, match=error_match):
+        migration._move_attribution_from_labels_mssql(bind=bind)
+
+    bind.exec_driver_sql.assert_called_once_with(migration._MSSQL_INVALID_ATTRIBUTION_QUERY)
+
+
+def test_attack_attribution_downgrade_restores_legacy_labels() -> None:
+    engine = create_engine("sqlite://")
+    attack_id = str(uuid.uuid4())
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, _ATTACK_ATTRIBUTION_REV)
+            connection.execute(
+                text(
+                    'INSERT INTO "AttackResultEntries" '
+                    "(id, conversation_id, objective, executed_turns, execution_time_ms, outcome, "
+                    "timestamp, operator, operation, labels) "
+                    "VALUES (:id, :conv, 'obj', 1, 0, 'success', '2026-09-04', "
+                    "'alice', 'nightly', :labels)"
+                ),
+                {"id": attack_id, "conv": f"conv-{attack_id}", "labels": json.dumps({"team": "red"})},
+            )
+
+            command.downgrade(config, _ATTACK_ATTRIBUTION_PREV_REV)
+
+            labels = connection.execute(
+                text('SELECT labels FROM "AttackResultEntries" WHERE id = :attack_id'),
+                {"attack_id": attack_id},
+            ).scalar_one()
+            columns = {column["name"] for column in inspect(connection).get_columns("AttackResultEntries")}
+
+        assert json.loads(labels) == {"team": "red", "operator": "alice", "operation": "nightly"}
+        assert "operator" not in columns
+        assert "operation" not in columns
+    finally:
+        engine.dispose()
+
+
 _STRING_TYPES_REQUIRING_LENGTH = {"String", "VARCHAR", "NVARCHAR", "Unicode"}
 
 
@@ -2522,3 +2717,140 @@ def test_migrations_do_not_use_unbounded_string_primary_keys() -> None:
     assert not violations, "Found unbounded string primary keys in migrations (SQL Server incompatible):\n" + "\n".join(
         violations
     )
+
+
+# --------------------------------------------------------------------------- #
+# scored_expectation migration (1b3d5f7a9c2e)
+# --------------------------------------------------------------------------- #
+_SCORED_EXPECTATION_REV = "1b3d5f7a9c2e"
+_SCORED_EXPECTATION_PREV_REV = "8d1e3f5a7b9c"
+
+
+def _seed_pre_scored_expectation_score(connection, *, score_id, objective):
+    connection.execute(
+        text(
+            'INSERT INTO "ScoreEntries" '
+            "(id, score_value, status, score_type, score_metadata, scorer_class_identifier, timestamp, objective) "
+            "VALUES (:id, 'true', 'complete', 'true_false', '{}', '{}', '2026-01-01 00:00:00', :objective)"
+        ),
+        {"id": score_id, "objective": objective},
+    )
+
+
+def test_scored_expectation_migration_script_metadata():
+    """The scored_expectation migration declares the expected revision chain."""
+    import importlib
+
+    mig = importlib.import_module("pyrit.memory.alembic.versions.1b3d5f7a9c2e_persist_scored_expectation")
+
+    assert mig.revision == _SCORED_EXPECTATION_REV
+    assert mig.down_revision == _SCORED_EXPECTATION_PREV_REV
+    assert mig.branch_labels is None
+    assert mig.depends_on is None
+
+
+@pytest.mark.parametrize(
+    ("function_name", "query_name"),
+    [
+        ("_backfill_scored_expectation", "_MSSQL_BACKFILL_SCORED_EXPECTATION_QUERY"),
+        ("_backfill_objective", "_MSSQL_RESTORE_OBJECTIVE_QUERY"),
+    ],
+)
+def test_scored_expectation_mssql_backfill_uses_set_based_update(function_name: str, query_name: str):
+    import importlib
+    from unittest.mock import MagicMock, patch
+
+    migration = importlib.import_module("pyrit.memory.alembic.versions.1b3d5f7a9c2e_persist_scored_expectation")
+    connection = MagicMock()
+    connection.dialect.name = "mssql"
+    connection.exec_driver_sql.return_value.rowcount = 12
+
+    with (
+        patch.object(migration.op, "get_bind", return_value=connection),
+        patch.object(migration, "_report_progress") as report_progress,
+    ):
+        getattr(migration, function_name)()
+
+    connection.exec_driver_sql.assert_called_once_with(getattr(migration, query_name))
+    connection.execute.assert_not_called()
+    assert report_progress.call_count == 2
+    assert "updated 12 row(s)" in report_progress.call_args_list[-1].args[0]
+
+
+def test_scored_expectation_upgrade_backfills_objective_into_expectation():
+    """Upgrading folds a non-null objective into a versioned expectation and leaves NULLs NULL."""
+    id_with = str(uuid.uuid4())
+    id_without = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'scored-exp-up.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _SCORED_EXPECTATION_PREV_REV)
+                _seed_pre_scored_expectation_score(connection, score_id=id_with, objective="legacy objective")
+                _seed_pre_scored_expectation_score(connection, score_id=id_without, objective=None)
+
+                command.upgrade(config, _SCORED_EXPECTATION_REV)
+
+                columns = {column["name"] for column in inspect(connection).get_columns("ScoreEntries")}
+                assert "scored_expectation" in columns
+                assert "objective" not in columns
+
+                rows = dict(connection.execute(text('SELECT id, scored_expectation FROM "ScoreEntries"')).fetchall())
+                assert json.loads(rows[id_with]) == {
+                    "schema_version": 1,
+                    "objective": "legacy objective",
+                    "conditions": [],
+                }
+                assert rows[id_without] is None
+        finally:
+            engine.dispose()
+
+
+def test_scored_expectation_downgrade_recovers_objective_and_drops_conditions():
+    """Downgrading recovers the objective string and drops condition-only expectations."""
+    id_objective = str(uuid.uuid4())
+    id_condition_only = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'scored-exp-down.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _SCORED_EXPECTATION_REV)
+
+                objective_expectation = json.dumps({"schema_version": 1, "objective": "recover me", "conditions": []})
+                condition_only_expectation = json.dumps(
+                    {
+                        "schema_version": 1,
+                        "objective": None,
+                        "conditions": [{"condition_type": "matches_objective"}],
+                    }
+                )
+                insert = (
+                    'INSERT INTO "ScoreEntries" '
+                    "(id, score_value, status, score_type, score_metadata, scorer_class_identifier, timestamp, "
+                    "scored_expectation) "
+                    "VALUES (:id, 'true', 'complete', 'true_false', '{}', '{}', '2026-01-01 00:00:00', :exp)"
+                )
+                connection.execute(
+                    text(insert),
+                    [
+                        {"id": id_objective, "exp": objective_expectation},
+                        {"id": id_condition_only, "exp": condition_only_expectation},
+                    ],
+                )
+
+                command.downgrade(config, _SCORED_EXPECTATION_PREV_REV)
+
+                columns = {column["name"] for column in inspect(connection).get_columns("ScoreEntries")}
+                assert "objective" in columns
+                assert "scored_expectation" not in columns
+
+                objectives = dict(connection.execute(text('SELECT id, objective FROM "ScoreEntries"')).fetchall())
+                assert objectives[id_objective] == "recover me"
+                # A condition-only expectation has no objective the old schema can hold, so it is dropped.
+                assert objectives[id_condition_only] is None
+        finally:
+            engine.dispose()

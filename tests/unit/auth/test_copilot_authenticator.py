@@ -5,7 +5,7 @@ import asyncio
 import json
 import os
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -302,13 +302,13 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
     def test_get_cached_token_valid(self, mock_env_vars, mock_persistent_cache):
         """Test retrieving valid cached token."""
 
-        expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
+        expires_at = (datetime.now(UTC) + timedelta(hours=1)).timestamp()
         cached_data = {
             "access_token": "cached.token.value",
             "token_type": "Bearer",
             "claims": {"upn": "test@example.com"},
             "expires_at": expires_at,
-            "cached_at": datetime.now(timezone.utc).timestamp(),
+            "cached_at": datetime.now(UTC).timestamp(),
         }
         mock_persistent_cache.load.return_value = json.dumps(cached_data)
 
@@ -324,7 +324,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
     def test_get_cached_token_expired(self, mock_env_vars, mock_persistent_cache):
         """Test that expired token is not returned."""
 
-        expires_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).timestamp()
+        expires_at = (datetime.now(UTC) - timedelta(minutes=5)).timestamp()
         cached_data = {
             "access_token": "expired.token.value",
             "claims": {"upn": "test@example.com"},
@@ -343,7 +343,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
     def test_get_cached_token_within_expiry_buffer(self, mock_env_vars, mock_persistent_cache):
         """Test that token within expiry buffer is not returned."""
 
-        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=200)).timestamp()
+        expires_at = (datetime.now(UTC) + timedelta(seconds=200)).timestamp()
         cached_data = {
             "access_token": "soon.to.expire",
             "claims": {"upn": "test@example.com"},
@@ -374,7 +374,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
     def test_get_cached_token_wrong_user(self, mock_env_vars, mock_persistent_cache):
         """Test that cached token for different user is invalidated."""
 
-        expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
+        expires_at = (datetime.now(UTC) + timedelta(hours=1)).timestamp()
         cached_data = {
             "access_token": "other.user.token",
             "claims": {"upn": "different@example.com"},
@@ -393,7 +393,7 @@ class TestCopilotAuthenticatorCachedTokenRetrieval:
     def test_get_cached_token_no_upn_in_claims(self, mock_env_vars, mock_persistent_cache):
         """Test that cached token without upn claim is invalidated."""
 
-        expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
+        expires_at = (datetime.now(UTC) + timedelta(hours=1)).timestamp()
         cached_data = {
             "access_token": "token.without.upn",
             "claims": {"aud": "sydney"},
@@ -446,7 +446,7 @@ class TestCopilotAuthenticatorTokenRetrieval:
     async def test_get_token_uses_cached_token(self, mock_env_vars, mock_persistent_cache):
         """Test that get_token uses cached token when available."""
 
-        expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
+        expires_at = (datetime.now(UTC) + timedelta(hours=1)).timestamp()
         cached_data = {
             "access_token": "cached.valid.token",
             "claims": {"upn": "test@example.com"},
@@ -499,7 +499,7 @@ class TestCopilotAuthenticatorTokenRetrieval:
         def mock_load_side_effect():
             # After first fetch, return cached token for subsequent calls
             if fetch_call_count > 0:
-                expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
+                expires_at = (datetime.now(UTC) + timedelta(hours=1)).timestamp()
                 return json.dumps(
                     {
                         "access_token": "token.1",

@@ -23,10 +23,6 @@ from transformers.models.auto.tokenization_auto import AutoTokenizer
 from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 from transformers.models.gpt_neox.modeling_gpt_neox import GPTNeoXForCausalLM
 from transformers.models.gptj.modeling_gptj import GPTJForCausalLM
-from transformers.models.llama.modeling_llama import LlamaForCausalLM
-from transformers.models.mistral.modeling_mistral import MistralForCausalLM
-from transformers.models.mixtral.modeling_mixtral import MixtralForCausalLM
-from transformers.models.phi3.modeling_phi3 import Phi3ForCausalLM
 
 from pyrit.executor.promptgen.gcg.experiments.log import (
     log_gpu_memory,
@@ -195,69 +191,52 @@ def _get_worker_log_params(worker: ModelWorker) -> dict[str, Any]:
 
 def get_embedding_layer(model: Any) -> Any:
     """
-    Return the token embedding layer for a supported causal language model.
+    Return the token embedding layer for a causal language model.
+
+    Uses the ``PreTrainedModel.get_input_embeddings`` interface, so any model that
+    ``AutoModelForCausalLM`` can load is supported rather than a fixed set of
+    architectures.
+
+    Args:
+        model (Any): A loaded causal language model.
 
     Returns:
         Any: The model's token embedding layer.
-
-    Raises:
-        ValueError: If the model architecture is unsupported.
     """
-    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
-        return model.transformer.wte
-    if isinstance(model, LlamaForCausalLM):
-        return model.model.embed_tokens
-    if isinstance(model, GPTNeoXForCausalLM):
-        return model.base_model.embed_in
-    if isinstance(model, Phi3ForCausalLM):
-        return model.model.embed_tokens
-    raise ValueError(f"Unknown model type: {type(model)}")
+    return model.get_input_embeddings()
 
 
 def get_embedding_matrix(model: Any) -> Any:
     """
-    Return the token embedding matrix for a supported causal language model.
+    Return the token embedding matrix for a causal language model.
+
+    Args:
+        model (Any): A loaded causal language model.
 
     Returns:
         Any: The model's token embedding matrix.
-
-    Raises:
-        ValueError: If the model architecture is unsupported.
     """
-    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
-        return model.transformer.wte.weight
-    if isinstance(model, LlamaForCausalLM):
-        return model.model.embed_tokens.weight
-    if isinstance(model, GPTNeoXForCausalLM):
-        return model.base_model.embed_in.weight  # type: ignore[union-attr, unused-ignore]
-    if isinstance(model, (MixtralForCausalLM, MistralForCausalLM)):
-        return model.model.embed_tokens.weight
-    if isinstance(model, Phi3ForCausalLM):
-        return model.model.embed_tokens.weight
-    raise ValueError(f"Unknown model type: {type(model)}")
+    return model.get_input_embeddings().weight
 
 
 def get_embeddings(model: Any, input_ids: torch.Tensor) -> Any:
     """
-    Embed input token ids with a supported causal language model.
+    Embed input token ids with a causal language model.
+
+    Args:
+        model (Any): A loaded causal language model.
+        input_ids (torch.Tensor): Token ids to embed.
 
     Returns:
         Any: The embedded token tensor.
-
-    Raises:
-        ValueError: If the model architecture is unsupported.
     """
-    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
-        return model.transformer.wte(input_ids).half()
-    if isinstance(model, LlamaForCausalLM):
-        return model.model.embed_tokens(input_ids)
-    if isinstance(model, GPTNeoXForCausalLM):
-        return model.base_model.embed_in(input_ids).half()  # type: ignore[operator, unused-ignore]
-    if isinstance(model, (MixtralForCausalLM, MistralForCausalLM)):
-        return model.model.embed_tokens(input_ids)
-    if isinstance(model, Phi3ForCausalLM):
-        return model.model.embed_tokens(input_ids)
-    raise ValueError(f"Unknown model type: {type(model)}")
+    embeddings = model.get_input_embeddings()(input_ids)
+    # GPT-2, GPT-J and GPT-NeoX have always returned half precision here, while
+    # the other supported architectures return the embedding dtype unchanged.
+    # That asymmetry is preserved so this change stays a compatibility fix.
+    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel, GPTNeoXForCausalLM)):
+        return embeddings.half()
+    return embeddings
 
 
 def get_nonascii_toks(tokenizer: Any, device: str = "cpu") -> torch.Tensor:

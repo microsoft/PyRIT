@@ -15,6 +15,7 @@ import type {
   CustomInitializerListResponse,
   RegisterInitializerRequest,
   CreateAttackRequest,
+  LabelOptionsResponse,
   CreateAttackResponse,
   AttackSummary,
   AttackListResponse,
@@ -339,6 +340,8 @@ export const attacksApi = {
     has_converters?: boolean
     include_scenario_attacks?: boolean
     outcome?: string
+    operator?: string[]
+    operation?: string[]
     label?: string[]
     min_turns?: number
     max_turns?: number
@@ -366,8 +369,18 @@ export const attacksApi = {
 export const labelsApi = {
   getLabels: async (
     source: 'attacks' | 'scenarios' = 'attacks',
-  ): Promise<{ source: string; labels: Record<string, string[]> }> => {
-    const response = await apiClient.get('/labels', { params: { source } })
+    filters?: {
+      operator?: string[]
+      operation?: string[]
+      label?: string[]
+    },
+  ): Promise<LabelOptionsResponse> => {
+    const response = await apiClient.get('/labels', {
+      params: { source, ...filters },
+      paramsSerializer: {
+        indexes: null, // serialize arrays as ?key=val1&key=val2
+      },
+    })
     return response.data
   },
 }

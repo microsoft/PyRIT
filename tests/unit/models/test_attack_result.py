@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -18,23 +18,23 @@ class TestAttackResultTimestamp:
 
     def test_timestamp_defaults_to_now_utc_when_not_set(self) -> None:
         """AttackResult constructed without a timestamp gets a tz-aware UTC default."""
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         result = AttackResult(conversation_id="c1", objective="test")
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert result.timestamp is not None
-        assert result.timestamp.tzinfo is timezone.utc
+        assert result.timestamp.tzinfo is UTC
         assert before <= result.timestamp <= after
 
     def test_timestamp_accepts_and_preserves_aware_datetime(self) -> None:
         """A tz-aware datetime passed to the constructor is stored as-is."""
-        ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
         result = AttackResult(conversation_id="c1", objective="test", timestamp=ts)
         assert result.timestamp == ts
 
     def test_entry_preserves_timestamp_from_attack_result(self) -> None:
         """Constructing AttackResultEntry from an AttackResult preserves its timestamp."""
-        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
         original = AttackResult(
             conversation_id="c1",
             objective="test",
@@ -48,12 +48,12 @@ class TestAttackResultTimestamp:
         original = AttackResult(conversation_id="c1", objective="test")
         original.timestamp = None  # type: ignore[assignment]
 
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         entry = AttackResultEntry(entry=original)
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert entry.timestamp is not None
-        assert entry.timestamp.tzinfo is timezone.utc
+        assert entry.timestamp.tzinfo is UTC
         assert before <= entry.timestamp <= after
 
     def test_timestamp_roundtrips_through_attack_result_entry(self) -> None:
@@ -64,7 +64,7 @@ class TestAttackResultTimestamp:
             outcome=AttackOutcome.SUCCESS,
         )
         entry = AttackResultEntry(entry=original)
-        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
         entry.timestamp = persisted_ts
 
         hydrated = entry.get_attack_result()
@@ -87,7 +87,7 @@ class TestAttackResultTimestamp:
             hydrated = reloaded.get_attack_result()
 
         assert hydrated.timestamp is not None
-        assert hydrated.timestamp.tzinfo is timezone.utc
+        assert hydrated.timestamp.tzinfo is UTC
         assert hydrated.timestamp.replace(tzinfo=None) == datetime(2026, 4, 17, 12, 0, 0)  # noqa: DTZ001
 
 
@@ -223,6 +223,24 @@ class TestAttackResultErrorRoundTrip:
         assert hydrated.retry_events == []
         assert hydrated.total_retries == 0
 
+    def test_attribution_fields_roundtrip_without_labels(self) -> None:
+        original = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            operator="alice",
+            operation="nightly",
+            labels={"team": "red"},
+        )
+
+        entry = AttackResultEntry(entry=original)
+        hydrated = entry.get_attack_result()
+
+        assert entry.operator == "alice"
+        assert entry.operation == "nightly"
+        assert hydrated.operator == "alice"
+        assert hydrated.operation == "nightly"
+        assert hydrated.labels == {"team": "red"}
+
     def test_traceback_truncation(self) -> None:
         """Very long tracebacks are truncated to 10KB."""
         long_traceback = "x" * 20000
@@ -250,7 +268,7 @@ def test_to_dict_from_dict_roundtrip():
         original_value="Sure, here is the answer.",
         conversation_id="conv-1",
         sequence=1,
-        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
     )
     last_score = Score(
         score_value="true",
@@ -259,7 +277,7 @@ def test_to_dict_from_dict_roundtrip():
         score_rationale="objective clearly met",
         scorer_class_identifier=scorer_id,
         message_piece_id="12345678-aaaa-bbbb-cccc-123456789abc",
-        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
     )
     original = AttackResult(
         conversation_id="conv-1",
@@ -272,7 +290,7 @@ def test_to_dict_from_dict_roundtrip():
         execution_time_ms=2500,
         outcome=AttackOutcome.SUCCESS,
         outcome_reason="Objective was achieved",
-        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
         related_conversations={
             ConversationReference(
                 conversation_id="conv-2",
@@ -301,7 +319,7 @@ def test_to_dict_from_dict_roundtrip():
                 component_name="OpenAIChatTarget",
                 endpoint="https://api.example.com",
                 elapsed_seconds=30.5,
-                timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
             ),
         ],
         total_retries=1,
@@ -333,7 +351,54 @@ class TestAttackResultValidation:
     def test_aware_iso_string_timestamp_is_preserved(self) -> None:
         """An ISO string carrying an offset is parsed without altering the instant."""
         result = AttackResult(conversation_id="c1", objective="test", timestamp="2026-01-01T12:00:00+00:00")
-        assert result.timestamp == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        assert result.timestamp == datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    def test_legacy_attribution_labels_are_normalized_without_mutation(self) -> None:
+        labels = {"operator": "alice", "operation": "nightly", "team": "red"}
+
+        with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
+            result = AttackResult(conversation_id="c1", objective="test", labels=labels)
+
+        assert result.operator == "alice"
+        assert result.operation == "nightly"
+        assert result.labels == {"team": "red"}
+        assert labels == {"operator": "alice", "operation": "nightly", "team": "red"}
+        assert result.model_dump(mode="json")["labels"] == {"team": "red"}
+
+    def test_conflicting_legacy_attribution_label_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="operator conflicts"):
+            AttackResult(
+                conversation_id="c1",
+                objective="test",
+                operator="alice",
+                labels={"operator": "bob"},
+            )
+
+    @pytest.mark.parametrize("field_name", ["operator", "operation"])
+    def test_attribution_value_longer_than_128_is_rejected(self, field_name: str) -> None:
+        with pytest.raises(ValueError, match="at most 128"):
+            AttackResult(conversation_id="c1", objective="test", **{field_name: "x" * 129})
+
+    def test_dedicated_attribution_is_canonical(self) -> None:
+        result = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            operator="alice",
+            operation="nightly",
+            labels={"team": "red"},
+        )
+
+        dumped = result.model_dump(mode="json")
+
+        assert dumped["operator"] == "alice"
+        assert dumped["operation"] == "nightly"
+        assert dumped["labels"] == {"team": "red"}
+
+        result.labels["operator"] = "legacy-mutation"
+        assert result.model_dump(mode="json")["labels"] == {
+            "team": "red",
+            "operator": "legacy-mutation",
+        }
 
 
 class TestAttackResultDuplicate:

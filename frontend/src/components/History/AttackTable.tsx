@@ -104,10 +104,10 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
               )}
             </TableCell>
             <TableCell>
-              <Text size={200} className={styles.nowrap}>{attack.labels.operator || '—'}</Text>
+              <Text size={200} className={styles.nowrap}>{attack.operator || '—'}</Text>
             </TableCell>
             <TableCell>
-              <Text size={200} className={styles.nowrap}>{attack.labels.operation || '—'}</Text>
+              <Text size={200} className={styles.nowrap}>{attack.operation || '—'}</Text>
             </TableCell>
             <TableCell>
               <Text size={200}>{attack.message_count}</Text>
@@ -133,7 +133,7 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
             </TableCell>
             <TableCell>
               {(() => {
-                const otherLabels = Object.entries(attack.labels ?? {}).filter(([k]) => k !== 'operator' && k !== 'operation' && k !== 'source')
+                const otherLabels = Object.entries(attack.labels ?? {}).filter(([k]) => k !== 'source')
                 return otherLabels.length > 0 ? (
                   <div className={styles.badgeGroup}>
                     {otherLabels.slice(0, 2).map(([k, v]) => (

@@ -4,7 +4,7 @@
 """Tests for lightweight scenario progress memory queries."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from unit.mocks import get_mock_target_identifier, make_scenario_result
 
@@ -57,7 +57,7 @@ def test_scenario_progress_deltas_page_equal_timestamps_by_id(
         objective_target_identifier=get_mock_target_identifier(),
     )
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario, unrelated])
-    timestamp = datetime(2026, 8, 6, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 6, tzinfo=UTC)
     first_id = uuid.UUID(int=1)
     second_id = uuid.UUID(int=2)
     rows = [
@@ -131,7 +131,7 @@ def test_scenario_progress_delta_uses_unknown_for_empty_scorer_identifier(
     attack_result = _make_delta_result(
         scenario_result_id=str(scenario.id),
         attack_result_id=uuid.UUID(int=5),
-        timestamp=datetime(2026, 8, 6, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 8, 6, tzinfo=UTC),
         objective="objective",
     )
     score = Score(
@@ -166,7 +166,7 @@ def test_scenario_result_header_does_not_hydrate_attack_results(
             _make_delta_result(
                 scenario_result_id=str(scenario.id),
                 attack_result_id=uuid.UUID(int=4),
-                timestamp=datetime(2026, 8, 6, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 8, 6, tzinfo=UTC),
                 objective="objective",
             )
         ]
