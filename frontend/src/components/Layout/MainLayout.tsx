@@ -36,11 +36,17 @@ export default function MainLayout({
     versionApi.getVersion()
       .then(data => {
         setVersion(data.version)
+        document.title = `Co-PyRIT ${data.version}`
         setCommit(data.version.includes('.dev') ? data.commit ?? null : null)
         setDatabaseInfo(data.database_info ?? null)
       })
-      .catch(() => setVersion('Unknown'))
+      .catch(() => {
+        setVersion('Unknown')
+        document.title = 'Co-PyRIT'
+      })
   }, [])
+
+  const title = version === 'Unknown' ? 'Co-PyRIT' : `Co-PyRIT ${version}`
 
   return (
     <div className={styles.root}>
@@ -61,7 +67,7 @@ export default function MainLayout({
             className={styles.logo}
           />
         </Tooltip>
-        <Text className={styles.title}>Co-PyRIT</Text>
+        <Text className={styles.title}>{title}</Text>
         <Text className={styles.subtitle}>Python Risk Identification Tool</Text>
         <div className={styles.spacer} />
         {onStartTour && (

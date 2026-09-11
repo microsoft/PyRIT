@@ -285,6 +285,14 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["pyrit", "pyrit.*"]
 
+[tool.setuptools]
+license-files = [
+    "LICENSE",
+    "LICENSES/Apache-2.0.txt",
+    "THIRD_PARTY_NOTICES.txt",
+    "third_party/garak-provenance.json",
+]
+
 [tool.setuptools.package-data]
 pyrit = [
     "backend/frontend/**/*",

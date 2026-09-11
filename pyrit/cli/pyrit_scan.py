@@ -843,10 +843,9 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
     from pyrit.cli._cli_args import ScenarioResultView
     from pyrit.cli._results import (
         apply_view_limit_policy,
-        build_attacks_table_payload,
-        build_conversations_payload_async,
         resolve_view,
     )
+    from pyrit.output import output_scenario_attacks_async
 
     scenario_result_id = parsed_args.scenario_result_id
     view = resolve_view(view=parsed_args.view)
@@ -863,18 +862,16 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
         return 0
 
     if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
-        attacks_payload = build_attacks_table_payload(
-            result=result,
-            scenario_result_id=scenario_result_id,
+        await output_scenario_attacks_async(
+            result,
             attack_result_ids=parsed_args.attack_result_ids,
             limit=limit,
         )
-        _output.print_attacks_table(payload=attacks_payload)
         if view is ScenarioResultView.ATTACKS:
             return 0
 
     try:
-        conversations_payload = await build_conversations_payload_async(
+        await _output.print_conversations_async(
             result=result,
             client=client,
             scenario_result_id=scenario_result_id,
@@ -884,7 +881,6 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
     except Exception as exc:
         _print_cli_exception(exc=exc)
         return 1
-    _output.print_conversations(payload=conversations_payload)
     return 0
 
 
