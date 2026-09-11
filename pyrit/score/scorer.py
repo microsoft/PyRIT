@@ -513,7 +513,6 @@ class Scorer(Identifiable, abc.ABC):
             raise NonReplayableObservationError(
                 f"Observation {observation.id} does not match its canonical stored evidence."
             )
-        observation = stored_observation
         evidence = _ObservationEvidenceResolver(memory=self._memory).resolve(observation=observation)
         scores = self._score_observation(
             observation=observation,

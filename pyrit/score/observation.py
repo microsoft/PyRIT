@@ -110,17 +110,11 @@ class _ObservationCollector:
 
     def referenced_by(self, *, scores: Sequence[Score]) -> list[Observation]:
         """Return collected observations referenced by final scores in stable order."""
-        referenced: list[Observation] = []
-        seen: set[uuid.UUID] = set()
-        for score in scores:
-            for observation_id in score.observation_ids:
-                if observation_id in seen:
-                    continue
-                observation = self._observations.get(observation_id)
-                if observation is not None:
-                    referenced.append(observation)
-                    seen.add(observation_id)
-        return referenced
+        return [
+            self._observations[observation_id]
+            for observation_id in _merge_observation_ids(scores=scores)
+            if observation_id in self._observations
+        ]
 
 
 _CURRENT_OBSERVATION_COLLECTOR: ContextVar[_ObservationCollector | None] = ContextVar(
