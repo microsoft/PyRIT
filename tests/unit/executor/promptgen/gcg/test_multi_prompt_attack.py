@@ -184,7 +184,7 @@ def test_attack_manager_records_run_params_before_creating_mpa(
     )
 
     assert factory.params_at_creation is not None
-    assert list(factory.params_at_creation)[-11:] == [
+    assert list(factory.params_at_creation)[-13:] == [
         "n_steps",
         "test_steps",
         "batch_size",
@@ -196,8 +196,10 @@ def test_attack_manager_records_run_params_before_creating_mpa(
         "anneal",
         "incr_control",
         "stop_on_success",
+        "random_seed",
+        "derived_seeds",
     ]
-    assert {key: factory.params_at_creation[key] for key in list(factory.params_at_creation)[-11:]} == {
+    assert {key: factory.params_at_creation[key] for key in list(factory.params_at_creation)[-13:]} == {
         "n_steps": 1,
         "test_steps": 4,
         "batch_size": 2,
@@ -209,6 +211,8 @@ def test_attack_manager_records_run_params_before_creating_mpa(
         "anneal": False,
         "incr_control": False,
         "stop_on_success": False,
+        "random_seed": 42,
+        "derived_seeds": {},
     }
 
 

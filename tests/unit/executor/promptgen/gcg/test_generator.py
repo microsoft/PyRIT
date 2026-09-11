@@ -253,9 +253,10 @@ class TestApplyTargetAugmentation:
     def test_augmentation_modifies_at_least_some_targets(self) -> None:
         import numpy as np
 
-        np.random.seed(42)
         targets = ["Sure, here is how to do it"] * 100
-        result, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[])
+        result, _ = GCGGenerator._apply_target_augmentation(
+            train_targets=targets, test_targets=[], np_rng=np.random.default_rng(42)
+        )
         num_changed = sum(1 for orig, aug in zip(targets, result, strict=False) if orig != aug)
         assert num_changed > 0
 

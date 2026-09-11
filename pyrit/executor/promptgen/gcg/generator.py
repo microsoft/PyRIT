@@ -36,12 +36,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, overload
 
 import numpy as np
+import torch
 import torch.multiprocessing as mp
 from pydantic import Field
 
@@ -67,6 +69,17 @@ from pyrit.executor.promptgen.gcg.experiments.log import log_gpu_memory, log_tra
 from pyrit.models import ComponentIdentifier, Identifiable
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RngBundle:
+    """Per-run RNG state bundle for deterministic GCG execution."""
+
+    np_rng: np.random.Generator
+    py_rng: random.Random
+    torch_gens: dict[int, torch.Generator]
+    base_seed: int
+    derived_seeds: dict[int, int]
 
 
 @dataclass
@@ -97,6 +110,7 @@ class GCGContext(PromptGeneratorStrategyContext):
     test_workers: list[Any] = field(default_factory=list)
     attack: Any | None = None
     logfile_path: str | None = None
+    rng_bundle: RngBundle | None = None
 
 
 class GCGResult(PromptGeneratorStrategyResult):
@@ -260,18 +274,32 @@ class GCGGenerator(
         self._ensure_spawn_start_method()
         context.memory_labels = combine_dict({}, context.memory_labels)
 
-        np_rng = np.random.default_rng(self._algorithm.random_seed)
-        context.targets, context.test_targets = self._apply_target_augmentation(
-            train_targets=context.targets,
-            test_targets=context.test_targets,
-            np_rng=np_rng,
-        )
-
         log_gpu_memory(step=0)
         log_train_goals(train_goals=context.goals)
 
         params = self._to_attack_params(context=context)
         context.workers, context.test_workers = await asyncio.to_thread(get_workers, params)
+
+        seed = self._algorithm.random_seed
+        derived_seeds = {i: seed + i for i in range(len(context.workers))}
+        try:
+            torch_gens = {
+                i: torch.Generator(device=context.workers[i].model.device).manual_seed(derived_seeds[i])
+                for i in range(len(context.workers))
+            }
+        except (TypeError, AttributeError):
+            torch_gens = {i: torch.Generator().manual_seed(derived_seeds[i]) for i in range(len(context.workers))}
+        context.rng_bundle = RngBundle(
+            np_rng=np.random.default_rng(seed),
+            py_rng=random.Random(seed),
+            torch_gens=torch_gens,
+            base_seed=seed,
+            derived_seeds=derived_seeds,
+        )
+
+        context.targets, context.test_targets = self._apply_target_augmentation(
+            train_targets=context.targets, test_targets=context.test_targets, np_rng=context.rng_bundle.np_rng
+        )
 
     async def _perform_async(self, *, context: GCGContext) -> GCGResult:
         """
@@ -304,6 +332,8 @@ class GCGGenerator(
             test_workers=context.test_workers,
             logfile_path=context.logfile_path,
         )
+
+        context.attack._rng_bundle = context.rng_bundle
 
         await asyncio.to_thread(
             context.attack.run,

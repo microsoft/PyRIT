@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
 import logging
 from typing import Any
 
@@ -203,7 +204,8 @@ class GCGMultiPromptAttack(MultiPromptAttack):
     ) -> torch.Tensor:
         sampler = self._resolve_sampling()
         prompt_manager = self.prompts[worker_index]
-        torch_gen: torch.Generator | None = getattr(self, "_torch_gen", None)
+        torch_gens = getattr(self, "_torch_gens", None) or {}
+        torch_gen = torch_gens.get(worker_index)
         kwargs: dict[str, Any] = {
             "gradient": gradient,
             "control_tokens": prompt_manager.control_toks,
@@ -214,7 +216,9 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             "non_ascii_tokens": prompt_manager.disallowed_toks,
         }
         if torch_gen is not None:
-            kwargs["torch_generator"] = torch_gen
+            sig = inspect.signature(sampler.sample_candidates)
+            if "torch_generator" in sig.parameters:
+                kwargs["torch_generator"] = torch_gen
         return sampler.sample_candidates(**kwargs)
 
     def _filter_control_candidates(

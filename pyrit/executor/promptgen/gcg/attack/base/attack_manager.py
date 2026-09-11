@@ -1003,10 +1003,18 @@ class MultiPromptAttack:
         Returns:
             tuple[str, float, int]: The final control, loss, and step count.
         """
-        py_rng = random.Random(random_seed)
-        models = getattr(self, "models", None)
-        device = models[0].device if models else "cpu"
-        self._torch_gen = torch.Generator(device=device).manual_seed(random_seed)
+        rng_bundle = getattr(self, "_rng_bundle", None)
+        py_rng = rng_bundle.py_rng if rng_bundle else random.Random(random_seed)
+        if rng_bundle:
+            self._torch_gens = rng_bundle.torch_gens
+        else:
+            try:
+                self._torch_gens = {
+                    i: torch.Generator(device=self.models[i].device).manual_seed(random_seed + i)
+                    for i in range(len(self.workers))
+                }
+            except (AttributeError, TypeError):
+                self._torch_gens = {0: torch.Generator().manual_seed(random_seed)}
 
         def acceptance_probability(e: float, e_prime: float, k: int) -> bool:
             temperature = max(1 - float(k + 1) / (n_steps + anneal_from), 1.0e-7)
@@ -1426,6 +1434,8 @@ class ProgressiveMultiPromptAttack:
         # not keep looking current.
         self.last_schedule_state = None
 
+        rng_bundle = getattr(self, "_rng_bundle", None)
+
         _update_attack_log_params(
             logfile=self.logfile,
             params={
@@ -1440,6 +1450,8 @@ class ProgressiveMultiPromptAttack:
                 "anneal": anneal,
                 "incr_control": incr_control,
                 "stop_on_success": stop_on_success,
+                "random_seed": random_seed,
+                "derived_seeds": rng_bundle.derived_seeds if rng_bundle else {},
             },
         )
 
@@ -1470,6 +1482,7 @@ class ProgressiveMultiPromptAttack:
             )
             if schedule.goals_admitted == len(self.goals) and schedule.workers_admitted == len(self.workers):
                 schedule.stop_inner_on_success = False
+            attack._rng_bundle = rng_bundle
             inner_result: tuple[str, float, int] = attack.run(
                 n_steps=n_steps - schedule.steps_completed,
                 batch_size=batch_size,
@@ -1681,6 +1694,8 @@ class IndividualPromptAttack:
         Returns:
             tuple[str, int]: The final control suffix and configured step count.
         """
+        rng_bundle = getattr(self, "_rng_bundle", None)
+
         _update_attack_log_params(
             logfile=self.logfile,
             params={
@@ -1695,6 +1710,8 @@ class IndividualPromptAttack:
                 "anneal": anneal,
                 "incr_control": incr_control,
                 "stop_on_success": stop_on_success,
+                "random_seed": random_seed,
+                "derived_seeds": rng_bundle.derived_seeds if rng_bundle else {},
             },
         )
 
@@ -1715,6 +1732,7 @@ class IndividualPromptAttack:
                 self.test_targets,
                 self.test_workers,
             )
+            attack._rng_bundle = rng_bundle
             attack.run(
                 n_steps=n_steps,
                 batch_size=batch_size,

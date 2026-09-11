@@ -1514,7 +1514,7 @@ class TestRandomSeedDeterminism:
         assert loss1 == loss2
 
     def test_annealing_different_seed_can_differ(self) -> None:
-        """run() with different seeds can produce different annealing outcomes."""
+        """run() with different seeds produces different annealing acceptance histories."""
         results = []
         for seed in [1, 999]:
             attack = object.__new__(MultiPromptAttack)
@@ -1522,14 +1522,11 @@ class TestRandomSeedDeterminism:
             prompt_manager.control_str = "initial"
             attack.prompts = [prompt_manager]
             attack.logfile = None
-            # Marginal loss that annealing might accept or reject depending on random draw
-            attack.step = MagicMock(return_value=("candidate", 2.1))
-            control, _, _ = attack.run(n_steps=10, prev_loss=2.0, stop_on_success=False, anneal=True, random_seed=seed)
+            attack.step = MagicMock(side_effect=[("c1", 2.1), ("c2", 2.2), ("c3", 2.3)])
+            control, _, _ = attack.run(n_steps=3, prev_loss=2.0, stop_on_success=False, anneal=True, random_seed=seed)
             results.append(control)
 
-        # With enough steps and marginal losses, different seeds should diverge
-        # (probabilistic but extremely likely with 10 steps)
-        assert results[0] != results[1] or True  # non-flaky: just verify no crash
+        assert results[0] != results[1], f"different seeds produced same control: {results}"
 
     def test_concurrent_runs_isolated(self) -> None:
         """Two runs with different seeds don't interfere with each other's RNG state."""
@@ -1559,11 +1556,12 @@ class TestRandomSeedDeterminism:
 
         attack.run(n_steps=1, stop_on_success=False, anneal=False, random_seed=123)
 
-        assert hasattr(attack, "_torch_gen")
-        assert isinstance(attack._torch_gen, torch.Generator)
+        assert hasattr(attack, "_torch_gens")
+        assert isinstance(attack._torch_gens, dict)
 
     def test_custom_sampler_without_torch_generator_still_works(self) -> None:
-        """Custom SamplingStrategy that doesn't accept torch_generator still functions."""
+        """Custom SamplingStrategy that doesn't accept torch_generator still functions
+        even when _torch_gen is set (the seeded run() path)."""
         gradient = torch.randn(3, 6)
         logits = torch.randn(2, 8, 10)
         token_ids = torch.randint(0, 10, (2, 8))
@@ -1573,14 +1571,11 @@ class TestRandomSeedDeterminism:
         tokenizer.decode.return_value = "decoded"
 
         worker = _WorkerStub(gradient=gradient.clone(), logits=logits, token_ids=token_ids, tokenizer=tokenizer)
-        prompt = MagicMock()
-        prompt.control_toks = control_tokens
         prompt_manager = MagicMock()
         prompt_manager.control_toks = control_tokens
         prompt_manager.disallowed_toks = disallowed_tokens
 
         sampled_tokens = torch.tensor([[8, 8, 8]], dtype=torch.long)
-        # _SpySampling does NOT accept torch_generator — backward compat test
         sampling = _SpySampling(sampled_tokens=sampled_tokens)
 
         attack = object.__new__(GCGMultiPromptAttack)
@@ -1589,8 +1584,8 @@ class TestRandomSeedDeterminism:
         attack.workers = [worker]
         attack.models = [MagicMock(device=torch.device("cpu"))]
         attack.control_str = "test"
+        attack._torch_gens = {0: torch.Generator(device=torch.device("cpu")).manual_seed(42)}
 
-        # No _torch_gen set — simulates step() called without run()
         result = attack._sample_control_candidates(
             worker_index=0,
             gradient=gradient,
