@@ -171,6 +171,17 @@ class TestListConverterCatalog:
         assert persuasion_entry.is_llm_based is True
         assert all("Target" not in p.type_name for p in persuasion_entry.parameters)
 
+    async def test_catalog_flags_required_params_the_form_cannot_supply(self) -> None:
+        """Catalog names required params not settable through the exposed parameters."""
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        token_entry = next(item for item in result.items if item.converter_type == "TokenBijectionConverter")
+        assert token_entry.unsupported_required_params == ["tokenizer"]
+        base64_entry = next(item for item in result.items if item.converter_type == "Base64Converter")
+        assert base64_entry.unsupported_required_params == []
+
 
 class TestGetConverter:
     """Tests for ConverterService.get_converter method."""
