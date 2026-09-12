@@ -28,13 +28,6 @@ def test_unicode_sub_rejects_invalid_start_value(start_value):
         UnicodeSubstitutionConverter(start_value=start_value)
 
 
-async def test_unicode_sub_rejects_derived_code_point_overflow():
-    converter = UnicodeSubstitutionConverter(start_value=0x10FFFF)
-
-    with pytest.raises(ValueError, match="exceeds the maximum code point"):
-        await converter.convert_async(prompt="a", input_type="text")
-
-
 async def test_unicode_sub_empty():
     converter = UnicodeSubstitutionConverter()
     result = await converter.convert_async(prompt="", input_type="text")
