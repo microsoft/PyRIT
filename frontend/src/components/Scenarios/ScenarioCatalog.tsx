@@ -22,7 +22,7 @@ import {
   ChevronUpRegular,
   SearchRegular,
 } from '@fluentui/react-icons'
-import { Link } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import { scenariosApi } from '@/services/api'
@@ -177,6 +177,7 @@ function CollapsibleContent({
 
 function ScenarioCatalogRow({ scenario, estimatesLoading }: ScenarioCatalogRowProps) {
   const styles = useScenarioCatalogStyles()
+  const navigate = useNavigate()
   const descriptionId = useId()
   const techniquesId = useId()
   const [expanded, setExpanded] = useState(false)
@@ -243,6 +244,20 @@ function ScenarioCatalogRow({ scenario, estimatesLoading }: ScenarioCatalogRowPr
         className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
       >
         <Text className={styles.mobileLabel} size={200} weight="semibold">
+          Configure
+        </Text>
+        <Button
+          appearance="primary"
+          className={styles.touchTarget}
+          onClick={() => navigate(scenarioPath)}
+        >
+          Configure run
+        </Button>
+      </TableCell>
+      <TableCell
+        className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
+      >
+        <Text className={styles.mobileLabel} size={200} weight="semibold">
           Default datasets
         </Text>
         <DefaultDatasetSummary
@@ -285,7 +300,7 @@ function ScenarioCatalogRow({ scenario, estimatesLoading }: ScenarioCatalogRowPr
         {estimatesLoading ? (
           <Spinner size="tiny" label="Calculating..." labelPosition="after" />
         ) : (
-          <ScenarioRunEstimateSummary state={estimateState} compact />
+          <ScenarioRunEstimateSummary state={estimateState} />
         )}
       </TableCell>
     </TableRow>
@@ -458,6 +473,15 @@ export default function ScenarioCatalog() {
                   )}
                 >
                   Scenario / purpose
+                </TableHeaderCell>
+                <TableHeaderCell
+                  className={mergeClasses(
+                    styles.configureColumn,
+                    styles.tableHeaderCell,
+                    'scenario-catalog-cell-padding',
+                  )}
+                >
+                  Configure
                 </TableHeaderCell>
                 <TableHeaderCell
                   className={mergeClasses(

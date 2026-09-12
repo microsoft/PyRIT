@@ -20,7 +20,7 @@ class SelectorScope:
 
     All fields default to "no restriction"; combine fields to narrow the
     scope (e.g. current run only, same harm category). Filter values flow
-    through ``compute_technique_stats`` to
+    through labeled technique statistics to
     ``MemoryInterface.get_attack_results``.
 
     The scope is held by the selector at construction time. The per-call
@@ -28,10 +28,9 @@ class SelectorScope:
     to memory only when ``current_run_only`` is set; otherwise the selector
     queries across all runs.
 
-    Per-technique disambiguation uses ``atomic_attack_identifier.eval_hash``
-    (auto-stamped on every persisted attack result), which already encodes
-    the attack class plus its behavior-relevant params. Class-based
-    narrowing is therefore unnecessary at this layer.
+    Per-technique disambiguation uses the canonical registered factory
+    identifier persisted on every Adaptive child result. This keeps distinct
+    registered configurations separate even when they share an attack class.
     """
 
     current_run_only: bool = False
@@ -86,8 +85,8 @@ class TechniqueSelector(Protocol):
         Return techniques in priority order (try first, try second, …).
 
         Args:
-            technique_identifiers (Sequence[str]): Available technique eval
-                hashes.
+            technique_identifiers (Sequence[str]): Available stable Adaptive
+                technique identities.
             objective (str): The objective text for this selection.
             num_top_techniques (int): Max techniques to return. Defaults to 1.
             scenario_result_id (str | None): The current scenario run ID,
@@ -96,7 +95,7 @@ class TechniqueSelector(Protocol):
                 ``current_run_only=True``.
 
         Returns:
-            Sequence[str]: Up to ``num_top_techniques`` technique eval hashes
+            Sequence[str]: Up to ``num_top_techniques`` technique identities
                 in priority order. Fewer if not enough techniques are
                 available.
         """

@@ -33,9 +33,12 @@ const datasetSummary = {
 };
 
 const configuredEstimate = {
-  estimated_attack_count: 8,
-  minimum_attack_count: null,
-  maximum_attack_count: null,
+  version: 1,
+  status: "exact",
+  total_attack_count: 8,
+  minimum_attack_count: 8,
+  maximum_attack_count: 8,
+  condition: null,
   components: [{
     label: "Prompt sending",
     count: 8,
@@ -43,11 +46,13 @@ const configuredEstimate = {
     note: null,
   }],
   datasets: [datasetSummary],
+  adaptive_details: null,
   effective_parameters: {
     num_jailbreaks: 2,
     num_jailbreak_attempts: 1,
   },
   note: "The backend total is authoritative.",
+  retries_included: false,
 };
 
 const catalogScenario = {
@@ -82,7 +87,11 @@ const catalogScenario = {
     },
   ],
   default_datasets: ["harmbench"],
-  default_dataset_summaries: [datasetSummary],
+  dataset_size_limit: {
+    default_scope: "per_dataset",
+    default_count: 4,
+    override_scope: "per_dataset",
+  },
   baseline_policy: "enabled",
   include_baseline_by_default: false,
   supported_parameters: [
@@ -115,9 +124,12 @@ const catalogScenario = {
     },
   ],
   default_run_size: {
-    estimated_attack_count: 16,
-    minimum_attack_count: null,
-    maximum_attack_count: null,
+    version: 1,
+    status: "exact",
+    total_attack_count: 16,
+    minimum_attack_count: 16,
+    maximum_attack_count: 16,
+    condition: null,
     components: [{
       label: "Default attacks",
       count: 16,
@@ -125,11 +137,13 @@ const catalogScenario = {
       note: null,
     }],
     datasets: [datasetSummary],
+    adaptive_details: null,
     effective_parameters: {
       num_jailbreaks: 2,
       num_jailbreak_attempts: 1,
     },
     note: "Retries and internal turns are excluded.",
+    retries_included: false,
   },
 };
 
@@ -214,6 +228,8 @@ const progressAttempt = {
   timestamp: "2026-08-07T00:00:30Z",
   total_retries: 1,
   retries: [],
+  result_kind: "attack",
+  technique_name: "prompt_sending",
 };
 
 interface ScenarioMocks {
@@ -274,6 +290,14 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
         items: [target],
         pagination: { limit: 200, has_more: false },
       }),
+    });
+  });
+
+  await page.route(/\/api\/datasets(?:\?|$)/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [{ name: "harmbench" }] }),
     });
   });
 
@@ -496,16 +520,20 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
 
 async function configurePromptSendingRun(page: Page): Promise<void> {
   await expect(page.getByTestId("scenario-target-select")).toHaveValue("test-target");
-  await page.getByTestId("technique-prompt_sending").check();
-  await page.getByTestId("technique-jailbreak_system_prompt").uncheck();
+  await page.getByTestId("technique-mode-custom").click();
+  await expect(page.getByTestId("technique-prompt_sending")).toBeChecked();
+  await expect(page.getByTestId("technique-jailbreak_system_prompt")).toBeChecked();
+  await page.getByTestId("technique-jailbreak_system_prompt").click();
   await page.getByTestId("scenario-param-num_jailbreaks").fill("2");
   await page.getByTestId("scenario-param-num_jailbreak_attempts").fill("1");
   await expect(page.getByTestId("baseline-checkbox")).not.toBeChecked();
-  await expect(page.getByTestId("run-estimate").getByText("8", { exact: true })).toBeVisible();
+  await expect(page.getByRole("group", {
+    name: "8 planned attacks.",
+  })).toBeVisible();
 }
 
 test.describe("Scenario catalog, history, and live run routing", () => {
-  test("renders the semantic catalog, full metadata, safe MyST, and both sidebar destinations", async ({ page }) => {
+  test("opens the Configure page from the semantic launch index with complete safe metadata", async ({ page }) => {
     await mockScenarioAPIs(page);
     await page.goto("/scanner");
 
@@ -524,17 +552,52 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     ]);
     await expect(page.getByTitle("Scanner")).toHaveAttribute("aria-current", "page");
     await expect(page.getByRole("table", { name: "Registered scenarios" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Default run size" })).toBeVisible();
-
+    await expect(page.getByRole("columnheader")).toHaveText([
+      "Scenario / purpose",
+      "Configure",
+      "Default datasets",
+      "Default techniques",
+      "Default run size",
+    ]);
     const row = page.getByTestId(`scenario-card-${SCENARIO_NAME}`);
-    await row.getByRole("link", { name: SCENARIO_NAME }).click();
+    const cells = row.getByRole("cell");
+    await expect(cells).toHaveCount(5);
+    const configureButton = cells.nth(1).getByRole("button", { name: "Configure run" });
+    await expect(configureButton).toBeVisible();
+    const [scenarioCellBox, configureCellBox, datasetCellBox] = await Promise.all([
+      cells.nth(0).boundingBox(),
+      cells.nth(1).boundingBox(),
+      cells.nth(2).boundingBox(),
+    ]);
+    expect(scenarioCellBox).not.toBeNull();
+    expect(configureCellBox).not.toBeNull();
+    expect(datasetCellBox).not.toBeNull();
+    expect(configureCellBox!.x).toBeGreaterThan(scenarioCellBox!.x);
+    expect(configureCellBox!.x).toBeLessThan(datasetCellBox!.x);
+    await expect(page.getByRole("button", { name: /show details|hide details/i })).toHaveCount(0);
+
+    await configureButton.click();
     await expect(page).toHaveURL(`/scanner/${SCENARIO_NAME}`);
     await expect(page.getByRole("heading", { name: SCENARIO_NAME, level: 1 })).toBeVisible();
+    await expect(page.getByText("Jailbreak · v4")).toBeVisible();
     const description = page.getByTestId("scenario-detail-description");
     await expect(description.getByText("dataset")).toHaveCSS("font-weight", /^(600|700)$/);
     await expect(description.locator("code").filter({ hasText: "num_jailbreaks" })).toBeVisible();
     await expect(description.locator("img")).toHaveCount(0);
     await expect(description).toContainText(RAW_IMAGE_HTML);
+    await expect(page.getByRole("radio", { name: /Recommended \(default\).*2 techniques/ })).toBeChecked();
+    await expect(page.getByRole("radio", { name: /Easy.*1 technique/ })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "Custom" })).toBeVisible();
+    const members = page.getByTestId("selected-technique-set-members");
+    await expect(members.getByText("prompt_sending")).toBeVisible();
+    await expect(members.getByText("jailbreak_system_prompt")).toBeVisible();
+    const preview = page.getByRole("complementary", { name: "Run preview" });
+    await expect(preview.getByText("Jailbreak templates: 2")).toBeVisible();
+    await expect(preview.getByRole("group", {
+      name: "16 planned attacks.",
+    })).toBeVisible();
+    await expect(page.getByText("Include direct baseline comparison")).toBeVisible();
+    await expect(page.getByText(/Also send each selected objective directly/)).toBeVisible();
 
     await page.getByTitle("History").click();
     await expect(page).toHaveURL("/history/attacks");
@@ -551,7 +614,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await page.goto(`/scanner/${SCENARIO_NAME}`);
 
     const form = page.getByRole("form", { name: "Scenario run configuration" });
-    const preview = page.getByTestId("run-estimate");
+    const preview = page.getByRole("complementary", { name: "Run preview" });
     await expect(form).toBeVisible();
     await expect(preview).toBeVisible();
 
@@ -570,12 +633,12 @@ test.describe("Scenario catalog, history, and live run routing", () => {
       const requests = mocks.getEstimateRequests();
       return requests[requests.length - 1];
     }).toEqual(expectedEstimateRequest);
-    await expect(preview.getByText("8", { exact: true })).toBeVisible();
+    await expect(preview.getByRole("group", {
+      name: "8 planned attacks.",
+    })).toBeVisible();
     await expect(preview).not.toContainText("context_compliance");
 
     await page.getByTestId("launch-scenario-btn").click();
-    await expect(page.getByRole("dialog", { name: "Run preview" })).toBeVisible();
-    await page.getByTestId("confirm-launch-scenario-btn").click();
     const expectedLaunchRequest = {
       scenario_name: SCENARIO_NAME,
       target_name: "test-target",
@@ -609,15 +672,28 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     const client = await page.context().newCDPSession(page);
     await client.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/scanner/${SCENARIO_NAME}`);
+    await page.goto("/scanner");
+    const catalogRow = page.getByTestId(`scenario-card-${SCENARIO_NAME}`);
+    const configureButton = catalogRow.getByRole("button", { name: "Configure run" });
+    await expect(catalogRow).toBeVisible();
+    expect(await catalogRow.getByRole("cell").allInnerTexts()).toEqual([
+      expect.stringContaining("Scenario / purpose"),
+      expect.stringContaining("Configure"),
+      expect.stringContaining("Default datasets"),
+      expect.stringContaining("Default techniques"),
+      expect.stringContaining("Default run size"),
+    ]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    expect((await configureButton.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await configureButton.press("Enter");
+    await expect(page).toHaveURL(`/scanner/${SCENARIO_NAME}`);
     await configurePromptSendingRun(page);
 
     const formBox = await page.getByRole("form", { name: "Scenario run configuration" }).boundingBox();
-    const previewBox = await page.getByTestId("run-estimate").boundingBox();
+    const previewBox = await page.getByRole("complementary", { name: "Run preview" }).boundingBox();
     expect(formBox).not.toBeNull();
     expect(previewBox).not.toBeNull();
-    expect(previewBox!.y).toBeGreaterThan(formBox!.y);
-    expect(previewBox!.y + previewBox!.height).toBeLessThanOrEqual(formBox!.y + formBox!.height);
+    expect(previewBox!.y).toBeGreaterThanOrEqual(formBox!.y + formBox!.height);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 
     for (const control of [

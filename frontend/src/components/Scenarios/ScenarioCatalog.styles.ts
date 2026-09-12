@@ -94,7 +94,7 @@ export const useScenarioCatalogStyles = makeStyles({
   },
   table: {
     width: '100%',
-    minWidth: '52rem',
+    minWidth: '60rem',
     tableLayout: 'fixed',
     [NARROW_VIEWPORT_QUERY]: {
       display: 'block',
@@ -130,16 +130,19 @@ export const useScenarioCatalogStyles = makeStyles({
     },
   },
   scenarioColumn: {
-    width: '40%',
+    width: '32%',
+  },
+  configureColumn: {
+    width: '14%',
   },
   sizeColumn: {
-    width: '20%',
+    width: '18%',
   },
   techniqueColumn: {
-    width: '20%',
+    width: '18%',
   },
   datasetColumn: {
-    width: '20%',
+    width: '18%',
   },
   summaryRow: {
     color: tokens.colorNeutralForeground1,
@@ -148,7 +151,7 @@ export const useScenarioCatalogStyles = makeStyles({
     },
     [NARROW_VIEWPORT_QUERY]: {
       display: 'grid',
-      gridTemplateRows: 'repeat(4, max-content)',
+      gridTemplateRows: 'repeat(5, max-content)',
       height: 'max-content',
       width: '100%',
       marginBottom: tokens.spacingVerticalM,

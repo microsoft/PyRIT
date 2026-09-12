@@ -27,10 +27,14 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimate,
     Seed,
     SeedObjective,
     SeedPrompt,
+)
+from pyrit.models.catalog import (
+    ScenarioDefaultRunSizeEstimate,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
 )
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -230,7 +234,7 @@ class Encoding(Scenario):
         atomic_attacks.extend(self._get_converter_attacks(context=context))
         return atomic_attacks
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
         """
         Estimate converter variants crossed with raw and decode-template prompt configurations.
 
@@ -246,6 +250,14 @@ class Encoding(Scenario):
             ScenarioRunSizeComponent(
                 label="Encoding converter variants",
                 count=seed_group_count * variant_count * prompt_configuration_count,
+                factors=[
+                    ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count),
+                    ScenarioRunSizeFactor(label="concrete converter variants", count=variant_count),
+                    ScenarioRunSizeFactor(
+                        label="raw plus decode prompt configurations",
+                        count=prompt_configuration_count,
+                    ),
+                ],
                 note=(
                     f"{seed_group_count} selected seed groups x {variant_count} concrete converter variants x "
                     f"{prompt_configuration_count} prompt configurations. Base64 and ASCII85 each map to two "
@@ -258,11 +270,13 @@ class Encoding(Scenario):
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=seed_group_count,
+                    factors=[ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count)],
                     is_baseline=True,
                 )
             )
-        return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(component.count for component in components),
+        return ScenarioDefaultRunSizeEstimate(
+            status=ScenarioRunSizeEstimateStatus.Exact,
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note=(
