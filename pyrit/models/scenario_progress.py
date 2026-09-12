@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
-from pyrit.models.catalog.scenario import ScenarioTargetSummary  # noqa: TC001
+from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary  # noqa: TC001
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.models.results.attack_result import AttackOutcome
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -16,6 +16,7 @@ from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score.score import ScoreStatus
 
 SCENARIO_RUN_PLAN_METADATA_KEY = "run_plan"
+SCENARIO_RUN_STARTED_AT_METADATA_KEY = "started_at"
 SCENARIO_RUN_PLAN_VERSION = 1
 
 
@@ -100,6 +101,7 @@ class ScenarioProgressHeader(BaseModel):
     scenario_version: int
     status: ScenarioRunState
     created_at: datetime
+    started_at: AwareDatetime | None = None
     completed_at: datetime | None = None
     pyrit_version: str | None = None
     target: "ScenarioTargetSummary | None" = None
@@ -107,6 +109,9 @@ class ScenarioProgressHeader(BaseModel):
     datasets_used: list[str] = Field(default_factory=list)
     scenario_parameters: dict[str, Any] = Field(default_factory=dict)
     labels: dict[str, str] = Field(default_factory=dict)
+    queue_position: int | None = Field(None, ge=1)
+    active_scenario_result_id: str | None = None
+    overload_summaries: list["ScenarioOverloadSummary"] = Field(default_factory=list)
 
 
 class ScenarioProgressScore(BaseModel):
@@ -244,6 +249,28 @@ class ScenarioRunProgress(BaseModel):
     next_cursor: str | None = None
     has_more: bool = False
     plan_complete: bool
+
+
+class ScenarioQueueEntry(BaseModel):
+    """One active or queued scenario run in scheduler order."""
+
+    scenario_result_id: str
+    scenario_name: str
+    scenario_registry_name: str
+    created_at: AwareDatetime
+    enqueued_at: AwareDatetime
+    started_at: AwareDatetime | None = None
+    state: ScenarioRunState
+    position: int | None = Field(None, ge=1)
+
+
+class ScenarioQueueSnapshot(BaseModel):
+    """Point-in-time FIFO scheduler state."""
+
+    revision: int = Field(ge=0)
+    snapshot_at: AwareDatetime
+    active: ScenarioQueueEntry | None = None
+    queued: list[ScenarioQueueEntry] = Field(default_factory=list)
 
 
 class ScenarioAttackResultDelta(BaseModel):

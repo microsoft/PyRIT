@@ -26,6 +26,8 @@ import {
   ScriptRegular,
 } from '@fluentui/react-icons'
 
+import ScenarioQueue from '@/components/Scenarios/ScenarioQueue'
+import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { labelsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { ScenarioRunListItem, ScenarioRunState } from '@/types'
@@ -92,6 +94,7 @@ export default function ScenarioHistory({
   showTitle = true,
 }: ScenarioHistoryProps) {
   const styles = useScenarioHistoryStyles()
+  const queue = useScenarioQueue()
   const [runs, setRuns] = useState<ScenarioRunListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -103,7 +106,7 @@ export default function ScenarioHistory({
   const [page, setPage] = useState(0)
   const [nextCursor, setNextCursor] = useState<string | undefined>()
   const [hasMore, setHasMore] = useState(false)
-  const [now, setNow] = useState(0)
+  const [now, setNow] = useState(() => Date.now())
   const filterKey = JSON.stringify([
     filters.scenarioNames,
     filters.statuses,
@@ -305,6 +308,15 @@ export default function ScenarioHistory({
         )}
       </header>
 
+      <div className={styles.queue}>
+        <ScenarioQueue
+          snapshot={queue.snapshot}
+          loading={queue.loading}
+          stale={queue.stale}
+          error={queue.error}
+        />
+      </div>
+
       <div className={styles.content}>
         {displayLoading ? (
           <div className={styles.emptyState}><Spinner label="Loading scanner history..." /></div>
@@ -473,11 +485,19 @@ function formatTimestamp(value: string): string {
 }
 
 function formatRuntime(run: ScenarioRunListItem, now: number): string {
-  const start = Date.parse(run.created_at)
+  if (!run.started_at) {
+    return run.status === 'CREATED' || run.status === 'QUEUED'
+      ? 'Not started'
+      : 'Execution time unavailable'
+  }
+  const start = Date.parse(run.started_at)
   const terminal = isTerminal(run.status)
   const end = terminal
     ? Date.parse(run.completed_at ?? run.updated_at)
     : now
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return 'Execution time unavailable'
+  }
   const seconds = Math.max(0, Math.floor((end - start) / 1000))
   const duration = seconds < 60
     ? `${seconds}s`

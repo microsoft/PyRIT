@@ -132,6 +132,7 @@ async def test_create_and_initialize_async_creates_sets_params_and_initializes()
         "my.scenario",
         scenario_params={"foo": "bar"},
         scenario_result_id="sr-1",
+        initial_metadata={"scheduler_managed_by": "test"},
         objective_target=target,
         max_concurrency=2,
     )
@@ -139,6 +140,7 @@ async def test_create_and_initialize_async_creates_sets_params_and_initializes()
     assert result is scenario
     registry.create_instance.assert_called_once_with("my.scenario", scenario_result_id="sr-1")
     scenario.set_scenario_registry_name.assert_called_once_with(scenario_registry_name="my.scenario")
+    scenario.set_initial_metadata.assert_called_once_with(metadata={"scheduler_managed_by": "test"})
     scenario.set_params_from_args.assert_called_once_with(
         args={"foo": "bar", "objective_target": target, "max_concurrency": 2}
     )
