@@ -8,6 +8,7 @@ import pytest
 from pyrit.executor.attack.core import AttackScoringConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
+    prepend_adversarial_system_prompt_prefix,
     resolve_adversarial_json_schema,
     resolve_adversarial_system_prompt,
 )
@@ -98,6 +99,37 @@ class TestResolveAdversarialSystemPrompt:
         )
         assert seed.value == "persona {{ objective }}"
         assert "objective" in (seed.parameters or [])
+
+    def test_static_prefix_preserves_native_prompt_contract(self):
+        schema = {"type": "object"}
+        native = SeedPrompt(
+            value="Native {{ objective }}",
+            data_type="text",
+            parameters=["objective"],
+            response_json_schema=schema,
+            is_jinja_template=True,
+        )
+        prefix = "Static guidance"
+
+        composed = prepend_adversarial_system_prompt_prefix(
+            system_prompt=native,
+            prefix=prefix,
+        )
+
+        assert composed.render_template_value(objective="goal").startswith("Static guidance")
+        assert "Native goal" in composed.render_template_value(objective="goal")
+        assert composed.parameters == native.parameters
+        assert composed.response_json_schema == schema
+        assert composed.data_type == native.data_type
+        assert composed.value.endswith(native.value)
+
+    @pytest.mark.parametrize("prefix", ["{{ objective }}", "{% if objective %}", "{# comment #}"])
+    def test_prefix_rejects_jinja_syntax(self, prefix: str):
+        with pytest.raises(ValueError, match="must be static text"):
+            prepend_adversarial_system_prompt_prefix(
+                system_prompt=SeedPrompt(value="native", data_type="text"),
+                prefix=prefix,
+            )
 
 
 _SCHEMA: dict = {"type": "object", "properties": {"next_message": {"type": "string"}}}

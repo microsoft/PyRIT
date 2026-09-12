@@ -81,6 +81,9 @@ class AttackAdversarialConfig:
     # SeedPrompt.
     system_prompt: str | SeedPrompt | None = None
 
+    # Static guidance prepended to the resolved native system prompt.
+    system_prompt_prefix: str | None = None
+
 
 def resolve_adversarial_system_prompt(
     *,
@@ -123,21 +126,69 @@ def resolve_adversarial_system_prompt(
                 raise ValueError(
                     error_message or f"Adversarial system prompt is missing required parameters: {missing}"
                 )
-            return system_prompt
+            resolved_prompt = system_prompt
+        else:
+            # Inline strings are trusted — declare all required params so Jinja rendering works.
+            resolved_prompt = SeedPrompt(
+                value=system_prompt,
+                is_jinja_template=True,
+                parameters=list(required_parameters),
+            )
 
-        # Inline strings are trusted — declare all required params so Jinja rendering works.
-        return SeedPrompt(
-            value=system_prompt,
-            is_jinja_template=True,
-            parameters=list(required_parameters),
+        return prepend_adversarial_system_prompt_prefix(
+            system_prompt=resolved_prompt,
+            prefix=config.system_prompt_prefix,
         )
 
     template_path = default_system_prompt_path
-    return SeedPrompt.from_yaml_with_required_parameters(
+    resolved_prompt = SeedPrompt.from_yaml_with_required_parameters(
         template_path=template_path,
         required_parameters=required_parameters,
         error_message=error_message,
     )
+    return prepend_adversarial_system_prompt_prefix(
+        system_prompt=resolved_prompt,
+        prefix=config.system_prompt_prefix,
+    )
+
+
+def prepend_adversarial_system_prompt_prefix(
+    *,
+    system_prompt: SeedPrompt,
+    prefix: str | None,
+) -> SeedPrompt:
+    """
+    Prepend static guidance while preserving the native prompt contract.
+
+    Args:
+        system_prompt: The native adversarial system prompt.
+        prefix: Static text to prepend, or None.
+
+    Returns:
+        SeedPrompt: A copy of ``system_prompt`` with the prefix prepended.
+
+    Raises:
+        ValueError: If the prefix contains Jinja syntax.
+    """
+    if prefix is None:
+        return system_prompt
+
+    validate_adversarial_system_prompt_prefix(prefix=prefix)
+    return system_prompt.model_copy(update={"value": f"{prefix.rstrip()}\n\n{system_prompt.value}"})
+
+
+def validate_adversarial_system_prompt_prefix(*, prefix: str) -> None:
+    """
+    Validate that an adversarial system prompt prefix cannot render dynamically.
+
+    Args:
+        prefix: The prefix to validate.
+
+    Raises:
+        ValueError: If the prefix contains Jinja syntax.
+    """
+    if any(delimiter in prefix for delimiter in ("{{", "{%", "{#")):
+        raise ValueError("Adversarial system prompt prefix must be static text without Jinja syntax.")
 
 
 @dataclass

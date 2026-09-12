@@ -18,6 +18,7 @@ These tests cover the new contract:
   that do not bake their own ``adversarial_chat``; the default expands to the exact
   benchmark set while the ``light`` aggregate remains selectable.
 * ``supported_parameters`` declares ``adversarial_targets: list[str]``.
+* Every selected adversarial technique receives shared guidance without global mutation.
 * ``_resolve_adversarial_targets`` raises with available names on typos.
 * ``_build_atomic_attacks_async`` produces ``N × M × D`` atomic attacks
   with the expected ``atomic_attack_name`` and ``display_group``.
@@ -37,7 +38,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.executor.attack import AttackScoringConfig, TreeOfAttacksWithPruningAttack
+from pyrit.executor.attack import (
+    AttackScoringConfig,
+    RedTeamingAttack,
+    RTASystemPromptPaths,
+    TreeOfAttacksWithPruningAttack,
+)
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
@@ -47,6 +53,8 @@ from pyrit.models import (
     ComponentIdentifier,
     ObjectiveTargetEvaluationIdentifier,
     SeedObjective,
+    SeedPrompt,
+    SeedSimulatedConversation,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
@@ -54,7 +62,11 @@ from pyrit.registry.components.attack_technique_registry import AttackTechniqueR
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark, _build_benchmark_technique
+from pyrit.scenario.scenarios.benchmark.adversarial import (
+    AdversarialBenchmark,
+    _build_benchmark_technique,
+    _get_benchmark_adversarial_guidance,
+)
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
@@ -105,6 +117,7 @@ def reset_technique_registry():
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
     _build_benchmark_technique.cache_clear()
+    _get_benchmark_adversarial_guidance.cache_clear()
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
@@ -115,6 +128,7 @@ def reset_technique_registry():
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
     _build_benchmark_technique.cache_clear()
+    _get_benchmark_adversarial_guidance.cache_clear()
 
 
 def _register_adversarial_target(*, name: str) -> PromptTarget:
@@ -159,9 +173,9 @@ async def _build_atomic_attacks(bench: AdversarialBenchmark) -> list:
 class TestAdversarialBenchmarkMetadata:
     """Tests for class-level metadata that doesn't depend on any runtime state."""
 
-    def test_version_is_4(self):
-        """VERSION 4 identifies runs using the evidence-backed default technique set."""
-        assert AdversarialBenchmark.VERSION == 4
+    def test_version_is_5(self):
+        """VERSION 5 identifies runs using shared benchmark guidance."""
+        assert AdversarialBenchmark.VERSION == 5
 
     def test_baseline_attack_policy_is_forbidden(self):
         """A baseline contributes no signal to a model-comparison benchmark, so it is forbidden."""
@@ -196,6 +210,10 @@ class TestAdversarialBenchmarkSupportedParameters:
         params = {p.name: p for p in AdversarialBenchmark.supported_parameters()}
         description = params["adversarial_targets"].description
         assert "--adversarial-targets" in description
+
+    def test_does_not_declare_user_supplied_system_prompt(self):
+        names = {p.name for p in AdversarialBenchmark.supported_parameters()}
+        assert "adversarial_system_prompt" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +277,52 @@ class TestAdversarialBenchmarkTechnique:
         technique_cls = _build_benchmark_technique()
         resolved_values = {child.value for child in technique_cls.expand({technique_cls.default()})}
         assert resolved_values == _DEFAULT_BENCHMARK_TECHNIQUE_NAMES
+
+    def test_shared_guidance_has_no_technique_contract_metadata(self):
+        guidance = _get_benchmark_adversarial_guidance()
+
+        assert "{{" not in guidance
+
+    @pytest.mark.parametrize("technique_name", ["role_play_video_game", "crescendo_simulated"])
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_simulated_defaults_receive_prefix_without_mutating_global_factory(self, technique_name: str):
+        registry_factories = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()
+        global_factory = registry_factories[technique_name]
+        global_hash = global_factory.get_identifier().hash
+        objective_target = MagicMock(spec=PromptTarget)
+        objective_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockObjectiveTarget",
+            class_module="pyrit.test",
+        )
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        objective_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockObjectiveScorer",
+            class_module="pyrit.test",
+        )
+        scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
+
+        global_technique = global_factory.create(
+            objective_target=objective_target,
+            attack_scoring_config=scoring_config,
+        )
+        local_technique = global_factory.create(
+            objective_target=objective_target,
+            attack_scoring_config=scoring_config,
+            adversarial_system_prompt_prefix=_get_benchmark_adversarial_guidance(),
+        )
+
+        assert registry_factories[technique_name] is global_factory
+        assert global_factory.get_identifier().hash == global_hash
+        assert local_technique.get_identifier().hash != global_technique.get_identifier().hash
+        assert global_factory.seed_technique is not None
+        assert local_technique.seed_technique is not None
+        global_seed = global_factory.seed_technique.seeds[0]
+        local_seed = local_technique.seed_technique.seeds[0]
+        assert isinstance(global_seed, SeedSimulatedConversation)
+        assert isinstance(local_seed, SeedSimulatedConversation)
+        assert local_seed.adversarial_chat_system_prompt_path == global_seed.adversarial_chat_system_prompt_path
+        assert global_seed.adversarial_chat_system_prompt_prefix is None
+        assert local_seed.adversarial_chat_system_prompt_prefix == _get_benchmark_adversarial_guidance()
 
     def test_light_aggregate_excludes_non_light_techniques(self):
         """Techniques without the ``light`` tag must not appear in the ``light`` aggregate."""
@@ -361,18 +425,80 @@ class TestAdversarialBenchmarkInit:
 
         objective_target = MagicMock(spec=PromptTarget)
         objective_target.configuration.capabilities.output_modalities = [{"text"}]
+        objective_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockObjectiveTarget",
+            class_module="pyrit.test",
+        )
         adversarial_target = TargetRegistry.get_registry_singleton().instances.get("adversarial_chat")
-        scoring_config = AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        adversarial_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockAdversarialTarget",
+            class_module="pyrit.test",
+        )
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        objective_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockObjectiveScorer",
+            class_module="pyrit.test",
+        )
+        scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
         with caplog.at_level(logging.WARNING):
             technique = factory.create(
                 objective_target=objective_target,
                 attack_scoring_config=scoring_config,
                 adversarial_chat=adversarial_target,
+                adversarial_system_prompt_prefix=_get_benchmark_adversarial_guidance(),
             )
 
         assert isinstance(technique.attack, TreeOfAttacksWithPruningAttack)
+        assert "# Cross-Technique Guidance" in technique.attack._adversarial_chat_system_seed_prompt.value
+        assert "SETTING:" in technique.attack._adversarial_chat_system_seed_prompt.value
+        identifier = technique.get_identifier()
+        assert identifier.attack is not None
+        assert (
+            identifier.attack.adversarial_system_prompt == technique.attack._adversarial_chat_system_seed_prompt.value
+        )
+        assert "{{ max_turns }}" not in technique.attack._adversarial_chat_system_seed_prompt.value
+        assert set(technique.attack._adversarial_chat_system_seed_prompt.parameters) == {
+            "objective",
+            "desired_prefix",
+            "conversation_context",
+        }
+        rendered = technique.attack._adversarial_chat_system_seed_prompt.render_template_value(
+            objective="test objective",
+            desired_prefix="Expected prefix",
+            conversation_context="",
+        )
+        assert "test objective" in rendered
+        assert "Expected prefix" in rendered
+        assert "{{" not in rendered
         assert any("incompatible" in record.message for record in caplog.records)
+
+    def test_red_teaming_uses_guidance_with_canonical_system_prompt(self):
+        factory = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()["red_teaming"]
+        objective_target = MagicMock(spec=PromptTarget)
+        objective_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockObjectiveTarget",
+            class_module="pyrit.test",
+        )
+        adversarial_target = TargetRegistry.get_registry_singleton().instances.get("adversarial_chat")
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        scoring_config = AttackScoringConfig(objective_scorer=objective_scorer)
+
+        technique = factory.create(
+            objective_target=objective_target,
+            attack_scoring_config=scoring_config,
+            adversarial_chat=adversarial_target,
+            adversarial_system_prompt_prefix=_get_benchmark_adversarial_guidance(),
+        )
+
+        assert isinstance(technique.attack, RedTeamingAttack)
+        prompt = technique.attack._adversarial_chat_system_prompt_template
+        canonical_prompt = SeedPrompt.from_yaml_file(RTASystemPromptPaths.TEXT_GENERATION.value)
+        guidance = _get_benchmark_adversarial_guidance()
+        assert prompt.value.count(guidance.strip()) == 1
+        assert canonical_prompt.value in prompt.value
+        assert prompt.parameters == canonical_prompt.parameters
+        assert prompt.response_json_schema == canonical_prompt.response_json_schema
 
 
 # ---------------------------------------------------------------------------
@@ -490,21 +616,26 @@ class TestGetAtomicAttacksValidation:
 class TestGetAtomicAttacksCrossProduct:
     """Tests for the (technique × target × dataset) cross-product produced by ``_build_atomic_attacks_async``."""
 
-    def _make_bench_with_targets(self, *, target_names: list[str]) -> AdversarialBenchmark:
+    def _make_bench_with_targets(
+        self,
+        *,
+        target_names: list[str],
+        technique_name: str = "red_teaming",
+    ) -> AdversarialBenchmark:
         for name in target_names:
             _register_adversarial_target(name=name)
         # Reset the technique registry so we can register a controllable mock factory
         # whose create() return value we can inspect.
         AttackTechniqueRegistry.reset_registry_singleton()
         _build_benchmark_technique.cache_clear()
-        _register_mock_factory(name="red_teaming", tags=["core", "light"])
+        _register_mock_factory(name=technique_name, tags=["core", "light"])
         bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
         bench._objective_target = MagicMock(spec=PromptTarget)
         bench.params = {"adversarial_targets": target_names}
 
-        red_teaming_technique = MagicMock()
-        red_teaming_technique.value = "red_teaming"
-        bench._scenario_techniques = [red_teaming_technique]
+        selected_technique = MagicMock()
+        selected_technique.value = technique_name
+        bench._scenario_techniques = [selected_technique]
 
         # Dataset config: one dataset with one real seed group (AtomicAttack hashes objectives).
         seed_group = AttackSeedGroup(seeds=[SeedObjective(value="benchmark_objective_1")])
@@ -576,10 +707,31 @@ class TestGetAtomicAttacksCrossProduct:
 
         # 1 factory × 2 targets × 1 dataset = 2 create calls
         assert factory.create.call_count == 2
+        assert all(
+            call.kwargs["adversarial_system_prompt_prefix"] == _get_benchmark_adversarial_guidance()
+            for call in factory.create.call_args_list
+        )
         target_a = TargetRegistry.get_registry_singleton().instances.get("adv_a")
         target_b = TargetRegistry.get_registry_singleton().instances.get("adv_b")
         injected_targets = {call.kwargs["adversarial_chat"] for call in factory.create.call_args_list}
         assert injected_targets == {target_a, target_b}
+
+    async def test_selected_factory_receives_create_time_prefix(self):
+        bench = self._make_bench_with_targets(
+            target_names=["adv_a"],
+            technique_name="future_adversarial_attack",
+        )
+        registered_factory = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()[
+            "future_adversarial_attack"
+        ]
+        result = await _build_atomic_attacks(bench)
+
+        assert len(result) == 1
+        registered_factory.create.assert_called_once()
+        assert (
+            registered_factory.create.call_args.kwargs["adversarial_system_prompt_prefix"]
+            == _get_benchmark_adversarial_guidance()
+        )
 
 
 # ---------------------------------------------------------------------------
