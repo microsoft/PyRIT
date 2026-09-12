@@ -374,7 +374,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             outcome=(attack_outcome_from_score(context.last_score) if context.last_score else AttackOutcome.FAILURE),
             executed_turns=context.executed_turns,
             last_response=context.last_response.get_piece() if context.last_response else None,
-            last_score=context.last_score,
+            automated_score=context.last_score,
             related_conversations=context.related_conversations,
             labels=context.memory_labels,
         )

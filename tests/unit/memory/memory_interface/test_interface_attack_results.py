@@ -4,11 +4,14 @@
 
 import uuid
 from dataclasses import FrozenInstanceError
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.dialects import mssql
+from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
@@ -24,6 +27,7 @@ from pyrit.models import (
     IdentifierFilter,
     IdentifierType,
     MessagePiece,
+    ScenarioRunState,
     Score,
 )
 
@@ -37,6 +41,8 @@ def create_attack_result(
     outcome: AttackOutcome = AttackOutcome.SUCCESS,
     labels: dict[str, str] | None = None,
     targeted_harm_categories: list[str] | None = None,
+    operator: str | None = None,
+    operation: str | None = None,
 ):
     """Helper function to create AttackResult."""
     return AttackResult(
@@ -44,11 +50,13 @@ def create_attack_result(
         objective=f"Objective {objective_num}",
         outcome=outcome,
         labels=labels or {},
+        operator=operator,
+        operation=operation,
         targeted_harm_categories=targeted_harm_categories or [],
     )
 
 
-_BASE_TS = datetime(2024, 6, 1, tzinfo=timezone.utc)
+_BASE_TS = datetime(2024, 6, 1, tzinfo=UTC)
 
 
 def _make_attack_result(
@@ -106,14 +114,17 @@ def _drain_keyset(memory: MemoryInterface, *, page_size: int, **filters) -> list
 def test_attack_result_query_snapshots_mutable_inputs():
     """The internal query remains stable when caller-owned containers change."""
     attack_classes = ["CrescendoAttack"]
-    labels = {"operator": ["alice"]}
-    query = _AttackResultQuery(attack_classes=attack_classes, labels=labels)
+    operators = ["alice"]
+    labels = {"team": ["red"]}
+    query = _AttackResultQuery(attack_classes=attack_classes, operator=operators, labels=labels)
 
     attack_classes.append("ManualAttack")
-    labels["operator"].append("bob")
+    operators.append("bob")
+    labels["team"].append("blue")
 
     assert query.attack_classes == ("CrescendoAttack",)
-    assert query.labels == {"operator": ("alice",)}
+    assert query.operator == ("alice",)
+    assert query.labels == {"team": ("red",)}
     field_name = "limit"
     with pytest.raises(FrozenInstanceError):
         setattr(query, field_name, 10)
@@ -146,7 +157,10 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
             converter_classes=["Converter"],
             converter_classes_match="any",
             has_converters=True,
-            labels={"operator": ["alice"]},
+            include_scenario_attacks=False,
+            operator=["alice"],
+            operation=["nightly"],
+            labels={"team": ["red"]},
             targeted_harm_categories=["violence"],
             identifier_filters=[identifier_filter],
             scenario_result_id=str(uuid.uuid4()),
@@ -168,7 +182,10 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
     assert query.converter_classes == ("Converter",)
     assert query.converter_classes_match == "any"
     assert query.has_converters is True
-    assert query.labels == {"operator": ("alice",)}
+    assert query.include_scenario_attacks is False
+    assert query.operator == ("alice",)
+    assert query.operation == ("nightly",)
+    assert query.labels == {"team": ("red",)}
     assert query.targeted_harm_categories == ("violence",)
     assert query.identifier_filters == (identifier_filter,)
     assert query.scenario_result_id is not None
@@ -557,8 +574,8 @@ def test_get_attack_results_nonexistent_ids(sqlite_instance: MemoryInterface):
     assert len(retrieved_results) == 0
 
 
-def test_attack_result_with_last_response_and_score(sqlite_instance: MemoryInterface):
-    """Test attack result with last_response and last_score relationships."""
+def test_attack_result_with_last_response_and_scores(sqlite_instance: MemoryInterface):
+    """Test attack result response and score relationships."""
     # Create a message piece first
     message_piece = MessagePiece(
         role="user",
@@ -582,17 +599,25 @@ def test_attack_result_with_last_response_and_score(sqlite_instance: MemoryInter
         score_rationale="Test score rationale",
         score_metadata={"test": "metadata"},
     )
+    human_score = score.model_copy(
+        update={
+            "id": uuid.uuid4(),
+            "score_value": "0.5",
+            "score_rationale": "Human score rationale",
+        }
+    )
 
     # Add message piece and score to memory
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[message_piece])
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    sqlite_instance.add_scores_to_memory(scores=[score, human_score])
 
-    # Create attack result with last_response and last_score
+    # Create attack result with both score sources
     attack_result = AttackResult(
         conversation_id="conv_1",
         objective="Test objective with relationships",
         last_response=message_piece,
-        last_score=score,
+        automated_score=score,
+        human_score=human_score,
         executed_turns=5,
         execution_time_ms=1000,
         outcome=AttackOutcome.SUCCESS,
@@ -607,8 +632,12 @@ def test_attack_result_with_last_response_and_score(sqlite_instance: MemoryInter
     assert all_entries[0].conversation_id == "conv_1"
     assert all_entries[0].last_response is not None
     assert all_entries[0].last_response.id == message_piece.id
+    assert all_entries[0].automated_score is not None
+    assert all_entries[0].automated_score.id == score.id
+    assert all_entries[0].human_score is not None
+    assert all_entries[0].human_score.id == human_score.id
     assert all_entries[0].last_score is not None
-    assert all_entries[0].last_score.id == score.id
+    assert all_entries[0].last_score.id == human_score.id
 
 
 def test_attack_result_all_outcomes(sqlite_instance: MemoryInterface):
@@ -1266,6 +1295,84 @@ def test_get_unique_attack_labels_deduplicates_across_attacks(sqlite_instance: M
     assert result == {"env": ["prod"]}
 
 
+def test_get_unique_attack_labels_narrows_by_attribution_and_labels(sqlite_instance: MemoryInterface):
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            create_attack_result(
+                "conv_1",
+                1,
+                operator="alice",
+                operation="nightly",
+                labels={"team": "red", "env": "prod"},
+            ),
+            create_attack_result(
+                "conv_2",
+                2,
+                operator="alice",
+                operation="daytime",
+                labels={"team": "blue", "env": "test"},
+            ),
+            create_attack_result(
+                "conv_3",
+                3,
+                operator="bob",
+                operation="nightly",
+                labels={"team": "red", "env": "dev"},
+            ),
+        ]
+    )
+
+    result = sqlite_instance.get_unique_attack_labels(
+        operator=["alice"],
+        operation=["nightly"],
+        labels={"team": ["red"]},
+    )
+
+    assert result == {"env": ["prod"], "team": ["red"]}
+
+
+def test_get_attack_results_filters_dedicated_attribution_columns(sqlite_instance: MemoryInterface):
+    attack_results = [
+        create_attack_result("conv_1", 1, operator="alice", operation="nightly"),
+        create_attack_result("conv_2", 2, operator="bob", operation="nightly"),
+        create_attack_result("conv_3", 3, operator="alice", operation="daytime"),
+    ]
+    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+
+    results = sqlite_instance.get_attack_results(operator=["alice"], operation="nightly")
+
+    assert [result.conversation_id for result in results] == ["conv_1"]
+
+
+def test_get_attack_results_legacy_attribution_filter_warns_and_normalizes(sqlite_instance: MemoryInterface):
+    sqlite_instance.add_attack_results_to_memory(attack_results=[create_attack_result("conv_1", 1, operator="alice")])
+
+    with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
+        results = sqlite_instance.get_attack_results(labels={"operator": "alice"})
+
+    assert [result.conversation_id for result in results] == ["conv_1"]
+
+
+def test_get_attack_results_rejects_conflicting_attribution_filters(sqlite_instance: MemoryInterface):
+    with pytest.raises(ValueError, match="operator conflicts"):
+        sqlite_instance.get_attack_results(operator="alice", labels={"operator": "bob"})
+
+
+def test_unique_attack_attribution_uses_dedicated_columns(sqlite_instance: MemoryInterface):
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            create_attack_result("conv_1", 1, operator="bob", operation="nightly", labels={"team": "red"}),
+            create_attack_result("conv_2", 2, operator="alice", operation="nightly", labels={"team": "blue"}),
+        ]
+    )
+
+    assert sqlite_instance.get_unique_attack_attribution() == {
+        "operators": ["alice", "bob"],
+        "operations": ["nightly"],
+    }
+    assert sqlite_instance.get_unique_attack_labels() == {"team": ["blue", "red"]}
+
+
 # ============================================================================
 # Attack class and converter class filtering tests
 # ============================================================================
@@ -1627,6 +1734,31 @@ def test_get_attack_results_has_converters_false_combined_with_attack_classes(sq
     assert {r.conversation_id for r in results} == {"conv_2"}
 
 
+def test_get_attack_results_can_exclude_scenario_attacks(sqlite_instance: MemoryInterface) -> None:
+    """Manual-only queries exclude attacks carrying scenario attribution."""
+    scenario = make_scenario_result(
+        id=uuid.uuid4(),
+        scenario_name="Scenario",
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        labels={},
+        metadata={},
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+    )
+    manual_attack = create_attack_result("manual", 1)
+    scenario_attack = create_attack_result("scenario", 2)
+    scenario_attack.attribution_parent_id = str(scenario.id)
+    scenario_attack.attribution_data = {"parent_collection": "attack"}
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+    sqlite_instance.add_attack_results_to_memory(attack_results=[manual_attack, scenario_attack])
+
+    all_results = sqlite_instance.get_attack_results(include_scenario_attacks=True)
+    manual_results = sqlite_instance.get_attack_results(include_scenario_attacks=False)
+
+    assert {result.conversation_id for result in all_results} == {"manual", "scenario"}
+    assert [result.conversation_id for result in manual_results] == ["manual"]
+
+
 # ============================================================================
 # Unique attack class and converter class name tests
 # ============================================================================
@@ -1759,6 +1891,17 @@ def test_get_attack_results_pagination_returns_recency_ordered_page(sqlite_insta
 
     page2 = sqlite_instance.get_attack_results(limit=3, after=_after(page1))
     assert [r.conversation_id for r in page2] == ["conv-6", "conv-5", "conv-4"]
+
+
+def test_get_attack_results_pagination_uses_not_exists_anti_join() -> None:
+    """Pagination probes for a newer duplicate instead of ranking the full result set."""
+    condition = MemoryInterface._attack_results_not_superseded_condition(conditions=[])
+    statement = select(AttackResultEntry.id).where(condition)
+    sql = str(statement.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True})).upper()
+
+    assert "NOT (EXISTS" in sql
+    assert "ROW_NUMBER" not in sql
+    assert "PARTITION BY" not in sql
 
 
 def test_get_attack_results_pagination_disjoint_and_complete(sqlite_instance: MemoryInterface):
@@ -1942,7 +2085,7 @@ def test_get_attack_results_paginated_hydrates_scores_under_limit(sqlite_instanc
         conversation_id="conv-scored",
         objective="scored objective",
         last_response=message_piece,
-        last_score=score,
+        automated_score=score,
         executed_turns=5,
         execution_time_ms=0,
         outcome=AttackOutcome.SUCCESS,

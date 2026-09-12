@@ -9,11 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-try:
-    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
-except ImportError:  # pragma: no cover - 3.10 only
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
-
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory

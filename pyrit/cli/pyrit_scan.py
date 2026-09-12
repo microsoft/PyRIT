@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pyrit.models.catalog import (
-        RegisteredScenario,
         RunScenarioRequest,
         ScenarioRunSummary,
     )
@@ -844,10 +843,9 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
     from pyrit.cli._cli_args import ScenarioResultView
     from pyrit.cli._results import (
         apply_view_limit_policy,
-        build_attacks_table_payload,
-        build_conversations_payload_async,
         resolve_view,
     )
+    from pyrit.output import output_scenario_attacks_async
 
     scenario_result_id = parsed_args.scenario_result_id
     view = resolve_view(view=parsed_args.view)
@@ -864,18 +862,16 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
         return 0
 
     if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
-        attacks_payload = build_attacks_table_payload(
-            result=result,
-            scenario_result_id=scenario_result_id,
+        await output_scenario_attacks_async(
+            result,
             attack_result_ids=parsed_args.attack_result_ids,
             limit=limit,
         )
-        _output.print_attacks_table(payload=attacks_payload)
         if view is ScenarioResultView.ATTACKS:
             return 0
 
     try:
-        conversations_payload = await build_conversations_payload_async(
+        await _output.print_conversations_async(
             result=result,
             client=client,
             scenario_result_id=scenario_result_id,
@@ -885,7 +881,6 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
     except Exception as exc:
         _print_cli_exception(exc=exc)
         return 1
-    _output.print_conversations(payload=conversations_payload)
     return 0
 
 
@@ -990,7 +985,6 @@ async def _poll_until_terminal_async(
     *,
     client: Any,
     scenario_result_id: str,
-    total_techniques: int,
 ) -> ScenarioRunSummary:
     """
     Poll the server until the run reaches a terminal status.
@@ -1007,7 +1001,7 @@ async def _poll_until_terminal_async(
     while True:
         run: ScenarioRunSummary = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
         _output.print_scenario_retry_warnings(run=run, seen_attack_ids=seen_retry_attack_ids)
-        _output.print_scenario_run_progress(run=run, total_techniques=total_techniques)
+        _output.print_scenario_run_progress(run=run)
         if run.status in terminal_states:
             return run
         await asyncio.sleep(0.5)
@@ -1017,7 +1011,6 @@ async def _run_scenario_async(
     *,
     client: Any,
     parsed_args: Namespace,
-    scenario_meta: RegisteredScenario,
 ) -> int:
     """
     Start a scenario run, poll for completion, and print results.
@@ -1031,7 +1024,6 @@ async def _run_scenario_async(
     scenario_name = parsed_args.scenario_name
     request = _build_run_request(parsed_args=parsed_args, scenario_name=scenario_name)
 
-    total_techniques = len(request.techniques or scenario_meta.all_techniques or [])
     print(f"\nRunning scenario: {scenario_name}")
     sys.stdout.flush()
 
@@ -1055,7 +1047,6 @@ async def _run_scenario_async(
         run = await _poll_until_terminal_async(
             client=client,
             scenario_result_id=scenario_result_id,
-            total_techniques=total_techniques,
         )
     except KeyboardInterrupt:
         print("\n\nCancelling scenario run...")
@@ -1110,7 +1101,7 @@ async def _handle_run_async(*, client: Any, parsed_args: Namespace) -> int:
     if reparsed is None:
         return 1
 
-    return await _run_scenario_async(client=client, parsed_args=reparsed, scenario_meta=scenario_meta)
+    return await _run_scenario_async(client=client, parsed_args=reparsed)
 
 
 #: Post-client verbs, each a uniform ``(*, client, parsed_args) -> int`` handler. Reached

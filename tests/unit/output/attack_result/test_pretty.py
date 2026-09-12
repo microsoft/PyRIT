@@ -63,7 +63,7 @@ def attack_result():
         execution_time_ms=1500,
         outcome=AttackOutcome.SUCCESS,
         outcome_reason="Test successful",
-        last_score=Score(
+        automated_score=Score(
             score_type="float_scale",
             score_value="0.75",
             score_category=["harm"],

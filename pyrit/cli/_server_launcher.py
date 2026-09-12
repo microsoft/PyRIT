@@ -678,7 +678,7 @@ class ServerLauncher:
                 self.probe_health_async(base_url=base_url),
                 timeout=min(_HEALTH_PROBE_TIMEOUT, timeout),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
 
     async def _print_startup_diagnostics_async(self, *, startup_state: _ServerStartupState) -> None:

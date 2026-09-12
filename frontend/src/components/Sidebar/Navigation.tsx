@@ -15,7 +15,6 @@ import {
   HistoryRegular,
   PersonFeedbackRegular,
   ScriptRegular,
-  OpenRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
   TargetRegular,
@@ -101,8 +100,8 @@ export default function Navigation({
           data-active={currentView === 'history'}
           appearance="subtle"
           icon={<HistoryRegular />}
-          title="Attack History"
-          aria-label="Attack History"
+          title="History"
+          aria-label="History"
           aria-current={currentView === 'history' ? 'page' : undefined}
           onClick={() => onNavigate('history')}
         />
@@ -154,17 +153,6 @@ export default function Navigation({
         title="Feedback"
         aria-label="Feedback"
         onClick={onOpenFeedback}
-      />
-      <Button
-        as="a"
-        className={styles.navButton}
-        appearance="subtle"
-        icon={<OpenRegular />}
-        title="Security"
-        aria-label="Security"
-        href="https://github.com/microsoft/PyRIT/security/policy"
-        target="_blank"
-        rel="noreferrer"
       />
       <Menu
         checkedValues={{ [THEME_MENU_NAME]: [mode] }}

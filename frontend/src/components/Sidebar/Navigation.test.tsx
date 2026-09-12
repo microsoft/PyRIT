@@ -3,7 +3,7 @@
  * Licensed under the MIT license.
  */
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, useTheme } from "../../hooks/useTheme";
 import Navigation from "./Navigation";
@@ -112,10 +112,10 @@ describe("Navigation", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the attack history button", () => {
+  it("renders the history button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
     expect(
-      screen.getByRole("button", { name: "Attack History" })
+      screen.getByRole("button", { name: "History" })
     ).toBeInTheDocument();
   });
 
@@ -126,7 +126,7 @@ describe("Navigation", () => {
     ).toBeInTheDocument();
   });
 
-  it("places Scanner immediately after Attack History without a history placeholder", () => {
+  it("renders the final primary navigation order", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
     const navigation = screen.getByRole("navigation", { name: "Primary" });
     const labels = within(navigation)
@@ -136,12 +136,28 @@ describe("Navigation", () => {
     expect(labels).toEqual([
       "Home",
       "Chat",
-      "Attack History",
+      "History",
       "Scanner",
       "Targets",
       "Configuration",
     ]);
-    expect(screen.queryByRole("button", { name: "Scenario History" })).not.toBeInTheDocument();
+  });
+
+  it("marks History current and navigates to its tabbed view", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation
+        {...defaultProps}
+        currentView="history"
+        onNavigate={onNavigate}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "History" });
+    expect(button).toHaveAttribute("aria-current", "page");
+    await user.click(button);
+    expect(onNavigate).toHaveBeenCalledWith("history");
   });
 
   it("calls onNavigate with 'scenarios' when the scenarios button is clicked", async () => {
@@ -165,25 +181,25 @@ describe("Navigation", () => {
     );
   });
 
-  it("renders the feedback button and forwards clicks to onOpenFeedback", () => {
+  it("renders one feedback button and forwards clicks to onOpenFeedback", async () => {
+    const user = userEvent.setup();
     const onOpenFeedback = jest.fn();
     renderWithProvider(
       <Navigation {...defaultProps} onOpenFeedback={onOpenFeedback} />
     );
 
-    const feedbackButton = screen.getByTitle("Feedback");
-    expect(feedbackButton).toBeInTheDocument();
-    fireEvent.click(feedbackButton);
+    const feedbackButtons = screen.getAllByRole("button", { name: "Feedback" });
+    expect(feedbackButtons).toHaveLength(1);
+    await user.click(feedbackButtons[0]);
     expect(onOpenFeedback).toHaveBeenCalledTimes(1);
   });
 
-  it("links to the public security policy", () => {
+  it("does not render a direct security link", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
 
-    expect(screen.getByRole("link", { name: "Security" })).toHaveAttribute(
-      "href",
-      "https://github.com/microsoft/PyRIT/security/policy"
-    );
+    expect(
+      screen.queryByRole("link", { name: "Security" })
+    ).not.toBeInTheDocument();
   });
 
   it("calls onNavigate with 'history' when history button is clicked", async () => {
@@ -193,7 +209,7 @@ describe("Navigation", () => {
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    await user.click(screen.getByRole("button", { name: "Attack History" }));
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(onNavigate).toHaveBeenCalledWith("history");
   });
 

@@ -478,7 +478,7 @@ def test_should_skip_evaluation_harm_found(mock_find, mock_harm_scorer, tmp_path
     assert result == expected_metrics
     mock_find.assert_called_once_with(
         eval_hash="test_hash_456",
-        harm_category="hate_speech",
+        file_path=result_file,
     )
 
 
@@ -971,6 +971,10 @@ class TestSelectEvaluationScore:
         score = self._score(category=["hate_speech"])
         assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="hate_speech") is score
 
+    def test_accepts_a_lone_score_with_an_alias_for_the_canonical_harm(self):
+        score = self._score(category=["Sexual"])
+        assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="SEXUAL_CONTENT") is score
+
     def test_rejects_a_lone_score_that_names_a_different_harm(self):
         score = self._score(category=["violence"])
         with pytest.raises(ValueError, match="requires a score for harm category 'hate_speech'"):
@@ -980,6 +984,25 @@ class TestSelectEvaluationScore:
         match = self._score(category=["hate_speech"])
         other = self._score(category=["violence"])
         assert ScorerEvaluator._select_evaluation_score(scores=[other, match], harm_category="hate_speech") is match
+
+    def test_picks_an_aliased_category_match_from_several_scores(self):
+        match = self._score(category=["Sexual"])
+        other = self._score(category=["Violence"])
+        assert (
+            ScorerEvaluator._select_evaluation_score(
+                scores=[other, match],
+                harm_category="SEXUAL_CONTENT",
+            )
+            is match
+        )
+
+    def test_does_not_match_two_unknown_categories_as_other(self):
+        score = self._score(category=["custom_score_category"])
+        with pytest.raises(ValueError, match="requires a score for harm category 'custom_dataset_category'"):
+            ScorerEvaluator._select_evaluation_score(
+                scores=[score],
+                harm_category="custom_dataset_category",
+            )
 
     def test_rejects_several_scores_with_no_category_match(self):
         scores = [self._score(category=["violence"]), self._score(category=["self_harm"])]

@@ -153,14 +153,14 @@ describe("MessageList", () => {
       name: /score 0.9 from selfaskscalescorer, objective score/i,
     });
     expect(scoreButton).toBeInTheDocument();
-    expect(scoreButton).toHaveTextContent("0.9");
+    expect(scoreButton).toHaveTextContent("Final score: 0.9");
 
     await user.click(scoreButton);
 
-    expect(screen.getByText("float_scale")).toBeInTheDocument();
+    expect(screen.queryByText("float_scale")).not.toBeInTheDocument();
     expect(screen.getByText("SelfAskScaleScorer")).toBeInTheDocument();
-    expect(screen.getByText("Yes")).toBeInTheDocument();
-    expect(screen.getByText("Piece 1 · text")).toBeInTheDocument();
+    expect(screen.getByText("Final score")).toBeInTheDocument();
+    expect(screen.queryByText("Piece 1 · text")).not.toBeInTheDocument();
     expect(screen.getByText("harmful")).toBeInTheDocument();
     expect(screen.getByText("The response contains harmful content.")).toBeInTheDocument();
   });
@@ -198,10 +198,10 @@ describe("MessageList", () => {
     const scoreButton = screen.getByRole("button", {
       name: /score undetermined from selfaskscalescorer, piece 1 · text/i,
     });
-    expect(scoreButton).toHaveTextContent("undetermined");
+    expect(scoreButton).toHaveTextContent("Score: undetermined");
 
     await user.hover(scoreButton);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("undetermined");
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Score: undetermined");
 
     await user.unhover(scoreButton);
     await user.click(scoreButton);
@@ -299,26 +299,28 @@ describe("MessageList", () => {
 
     expect(screen.getByRole("tablist", { name: "Scores" })).toBeInTheDocument();
     const objectiveTab = screen.getByRole("tab", {
-      name: /score false from oldscorer, objective score/i,
+      name: /final score from oldscorer: false/i,
     });
     const auxiliaryTab = screen.getByRole("tab", {
-      name: /score 0.9 from newscorer/i,
+      name: /score from newscorer: 0.9/i,
     });
     expect(screen.getAllByRole("tab")).toEqual([objectiveTab, auxiliaryTab]);
-    expect(objectiveTab).toHaveTextContent("False");
-    expect(objectiveTab).not.toHaveTextContent("OldScorer");
+    expect(objectiveTab).toHaveTextContent("Final Score");
+    expect(objectiveTab).not.toHaveTextContent("Score:");
     expect(objectiveTab).not.toHaveTextContent("Objective");
-    expect(auxiliaryTab).toHaveTextContent("0.9");
-    expect(auxiliaryTab).not.toHaveTextContent("NewScorer");
+    expect(auxiliaryTab).toHaveTextContent("Score 2");
+    expect(auxiliaryTab).not.toHaveTextContent("Score:");
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", objectiveTab.id);
-    expect(screen.getByText("true_false")).toBeInTheDocument();
-    expect(screen.getByText("OldScorer")).toBeInTheDocument();
-    expect(screen.getByText("Yes")).toBeInTheDocument();
+    expect(screen.queryByText("Score:")).not.toBeInTheDocument();
+    expect(screen.queryByText("true_false")).not.toBeInTheDocument();
+    expect(screen.queryByText("Piece 1 · text")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("tabpanel")).getByText("OldScorer")).toBeInTheDocument();
+    expect(screen.getByText("Final score")).toBeInTheDocument();
 
     await user.hover(auxiliaryTab);
     expect(
-      await screen.findByText("Score 0.9 from NewScorer, Piece 2 · text")
+      await screen.findByText("Score from NewScorer: 0.9")
     ).toBeInTheDocument();
     await user.unhover(auxiliaryTab);
 
@@ -326,15 +328,15 @@ describe("MessageList", () => {
 
     expect(auxiliaryTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", auxiliaryTab.id);
-    expect(screen.getByText("float_scale")).toBeInTheDocument();
-    expect(screen.getByText("NewScorer")).toBeInTheDocument();
-    expect(screen.getByText("No")).toBeInTheDocument();
+    expect(screen.queryByText("float_scale")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("tabpanel")).getByText("NewScorer")).toBeInTheDocument();
+    expect(screen.getByText("Supporting score")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
         name: /view 2 scores, displayed score false from oldscorer, objective score/i,
       })
     ).toBeInTheDocument();
-    expect(stackedScoreButton).toHaveTextContent("False");
+    expect(stackedScoreButton).toHaveTextContent("Final score: False");
   });
 
   it("should preserve a long stacked-score value outside its ellipsized chip", async () => {
@@ -436,7 +438,7 @@ describe("MessageList", () => {
     await user.click(trigger);
 
     const trueTab = screen.getByRole("tab", {
-      name: /score true from booleanscorer/i,
+      name: /score from booleanscorer: true/i,
     });
     await user.click(trueTab);
     expect(trueTab).toHaveAttribute("aria-selected", "true");
@@ -446,10 +448,10 @@ describe("MessageList", () => {
     await user.keyboard("{Enter}");
 
     const reopenedTrueTab = screen.getByRole("tab", {
-      name: /score true from booleanscorer/i,
+      name: /score from booleanscorer: true/i,
     });
     const reopenedLatestTab = screen.getByRole("tab", {
-      name: /score 0.91 from scalescorer/i,
+      name: /score from scalescorer: 0.91/i,
     });
     expect(reopenedTrueTab).toHaveAttribute("aria-selected", "true");
     expect(reopenedTrueTab).toHaveFocus();
@@ -499,15 +501,15 @@ describe("MessageList", () => {
     const stackedScoreButton = screen.getByRole("button", {
       name: /view 2 scores, displayed score 0.9 from newscorer/i,
     });
-    expect(stackedScoreButton).toHaveTextContent("0.9");
+    expect(stackedScoreButton).toHaveTextContent("Score: 0.9");
 
     await user.click(stackedScoreButton);
     await user.click(screen.getByRole("tab", {
-      name: /score false from oldscorer/i,
+      name: /score from oldscorer: false/i,
     }));
 
-    expect(screen.getByText("OldScorer")).toBeInTheDocument();
-    expect(stackedScoreButton).toHaveTextContent("0.9");
+    expect(within(screen.getByRole("tabpanel")).getByText("OldScorer")).toBeInTheDocument();
+    expect(stackedScoreButton).toHaveTextContent("Score: 0.9");
   });
 
   it("should not show a stacked control when the message has only one score", () => {
@@ -629,7 +631,7 @@ describe("MessageList", () => {
     await user.click(screen.getByRole("button", { name: /view 4 scores/i }));
     expect(screen.getAllByRole("tab")).toHaveLength(2);
     const objectiveTab = screen.getByRole("tab", {
-      name: /score 1 from objectivescorer, objective score/i,
+      name: /final score from objectivescorer: 1/i,
     });
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
     const moreScoresButton = screen.getByRole("button", { name: "More scores, 2 hidden" });
@@ -638,7 +640,7 @@ describe("MessageList", () => {
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
 
     const overflowScore = screen.getByRole("menuitem", {
-      name: /3 · overflowscorer/i,
+      name: /score 4 · overflowscorer · 3/i,
     });
     expect(overflowScore).toBeInTheDocument();
     expect(
@@ -651,15 +653,15 @@ describe("MessageList", () => {
     await user.click(overflowScore);
 
     expect(
-      screen.getByRole("tab", { name: /score 3 from overflowscorer/i })
+      screen.getByRole("tab", { name: /score from overflowscorer: 3/i })
     ).toHaveAttribute("aria-selected", "true");
     expect(
-      screen.queryByRole("tab", { name: /score 0 from firstscorer/i })
+      screen.queryByRole("tab", { name: /score from firstscorer: 0/i })
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "More scores, 2 hidden" }));
     expect(
-      screen.getByRole("menuitem", { name: /0 · firstscorer/i })
+      screen.getByRole("menuitem", { name: /score 2 · firstscorer · 0/i })
     ).toBeInTheDocument();
   });
 
@@ -706,18 +708,18 @@ describe("MessageList", () => {
     expect(screen.getAllByRole("tab")).toHaveLength(2);
 
     await user.click(screen.getByRole("button", { name: "More scores, 1 hidden" }));
-    await user.click(screen.getByRole("menuitem", { name: /2 · thirdscorer/i }));
+    await user.click(screen.getByRole("menuitem", { name: /score 3 · thirdscorer · 2/i }));
 
     expect(screen.getAllByRole("tab")).toHaveLength(2);
     expect(
-      screen.getByRole("tab", { name: /score 2 from thirdscorer/i })
+      screen.getByRole("tab", { name: /score from thirdscorer: 2/i })
     ).toHaveAttribute("aria-selected", "true");
     expect(
       screen.getByRole("tab", { name: /objectivescorer/i })
     ).toBeInTheDocument();
   });
 
-  it("should disambiguate identical overflow scores with piece, category, and ordinal context", async () => {
+  it("should number identical overflow scores independently", async () => {
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
       configurable: true,
       get() {
@@ -780,13 +782,13 @@ describe("MessageList", () => {
     await user.click(screen.getByRole("button", { name: "More scores, 3 hidden" }));
 
     expect(screen.getByRole("menuitem", {
-      name: "0.5 · SharedScorer · Piece 2 · text · Categories: alpha",
+      name: "Score 3 · SharedScorer · 0.5 · Categories: alpha",
     })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", {
-      name: "0.5 · SharedScorer · Piece 3 · text · Categories: beta · 1 of 2",
+      name: "Score 4 · SharedScorer · 0.5 · Categories: beta",
     })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", {
-      name: "0.5 · SharedScorer · Piece 3 · text · Categories: beta · 2 of 2",
+      name: "Score 5 · SharedScorer · 0.5 · Categories: beta",
     })).toBeInTheDocument();
   });
 
