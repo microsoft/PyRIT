@@ -39,7 +39,7 @@ class AgentThreatRulesScorer(RegexScorer):
     injection, tool poisoning, context exfiltration and related categories.
     This scorer consumes a precompiled digest that ATR's CI publishes, so it
     adds no dependency: every pattern in the digest is plain Python ``re``
-    syntax and is compiled by :class:`RegexScorer` exactly as any other
+    syntax and is compiled by ``RegexScorer`` exactly as any other
     pattern set would be.
 
     The digest is fetched from a pinned commit by default and cached under
@@ -76,8 +76,8 @@ class AgentThreatRulesScorer(RegexScorer):
                 the digest's own ``default_fields``.
             categories: Score categories. Defaults to ``("agent_threat",)``.
             cache: Whether to cache the fetched digest under ``DB_DATA_PATH``.
-            validator: Passed through to :class:`RegexScorer`.
-            score_aggregator: Passed through to :class:`RegexScorer`.
+            validator: Passed through to ``RegexScorer``.
+            score_aggregator: Passed through to ``RegexScorer``.
 
         Raises:
             ValueError: If the digest is unreadable, carries an unsupported
@@ -122,7 +122,7 @@ def _patterns_from_digest(
 ) -> dict[str, str]:
     """
     Select the digest conditions that apply to ``fields`` and return them as
-    the ``{name: pattern}`` mapping :class:`RegexScorer` expects.
+    the ``{name: pattern}`` mapping ``RegexScorer`` expects.
 
     Condition keys are already unique in the digest (``<rule-id>#<index>``),
     so they double as pattern names and keep a match traceable to its rule.
