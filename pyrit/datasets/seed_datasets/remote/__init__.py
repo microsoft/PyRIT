@@ -54,6 +54,12 @@ if TYPE_CHECKING:
         _FigStepProDataset,
     )
     from pyrit.datasets.seed_datasets.remote.forbidden_questions_dataset import _ForbiddenQuestionsDataset
+    from pyrit.datasets.seed_datasets.remote.fortress_dataset import (
+        FortressRiskDomain,
+        FortressRiskSubdomain,
+        FortressSplit,
+        _FortressDataset,
+    )
     from pyrit.datasets.seed_datasets.remote.garak_audio_dataset import _GarakAudioAchillesHeelDataset
     from pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset import (
         _GarakCratesDataset,
@@ -155,6 +161,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "DecodingTrustToxicitySubset": "pyrit.datasets.seed_datasets.remote.decoding_trust_toxicity_dataset",
     "FigStepCategory": "pyrit.datasets.seed_datasets.remote.figstep_dataset",
     "FigStepVariant": "pyrit.datasets.seed_datasets.remote.figstep_dataset",
+    "FortressRiskDomain": "pyrit.datasets.seed_datasets.remote.fortress_dataset",
+    "FortressRiskSubdomain": "pyrit.datasets.seed_datasets.remote.fortress_dataset",
+    "FortressSplit": "pyrit.datasets.seed_datasets.remote.fortress_dataset",
     "HiXSTestLanguage": "pyrit.datasets.seed_datasets.remote.hixstest_dataset",
     "MMSafetyBenchCategory": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
     "MMSafetyBenchVariant": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
@@ -195,6 +204,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_FigStepDataset": "pyrit.datasets.seed_datasets.remote.figstep_dataset",
     "_FigStepProDataset": "pyrit.datasets.seed_datasets.remote.figstep_dataset",
     "_ForbiddenQuestionsDataset": "pyrit.datasets.seed_datasets.remote.forbidden_questions_dataset",
+    "_FortressDataset": "pyrit.datasets.seed_datasets.remote.fortress_dataset",
     "_GarakAudioAchillesHeelDataset": "pyrit.datasets.seed_datasets.remote.garak_audio_dataset",
     "_GarakCratesDataset": "pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset",
     "_GarakDartDataset": "pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset",
