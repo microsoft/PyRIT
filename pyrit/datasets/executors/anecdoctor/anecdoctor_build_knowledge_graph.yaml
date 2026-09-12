@@ -10,7 +10,7 @@ authors:
   - Madeleine Daepp
 groups:
   - Microsoft Research
-source: Link TBA
+source: https://aclanthology.org/2025.emnlp-main.964.pdf
 parameters:
   - language
   - type

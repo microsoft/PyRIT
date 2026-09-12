@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -137,8 +137,8 @@ def _make_db_scenario_result(
     sr.get_techniques_used.return_value = []
     sr.attack_results = attack_results or {}
     sr.number_tries = 1
-    sr.creation_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    sr.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=timezone.utc)
+    sr.creation_time = datetime(2025, 1, 1, tzinfo=UTC)
+    sr.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=UTC)
     sr.labels = {}
     sr.objective_achieved_rate.return_value = 0
     sr.get_display_groups.return_value = {}
@@ -1419,7 +1419,7 @@ class TestScenarioRunServiceGetRun:
             conversation_id="conversation-1",
             objective="objective",
             outcome=AttackOutcome.SUCCESS,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
             attribution_data={"parent_collection": "legacy attack", "parent_eval_hash": "eval"},
         )
         db_result = make_scenario_result(
@@ -1545,7 +1545,7 @@ class TestScenarioRunServiceListRuns:
             plan_atomic_groups=[group.model_dump(mode="json") for group in plan.atomic_groups],
             plan_seed_id_map=[{"id": seed.id, "objective_sha256": seed.objective_sha256} for seed in plan.seed_groups],
         )
-        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+        timestamp = datetime(2026, 8, 7, tzinfo=UTC)
         mock_memory.get_scenario_run_history_page.return_value = (
             [record],
             {
@@ -1676,7 +1676,7 @@ class TestScenarioRunServiceListRuns:
                 {"id": "seed-2", "objective_sha256": "shared-hash"},
             ],
         )
-        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+        timestamp = datetime(2026, 8, 7, tzinfo=UTC)
         mock_memory.get_scenario_run_history_page.return_value = (
             [record],
             {
@@ -1743,7 +1743,7 @@ class TestScenarioRunServiceListRuns:
                 successful_units=1,
                 error_attempts=1,
                 total_retries=4,
-                latest_attempt_timestamp=datetime(2026, 8, 7, tzinfo=timezone.utc),
+                latest_attempt_timestamp=datetime(2026, 8, 7, tzinfo=UTC),
                 atomic_attack_names=("attack",),
             )
         }
@@ -1943,7 +1943,7 @@ class TestScenarioRunServiceRecovery:
         assert all("shut down" in call.kwargs["error_message"] for call in failure_calls)
 
     def test_overload_summaries_group_429_and_5xx_by_role_without_false_positives(self, mock_memory) -> None:
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         events = [
             RetryEvent(component_role="adversarial_chat", status_code=429, timestamp=now),
             RetryEvent(component_role="adversarial_chat", status_code=503, timestamp=now + timedelta(seconds=2)),
@@ -1972,7 +1972,7 @@ class TestScenarioRunServiceRecovery:
             objective="persisted during cancellation",
             outcome=AttackOutcome.ERROR,
             execution_time_ms=10,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
             error_type="CancelledError",
             error_message="cancelled",
             attribution_data={"parent_collection": "attack"},
@@ -2043,8 +2043,8 @@ class TestScenarioRunServiceExecution:
         mock_scenario_result.get_techniques_used.return_value = ["base64"]
         mock_scenario_result.attack_results = {"attack1": []}
         mock_scenario_result.number_tries = 1
-        mock_scenario_result.creation_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        mock_scenario_result.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=timezone.utc)
+        mock_scenario_result.creation_time = datetime(2025, 1, 1, tzinfo=UTC)
+        mock_scenario_result.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=UTC)
 
         execution_started = asyncio.Event()
         release_execution = asyncio.Event()
@@ -2480,7 +2480,7 @@ def test_planned_progress_deduplicates_attempts_and_keeps_latest_outcome(mock_me
             objective="objective",
             atomic_attack_identifier=atomic_identifier,
             outcome=outcome,
-            timestamp=datetime(2025, 1, 1, 0, index, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, 0, index, tzinfo=UTC),
             attribution_data={"parent_collection": "attack", "parent_eval_hash": "eval"},
         )
         for index, outcome in enumerate(
@@ -2584,7 +2584,7 @@ def test_history_and_detail_retry_work_match_across_attempt_partitions(mock_memo
             )
         ],
     )
-    timestamp = datetime(2026, 8, 8, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 8, tzinfo=UTC)
     attempts = [
         AttackResult(
             conversation_id=f"conversation-{index}",
@@ -2658,7 +2658,7 @@ def test_planned_progress_maps_legacy_objective_hash_to_logical_seed_id(mock_mem
         conversation_id="legacy-conversation",
         objective=objective,
         outcome=AttackOutcome.SUCCESS,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         attribution_data={"parent_collection": "attack", "parent_eval_hash": "eval"},
     )
     scenario_result = make_scenario_result(
@@ -2733,7 +2733,7 @@ def test_get_progress_cache_only_maps_new_storage_rows(mock_memory) -> None:
             objective=seed_id,
             outcome=AttackOutcome.SUCCESS,
             execution_time_ms=10,
-            timestamp=datetime(2025, 1, 1, 0, index, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, 0, index, tzinfo=UTC),
             attribution_data={
                 "parent_collection": "attack",
                 "parent_eval_hash": "eval",
@@ -2793,7 +2793,7 @@ def test_get_progress_cache_refreshes_identifier_enriched_after_insert(mock_memo
         objective="objective",
         outcome=AttackOutcome.SUCCESS,
         execution_time_ms=10,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack_identifier),
         attribution_data={
             "parent_collection": "attack",
@@ -2831,7 +2831,7 @@ def test_get_progress_cache_refreshes_identifier_enriched_after_insert(mock_memo
 
 
 def test_get_progress_exposes_persisted_started_at(mock_memory) -> None:
-    started_at = datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)
+    started_at = datetime(2026, 8, 8, 12, 30, tzinfo=UTC)
     header = make_scenario_result(
         attack_results={},
         metadata={
@@ -2904,7 +2904,7 @@ def test_progress_prefers_persisted_logical_seed_group_attribution() -> None:
         objective_sha256="objective-sha",
         outcome=AttackOutcome.SUCCESS,
         execution_time_ms=10,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         attribution_data={
             "parent_collection": "attack",
             "parent_eval_hash": "eval",
@@ -2976,7 +2976,7 @@ def test_progress_builds_attack_technique_details_once_per_atomic_group() -> Non
         objective_sha256="objective-sha",
         outcome=AttackOutcome.SUCCESS,
         execution_time_ms=10,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         atomic_attack_identifier=AtomicAttackIdentifier.build(
             technique_identifier=technique_identifier,
             seed_group=AttackSeedGroup(seeds=[SeedObjective(value="objective")]),
@@ -3063,7 +3063,7 @@ def test_synthesize_legacy_plan_deduplicates_seed_ids_in_first_seen_order() -> N
             objective=objective,
             outcome=AttackOutcome.SUCCESS,
             execution_time_ms=10,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
             attribution_data={
                 "parent_collection": attack_name,
                 "parent_eval_hash": eval_hash,
@@ -3093,7 +3093,7 @@ def test_get_progress_synthesizes_incomplete_legacy_plan(mock_memory) -> None:
         objective="legacy objective",
         outcome=AttackOutcome.FAILURE,
         execution_time_ms=10,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         attribution_data={"parent_collection": "legacy attack"},
     )
     mock_memory.get_scenario_result_header.return_value = header
@@ -3161,7 +3161,7 @@ def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None
             seed_group_id="seed-1",
             outcome=AttackOutcome.SUCCESS,
             execution_time_ms=10,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         ),
         ScenarioProgressResult(
             attack_result_id=str(uuid.uuid4()),
@@ -3171,7 +3171,7 @@ def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None
             seed_group_id="seed-1",
             outcome=AttackOutcome.ERROR,
             execution_time_ms=10,
-            timestamp=datetime(2025, 1, 1, 0, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, 0, 1, tzinfo=UTC),
         ),
         ScenarioProgressResult(
             attack_result_id=str(uuid.uuid4()),
@@ -3181,7 +3181,7 @@ def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None
             seed_group_id="seed-2",
             outcome=AttackOutcome.FAILURE,
             execution_time_ms=10,
-            timestamp=datetime(2025, 1, 1, 0, 2, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, 0, 2, tzinfo=UTC),
             total_retries=2,
             score=ScenarioProgressScore(
                 scorer_name="FloatScaleThresholdScorer",
@@ -3277,7 +3277,7 @@ def test_decode_progress_cursor_rejects_cross_run_cursor() -> None:
         objective="objective",
         outcome=AttackOutcome.SUCCESS,
         execution_time_ms=10,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
     )
     cursor = ScenarioRunService._encode_progress_cursor(scenario_result_id="run-a", delta=delta)
 

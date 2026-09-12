@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -317,7 +317,7 @@ def test_handles_empty_attack_results(sqlite_instance: MemoryInterface):
 def test_terminal_state_updates_completion_time_only_on_terminal_transition(
     sqlite_instance: MemoryInterface,
 ) -> None:
-    old_completion = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    old_completion = datetime(2020, 1, 1, tzinfo=UTC)
     scenario_result = create_scenario_result(name="Timing Scenario")
     scenario_result.completion_time = old_completion
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
@@ -500,7 +500,7 @@ def test_filter_by_completion_time(sqlite_instance: MemoryInterface):
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
 
     # Create scenarios with different completion times
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     yesterday = now - timedelta(days=1)
     last_week = now - timedelta(days=7)
 
@@ -701,7 +701,7 @@ def test_combined_filters(sqlite_instance: MemoryInterface):
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
 
     # Create scenarios with various properties
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     yesterday = now - timedelta(days=1)
 
     scenario1 = make_scenario_result(

@@ -7,8 +7,8 @@ import uuid
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, ClassVar, Generic, Literal, TypeVar, get_args, get_origin
+from datetime import UTC, datetime
+from typing import Any, ClassVar, Generic, Literal, Self, TypeVar, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
@@ -32,7 +32,6 @@ from sqlalchemy.orm import (
     relationship,
 )
 from sqlalchemy.types import Uuid
-from typing_extensions import Self
 
 import pyrit
 from pyrit.common.utils import to_sha256
@@ -214,7 +213,7 @@ class UTCDateTime(TypeDecorator[datetime]):
             datetime | None: The value with UTC tzinfo if it was naive, otherwise unchanged.
         """
         if value is not None and value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=UTC)
         return value
 
 
@@ -1555,7 +1554,8 @@ class AttackResultEntry(Base):
             (technique, seeds, etc.).
         objective_sha256 (str): The SHA256 hash of the objective.
         last_response_id (Uuid): Foreign key to the last response MessagePiece.
-        last_score_id (Uuid): Foreign key to the last score ScoreEntry.
+        automated_score_id (Uuid): Foreign key to the automated score ScoreEntry.
+        human_score_id (Uuid): Foreign key to the human score ScoreEntry.
         executed_turns (int): Total number of turns that were executed.
         execution_time_ms (int): Total execution time of the attack in milliseconds.
         outcome (AttackOutcome): The outcome of the attack, indicating success, failure, or undetermined.
@@ -1569,7 +1569,8 @@ class AttackResultEntry(Base):
         adversarial_chat_conversation_ids (list[str]): List of conversation IDs used for adversarial chat.
         timestamp (DateTime): The timestamp of the attack result entry.
         last_response (PromptMemoryEntry): Relationship to the last response prompt memory entry.
-        last_score (ScoreEntry): Relationship to the last score entry.
+        automated_score (ScoreEntry): Relationship to the automated score entry.
+        human_score (ScoreEntry): Relationship to the human score entry.
 
     Methods:
         __str__(): Returns a string representation of the attack result entry.
@@ -1620,7 +1621,10 @@ class AttackResultEntry(Base):
     last_response_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=True
     )
-    last_score_id: Mapped[uuid.UUID | None] = mapped_column(
+    automated_score_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey(f"{ScoreEntry.__tablename__}.id"), nullable=True
+    )
+    human_score_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey(f"{ScoreEntry.__tablename__}.id"), nullable=True
     )
     executed_turns = mapped_column(INTEGER, nullable=False, default=0)
@@ -1667,9 +1671,13 @@ class AttackResultEntry(Base):
         "PromptMemoryEntry",
         foreign_keys=[last_response_id],
     )
-    last_score: Mapped["ScoreEntry | None"] = relationship(
+    automated_score: Mapped["ScoreEntry | None"] = relationship(
         "ScoreEntry",
-        foreign_keys=[last_score_id],
+        foreign_keys=[automated_score_id],
+    )
+    human_score: Mapped["ScoreEntry | None"] = relationship(
+        "ScoreEntry",
+        foreign_keys=[human_score_id],
     )
     atomic_attack_identifier_entry: Mapped["AtomicAttackIdentifierEntry | None"] = relationship(
         "AtomicAttackIdentifierEntry",
@@ -1704,7 +1712,8 @@ class AttackResultEntry(Base):
 
         # Use helper method for UUID conversions
         self.last_response_id = self._get_id_as_uuid(entry.last_response)
-        self.last_score_id = self._get_id_as_uuid(entry.last_score)
+        self.automated_score_id = self._get_id_as_uuid(entry.automated_score)
+        self.human_score_id = self._get_id_as_uuid(entry.human_score)
 
         self.executed_turns = entry.executed_turns
         self.execution_time_ms = entry.execution_time_ms
@@ -1730,7 +1739,7 @@ class AttackResultEntry(Base):
             ref.conversation_id for ref in entry.get_conversations_by_type(ConversationType.ADVERSARIAL)
         ] or None
 
-        self.timestamp = entry.timestamp or datetime.now(tz=timezone.utc)
+        self.timestamp = entry.timestamp or datetime.now(tz=UTC)
         self.pyrit_version = pyrit.__version__
 
         # Error information
@@ -1842,14 +1851,15 @@ class AttackResultEntry(Base):
             objective=self.objective,
             atomic_attack_identifier=atomic_id,
             last_response=self.last_response.get_message_piece() if self.last_response else None,
-            last_score=self.last_score.get_score() if self.last_score else None,
+            automated_score=self.automated_score.get_score() if self.automated_score else None,
+            human_score=self.human_score.get_score() if self.human_score else None,
             executed_turns=self.executed_turns,
             execution_time_ms=self.execution_time_ms,
             outcome=AttackOutcome(self.outcome),
             outcome_reason=self.outcome_reason,
             related_conversations=related_conversations,
             metadata=self.attack_metadata or {},
-            timestamp=self.timestamp or datetime.now(tz=timezone.utc),
+            timestamp=self.timestamp or datetime.now(tz=UTC),
             operator=self.operator,
             operation=self.operation,
             labels=self.labels or {},

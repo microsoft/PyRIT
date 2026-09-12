@@ -10,7 +10,7 @@ import json
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -99,7 +99,7 @@ def decode_keyset_cursor(*, cursor: str | None, fingerprint: str) -> DecodedKeys
     if timestamp.tzinfo is None:
         return None
     try:
-        timestamp = timestamp.astimezone(timezone.utc)
+        timestamp = timestamp.astimezone(UTC)
     except (OverflowError, OSError):
         return None
     return DecodedKeysetCursor(timestamp=timestamp, identifier=identifier)

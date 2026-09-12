@@ -5,7 +5,7 @@
 Tests for scenario run API routes.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import get_ident
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -60,8 +60,8 @@ def _mock_run_response(
         scenario_result_id=run_id,
         scenario_name=scenario_name,
         status=run_status,
-        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        updated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2025, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2025, 1, 1, tzinfo=UTC),
         error=None,
     )
 
@@ -257,7 +257,7 @@ class TestScenarioRunQueueRoute:
     """Tests for GET /api/scenarios/runs/queue."""
 
     def test_queue_returns_active_and_ordered_entries(self, client: TestClient) -> None:
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         snapshot = ScenarioQueueSnapshot(
             revision=4,
             snapshot_at=now,
@@ -327,7 +327,7 @@ class TestGetScenarioRunRoute:
             conversation_id="conversation-1",
             objective="objective",
             outcome=AttackOutcome.SUCCESS,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
             attribution_data={"parent_collection": "legacy attack"},
         )
         db_result = make_scenario_result(
@@ -376,7 +376,7 @@ class TestGetScenarioRunRoute:
                 scenario_registry_name="test.scenario",
                 scenario_version=1,
                 status=ScenarioRunState.IN_PROGRESS,
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                created_at=datetime(2025, 1, 1, tzinfo=UTC),
             ),
             plan=ScenarioRunPlan(
                 scenario_registry_name="test.scenario",
@@ -433,7 +433,7 @@ class TestGetScenarioRunRoute:
                 scenario_registry_name="test.scenario",
                 scenario_version=1,
                 status=ScenarioRunState.IN_PROGRESS,
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                created_at=datetime(2025, 1, 1, tzinfo=UTC),
             ),
             plan=ScenarioRunPlan(
                 scenario_registry_name="test.scenario",
@@ -532,7 +532,7 @@ class TestGetScenarioRunResultsRoute:
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
             execution_time_ms=100,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         )
         scenario_result = make_scenario_result(
             scenario_name="foundry.red_team_agent",

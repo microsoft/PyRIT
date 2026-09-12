@@ -13,16 +13,13 @@ Converters can be:
 """
 
 import base64
-import binascii
 import mimetypes
 import uuid
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qs, urlparse
 
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
-from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.backend.models.converters import (
     ConverterCatalogEntry,
     ConverterCatalogResponse,
@@ -34,6 +31,7 @@ from pyrit.backend.models.converters import (
     CreateConverterResponse,
     PreviewStep,
 )
+from pyrit.backend.services.media_persistence import persist_media_value_async
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
 from pyrit.registry.components import ConverterRegistry
@@ -174,51 +172,19 @@ class ConverterService:
         original_value = request.original_value
         data_type = request.original_value_data_type
 
-        # For path-based data types, persist base64/data-uri to a file.
-        # Reuse the same detection logic as AttackService._persist_base64_pieces_async
-        # to correctly distinguish file paths / URLs from raw base64 payloads.
+        # For path-based data types, resolve references or persist base64/data URIs.
         if str(data_type).endswith("_path"):
-            # Already a remote URL — keep as-is
-            if original_value.startswith(("http://", "https://")):
-                pass
-            # Already a local media URL (e.g. /api/media?path=...) — extract the file path
-            elif original_value.startswith("/api/media"):
-                parsed = urlparse(original_value)
-                file_path = parse_qs(parsed.query).get("path", [None])[0]
-                if file_path:
-                    original_value = file_path
-            # Data URI from the frontend (e.g. "data:image/png;base64,...") — decode and persist
-            elif original_value.startswith("data:"):
-                _, _, value = original_value.partition(",")
-
-                ext = DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
-
-                serializer = data_serializer_factory(
-                    category="prompt-memory-entries",
-                    data_type=data_type,
-                    extension=ext,
-                )
-                await serializer.save_b64_image_async(data=value)
-                original_value = str(serializer.value)
-            else:
-                try:
-                    is_existing_file = Path(original_value).is_file()
-                except (OSError, ValueError):
-                    if not self._is_raw_base64(original_value):
-                        raise
-                    is_existing_file = False
-
-                if not is_existing_file:
-                    # Treat as raw base64
-                    ext = DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
-
-                    serializer = data_serializer_factory(
-                        category="prompt-memory-entries",
-                        data_type=data_type,
-                        extension=ext,
-                    )
-                    await serializer.save_b64_image_async(data=original_value)
-                    original_value = str(serializer.value)
+            result = await persist_media_value_async(
+                value=original_value,
+                data_type=data_type,
+                # Preview historically derives data-URI extensions from the
+                # declared prompt type; attack ingestion additionally accepts
+                # explicit/data-URI MIME metadata.
+                use_data_uri_mime_type=False,
+                require_valid_base64_after_path_error=True,
+                serializer_factory=data_serializer_factory,
+            )
+            original_value = result.value
 
         converters = self._gather_converters(converter_ids=request.converter_ids)
         steps, final_value, final_type = await self._apply_converters_async(
@@ -366,20 +332,6 @@ class ConverterService:
             )
 
         return steps, current_value, current_type
-
-    @staticmethod
-    def _is_raw_base64(value: str) -> bool:
-        """
-        Determine whether a value is syntactically valid raw base64.
-
-        Returns:
-            True when the value is valid raw base64, otherwise False.
-        """
-        try:
-            base64.b64decode(value, validate=True)
-        except binascii.Error:
-            return False
-        return True
 
 
 # ============================================================================

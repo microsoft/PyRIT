@@ -22,7 +22,7 @@ import hashlib
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, ClassVar, get_args, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar, Self, get_args, get_origin
 
 from pydantic import (
     BaseModel,
@@ -34,7 +34,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
-from typing_extensions import Self, TypeAliasType
+from typing_extensions import TypeAliasType
 
 import pyrit
 

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
@@ -120,8 +120,11 @@ class AttackResult(StrategyResult):
     # Model response generated in the final turn of the attack
     last_response: MessagePiece | None = None
 
-    # Score assigned to the final response by a scorer component
-    last_score: Score | None = None
+    # Score assigned to the final response by an automated scorer component
+    automated_score: Score | None = None
+
+    # Score assigned to the final response by a human
+    human_score: Score | None = None
 
     # Metrics
     # Total number of turns that were executed
@@ -138,7 +141,7 @@ class AttackResult(StrategyResult):
     outcome_reason: str | None = None
 
     # Wall-clock time the result was created or persisted.
-    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
     # Flexible conversation refs (nothing unused)
     related_conversations: set[ConversationReference] = Field(default_factory=set)
@@ -201,6 +204,11 @@ class AttackResult(StrategyResult):
         normalized["operator"] = operator
         normalized["operation"] = operation
         return normalized
+
+    @property
+    def last_score(self) -> Score | None:
+        """The human score when present, otherwise the automated score."""
+        return self.human_score or self.automated_score
 
     def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """

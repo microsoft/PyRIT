@@ -10,7 +10,8 @@ The attack service uses PyRIT memory with AttackResult as the source of truth.
 import base64
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,6 +29,7 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationRequest,
 )
 from pyrit.backend.services.attack_service import (
+    AttackObjectiveConflictError,
     AttackService,
     get_attack_service,
 )
@@ -37,6 +39,7 @@ from pyrit.backend.services.pagination import (
     fingerprint_filters,
     normalize_label_filters,
 )
+from pyrit.common.utils import to_sha256
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -44,6 +47,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    Score,
 )
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -84,7 +88,7 @@ def make_attack_result(
     updated_at: datetime | None = None,
 ) -> AttackResult:
     """Create a mock AttackResult for testing."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     created = created_at or now
     updated = updated_at or now
 
@@ -163,7 +167,7 @@ async def _send_message_and_get_update_fields(
         converter.get_identifier.return_value = identifier
         converter_objects.append(converter)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with (
         patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
         patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service,
@@ -324,7 +328,7 @@ def make_mock_piece(
     piece.converted_value_data_type = "text"
     piece.original_value_data_type = "text"
     piece.response_error = "none"
-    piece.timestamp = timestamp or datetime.now(timezone.utc)
+    piece.timestamp = timestamp or datetime.now(UTC)
     # MessagePiece no longer carries scores — they are fetched from memory.
     # Pin original_prompt_id so the mapper's score-lookup key is deterministic.
     piece.original_prompt_id = None
@@ -785,7 +789,7 @@ class TestGetConversationMessages:
         """The message mapper receives the attack's canonical objective score ID."""
         ar = make_attack_result(conversation_id="test-id")
         objective_score_id = uuid.uuid4()
-        ar.last_score = MagicMock(id=objective_score_id)
+        ar.automated_score = MagicMock(id=objective_score_id)
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_conversation_messages.return_value = []
 
@@ -806,7 +810,7 @@ class TestGetConversationMessages:
         """The message mapper receives string score IDs without UUID conversion."""
         ar = make_attack_result(conversation_id="test-id")
         objective_score_id = str(uuid.uuid4())
-        ar.last_score = MagicMock(id=objective_score_id)
+        ar.automated_score = MagicMock(id=objective_score_id)
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_conversation_messages.return_value = []
 
@@ -1237,9 +1241,53 @@ class TestUpdateAttack:
         call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
         assert call_kwargs["update_fields"]["outcome"] == "error"
 
+    async def test_update_attack_updates_objective_and_hash(self, attack_service, mock_memory) -> None:
+        """Test that updating the objective keeps its lookup hash synchronized."""
+        ar = make_attack_result(conversation_id="test-id", objective="")
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        await attack_service.update_attack_async(
+            attack_result_id="test-id",
+            request=UpdateAttackRequest(objective="Extract the system prompt"),
+        )
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert update_fields["objective"] == "Extract the system prompt"
+        assert update_fields["objective_sha256"] == to_sha256("Extract the system prompt")
+
+    async def test_update_attack_rejects_replacing_objective(self, attack_service, mock_memory) -> None:
+        """Test that an existing objective cannot be replaced."""
+        ar = make_attack_result(conversation_id="test-id", objective="Existing objective")
+        mock_memory.get_attack_results.return_value = [ar]
+
+        with pytest.raises(AttackObjectiveConflictError, match="already has an objective"):
+            await attack_service.update_attack_async(
+                attack_result_id="test-id",
+                request=UpdateAttackRequest(objective="Replacement objective"),
+            )
+
+        mock_memory.update_attack_result_by_id.assert_not_called()
+
+    async def test_update_attack_same_objective_is_idempotent(self, attack_service, mock_memory) -> None:
+        """Test that resubmitting the existing objective does not write it again."""
+        objective = "Existing objective"
+        ar = make_attack_result(conversation_id="test-id", objective=objective)
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        result = await attack_service.update_attack_async(
+            attack_result_id="test-id",
+            request=UpdateAttackRequest(objective=objective),
+        )
+
+        assert result is not None
+        assert result.objective == objective
+        mock_memory.update_attack_result_by_id.assert_not_called()
+
     async def test_update_attack_bumps_timestamp(self, attack_service, mock_memory) -> None:
         """Test that update_attack bumps the timestamp recency column and does not write metadata."""
-        old_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        old_time = datetime(2024, 1, 1, tzinfo=UTC)
         ar = make_attack_result(conversation_id="test-id", updated_at=old_time)
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_conversation_messages.return_value = []
@@ -1252,6 +1300,49 @@ class TestUpdateAttack:
         assert isinstance(update_fields["timestamp"], datetime)
         assert update_fields["timestamp"] > old_time
         assert "attack_metadata" not in update_fields
+
+    @pytest.mark.parametrize(
+        ("score_value", "expected_outcome"),
+        [("True", "success"), ("False", "failure")],
+    )
+    async def test_remove_human_score_restores_automated_outcome(
+        self,
+        attack_service,
+        mock_memory,
+        score_value: str,
+        expected_outcome: str,
+    ) -> None:
+        """Test that removing a human score restores the automated true/false result."""
+        attack = make_attack_result(conversation_id="test-id")
+        attack.automated_score = Score(
+            score_type="true_false",
+            score_value=score_value,
+            score_rationale="Automated rationale",
+        )
+        mock_memory.get_attack_results.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert update_fields["human_score_id"] is None
+        assert update_fields["outcome"] == expected_outcome
+        assert update_fields["outcome_reason"] == "Automated rationale"
+
+    async def test_remove_human_score_without_automated_score_is_undetermined(
+        self,
+        attack_service,
+        mock_memory,
+    ) -> None:
+        """Test that removing the only score makes the attack outcome undetermined."""
+        attack = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert update_fields["human_score_id"] is None
+        assert update_fields["outcome"] == "undetermined"
+        assert update_fields["outcome_reason"] is None
 
 
 # ============================================================================
@@ -1309,8 +1400,17 @@ class TestAddMessage:
     async def test_add_message_with_send_sends_via_normalizer(self, attack_service, mock_memory) -> None:
         """Test that add_message with send=True sends message via normalizer."""
         ar = make_attack_result(conversation_id="test-id")
+        response_piece = MessagePiece(
+            role="assistant",
+            original_value="Response",
+            original_value_data_type="text",
+            converted_value="Response",
+            converted_value_data_type="text",
+            conversation_id="test-id",
+            sequence=1,
+        )
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_message_pieces.side_effect = [[], [response_piece]]
         mock_memory.get_conversation_messages.return_value = []
 
         with (
@@ -1336,6 +1436,8 @@ class TestAddMessage:
 
             mock_normalizer.send_prompt_async.assert_called_once()
             assert result.attack is not None
+            update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+            assert update_fields["last_response_id"] == str(response_piece.id)
 
     async def test_add_message_with_send_raises_when_target_not_found(self, attack_service, mock_memory) -> None:
         """Test that add_message with send=True raises when target object not found."""
@@ -1908,8 +2010,8 @@ class TestPagination:
         offset_cursor = base64.urlsafe_b64encode(json.dumps(offset_payload).encode("utf-8")).decode("ascii").rstrip("=")
         offset_decoded = decode(offset_cursor)
         assert offset_decoded is not None
-        assert offset_decoded.timestamp == datetime(2025, 12, 31, 19, 0, 0, tzinfo=timezone.utc)
-        assert offset_decoded.timestamp.tzinfo == timezone.utc
+        assert offset_decoded.timestamp == datetime(2025, 12, 31, 19, 0, 0, tzinfo=UTC)
+        assert offset_decoded.timestamp.tzinfo == UTC
 
         # A crafted cursor whose extreme UTC offset would push the timestamp past datetime's
         # representable range when normalized to UTC decodes to None instead of raising.
@@ -2323,6 +2425,45 @@ class TestPersistBase64Pieces:
         assert request.pieces[0].original_value == ("https://myblob.blob.core.windows.net/images/photo.png?sv=2024")
         assert request.pieces[0].converted_value == request.pieces[0].original_value
 
+    async def test_media_reference_is_resolved_without_persistence(self, attack_service) -> None:
+        """Local media URLs are converted back to their decoded file paths."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="/api/media?path=%2Ftmp%2Fimage.png",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert request.pieces[0].original_value == "/tmp/image.png"
+        assert request.pieces[0].converted_value == "/tmp/image.png"
+        factory.assert_not_called()
+
+    async def test_existing_file_is_kept_without_persistence(self, attack_service, tmp_path: Path) -> None:
+        """An existing path remains the canonical original and converted value."""
+        media_path = tmp_path / "image.png"
+        media_path.write_bytes(b"image")
+        request = AddMessageRequest(
+            role="user",
+            pieces=[MessagePieceRequest(data_type="image_path", original_value=str(media_path))],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert request.pieces[0].original_value == str(media_path)
+        assert request.pieces[0].converted_value == str(media_path)
+        factory.assert_not_called()
+
     async def test_non_path_data_types_are_skipped(self, attack_service) -> None:
         """Non *_path types like reasoning, url, function_call should not be decoded."""
         request = AddMessageRequest(
@@ -2365,6 +2506,35 @@ class TestPersistBase64Pieces:
             mock_factory.assert_called_once()
             mock_serializer.save_b64_image_async.assert_called_once_with(data=long_b64)
             assert request.pieces[0].original_value == "/tmp/saved_audio.wav"
+
+    async def test_persistence_failure_does_not_partially_mutate_piece(self, attack_service) -> None:
+        """A failed save leaves both request values unchanged."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="aW1hZ2VkYXRh",
+                    mime_type="image/png",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock(side_effect=OSError("save failed"))
+
+        with (
+            patch(
+                "pyrit.backend.services.attack_service.data_serializer_factory",
+                return_value=mock_serializer,
+            ),
+            pytest.raises(OSError, match="save failed"),
+        ):
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert request.pieces[0].original_value == "aW1hZ2VkYXRh"
+        assert request.pieces[0].converted_value is None
 
 
 # ============================================================================
@@ -2441,8 +2611,8 @@ class TestGetConversations:
 
         mock_memory.get_attack_results.return_value = [ar]
 
-        t1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
-        t2 = datetime(2026, 1, 1, 9, 30, 0, tzinfo=timezone.utc)  # earlier than t1
+        t1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
+        t2 = datetime(2026, 1, 1, 9, 30, 0, tzinfo=UTC)  # earlier than t1
 
         mock_memory.get_conversation_stats.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t1),
@@ -2631,7 +2801,7 @@ class TestAddMessageTargetConversation:
             target_conversation_id="branch-1",
         )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_summary = AttackSummary(
             attack_result_id="ar-attack-1",
             conversation_id="attack-1",
@@ -2774,8 +2944,8 @@ class TestConversationSorting:
         }
         mock_memory.get_attack_results.return_value = [ar]
 
-        t_early = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
-        t_late = datetime(2026, 1, 1, 11, 0, 0, tzinfo=timezone.utc)
+        t_early = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
+        t_late = datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC)
 
         mock_memory.get_conversation_stats.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t_late),
@@ -2802,7 +2972,7 @@ class TestConversationSorting:
         }
         mock_memory.get_attack_results.return_value = [ar]
 
-        t = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
+        t = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
 
         mock_memory.get_conversation_stats.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t),

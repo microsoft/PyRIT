@@ -13,7 +13,7 @@ import weakref
 from collections.abc import Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
@@ -1354,7 +1354,8 @@ class MemoryInterface(abc.ABC):
                 elif model_class == AttackResultEntry:
                     query = query.options(
                         joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
-                        joinedload(AttackResultEntry.last_score),
+                        joinedload(AttackResultEntry.automated_score),
+                        joinedload(AttackResultEntry.human_score),
                     )
                 if conditions is not None:
                     query = query.filter(conditions)
@@ -1999,7 +2000,7 @@ class MemoryInterface(abc.ABC):
                     value=scorable.value,
                     value_sha256=value_sha256 or hashlib.sha256(scorable.value.encode("utf-8")).hexdigest(),
                     data_type=scorable.data_type,
-                    timestamp=datetime.now(tz=timezone.utc),
+                    timestamp=datetime.now(tz=UTC),
                 )
                 rows[scorable] = row
             anchor_rewrites.append((score, ContentEntryScorable(content_id=row.id, data_type=scorable.data_type)))
@@ -3159,7 +3160,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the 'added_by' attribute is not set for each prompt.
         """
-        current_time = datetime.now(tz=timezone.utc)
+        current_time = datetime.now(tz=UTC)
         for prompt in seeds:
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
@@ -3321,7 +3322,7 @@ class MemoryInterface(abc.ABC):
                 "seeds tagged for another dataset."
             )
 
-        current_time = datetime.now(tz=timezone.utc)
+        current_time = datetime.now(tz=UTC)
         entries: list[SeedEntry] = []
         for prompt in seeds:
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
@@ -4236,7 +4237,7 @@ class MemoryInterface(abc.ABC):
                 ScenarioRunState.FAILED,
                 ScenarioRunState.CANCELLED,
             ):
-                entry.completion_time = datetime.now(tz=timezone.utc)
+                entry.completion_time = datetime.now(tz=UTC)
 
             session.commit()
 
@@ -4285,7 +4286,7 @@ class MemoryInterface(abc.ABC):
             ScenarioRunState.FAILED,
             ScenarioRunState.CANCELLED,
         ):
-            values["completion_time"] = datetime.now(tz=timezone.utc)
+            values["completion_time"] = datetime.now(tz=UTC)
 
         with closing(self.get_session()) as session:
             updated_rows = (
@@ -4866,7 +4867,10 @@ class MemoryInterface(abc.ABC):
                 ScoreEntry.score_rationale,
                 ScoreEntry.scorer_class_identifier,
             )
-            .outerjoin(ScoreEntry, AttackResultEntry.last_score_id == ScoreEntry.id)
+            .outerjoin(
+                ScoreEntry,
+                func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id) == ScoreEntry.id,
+            )
             .where(and_(*conditions))
             .order_by(AttackResultEntry.timestamp.asc(), AttackResultEntry.id.asc())
             .limit(limit + 1)
@@ -5158,7 +5162,7 @@ class MemoryInterface(abc.ABC):
                 )
                 continue
 
-            sort_key = row.timestamp or datetime.min.replace(tzinfo=timezone.utc)
+            sort_key = row.timestamp or datetime.min.replace(tzinfo=UTC)
             grouped[scenario_id].setdefault(name, []).append((sort_key, row.get_attack_result()))
 
         return {

@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
+from azure.ai.contentsafety.models import TextCategory
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, Score, ScoreStatus
 from pyrit.score import (
+    AzureContentFilterScorer,
     FloatScaleScorer,
     HarmHumanLabeledEntry,
     HarmScorerEvaluator,
@@ -955,6 +957,21 @@ class TestSelectEvaluationScore:
     @staticmethod
     def _score(*, category: list[str] | None) -> Score:
         return Score(score_type="float_scale", score_value="0.5", score_category=category)
+
+    @pytest.mark.parametrize("category", list(AzureContentFilterScorer._CATEGORY_EVAL_FILES))
+    @pytest.mark.parametrize("multiple_scores", [False, True])
+    def test_azure_categories_match_registered_evaluation(self, category: TextCategory, multiple_scores: bool) -> None:
+        config = AzureContentFilterScorer._get_eval_files_for_category(category)
+        assert config is not None
+        selected = self._score(category=[category.value])
+        scores = [selected]
+        if multiple_scores:
+            scores = [
+                self._score(category=[other.value])
+                for other in AzureContentFilterScorer._CATEGORY_EVAL_FILES
+                if other != category
+            ] + scores
+        assert ScorerEvaluator._select_evaluation_score(scores=scores, harm_category=config.harm_category) is selected
 
     def test_returns_none_when_the_scorer_returned_nothing(self):
         assert ScorerEvaluator._select_evaluation_score(scores=[], harm_category="hate_speech") is None

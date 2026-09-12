@@ -19,15 +19,10 @@ from collections import OrderedDict, deque
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
-
-try:
-    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
-except ImportError:  # pragma: no cover - exercised only on 3.10
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -386,7 +381,7 @@ class ScenarioRunService:
                 scenario_name=persisted[0].scenario_name,
                 scenario_registry_name=request.scenario_name,
                 created_at=persisted[0].creation_time,
-                enqueued_at=datetime.now(timezone.utc),
+                enqueued_at=datetime.now(UTC),
             )
             await self._enqueue_run_async(scheduled=scheduled)
 
@@ -800,7 +795,7 @@ class ScenarioRunService:
         Returns:
             ScenarioQueueSnapshot: Active run and ordered waiting runs.
         """
-        snapshot_at = datetime.now(timezone.utc)
+        snapshot_at = datetime.now(UTC)
         active = None
         if self._active_scenario_result_id is not None:
             active_run = self._active_tasks.get(self._active_scenario_result_id)
@@ -952,7 +947,7 @@ class ScenarioRunService:
 
     async def _start_scheduled_run_locked_async(self, *, scheduled: _ActiveTask) -> None:
         """Start one run while the scheduler lock guarantees exclusive ownership."""
-        scheduled.started_at = datetime.now(timezone.utc)
+        scheduled.started_at = datetime.now(UTC)
         await asyncio.to_thread(
             self._memory.update_scenario_run_state_and_metadata_fields,
             scenario_result_id=scheduled.scenario_result_id,
@@ -1913,7 +1908,7 @@ class ScenarioRunService:
         """Return a deterministic chronological key for one hydrated result attempt."""
         timestamp = attack_result.timestamp
         if not isinstance(timestamp, datetime):
-            timestamp = datetime.min.replace(tzinfo=timezone.utc)
+            timestamp = datetime.min.replace(tzinfo=UTC)
         return timestamp, str(attack_result.attack_result_id)
 
     def get_run_progress(
