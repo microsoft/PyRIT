@@ -1674,6 +1674,48 @@ class TestScenarioRunServiceCancelRun:
         assert progress.run.status is ScenarioRunState.CANCELLED
         assert [result.attack_result_id for result in progress.results] == [delta.attack_result_id]
 
+    async def test_cancelled_readback_reports_terminal_state_and_cleans_up_active_task(
+        self, mock_all_registries
+    ) -> None:
+        """Cancelled runs read back terminal DB state and drop the active-task entry exactly once."""
+        mock_memory = mock_all_registries["memory"]
+        started = asyncio.Event()
+
+        async def run_until_cancelled() -> None:
+            started.set()
+            await asyncio.Event().wait()
+
+        mock_all_registries["scenario_instance"].run_async.side_effect = run_until_cancelled
+        service = ScenarioRunService()
+        response = await service.start_run_async(request=_make_request())
+        await asyncio.wait_for(started.wait(), timeout=5)
+        rid = response.scenario_result_id
+        # Narrowly scoped internal invariant: the live run stays tracked until readback.
+        assert rid in service._active_tasks
+
+        running_result = mock_all_registries["db_result"]
+        cancelled_result = _make_db_scenario_result(
+            result_id=rid,
+            run_state=ScenarioRunState.CANCELLED,
+        )
+        cancelled_result.metadata = {}
+        mock_memory.get_scenario_results.side_effect = [
+            [running_result],
+            [cancelled_result],
+            [cancelled_result],
+            [cancelled_result],
+        ]
+
+        await service.cancel_run_async(scenario_result_id=rid)
+        fetched = service.get_run(scenario_result_id=rid)
+        assert fetched is not None
+        assert fetched.status is ScenarioRunState.CANCELLED
+        assert rid not in service._active_tasks
+
+        fetched_again = service.get_run(scenario_result_id=rid)
+        assert fetched_again is not None
+        assert fetched_again.status is ScenarioRunState.CANCELLED
+
     async def test_cancel_completed_run_raises_value_error(self, mock_memory) -> None:
         """Test that cancelling a completed run raises ValueError."""
         db_result = _make_db_scenario_result(result_id="sr-done", run_state=ScenarioRunState.COMPLETED)
