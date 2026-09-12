@@ -9,6 +9,7 @@ Covers the lifespan manager and setup_frontend function.
 
 import logging
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,11 +19,60 @@ from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
+from pyrit.backend.models.converters import CreateConverterRequest
+from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 
 class TestLifespan:
     """Tests for the application lifespan context manager."""
+
+    @pytest.mark.parametrize("fail_during_lifespan", [False, True])
+    async def test_lifespan_cleans_converter_uploads(self, fail_during_lifespan: bool) -> None:
+        fake_config = ConfigurationLoader()
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+            pytest.raises(RuntimeError, match="application failed") if fail_during_lifespan else nullcontext(),
+        ):
+            async with lifespan(app):
+                service = get_converter_service()
+                await service.create_converter_async(
+                    request=CreateConverterRequest(
+                        name="lifespan-upload",
+                        type="PDFConverter",
+                        params={"existing_pdf": "data:application/pdf;base64,JVBERi0xLjQK"},
+                    )
+                )
+                entry = service._registry.instances.get_entry("lifespan-upload")
+                assert entry is not None
+                owned_path = Path(entry.metadata["owned_artifact_paths"][0])
+                assert owned_path.read_bytes() == b"%PDF-1.4\n"
+                if fail_during_lifespan:
+                    raise RuntimeError("application failed")
+
+        assert not owned_path.exists()
+        assert not service._upload_path.exists()
+        assert service._registry.instances.get("lifespan-upload") is None
+        assert get_converter_service.cache_info().currsize == 0
+
+    async def test_lifespan_restarts_with_fresh_upload_directory(self) -> None:
+        fake_config = ConfigurationLoader()
+        paths: list[Path] = []
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            for _ in range(2):
+                async with lifespan(app):
+                    path = get_converter_service()._upload_path
+                    assert path.is_dir()
+                    paths.append(path)
+                assert not path.exists()
+
+        assert paths[0] != paths[1]
 
     async def test_lifespan_yields(self) -> None:
         """Test that lifespan delegates to ConfigurationLoader and yields."""

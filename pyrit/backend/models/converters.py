@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from pyrit.backend.models.common import REGISTRY_INSTANCE_NAME_PATTERN
 from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
 
 __all__ = [
@@ -18,6 +19,8 @@ __all__ = [
     "ConverterCatalogResponse",
     "ConverterInstance",
     "ConverterInstanceListResponse",
+    "ConverterTypeEntry",
+    "ConverterTypeResponse",
     "CreateConverterRequest",
     "CreateConverterResponse",
     "ConverterPreviewRequest",
@@ -27,11 +30,11 @@ __all__ = [
 
 
 # ============================================================================
-# Converter Catalog (Available Types)
+# Converter Types
 # ============================================================================
 
 
-class ConverterCatalogEntry(BaseModel):
+class ConverterTypeEntry(BaseModel):
     """A converter type available from the backend registry."""
 
     converter_type: str = Field(..., description="Converter class name (e.g., 'Base64Converter')")
@@ -48,10 +51,17 @@ class ConverterCatalogEntry(BaseModel):
     description: str | None = Field(None, description="Short description of the converter from its docstring")
 
 
-class ConverterCatalogResponse(BaseModel):
+class ConverterTypeResponse(BaseModel):
     """Response for listing available converter types from the registry."""
 
-    items: list[ConverterCatalogEntry] = Field(..., description="List of available converter types")
+    items: list[ConverterTypeEntry] = Field(..., description="List of available converter types")
+
+
+# LEGACY COMPATIBILITY: ``Catalog`` is the pre-registry name for ``Type``. These
+# aliases exist only so the un-migrated chat UI keeps working; delete them with the
+# /catalog route when that UI switches to the /types API.
+ConverterCatalogEntry = ConverterTypeEntry
+ConverterCatalogResponse = ConverterTypeResponse
 
 
 # ============================================================================
@@ -68,8 +78,10 @@ class ConverterInstance(BaseModel):
     for the converter's class, supported data types, and constructor params.
     """
 
-    converter_id: str = Field(..., description="Unique converter instance identifier")
+    converter_id: str = Field(..., description="Converter instance registry name")
     identifier: ConverterIdentifier = Field(..., description="The converter's identity/configuration projection")
+    is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
+    description: str | None = Field(None, description="Short description of the converter type")
 
 
 class ConverterInstanceListResponse(BaseModel):
@@ -81,7 +93,17 @@ class ConverterInstanceListResponse(BaseModel):
 class CreateConverterRequest(BaseModel):
     """Request to create a new converter instance."""
 
+    # LEGACY COMPATIBILITY: The current chat UI does not send a name. Make this
+    # field required when the chat-migration stack layer sends explicit names.
+    name: str | None = Field(
+        None,
+        min_length=1,
+        pattern=REGISTRY_INSTANCE_NAME_PATTERN,
+        description="Unique registry name; omitted only for legacy chat compatibility",
+    )
     type: str = Field(..., description="Converter type (e.g., 'Base64Converter')")
+    # LEGACY COMPATIBILITY: The former create response echoed this field. Remove
+    # it after clients use the complete ConverterInstance response.
     display_name: str | None = Field(None, description="Human-readable display name")
     params: dict[str, Any] = Field(
         default_factory=dict,
@@ -90,7 +112,12 @@ class CreateConverterRequest(BaseModel):
 
 
 class CreateConverterResponse(BaseModel):
-    """Response after creating a converter instance."""
+    """
+    Legacy response model for downstream imports.
+
+    POST /converters now returns ``ConverterInstance``. Remove this model when
+    downstream clients no longer import the former response type.
+    """
 
     converter_id: str = Field(..., description="Unique converter instance identifier")
     converter_type: str = Field(..., description="Converter class name")

@@ -49,6 +49,7 @@ class TestServeMedia:
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/png"
+        assert response.headers["x-content-type-options"] == "nosniff"
         assert response.content == b"\x89PNG\r\n\x1a\n"
 
     def test_rejects_path_outside_results_directory(self, client: TestClient, _mock_memory: Path) -> None:
@@ -126,14 +127,36 @@ class TestServeMedia:
 
         assert response.status_code == 200
 
-    def test_rejects_unknown_extension(self, client: TestClient, _mock_memory: Path) -> None:
-        """Files with unknown extensions are rejected by the allowlist."""
-        file_path = _mock_memory / "prompt-memory-entries" / "data.xyz123"
-        file_path.write_bytes(b"binary data")
+    @pytest.mark.parametrize(
+        ("file_name", "content"),
+        [
+            ("program.exe", b"MZ"),
+            ("data.xyz123", b"binary data"),
+            ("config.yaml", b"key: value"),
+            ("leaked.db", b"SQLite format 3"),
+            ("active.html", b"<script>alert(1)</script>"),
+            ("active.svg", b"<svg></svg>"),
+        ],
+    )
+    def test_non_inline_type_downloads_as_opaque_attachment(
+        self,
+        client: TestClient,
+        _mock_memory: Path,
+        file_name: str,
+        content: bytes,
+    ) -> None:
+        """Any stored type can download, but only allowlisted media renders inline."""
+        file_path = _mock_memory / "prompt-memory-entries" / file_name
+        file_path.write_bytes(content)
 
         response = client.get("/api/media", params={"path": str(file_path)})
 
-        assert response.status_code == 403
+        assert response.status_code == 200
+        assert response.content == content
+        assert response.headers["content-type"] == "application/octet-stream"
+        assert response.headers["content-disposition"].startswith("attachment;")
+        assert file_name in response.headers["content-disposition"]
+        assert response.headers["x-content-type-options"] == "nosniff"
 
     def test_rejects_file_in_results_root(self, client: TestClient, _mock_memory: Path) -> None:
         """Files directly in results_path (not in allowed subdir) are rejected."""
@@ -144,23 +167,17 @@ class TestServeMedia:
 
         assert response.status_code == 403
 
-    def test_rejects_database_file_in_allowed_subdir(self, client: TestClient, _mock_memory: Path) -> None:
-        """Database files are not in the extension allowlist."""
-        file_path = _mock_memory / "prompt-memory-entries" / "leaked.db"
-        file_path.write_bytes(b"SQLite format 3")
+    def test_serves_documents_as_attachments(self, client: TestClient, _mock_memory: Path) -> None:
+        """Documents download as opaque bytes instead of rendering in the application origin."""
+        file_path = _mock_memory / "prompt-memory-entries" / "document.pdf"
+        file_path.write_bytes(b"%PDF-1.4\n")
 
         response = client.get("/api/media", params={"path": str(file_path)})
 
-        assert response.status_code == 403
-
-    def test_rejects_yaml_file(self, client: TestClient, _mock_memory: Path) -> None:
-        """YAML files are not in the extension allowlist."""
-        file_path = _mock_memory / "prompt-memory-entries" / "config.yaml"
-        file_path.write_bytes(b"key: value")
-
-        response = client.get("/api/media", params={"path": str(file_path)})
-
-        assert response.status_code == 403
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/octet-stream"
+        assert response.headers["content-disposition"].startswith("attachment;")
+        assert response.headers["x-content-type-options"] == "nosniff"
 
     def test_rejects_disallowed_subdirectory(self, client: TestClient, _mock_memory: Path) -> None:
         """Files in non-allowed subdirectories are rejected."""

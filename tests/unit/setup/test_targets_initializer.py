@@ -696,6 +696,21 @@ class TestTargetInitializerAdversarialRoundRobin:
             member_name, _ = self.SLOTS[index]
             assert registry.instances.get(member_name) is round_robin.inner_targets[index]
 
+    async def test_repeated_initialization_replaces_primary_alias(self) -> None:
+        """Repeated initialization refreshes the canonical and primary targets."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        self._set_slots(0, 1)
+        initializer = TargetInitializer()
+
+        await initializer.initialize_async()
+        await initializer.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        round_robin = registry.instances.get("adversarial_chat")
+        assert isinstance(round_robin, RoundRobinTarget)
+        assert registry.instances.get("adversarial_chat_primary") is round_robin.inner_targets[0]
+
     async def test_noncontiguous_slots_publish_round_robin_without_inferred_duplicate(self) -> None:
         """Secondary slots compose directly without producing a generic inferred group."""
         from pyrit.prompt_target import RoundRobinTarget
