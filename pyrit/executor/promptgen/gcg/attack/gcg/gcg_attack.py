@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
 import logging
 from typing import Any
 
@@ -104,6 +105,7 @@ class GCGPromptManager(PromptManager):
         topk: int = 256,
         temp: float = 1.0,
         allow_non_ascii: bool = True,
+        torch_generator: torch.Generator | None = None,
     ) -> torch.Tensor:
         """
         Sample new control token candidates based on gradients.
@@ -114,6 +116,7 @@ class GCGPromptManager(PromptManager):
             topk (int): Number of top gradient positions to sample from. Defaults to 256.
             temp (float): Temperature for sampling. Currently unused but kept for API compatibility. Defaults to 1.0.
             allow_non_ascii (bool): Whether to allow non-ASCII tokens. Defaults to True.
+            torch_generator (torch.Generator | None): Optional generator for deterministic sampling.
 
         Returns:
             torch.Tensor: Batch of new candidate control token sequences.
@@ -127,7 +130,9 @@ class GCGPromptManager(PromptManager):
             torch.int64
         )
         new_token_val = torch.gather(
-            top_indices[new_token_pos], 1, torch.randint(0, topk, (batch_size, 1), device=grad.device)
+            top_indices[new_token_pos],
+            1,
+            torch.randint(0, topk, (batch_size, 1), device=grad.device, generator=torch_generator),
         )
         return original_control_toks.scatter_(1, new_token_pos.unsqueeze(-1), new_token_val)
 
@@ -199,15 +204,22 @@ class GCGMultiPromptAttack(MultiPromptAttack):
     ) -> torch.Tensor:
         sampler = self._resolve_sampling()
         prompt_manager = self.prompts[worker_index]
-        return sampler.sample_candidates(
-            gradient=gradient,
-            control_tokens=prompt_manager.control_toks,
-            batch_size=batch_size,
-            top_k=topk,
-            temperature=temp,
-            allow_non_ascii=allow_non_ascii,
-            non_ascii_tokens=prompt_manager.disallowed_toks,
-        )
+        torch_gens = getattr(self, "_torch_gens", None) or {}
+        torch_gen = torch_gens.get(worker_index)
+        kwargs: dict[str, Any] = {
+            "gradient": gradient,
+            "control_tokens": prompt_manager.control_toks,
+            "batch_size": batch_size,
+            "top_k": topk,
+            "temperature": temp,
+            "allow_non_ascii": allow_non_ascii,
+            "non_ascii_tokens": prompt_manager.disallowed_toks,
+        }
+        if torch_gen is not None:
+            sig = inspect.signature(sampler.sample_candidates)
+            if "torch_generator" in sig.parameters:
+                kwargs["torch_generator"] = torch_gen
+        return sampler.sample_candidates(**kwargs)
 
     def _filter_control_candidates(
         self,
