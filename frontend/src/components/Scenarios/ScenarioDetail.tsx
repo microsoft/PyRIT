@@ -352,9 +352,6 @@ function buildRunRequest({
   includeBaseline,
   labels,
 }: BuildRunRequestInput): BuildRunRequestResult {
-  if (!targetName) {
-    return { ok: false, error: 'Select a target.' }
-  }
   if (techniques.length === 0) {
     return { ok: false, error: 'Select at least one technique.' }
   }
@@ -437,9 +434,11 @@ function buildRunRequest({
 
 function buildEstimateRequest(request: RunScenarioRequest): ScenarioRunSizeEstimateRequest {
   const estimateRequest: ScenarioRunSizeEstimateRequest = {
-    target_name: request.target_name,
     techniques: request.techniques,
     include_baseline: request.include_baseline,
+  }
+  if (request.target_name) {
+    estimateRequest.target_name = request.target_name
   }
   if (request.dataset_names !== undefined) {
     estimateRequest.dataset_names = request.dataset_names
@@ -721,6 +720,7 @@ function ScenarioDetailContent({
       targets={targets}
       activeTarget={activeTarget}
       labels={labels}
+      onNavigate={onNavigate}
     />
   )
 }
@@ -730,9 +730,10 @@ interface ScenarioLaunchFormProps {
   targets: TargetInstance[]
   activeTarget: TargetInstance | null
   labels: Record<string, string>
+  onNavigate: (view: ViewName) => void
 }
 
-function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: ScenarioLaunchFormProps) {
+function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigate }: ScenarioLaunchFormProps) {
   const styles = useScenarioDetailStyles()
   const navigate = useNavigate()
   const formId = `scenario-launch-${encodeURIComponent(scenario.scenario_name).replace(/%/g, '-')}`
@@ -759,7 +760,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: Scenari
       target.target_registry_name === activeTarget.target_registry_name)) {
       return activeTarget.target_registry_name
     }
-    return targets[0].target_registry_name
+    return targets[0]?.target_registry_name ?? ''
   })
   const [techniqueSelection, setTechniqueSelection] = useState<TechniqueSelection>(() => defaultSelection)
   const [customTechniques, setCustomTechniques] = useState<string[]>(() => initialCustomTechniques)
@@ -1236,6 +1237,10 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: Scenari
     }
 
     setApiError(null)
+    if (!targetName) {
+      setValidationError('Select a target.')
+      return
+    }
     if (
       adaptiveMetadataUnavailable
       || adaptiveCandidateMaximum === 0
@@ -1255,7 +1260,6 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: Scenari
 
     try {
       const summary = await scenariosApi.startRun(requestResult.request)
-      setPreviewOpen(false)
       navigate(scenarioRunRoutePath(summary.scenario_result_id), {
         state: { scenarioName: scenario.scenario_name },
       })
@@ -1779,6 +1783,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: Scenari
                 form={formId}
                 disabled={
                   submitting
+                  || !targetName
                   || techniqueSelectionInvalid
                   || datasetSelectionInvalid
                   || !requestResult.ok

@@ -268,7 +268,7 @@ class TestScenarioServiceListScenarios:
         scenario.get_default_run_size_estimate_async = AsyncMock(return_value=estimate)
 
         with (
-            patch.object(ScenarioService, "__init__", lambda self: None),
+            patch.object(ScenarioService, "__init__", _initialize_test_service),
             patch("pyrit.backend.services.scenario_service.read_only_dataset_resolution") as read_only_resolution,
         ):
             service = ScenarioService()

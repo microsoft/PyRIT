@@ -31,7 +31,7 @@
       "value": "YOUR_DATABASE_NAME"
     },
     "pyritInitializer": {
-      "value": "target"
+      "value": "target,technique"
     },
     "pyritConfigFileUri": {
       "value": ""

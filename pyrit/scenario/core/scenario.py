@@ -17,13 +17,6 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, final
 
-try:
-    # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
-    # (declared as a conditional dependency in pyproject.toml).
-    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
-except ImportError:  # pragma: no cover - exercised only on 3.10
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
-
 from tqdm.auto import tqdm
 
 from pyrit.common import get_global_default_values
@@ -64,7 +57,6 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
-    read_only_dataset_resolution,
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
@@ -836,15 +828,14 @@ class Scenario(ABC):
             tuple: Selected groups keyed by population and their catalog summaries.
         """
         configured_dataset = self._dataset_config
-        with read_only_dataset_resolution():
+        self._dataset_config = configured_dataset
+        if type(self)._resolve_seed_groups_by_dataset_async is Scenario._resolve_seed_groups_by_dataset_async:
+            full_groups, selected_groups = await configured_dataset.resolve_attack_groups_for_estimate_async()
+        else:
+            full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
             self._dataset_config = configured_dataset
-            if type(self)._resolve_seed_groups_by_dataset_async is Scenario._resolve_seed_groups_by_dataset_async:
-                full_groups, selected_groups = await configured_dataset.resolve_attack_groups_for_estimate_async()
-            else:
-                full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
-                self._dataset_config = configured_dataset
-                selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
-            self._estimate_full_groups_by_dataset = full_groups
+            selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
+        self._estimate_full_groups_by_dataset = full_groups
 
         configured_caps = self._dataset_config.size_caps_by_dataset()
         datasets: list[ScenarioDatasetSummary] = []
@@ -1787,7 +1778,7 @@ class Scenario(ABC):
             queue.put_nowait(atomic_attack)
 
         stop_event = asyncio.Event()
-        outcomes: list[tuple[AtomicAttack, AttackExecutorResult[AttackResult]] | BaseException] = []
+        outcomes: list[tuple[AtomicAttack, AttackExecutorResult[AttackResult]] | Exception] = []
 
         async def worker_async() -> None:
             while not stop_event.is_set():
@@ -1827,7 +1818,7 @@ class Scenario(ABC):
             # Single failure: re-raise as-is to keep simple cases readable. Multiple
             # failures: wrap in ExceptionGroup so the caller sees every one — logging
             # alone is easy to miss.
-            final_error: BaseException = (
+            final_error: Exception = (
                 errors[0]
                 if len(errors) == 1
                 else ExceptionGroup(f"Multiple atomic attacks failed in scenario '{self._name}'", errors)
@@ -1837,26 +1828,26 @@ class Scenario(ABC):
     def _collect_errors_from_outcomes(
         self,
         *,
-        outcomes: list[tuple[AtomicAttack, AttackExecutorResult[AttackResult]] | BaseException],
-    ) -> list[BaseException]:
+        outcomes: list[tuple[AtomicAttack, AttackExecutorResult[AttackResult]] | Exception],
+    ) -> list[Exception]:
         """
         Convert worker outcomes into a flat list of errors for the caller to raise.
 
         Each outcome is either:
-            - ``BaseException``: the atomic attack raised; log and surface as-is.
+            - ``Exception``: the atomic attack raised; log and surface as-is.
             - ``(AtomicAttack, result)``: ran to completion. If the result reports
               incomplete objectives, ``_partial_result_to_exception`` produces a
               ``ScenarioPartialFailureException``.
 
         Returns:
-            list[BaseException]: One exception per failed atomic attack, preserving
+            list[Exception]: One exception per failed atomic attack, preserving
                 worker-completion order. Empty if every atomic attack succeeded.
         """
-        errors: list[BaseException] = []
+        errors: list[Exception] = []
         for outcome in outcomes:
-            if isinstance(outcome, BaseException):
+            if isinstance(outcome, Exception):
                 logger.error(f"Atomic attack failed in scenario '{self._name}': {str(outcome)}")
-                error: BaseException | None = outcome
+                error: Exception | None = outcome
             else:
                 atomic_attack, atomic_results = outcome
                 error = self._partial_result_to_exception(atomic_attack=atomic_attack, atomic_results=atomic_results)

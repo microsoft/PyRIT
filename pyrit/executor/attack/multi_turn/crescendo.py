@@ -456,7 +456,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             outcome_reason=outcome_reason,
             executed_turns=context.executed_turns,
             last_response=context.last_response.get_piece() if context.last_response else None,
-            last_score=context.last_score,
+            automated_score=context.last_score,
             related_conversations=context.related_conversations,
             labels=context.memory_labels,
         )

@@ -23,17 +23,6 @@ from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.score import TrueFalseScorer
 
 _MOCK_MANY_SHOT_EXAMPLES = [{"question": f"q{i}", "answer": f"a{i}"} for i in range(100)]
-_LIGHT_TECHNIQUES = {
-    "role_play_movie_script",
-    "role_play_video_game",
-    "role_play_trivia_game",
-    "role_play_persuasion",
-    "role_play_persuasion_written",
-    "many_shot",
-    "red_teaming",
-    "context_compliance",
-    "flip",
-}
 
 
 def _mock_id(name: str) -> ComponentIdentifier:
@@ -190,8 +179,16 @@ class TestTextAdaptiveBasics:
             ]
         }
         scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-        scenario.set_params_from_args(args={"include_baseline": True})
+        technique_class = scenario.get_technique_class()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_techniques": [technique_class("many_shot")],
+                "include_baseline": True,
+            }
+        )
         scenario._objective_target = mock_objective_target
+        scenario._scenario_techniques = [technique_class("many_shot")]
         scenario._include_baseline = True
         scenario._estimate_target_is_configured = True
         scenario._estimate_has_binding_size_cap = True
@@ -203,7 +200,7 @@ class TestTextAdaptiveBasics:
                 new_callable=AsyncMock,
                 return_value=(selected_groups, []),
             ),
-            patch.object(scenario, "_build_techniques_dict", return_value={}),
+            patch.object(scenario, "_build_techniques_dict", return_value={"compatible": MagicMock()}),
             patch(
                 "pyrit.scenario.scenarios.adaptive.adaptive_scenario.AdaptiveTechniqueDispatcher"
             ) as mock_dispatcher_class,
@@ -431,7 +428,7 @@ class TestTextAdaptiveAtomicAttacks:
         assert "many_shot" in technique_names
 
     @pytest.mark.parametrize(("max_attempts", "expected_attempts"), [(4, 84), (5, 105)])
-    async def test_light_keeps_nine_distinct_factory_arms_and_attempt_bound(
+    async def test_missing_light_factories_do_not_inflate_attempt_bound(
         self,
         mock_objective_target,
         mock_objective_scorer,
@@ -439,12 +436,17 @@ class TestTextAdaptiveAtomicAttacks:
         expected_attempts,
     ):
         shared_attack_identifier = _mock_id("SharedPromptSendingAttack")
+        technique_class = TextAdaptive.get_technique_class()
+        selected_names = {technique.value for technique in technique_class.expand({technique_class("light")})}
+        assert len(selected_names) == 11
+        factory_names = selected_names - {"bijection", "code_attack"}
+        assert len(factory_names) == 9
         factories = {
             name: _make_fake_factory(
                 attack_identifier=shared_attack_identifier,
                 factory_identifier=_mock_id(f"Factory_{name}"),
             )
-            for name in _LIGHT_TECHNIQUES
+            for name in factory_names
         }
         groups = {"adaptive": [_make_seed_group(value=f"obj-{index}") for index in range(21)]}
         summaries = [
@@ -455,7 +457,6 @@ class TestTextAdaptiveAtomicAttacks:
             )
         ]
         scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-        technique_class = scenario.get_technique_class()
         scenario.set_params_from_args(
             args={
                 "objective_target": mock_objective_target,
@@ -471,18 +472,18 @@ class TestTextAdaptiveAtomicAttacks:
             techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
 
         assert len(techniques) == 9
-        assert {bundle.name for bundle in techniques.values()} == _LIGHT_TECHNIQUES
+        assert {bundle.name for bundle in techniques.values()} == factory_names
         parsed_identifiers = [AdaptiveTechniqueIdentifier.parse(identifier) for identifier in techniques]
         assert all(identifier is not None for identifier in parsed_identifiers)
         assert len({identifier.factory_hash for identifier in parsed_identifiers if identifier is not None}) == 9
         assert len({identifier.technique_eval_hash for identifier in parsed_identifiers if identifier is not None}) == 9
         assert estimate.adaptive_details is not None
-        assert estimate.adaptive_details.selected_candidate_technique_count == 9
+        assert estimate.adaptive_details.selected_candidate_technique_count == 11
         assert estimate.adaptive_details.candidate_technique_count == 9
         assert estimate.adaptive_details.techniques_per_objective_upper_bound == max_attempts
         assert estimate.adaptive_details.technique_attempt_count_upper_bound == expected_attempts
 
-    @pytest.mark.parametrize(("aggregate_name", "expected_candidate_count"), [("light", 9), ("core", 14)])
+    @pytest.mark.parametrize(("aggregate_name", "expected_candidate_count"), [("light", 11), ("core", 16)])
     async def test_aggregate_attempt_bound_increases_until_distinct_candidate_count(
         self,
         mock_objective_target,

@@ -122,12 +122,12 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     scenarioName?: string
   } | null
   const backPath = navigationState?.fromScenarioHistory
-    ? `/scenario-history${navigationState.scenarioHistorySearch ?? ''}`
+    ? `/history/scanner${navigationState.scenarioHistorySearch ?? ''}`
     : navigationState?.scenarioName
       ? `/scanner/${encodeURIComponent(navigationState.scenarioName)}`
       : '/scanner'
   const backLabel = navigationState?.fromScenarioHistory
-    ? 'Back to scenario history'
+    ? 'Back to scanner history'
     : navigationState?.scenarioName
       ? 'Back to scenario'
       : 'Back to scanners'
@@ -168,7 +168,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   }, [state.results])
 
   const closeAttemptDetails = (): void => {
-    navigate(scenarioRunRoutePath(scenarioResultId), { replace: true })
+    navigate(scenarioRunRoutePath(scenarioResultId), { replace: true, state: location.state })
     requestAnimationFrame(() => detailsTriggerRef.current?.focus())
   }
 
@@ -177,7 +177,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     trigger: HTMLElement,
   ): void => {
     detailsTriggerRef.current = trigger
-    navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id))
+    navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id), { state: location.state })
   }
 
   const toggleDisplayGroup = (groupId: string): void => {
@@ -395,9 +395,6 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
               value={formatConfiguration(run.labels ?? {})}
             />
             {run.target?.endpoint && <ConfigurationItem label="Target endpoint" value={run.target.endpoint} />}
-            {run.target?.identifier_hash && (
-              <ConfigurationItem label="Target identifier" value={run.target.identifier_hash} />
-            )}
           </div>
         </section>
 

@@ -1,24 +1,50 @@
-import type { ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 
-import { Text } from '@fluentui/react-components'
+import { Button, mergeClasses, Text } from '@fluentui/react-components'
+import { ChevronDownRegular, ChevronUpRegular } from '@fluentui/react-icons'
 
 import type { ScenarioComponentIdentity, ScenarioIdentityValue } from '@/types'
 
 import { useComponentIdentityDetailsStyles } from './ComponentIdentityDetails.styles'
 
 const NO_OMITTED_PARAMETERS = new Set<string>()
+const COLLAPSIBLE_VALUE_LENGTH = 240
 
 export interface DetailMetricProps {
   readonly label: string
   readonly value: string
+  readonly collapsible?: boolean
 }
 
-export function DetailMetric({ label, value }: DetailMetricProps) {
+export function DetailMetric({ label, value, collapsible = false }: DetailMetricProps) {
   const styles = useComponentIdentityDetailsStyles()
+  const contentId = useId()
+  const [expanded, setExpanded] = useState(false)
+  const canCollapse = collapsible && value.length > COLLAPSIBLE_VALUE_LENGTH
   return (
     <div className={styles.metric} role="group" aria-label={label}>
       <Text size={200} className={styles.label}>{label}</Text>
-      <Text weight="semibold" className={styles.value}>{value}</Text>
+      <Text
+        id={contentId}
+        weight="semibold"
+        className={mergeClasses(styles.value, canCollapse && !expanded && styles.collapsedValue)}
+      >
+        {value}
+      </Text>
+      {canCollapse && (
+        <Button
+          appearance="transparent"
+          size="small"
+          className={styles.valueToggle}
+          icon={expanded ? <ChevronUpRegular /> : <ChevronDownRegular />}
+          aria-controls={contentId}
+          aria-expanded={expanded}
+          aria-label={expanded ? `Collapse ${label}` : `Show full ${label}`}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </Button>
+      )}
     </div>
   )
 }
@@ -33,6 +59,7 @@ interface ComponentIdentityDetailsProps {
   readonly identity: ScenarioComponentIdentity
   readonly hideComponentName?: boolean
   readonly omittedParameters?: ReadonlySet<string>
+  readonly collapseParameterValues?: boolean
   readonly renderChild?: (context: IdentityChildRenderContext) => ReactNode
 }
 
@@ -40,6 +67,7 @@ export default function ComponentIdentityDetails({
   identity,
   hideComponentName = false,
   omittedParameters = NO_OMITTED_PARAMETERS,
+  collapseParameterValues = false,
   renderChild,
 }: ComponentIdentityDetailsProps) {
   const styles = useComponentIdentityDetailsStyles()
@@ -53,7 +81,12 @@ export default function ComponentIdentityDetails({
       {parameters.length > 0 && (
         <div className={styles.fields}>
           {parameters.map(([name, value]) => (
-            <DetailMetric key={name} label={formatIdentityLabel(name)} value={formatIdentityValue(value)} />
+            <DetailMetric
+              key={name}
+              label={formatIdentityLabel(name)}
+              value={formatIdentityValue(value)}
+              collapsible={collapseParameterValues}
+            />
           ))}
         </div>
       )}
@@ -69,6 +102,7 @@ export default function ComponentIdentityDetails({
                     <ComponentIdentityDetails
                       identity={childIdentity}
                       omittedParameters={omittedParameters}
+                      collapseParameterValues={collapseParameterValues}
                       renderChild={renderChild}
                     />
                   )}

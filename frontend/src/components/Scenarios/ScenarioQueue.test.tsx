@@ -64,8 +64,8 @@ describe('ScenarioQueue', () => {
 
     const activeLink = screen.getByRole('link', { name: /active\.scenario/i })
     const waitingLink = screen.getByRole('link', { name: /waiting\.scenario/i })
-    expect(activeLink).toHaveAttribute('href', '/scenario-history/run-active')
-    expect(waitingLink).toHaveAttribute('href', '/scenario-history/run-waiting')
+    expect(activeLink).toHaveAttribute('href', '/scanner-history/run-active')
+    expect(waitingLink).toHaveAttribute('href', '/scanner-history/run-waiting')
     expect(waitingLink).toHaveAttribute('aria-current', 'page')
     expect(screen.getByText('Active')).toBeInTheDocument()
     expect(screen.getByText('Position 1')).toBeInTheDocument()

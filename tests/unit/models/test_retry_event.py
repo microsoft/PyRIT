@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyrit.models.retry_event import RetryEvent
 
@@ -21,11 +21,11 @@ class TestRetryEvent:
         assert evt.endpoint is None
         assert evt.elapsed_seconds == 0.0
         assert evt.timestamp is not None
-        assert evt.timestamp.tzinfo is timezone.utc
+        assert evt.timestamp.tzinfo is UTC
 
     def test_full_construction(self) -> None:
         """RetryEvent constructed with all args stores them correctly."""
-        ts = datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc)
+        ts = datetime(2026, 5, 7, 12, 0, 0, tzinfo=UTC)
         evt = RetryEvent(
             attempt_number=3,
             function_name="send_prompt_async",

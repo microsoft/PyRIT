@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
+from azure.ai.contentsafety.models import TextCategory
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, Score, ScoreStatus
 from pyrit.score import (
+    AzureContentFilterScorer,
     FloatScaleScorer,
     HarmHumanLabeledEntry,
     HarmScorerEvaluator,
@@ -478,7 +480,7 @@ def test_should_skip_evaluation_harm_found(mock_find, mock_harm_scorer, tmp_path
     assert result == expected_metrics
     mock_find.assert_called_once_with(
         eval_hash="test_hash_456",
-        harm_category="hate_speech",
+        file_path=result_file,
     )
 
 
@@ -956,6 +958,21 @@ class TestSelectEvaluationScore:
     def _score(*, category: list[str] | None) -> Score:
         return Score(score_type="float_scale", score_value="0.5", score_category=category)
 
+    @pytest.mark.parametrize("category", list(AzureContentFilterScorer._CATEGORY_EVAL_FILES))
+    @pytest.mark.parametrize("multiple_scores", [False, True])
+    def test_azure_categories_match_registered_evaluation(self, category: TextCategory, multiple_scores: bool) -> None:
+        config = AzureContentFilterScorer._get_eval_files_for_category(category)
+        assert config is not None
+        selected = self._score(category=[category.value])
+        scores = [selected]
+        if multiple_scores:
+            scores = [
+                self._score(category=[other.value])
+                for other in AzureContentFilterScorer._CATEGORY_EVAL_FILES
+                if other != category
+            ] + scores
+        assert ScorerEvaluator._select_evaluation_score(scores=scores, harm_category=config.harm_category) is selected
+
     def test_returns_none_when_the_scorer_returned_nothing(self):
         assert ScorerEvaluator._select_evaluation_score(scores=[], harm_category="hate_speech") is None
 
@@ -971,6 +988,10 @@ class TestSelectEvaluationScore:
         score = self._score(category=["hate_speech"])
         assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="hate_speech") is score
 
+    def test_accepts_a_lone_score_with_an_alias_for_the_canonical_harm(self):
+        score = self._score(category=["Sexual"])
+        assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="SEXUAL_CONTENT") is score
+
     def test_rejects_a_lone_score_that_names_a_different_harm(self):
         score = self._score(category=["violence"])
         with pytest.raises(ValueError, match="requires a score for harm category 'hate_speech'"):
@@ -980,6 +1001,25 @@ class TestSelectEvaluationScore:
         match = self._score(category=["hate_speech"])
         other = self._score(category=["violence"])
         assert ScorerEvaluator._select_evaluation_score(scores=[other, match], harm_category="hate_speech") is match
+
+    def test_picks_an_aliased_category_match_from_several_scores(self):
+        match = self._score(category=["Sexual"])
+        other = self._score(category=["Violence"])
+        assert (
+            ScorerEvaluator._select_evaluation_score(
+                scores=[other, match],
+                harm_category="SEXUAL_CONTENT",
+            )
+            is match
+        )
+
+    def test_does_not_match_two_unknown_categories_as_other(self):
+        score = self._score(category=["custom_score_category"])
+        with pytest.raises(ValueError, match="requires a score for harm category 'custom_dataset_category'"):
+            ScorerEvaluator._select_evaluation_score(
+                scores=[score],
+                harm_category="custom_dataset_category",
+            )
 
     def test_rejects_several_scores_with_no_category_match(self):
         scores = [self._score(category=["violence"]), self._score(category=["self_harm"])]

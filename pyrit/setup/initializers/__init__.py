@@ -10,6 +10,7 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.models.parameter import Parameter
+    from pyrit.setup.initializers.converters import ConverterInitializer
     from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
     from pyrit.setup.initializers.preload_scenario_metadata import PreloadScenarioMetadata
     from pyrit.setup.initializers.refresh_datasets import RefreshDatasets
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "Parameter": "pyrit.models.parameter",
     "PyRITInitializer": "pyrit.setup.pyrit_initializer",
+    "ConverterInitializer": "pyrit.setup.initializers.converters",
     "TechniqueInitializer": "pyrit.setup.initializers.techniques",
     "ScorerInitializer": "pyrit.setup.initializers.scorers",
     "TargetInitializer": "pyrit.setup.initializers.targets",

@@ -1654,12 +1654,12 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             # The default SelfAskScaleScorer only supports text; for targets that output
             # images (or other non-text types), we need a scorer that accepts those types
             # so it can evaluate the response with a multimodal LLM.
-            output_types: set[str] = set()
+            output_types: set[PromptDataType] = set()
             for modality_set in self._objective_target.configuration.capabilities.output_modalities:
                 output_types.update(modality_set)
-            supported_types: list[PromptDataType] = cast(
-                "list[PromptDataType]", sorted(output_types) if output_types else ["text"]
-            )
+            supported_types = sorted(output_types)
+            if not supported_types:
+                supported_types.append("text")
 
             scorer_validator = ScorerPromptValidator(
                 supported_data_types=supported_types,
@@ -2452,7 +2452,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             outcome_reason=outcome_reason,
             executed_turns=context.executed_turns,
             last_response=last_response,
-            last_score=context.best_objective_score,
+            automated_score=context.best_objective_score,
             related_conversations=context.related_conversations,
             labels=context.memory_labels,
         )

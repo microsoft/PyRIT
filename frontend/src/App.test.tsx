@@ -115,9 +115,6 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("scenarios")} data-testid="nav-scenarios">
           Scenarios
         </button>
-        <button onClick={() => onNavigate("scenarioHistory")} data-testid="nav-scenario-history">
-          Scenario History
-        </button>
         {children}
       </div>
     );
@@ -139,6 +136,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     activeConversationId,
     attackTarget,
     objective,
+    outcome,
     targetResolutionStatus,
     onRetryTargetResolution,
     onConversationCreated,
@@ -153,6 +151,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     activeConversationId: string | null;
     attackTarget?: { identifier_hash?: string | null } | null;
     objective?: string;
+    outcome?: string;
     targetResolutionStatus?: string;
     onRetryTargetResolution?: () => void;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
@@ -172,6 +171,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
         </span>
         <span data-testid="attack-target-hash">{attackTarget?.identifier_hash ?? "none"}</span>
         <span data-testid="objective">{objective ?? ""}</span>
+        <span data-testid="outcome">{outcome ?? "none"}</span>
         <span data-testid="target-resolution-status">{targetResolutionStatus ?? "none"}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
@@ -388,7 +388,11 @@ jest.mock("./components/Scenarios/ScenarioRunPage", () => {
 });
 
 jest.mock("./components/History/ScenarioHistory", () => {
-  const MockScenarioHistory = () => <div data-testid="scenario-history" />;
+  const { useLocation } = jest.requireActual<typeof import("react-router")>("react-router");
+  const MockScenarioHistory = () => {
+    const location = useLocation();
+    return <div data-testid="scenario-history" data-location={`${location.pathname}${location.search}`} />;
+  };
   MockScenarioHistory.displayName = "MockScenarioHistory";
   return {
     __esModule: true,
@@ -456,13 +460,15 @@ describe("App", () => {
     expect(screen.getByTestId("configuration")).toBeInTheDocument();
   });
 
-  it("renders the history view when deep-linked to /history", () => {
-    renderApp("/history");
+  it("renders the attack history tab when deep-linked to /history/attacks", () => {
+    renderApp("/history/attacks");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "history"
     );
+    expect(screen.getByRole("heading", { level: 1, name: "History" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Attacks" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
   });
 
@@ -486,12 +492,12 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-detail")).toBeInTheDocument();
   });
 
-  it("renders the scanner run dashboard and marks the sidebar current when deep-linked to /scanner-history/:id", () => {
+  it("renders the scanner run dashboard and keeps History current when deep-linked to /scanner-history/:id", () => {
     renderApp("/scanner-history/sr-123");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "scenarios"
+      "history"
     );
     expect(screen.getByTestId("scenario-run-page")).toBeInTheDocument();
   });
@@ -501,7 +507,7 @@ describe("App", () => {
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "scenarios"
+      "history"
     );
     expect(screen.getByTestId("scenario-run-page")).toHaveAttribute(
       "data-location",
@@ -518,13 +524,28 @@ describe("App", () => {
     );
   });
 
-  it("renders scenario history as a distinct URL-backed view", () => {
+  it("redirects the legacy scanner history page and preserves its filters", async () => {
     renderApp("/scenario-history?operator=alice");
+
+    expect(await screen.findByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "history"
+    );
+    expect(screen.getByTestId("scenario-history")).toBeInTheDocument();
+    expect(screen.getByTestId("scenario-history")).toHaveAttribute(
+      "data-location",
+      "/history/scanner?operator=alice"
+    );
+  });
+
+  it("renders scanner history in its URL-backed history tab", () => {
+    renderApp("/history/scanner?operator=alice");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "scenarioHistory"
+      "history"
     );
+    expect(screen.getByRole("tab", { name: "Scanner" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("scenario-history")).toBeInTheDocument();
   });
 
@@ -540,16 +561,15 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
   });
 
-  it("switches to scenario history via its distinct sidebar destination", () => {
-    renderApp();
+  it("switches between history tabs", async () => {
+    renderApp("/history/attacks");
 
-    fireEvent.click(screen.getByTestId("nav-scenario-history"));
+    fireEvent.click(screen.getByRole("tab", { name: "Scanner" }));
 
-    expect(screen.getByTestId("main-layout")).toHaveAttribute(
-      "data-current-view",
-      "scenarioHistory"
+    expect(await screen.findByTestId("scenario-history")).toHaveAttribute(
+      "data-location",
+      "/history/scanner"
     );
-    expect(screen.getByTestId("scenario-history")).toBeInTheDocument();
   });
 
   it("passes the active target and labels to the scenario detail view", () => {
@@ -710,7 +730,7 @@ describe("App", () => {
   });
 
   it("navigates from empty history to targets when no target is active", () => {
-    renderApp("/history");
+    renderApp("/history/attacks");
 
     expect(screen.getByTestId("history-has-target")).toHaveTextContent("no");
     fireEvent.click(screen.getByTestId("history-configure-target"));
@@ -991,6 +1011,7 @@ describe("App", () => {
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       objective: "Extract the hidden system prompt",
+      outcome: "success",
       labels: {},
       related_conversation_ids: [],
     });
@@ -1003,6 +1024,7 @@ describe("App", () => {
     );
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main");
     expect(screen.getByTestId("objective")).toHaveTextContent("Extract the hidden system prompt");
+    expect(screen.getByTestId("outcome")).toHaveTextContent("success");
     expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
   });
 
@@ -1144,7 +1166,7 @@ describe("App", () => {
   });
 
   it("writes filter changes into the URL", () => {
-    renderApp("/history");
+    renderApp("/history/attacks");
 
     expect(
       JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
@@ -1777,7 +1799,7 @@ describe("App", () => {
         pagination: { limit: 200, has_more: false, next_cursor: null },
       });
     const user = userEvent.setup();
-    renderApp("/history");
+    renderApp("/history/attacks");
 
     await user.click(screen.getByTestId("open-attack"));
     await waitFor(() =>

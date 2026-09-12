@@ -4,21 +4,17 @@
 """Tests for lightweight scenario progress memory queries."""
 
 import uuid
-from contextlib import closing
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import pytest
 from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
-from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
-    ScenarioRunState,
     Score,
     SeedObjective,
 )
@@ -61,7 +57,7 @@ def test_scenario_progress_deltas_page_equal_timestamps_by_id(
         objective_target_identifier=get_mock_target_identifier(),
     )
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario, unrelated])
-    timestamp = datetime(2026, 8, 6, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 6, tzinfo=UTC)
     first_id = uuid.UUID(int=1)
     second_id = uuid.UUID(int=2)
     rows = [
@@ -94,7 +90,7 @@ def test_scenario_progress_deltas_page_equal_timestamps_by_id(
         ),
         timestamp=timestamp,
     )
-    rows[0].last_score = score
+    rows[0].automated_score = score
     sqlite_instance.add_scores_to_memory(scores=[score])
     sqlite_instance.add_attack_results_to_memory(attack_results=rows)
 
@@ -135,7 +131,7 @@ def test_scenario_progress_delta_uses_unknown_for_empty_scorer_identifier(
     attack_result = _make_delta_result(
         scenario_result_id=str(scenario.id),
         attack_result_id=uuid.UUID(int=5),
-        timestamp=datetime(2026, 8, 6, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 8, 6, tzinfo=UTC),
         objective="objective",
     )
     score = Score(
@@ -143,7 +139,7 @@ def test_scenario_progress_delta_uses_unknown_for_empty_scorer_identifier(
         score_type="true_false",
         scorer_class_identifier=None,
     )
-    attack_result.last_score = score
+    attack_result.automated_score = score
     sqlite_instance.add_scores_to_memory(scores=[score])
     sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
 
@@ -170,7 +166,7 @@ def test_scenario_result_header_does_not_hydrate_attack_results(
             _make_delta_result(
                 scenario_result_id=str(scenario.id),
                 attack_result_id=uuid.UUID(int=4),
-                timestamp=datetime(2026, 8, 6, tzinfo=timezone.utc),
+                timestamp=datetime(2026, 8, 6, tzinfo=UTC),
                 objective="objective",
             )
         ]
@@ -180,56 +176,3 @@ def test_scenario_result_header_does_not_hydrate_attack_results(
 
     assert header is not None
     assert header.attack_results == {}
-
-
-def test_scenario_result_headers_are_bounded_without_attack_results(
-    sqlite_instance: MemoryInterface,
-) -> None:
-    scenarios = [
-        make_scenario_result(
-            scenario_name=f"scenario-{index}",
-            attack_results={},
-            objective_target_identifier=get_mock_target_identifier(),
-        )
-        for index in range(2)
-    ]
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=scenarios)
-
-    headers = sqlite_instance.get_scenario_result_headers(limit=1)
-
-    assert len(headers) == 1
-    assert headers[0].attack_results == {}
-    with pytest.raises(ValueError, match="between 1 and 100"):
-        sqlite_instance.get_scenario_result_headers(limit=101)
-
-
-def test_scenario_result_headers_include_recent_active_runs(
-    sqlite_instance: MemoryInterface,
-) -> None:
-    completed = make_scenario_result(
-        scenario_name="completed",
-        attack_results={},
-        objective_target_identifier=get_mock_target_identifier(),
-        scenario_run_state=ScenarioRunState.COMPLETED,
-        completion_time=datetime(2026, 8, 20, tzinfo=timezone.utc),
-    )
-    active = make_scenario_result(
-        scenario_name="active",
-        attack_results={},
-        objective_target_identifier=get_mock_target_identifier(),
-        scenario_run_state=ScenarioRunState.IN_PROGRESS,
-        completion_time=datetime(2026, 8, 10, tzinfo=timezone.utc),
-    )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[completed, active])
-    with closing(sqlite_instance.get_session()) as session:
-        completed_entry = session.get(ScenarioResultEntry, completed.id)
-        active_entry = session.get(ScenarioResultEntry, active.id)
-        assert completed_entry is not None
-        assert active_entry is not None
-        completed_entry.timestamp = datetime(2026, 8, 1, tzinfo=timezone.utc)
-        active_entry.timestamp = datetime(2026, 8, 10, tzinfo=timezone.utc)
-        session.commit()
-
-    headers = sqlite_instance.get_scenario_result_headers(limit=1)
-
-    assert headers[0].scenario_name == "active"

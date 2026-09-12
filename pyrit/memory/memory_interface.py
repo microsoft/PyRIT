@@ -13,17 +13,19 @@ import weakref
 from collections.abc import Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, func, literal, not_, or_, select
+from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 from sqlalchemy.orm.session import Session
+
+from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -93,6 +95,7 @@ from pyrit.models import (
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
+from pyrit.models.results.attack_result import ATTRIBUTION_FIELDS, ATTRIBUTION_VALUE_MAX_LENGTH
 
 if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
@@ -102,6 +105,24 @@ logger = logging.getLogger(__name__)
 
 Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
+
+
+def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[str]) -> tuple[str, ...]:
+    """
+    Validate and snapshot one dedicated attribution filter.
+
+    Returns:
+        tuple[str, ...]: The validated immutable filter values.
+
+    Raises:
+        ValueError: If any value is not a string or exceeds the column limit.
+    """
+    values = (raw,) if isinstance(raw, str) else tuple(raw)
+    if any(not isinstance(value, str) for value in values):
+        raise ValueError(f"{field} values must be strings")
+    if any(len(value) > ATTRIBUTION_VALUE_MAX_LENGTH for value in values):
+        raise ValueError(f"{field} values must be at most {ATTRIBUTION_VALUE_MAX_LENGTH} characters")
+    return values
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -172,24 +193,43 @@ class ScenarioHistoryRunRecord:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ScenarioHistoryUnitRecord:
+class ScenarioHistoryAggregate:
     """
-    One logical scenario work unit aggregated from all persisted attempts.
+    Attempt metrics for one scenario run, aggregated by the database.
 
-    ``total_retries`` is all work beyond the initial logical attempt: inner
-    retries plus additional scenario-level attempts.
+    Counters are computed over logical work units — every persisted attempt is first
+    resolved to the planned unit it belongs to, so retried and errored attempts never
+    inflate unit counts. The metrics query produces one aggregate per history row;
+    a     separate projection returns only distinct technique names, never one row per unit.
     """
 
     scenario_result_id: str
-    atomic_attack_name: str
-    technique_eval_hash: str
-    seed_group_id: str
-    objective_sha256: str | None
-    latest_outcome: str
-    latest_timestamp: datetime
+    unit_count: int
+    completed_units: int
+    successful_units: int
+    error_attempts: int
     total_retries: int
-    error_count: int
-    attempt_count: int = 1
+    latest_attempt_timestamp: datetime | None
+    atomic_attack_names: tuple[str, ...]
+
+    @classmethod
+    def empty(cls, *, scenario_result_id: str) -> "ScenarioHistoryAggregate":
+        """
+        Build the zero-valued aggregate for a run with no persisted attempts.
+
+        Returns:
+            ScenarioHistoryAggregate: Aggregate with all counters set to zero.
+        """
+        return cls(
+            scenario_result_id=scenario_result_id,
+            unit_count=0,
+            completed_units=0,
+            successful_units=0,
+            error_attempts=0,
+            total_retries=0,
+            latest_attempt_timestamp=None,
+            atomic_attack_names=(),
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -229,7 +269,10 @@ class _AttackResultQuery:
     converter_classes: Sequence[str] | None = None
     converter_classes_match: Literal["all", "any"] = "all"
     has_converters: bool | None = None
+    include_scenario_attacks: bool = True
     labels: Mapping[str, str | Sequence[str]] | None = None
+    operator: str | Sequence[str] | None = None
+    operation: str | Sequence[str] | None = None
     targeted_harm_categories: Sequence[str] | None = None
     identifier_filters: Sequence[IdentifierFilter] | None = None
     scenario_result_id: str | None = None
@@ -239,15 +282,47 @@ class _AttackResultQuery:
     after: AttackResultKeysetCursor | None = None
 
     def __post_init__(self) -> None:
-        """Snapshot mutable sequence and mapping inputs."""
+        """
+        Snapshot mutable inputs and normalize legacy attribution aliases.
+
+        TODO(PyRIT 1.4): Remove attribution handling in ``labels``.
+
+        Raises:
+            ValueError: If attribution aliases conflict or exceed their maximum length.
+        """
         for field_name in self._SEQUENCE_FIELDS:
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(self, field_name, tuple(value))
 
+        for field_name in ATTRIBUTION_FIELDS:
+            values = getattr(self, field_name)
+            if values is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    _normalize_attribution_filter_values(field=field_name, raw=values),
+                )
+
         if self.labels is not None:
             labels = {key: value if isinstance(value, str) else tuple(value) for key, value in self.labels.items()}
-            object.__setattr__(self, "labels", MappingProxyType(labels))
+            for field_name in ATTRIBUTION_FIELDS:
+                if field_name not in labels:
+                    continue
+                legacy_values = _normalize_attribution_filter_values(
+                    field=f"labels.{field_name}",
+                    raw=labels.pop(field_name),
+                )
+                dedicated_values = getattr(self, field_name)
+                if dedicated_values is not None and set(dedicated_values) != set(legacy_values):
+                    raise ValueError(f"{field_name} conflicts with legacy labels.{field_name}")
+                print_deprecation_message(
+                    old_item=f"_AttackResultQuery.labels['{field_name}']",
+                    new_item=f"_AttackResultQuery.{field_name}",
+                    removed_in="1.4.0",
+                )
+                object.__setattr__(self, field_name, legacy_values)
+            object.__setattr__(self, "labels", MappingProxyType(labels) if labels else None)
 
 
 class MemoryInterface(abc.ABC):
@@ -639,6 +714,14 @@ class MemoryInterface(abc.ABC):
             SQLAlchemyError: If the message pieces or converter identifiers cannot be persisted.
         """
         entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
+        # Sequence orders messages, so timestamp preserves the input order of pieces within one message.
+        latest_timestamp_by_message: dict[tuple[str, int], datetime] = {}
+        for entry in entries:
+            message_key = (entry.conversation_id, entry.sequence)
+            latest_timestamp = latest_timestamp_by_message.get(message_key)
+            if latest_timestamp is not None and entry.timestamp <= latest_timestamp:
+                entry.timestamp = latest_timestamp + timedelta(microseconds=1)
+            latest_timestamp_by_message[message_key] = entry.timestamp
         with closing(self.get_session()) as session:
             try:
                 for piece, entry in zip(message_pieces, entries, strict=True):
@@ -1271,7 +1354,8 @@ class MemoryInterface(abc.ABC):
                 elif model_class == AttackResultEntry:
                     query = query.options(
                         joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
-                        joinedload(AttackResultEntry.last_score),
+                        joinedload(AttackResultEntry.automated_score),
+                        joinedload(AttackResultEntry.human_score),
                     )
                 if conditions is not None:
                     query = query.filter(conditions)
@@ -1692,6 +1776,24 @@ class MemoryInterface(abc.ABC):
             "to support Scenario history queries."
         )
 
+    def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
+        """
+        Return backend-specific run-plan expansions used to resolve attempts to planned units.
+
+        The first subquery yields one row per planned ``(atomic group, seed group)`` pair with
+        columns ``scenario_result_id``, ``group_ordinal``, ``atomic_group_id``,
+        ``atomic_attack_name``, ``technique_eval_hash`` and ``seed_group_id``. The second yields
+        one row per planned seed group with columns ``scenario_result_id``, ``seed_group_id`` and
+        ``objective_sha256``.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support Scenario history queries.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_scenario_plan_unit_subqueries "
+            "to support Scenario history queries."
+        )
+
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
         """
         Persist scores whose loose-content anchors need no asynchronous file copy.
@@ -1898,7 +2000,7 @@ class MemoryInterface(abc.ABC):
                     value=scorable.value,
                     value_sha256=value_sha256 or hashlib.sha256(scorable.value.encode("utf-8")).hexdigest(),
                     data_type=scorable.data_type,
-                    timestamp=datetime.now(tz=timezone.utc),
+                    timestamp=datetime.now(tz=UTC),
                 )
                 rows[scorable] = row
             anchor_rewrites.append((score, ContentEntryScorable(content_id=row.id, data_type=scorable.data_type)))
@@ -3058,7 +3160,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the 'added_by' attribute is not set for each prompt.
         """
-        current_time = datetime.now(tz=timezone.utc)
+        current_time = datetime.now(tz=UTC)
         for prompt in seeds:
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
@@ -3220,7 +3322,7 @@ class MemoryInterface(abc.ABC):
                 "seeds tagged for another dataset."
             )
 
-        current_time = datetime.now(tz=timezone.utc)
+        current_time = datetime.now(tz=UTC)
         entries: list[SeedEntry] = []
         for prompt in seeds:
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
@@ -3464,7 +3566,10 @@ class MemoryInterface(abc.ABC):
         converter_classes: Sequence[str] | None = None,
         converter_classes_match: Literal["all", "any"] = "all",
         has_converters: bool | None = None,
-        labels: dict[str, str | Sequence[str]] | None = None,
+        include_scenario_attacks: bool = True,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+        operator: str | Sequence[str] | None = None,
+        operation: str | Sequence[str] | None = None,
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
@@ -3505,14 +3610,17 @@ class MemoryInterface(abc.ABC):
             has_converters (bool | None, optional): Filter by converter presence.
                 ``True`` returns only attacks that used at least one converter. ``False`` returns
                 only attacks that used no converters. ``None`` applies no filter. Defaults to None.
-            labels (dict[str, str | Sequence[str]] | None, optional): Filter results
-                by attack labels. Entries are AND-combined across label names; within a
+            include_scenario_attacks (bool, optional): Whether to include attacks created as part
+                of scenario runs. Defaults to ``True``.
+            labels (Mapping[str, str | Sequence[str]] | None, optional): Filter results
+                by arbitrary attack labels. The legacy ``operator`` and ``operation`` aliases
+                are accepted through PyRIT 1.3 and normalized to dedicated filters. Entries
+                are AND-combined across label names; within a
                 single entry, a string value is an equality match and a sequence value is
                 an OR match over the listed values. An empty sequence applies no filter
-                for that label. Example: ``{"operator": "roakey", "operation":
-                ["roakey_op_a", "roakey_op_b"]}`` matches attacks where ``operator ==
-                "roakey"`` AND (``operation == "roakey_op_a"`` OR ``operation ==
-                "roakey_op_b"``). Defaults to None.
+                for that label. Defaults to None.
+            operator (str | Sequence[str] | None, optional): Filter by dedicated operator values.
+            operation (str | Sequence[str] | None, optional): Filter by dedicated operation values.
             targeted_harm_categories (Sequence[str] | None, optional): Filter results by the
                 harm categories targeted by the attack (stored on
                 ``AttackResultEntry.targeted_harm_categories``, auto-populated from the
@@ -3535,7 +3643,7 @@ class MemoryInterface(abc.ABC):
                 deduplication, mirroring ``min_turns``. Defaults to None.
             limit (int | None, optional): Maximum number of deduplicated attack results to
                 return, ordered by recency. When either ``limit`` or ``after`` is provided,
-                deduplication and pagination happen in the database (via ``ROW_NUMBER()``)
+                deduplication and pagination happen in the database (via a ``NOT EXISTS`` anti-join)
                 instead of loading every row into memory. Defaults to None (return all).
             after (AttackResultKeysetCursor | None, optional): Keyset (seek) anchor from a
                 previous page. When provided, only results ordered strictly after the anchor
@@ -3562,7 +3670,10 @@ class MemoryInterface(abc.ABC):
             converter_classes=converter_classes,
             converter_classes_match=converter_classes_match,
             has_converters=has_converters,
+            include_scenario_attacks=include_scenario_attacks,
             labels=labels,
+            operator=operator,
+            operation=operation,
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
             scenario_result_id=scenario_result_id,
@@ -3657,8 +3768,14 @@ class MemoryInterface(abc.ABC):
             conditions.append(AttackResultEntry.objective.contains(query.objective))
         if query.outcome:
             conditions.append(AttackResultEntry.outcome == query.outcome)
+        if query.operator:
+            conditions.append(AttackResultEntry.operator.in_(query.operator))
+        if query.operation:
+            conditions.append(AttackResultEntry.operation.in_(query.operation))
         if query.scenario_result_id:
             conditions.append(AttackResultEntry.attribution_parent_id == uuid.UUID(query.scenario_result_id))
+        elif not query.include_scenario_attacks:
+            conditions.append(AttackResultEntry.attribution_parent_id.is_(None))
         return conditions
 
     def _build_attack_result_identifier_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
@@ -3827,16 +3944,28 @@ class MemoryInterface(abc.ABC):
         """
         Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
 
-        Ranks rows with ``ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY timestamp
-        DESC, id DESC)`` after applying ``conditions``, keeps only the newest row per
-        conversation (``rn == 1``) — reproducing the post-fetch Python dedup but *before*
-        pagination so page sizes stay correct — then applies the ``min_turns``/``max_turns``
-        bounds to those winners, orders by recency, seeks past the ``after`` keyset anchor,
-        and applies ``limit`` in the database. The turn bounds are applied to the winners (not
-        inside the ranking subquery) so they never resurrect an older duplicate that happens
-        to fall in range. Seeking on the recency ordering tuple (rather than a numeric offset)
-        keeps page boundaries stable when other rows are inserted or deleted between page loads
+        Keeps only the newest row per ``conversation_id`` with a correlated ``NOT EXISTS``
+        anti-join: a row survives when no other row that passes the same ``conditions``
+        shares its conversation and sorts later on ``(timestamp, id)``. This reproduces the
+        post-fetch Python dedup but *before* pagination so page sizes stay correct. The
+        ``min_turns``/``max_turns`` bounds are applied to the surviving winners (not inside
+        the anti-join) so they never resurrect an older duplicate that happens to fall in
+        range. Seeking on the recency ordering tuple (rather than a numeric offset) keeps
+        page boundaries stable when other rows are inserted or deleted between page loads
         (offset pagination instead shifts every row after the change).
+
+        The anti-join replaces a ``ROW_NUMBER() OVER (PARTITION BY conversation_id ...)``
+        window that had to rank *every* matching row on every page before a single result
+        could be returned, which made each page cost O(table). ``NOT EXISTS`` lets the
+        planner drive from the recency index, seek past the keyset anchor, probe
+        ``ix_AttackResultEntries_conversation_timestamp_id`` per candidate row, and stop
+        once ``limit`` winners are found.
+
+        ``conditions`` are re-applied inside the anti-join through a derived table rather
+        than remapped onto an alias: the converter and harm-category filters are raw
+        ``text()`` fragments that hard-code ``"AttackResultEntries"``, so alias adaption
+        would silently leave them bound to the outer row and let a newer non-matching row
+        suppress a valid winner.
 
         Args:
             conditions (list[Any]): Scalar WHERE filters applied before deduplication.
@@ -3849,22 +3978,8 @@ class MemoryInterface(abc.ABC):
         Returns:
             list[AttackResult]: The deduplicated, recency-ordered page of attack results.
         """
-        ranked = select(
-            AttackResultEntry.id.label("id"),
-            func.row_number()
-            .over(
-                partition_by=AttackResultEntry.conversation_id,
-                order_by=(AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()),
-            )
-            .label("rn"),
-        )
-        if conditions:
-            ranked = ranked.where(and_(*conditions))
-        ranked_subquery = ranked.subquery()
-
-        winner_ids = select(ranked_subquery.c.id).where(ranked_subquery.c.rn == 1)
-
-        page_conditions: list[Any] = [AttackResultEntry.id.in_(winner_ids)]
+        page_conditions: list[Any] = list(conditions)
+        page_conditions.append(self._attack_results_not_superseded_condition(conditions=conditions))
         if min_turns is not None:
             page_conditions.append(AttackResultEntry.executed_turns >= min_turns)
         if max_turns is not None:
@@ -3879,6 +3994,48 @@ class MemoryInterface(abc.ABC):
             limit=limit,
         )
         return [entry.get_attack_result() for entry in entries]
+
+    @staticmethod
+    def _attack_results_not_superseded_condition(*, conditions: list[Any]) -> Any:
+        """
+        Build the anti-join predicate keeping only the newest matching row per conversation.
+
+        Args:
+            conditions (list[Any]): The same filters applied to the outer query, so dedup
+                picks the newest row *among matching rows*.
+
+        Returns:
+            Any: A condition that is true when no later matching row shares the conversation.
+        """
+        candidates = select(
+            AttackResultEntry.conversation_id.label("conversation_id"),
+            AttackResultEntry.timestamp.label("timestamp"),
+            AttackResultEntry.id.label("id"),
+        )
+        if conditions:
+            candidates = candidates.where(and_(*conditions))
+        # correlate(None) stops SQLAlchemy from hoisting the inner FROM onto the outer row,
+        # which would make every candidate trivially supersede itself.
+        newer = candidates.correlate(None).subquery("newer")
+
+        return not_(
+            exists(
+                select(literal(1))
+                .select_from(newer)
+                .where(
+                    and_(
+                        newer.c.conversation_id == AttackResultEntry.conversation_id,
+                        or_(
+                            newer.c.timestamp > AttackResultEntry.timestamp,
+                            and_(
+                                newer.c.timestamp == AttackResultEntry.timestamp,
+                                newer.c.id > AttackResultEntry.id,
+                            ),
+                        ),
+                    )
+                )
+            )
+        )
 
     @staticmethod
     def _filter_attack_results_by_turns(
@@ -3925,31 +4082,68 @@ class MemoryInterface(abc.ABC):
                 seen[entry.conversation_id] = entry
         return [entry.get_attack_result() for entry in seen.values()]
 
-    def get_unique_attack_labels(self) -> dict[str, list[str]]:
+    def get_unique_attack_labels(
+        self,
+        *,
+        operator: Sequence[str] | None = None,
+        operation: Sequence[str] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> dict[str, list[str]]:
         """
-        Return all unique label key-value pairs across attack results.
+        Return unique arbitrary labels, optionally narrowed by indexed attribution first.
+
+        Args:
+            operator (Sequence[str] | None): Operator values used to narrow rows.
+            operation (Sequence[str] | None): Operation values used to narrow rows.
+            labels (Mapping[str, str | Sequence[str]] | None): Arbitrary label filters used
+                to narrow rows.
 
         Returns:
             dict[str, list[str]]: Mapping of label keys to sorted lists of
             unique values.
         """
         label_values: dict[str, set[str]] = {}
+        filter_query = _AttackResultQuery(operator=operator, operation=operation, labels=labels)
+        conditions = self._build_attack_result_scalar_conditions(query=filter_query)
+        conditions.extend(self._build_attack_result_label_conditions(query=filter_query))
 
         with closing(self.get_session()) as session:
-            are_rows = (
-                session.query(AttackResultEntry.labels).filter(AttackResultEntry.labels.isnot(None)).distinct().all()
-            )
+            query = session.query(AttackResultEntry.labels).filter(AttackResultEntry.labels.isnot(None))
+            if conditions:
+                query = query.filter(and_(*conditions))
+            are_rows = query.distinct().all()
 
         for (labels,) in are_rows:
             if not isinstance(labels, dict):
                 continue
             for key, value in labels.items():
+                if key in {"operator", "operation"}:
+                    continue
                 if isinstance(value, str):
                     if key not in label_values:
                         label_values[key] = set()
                     label_values[key].add(value)
 
         return {key: sorted(values) for key, values in sorted(label_values.items())}
+
+    def get_unique_attack_attribution(self) -> dict[str, list[str]]:
+        """Return unique dedicated operator and operation values from indexed columns."""
+        with closing(self.get_session()) as session:
+            operators = [
+                value
+                for (value,) in session.query(AttackResultEntry.operator)
+                .filter(AttackResultEntry.operator.isnot(None))
+                .distinct()
+                .all()
+            ]
+            operations = [
+                value
+                for (value,) in session.query(AttackResultEntry.operation)
+                .filter(AttackResultEntry.operation.isnot(None))
+                .distinct()
+                .all()
+            ]
+        return {"operators": sorted(operators), "operations": sorted(operations)}
 
     def add_scenario_results_to_memory(self, *, scenario_results: Sequence[ScenarioResult]) -> None:
         """
@@ -4043,7 +4237,7 @@ class MemoryInterface(abc.ABC):
                 ScenarioRunState.FAILED,
                 ScenarioRunState.CANCELLED,
             ):
-                entry.completion_time = datetime.now(tz=timezone.utc)
+                entry.completion_time = datetime.now(tz=UTC)
 
             session.commit()
 
@@ -4092,7 +4286,7 @@ class MemoryInterface(abc.ABC):
             ScenarioRunState.FAILED,
             ScenarioRunState.CANCELLED,
         ):
-            values["completion_time"] = datetime.now(tz=timezone.utc)
+            values["completion_time"] = datetime.now(tz=UTC)
 
         with closing(self.get_session()) as session:
             updated_rows = (
@@ -4163,28 +4357,6 @@ class MemoryInterface(abc.ABC):
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
             return entry.get_scenario_result() if entry is not None else None
 
-    def get_scenario_result_headers(self, *, limit: int = 100) -> Sequence[ScenarioResult]:
-        """
-        Return recent ScenarioResult headers without hydrating linked attack results.
-
-        Returns:
-            Sequence[ScenarioResult]: Recent scenario metadata ordered newest first.
-
-        Raises:
-            ValueError: If limit is outside the bounded run-history range.
-        """
-        if limit < 1 or limit > 100:
-            raise ValueError("Scenario run history limit must be between 1 and 100.")
-        entries = self._query_entries(
-            ScenarioResultEntry,
-            order_by=[
-                ScenarioResultEntry.timestamp.desc(),
-                ScenarioResultEntry.id.desc(),
-            ],
-            limit=limit,
-        )
-        return [entry.get_scenario_result() for entry in entries]
-
     def get_scenario_run_state_page(
         self,
         *,
@@ -4233,17 +4405,18 @@ class MemoryInterface(abc.ABC):
         labels: Mapping[str, str | Sequence[str]] | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
-    ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, list[ScenarioHistoryUnitRecord]], bool]:
+    ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
-        Return one descending scenario-history page and minimal linked attempts.
+        Return one descending scenario-history page and its database-side attempt metrics.
 
         Only selected ScenarioResult columns and the linked AttackResult columns
         required for aggregate counts are read. Full ORM result objects and their
-        relationships are never hydrated.
+        relationships are never hydrated, and attempt metrics are reduced to one
+        aggregate row per history row inside the database.
 
         Returns:
-            tuple[list[ScenarioHistoryRunRecord], dict[str, list[ScenarioHistoryUnitRecord]], bool]:
-                Page headers, logical work units grouped by scenario ID, and whether
+            tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
+                Page headers, attempt aggregates keyed by scenario ID, and whether
                 another page exists.
 
         Raises:
@@ -4319,53 +4492,7 @@ class MemoryInterface(abc.ABC):
         ).limit(limit + 1)
         with closing(self.get_session()) as session:
             rows = session.execute(statement).all()
-            page_rows = rows[:limit]
-            page_ids = [row.id for row in page_rows]
-            unit_rows = []
-            if page_ids:
-                atomic_name, technique_hash, seed_group_id = self._get_scenario_attempt_unit_expressions()
-                unit_partition = (
-                    AttackResultEntry.attribution_parent_id,
-                    atomic_name,
-                    technique_hash,
-                    seed_group_id,
-                )
-                ranked_units = select(
-                    AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
-                    atomic_name.label("atomic_attack_name"),
-                    technique_hash.label("technique_eval_hash"),
-                    seed_group_id.label("seed_group_id"),
-                    AttackResultEntry.objective_sha256.label("objective_sha256"),
-                    AttackResultEntry.outcome.label("latest_outcome"),
-                    func.max(AttackResultEntry.timestamp).over(partition_by=unit_partition).label("latest_timestamp"),
-                    func.sum(
-                        case(
-                            (
-                                func.coalesce(AttackResultEntry.total_retries, 0) > 0,
-                                func.coalesce(AttackResultEntry.total_retries, 0),
-                            ),
-                            else_=0,
-                        )
-                    )
-                    .over(partition_by=unit_partition)
-                    .label("inner_retries"),
-                    func.count().over(partition_by=unit_partition).label("attempt_count"),
-                    func.sum(case((AttackResultEntry.outcome == AttackOutcome.ERROR.value, 1), else_=0))
-                    .over(partition_by=unit_partition)
-                    .label("error_count"),
-                    func.row_number()
-                    .over(
-                        partition_by=unit_partition,
-                        order_by=(
-                            case((AttackResultEntry.outcome != AttackOutcome.ERROR.value, 1), else_=0).desc(),
-                            AttackResultEntry.timestamp.desc(),
-                            AttackResultEntry.id.desc(),
-                        ),
-                    )
-                    .label("unit_rank"),
-                ).where(AttackResultEntry.attribution_parent_id.in_(page_ids))
-                ranked_subquery = ranked_units.subquery()
-                unit_rows = session.execute(select(ranked_subquery).where(ranked_subquery.c.unit_rank == 1)).all()
+        page_rows = rows[:limit]
 
         records = [
             ScenarioHistoryRunRecord(
@@ -4388,26 +4515,264 @@ class MemoryInterface(abc.ABC):
             )
             for row in page_rows
         ]
-        units_by_run: dict[str, list[ScenarioHistoryUnitRecord]] = {record.scenario_result_id: [] for record in records}
-        for row in unit_rows:
+        aggregates = self.get_scenario_history_aggregates(
+            scenario_result_ids=[record.scenario_result_id for record in records],
+            plan_scenario_ids=[
+                record.scenario_result_id for record in records if record.plan_atomic_groups is not None
+            ],
+        )
+        return records, aggregates, len(rows) > limit
+
+    def get_scenario_history_aggregates(
+        self,
+        *,
+        scenario_result_ids: Sequence[str],
+        plan_scenario_ids: Sequence[str] = (),
+    ) -> dict[str, ScenarioHistoryAggregate]:
+        """
+        Return one attempt aggregate per requested scenario run.
+
+        Persisted attempts are grouped into logical work units before being counted, so
+        retries and errored re-runs of the same objective collapse into a single unit.
+        For every scenario listed in ``plan_scenario_ids`` the persisted run plan resolves
+        those units: attempts are matched to their planned atomic group and seed group
+        (remapping objective-hash attribution onto the planned seed group ID), and attempts
+        that resolve to no planned unit are excluded from the counters. Scenarios outside
+        ``plan_scenario_ids`` keep the persisted attribution as the unit identity and count
+        every unit, which is the legacy behavior for runs without a usable plan.
+
+        Args:
+            scenario_result_ids (Sequence[str]): Scenario run IDs to aggregate.
+            plan_scenario_ids (Sequence[str], optional): Subset of ``scenario_result_ids``
+                whose persisted run plan should resolve and filter units. Defaults to ().
+
+        Returns:
+            dict[str, ScenarioHistoryAggregate]: One aggregate per requested scenario ID.
+        """
+        aggregates = {
+            scenario_result_id: ScenarioHistoryAggregate.empty(scenario_result_id=scenario_result_id)
+            for scenario_result_id in scenario_result_ids
+        }
+        if not aggregates:
+            return aggregates
+
+        entry_ids = [uuid.UUID(scenario_result_id) for scenario_result_id in aggregates]
+        plan_entry_ids = [
+            uuid.UUID(scenario_result_id)
+            for scenario_result_id in plan_scenario_ids
+            if scenario_result_id in aggregates
+        ]
+        with closing(self.get_session()) as session:
+            aggregate_rows = session.execute(
+                self._build_scenario_history_aggregate_statement(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
+            ).all()
+            name_rows = session.execute(
+                select(AttackResultEntry.attribution_parent_id, self._get_scenario_attempt_unit_expressions()[0])
+                .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
+                .distinct()
+            ).all()
+
+        names_by_run: dict[str, list[str]] = {}
+        for scenario_result_id, atomic_attack_name in name_rows:
+            if scenario_result_id is None or not atomic_attack_name:
+                continue
+            names_by_run.setdefault(str(scenario_result_id), []).append(atomic_attack_name)
+        for row in aggregate_rows:
             if row.scenario_result_id is None:
                 continue
             run_id = str(row.scenario_result_id)
-            units_by_run[run_id].append(
-                ScenarioHistoryUnitRecord(
-                    scenario_result_id=run_id,
-                    atomic_attack_name=row.atomic_attack_name or "",
-                    technique_eval_hash=row.technique_eval_hash or "",
-                    seed_group_id=row.seed_group_id or "",
-                    objective_sha256=row.objective_sha256,
-                    latest_outcome=row.latest_outcome,
-                    latest_timestamp=row.latest_timestamp,
-                    total_retries=(row.inner_retries or 0) + max(0, (row.attempt_count or 0) - 1),
-                    error_count=row.error_count or 0,
-                    attempt_count=row.attempt_count or 0,
+            aggregates[run_id] = ScenarioHistoryAggregate(
+                scenario_result_id=run_id,
+                unit_count=row.unit_count or 0,
+                completed_units=row.completed_units or 0,
+                successful_units=row.successful_units or 0,
+                error_attempts=row.error_attempts or 0,
+                total_retries=row.total_retries or 0,
+                latest_attempt_timestamp=row.latest_attempt_timestamp,
+                atomic_attack_names=tuple(sorted(names_by_run.get(run_id, ()))),
+            )
+        return aggregates
+
+    def _build_scenario_history_aggregate_statement(
+        self,
+        *,
+        entry_ids: Sequence[uuid.UUID],
+        plan_entry_ids: Sequence[uuid.UUID],
+    ) -> Any:
+        """
+        Build the statement that reduces linked attempts to one metrics row per run.
+
+        Returns:
+            Any: A statement selecting one aggregate row per scenario run with attempts.
+        """
+        atomic_name, technique_hash, seed_group_id = self._get_scenario_attempt_unit_expressions()
+        attempts = (
+            select(
+                AttackResultEntry.id.label("attempt_id"),
+                AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
+                atomic_name.label("atomic_attack_name"),
+                technique_hash.label("technique_eval_hash"),
+                seed_group_id.label("seed_group_id"),
+                AttackResultEntry.objective_sha256.label("objective_sha256"),
+                AttackResultEntry.outcome.label("outcome"),
+                AttackResultEntry.timestamp.label("timestamp"),
+                case(
+                    (
+                        func.coalesce(AttackResultEntry.total_retries, 0) > 0,
+                        func.coalesce(AttackResultEntry.total_retries, 0),
+                    ),
+                    else_=0,
+                ).label("total_retries"),
+            )
+            .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
+            .subquery("history_attempts")
+        )
+        units = self._build_scenario_history_unit_statement(attempts=attempts, plan_entry_ids=plan_entry_ids).subquery(
+            "history_units"
+        )
+
+        unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
+        is_error = units.c.outcome == AttackOutcome.ERROR.value
+        unit_retries = (
+            func.sum(units.c.total_retries).over(partition_by=unit_partition)
+            + func.count().over(partition_by=unit_partition)
+            - 1
+        )
+        ranked = select(
+            units.c.scenario_result_id,
+            units.c.timestamp,
+            units.c.outcome.label("latest_outcome"),
+            func.max(units.c.is_planned).over(partition_by=unit_partition).label("is_planned"),
+            unit_retries.label("unit_retries"),
+            func.sum(case((is_error, 1), else_=0)).over(partition_by=unit_partition).label("unit_errors"),
+            func.row_number()
+            .over(
+                partition_by=unit_partition,
+                order_by=(
+                    units.c.timestamp.desc(),
+                    units.c.attempt_id.desc(),
+                ),
+            )
+            .label("unit_rank"),
+        ).subquery("history_ranked_units")
+        counted = and_(ranked.c.unit_rank == 1, ranked.c.is_planned == 1)
+        return (
+            select(
+                ranked.c.scenario_result_id,
+                func.max(ranked.c.timestamp).label("latest_attempt_timestamp"),
+                func.sum(case((counted, 1), else_=0)).label("unit_count"),
+                func.sum(case((counted, 1), else_=0)).label("completed_units"),
+                func.sum(
+                    case((and_(counted, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
+                ).label("successful_units"),
+                func.sum(case((counted, ranked.c.unit_errors), else_=0)).label("error_attempts"),
+                func.sum(case((and_(counted, ranked.c.unit_retries > 0), ranked.c.unit_retries), else_=0)).label(
+                    "total_retries"
+                ),
+            )
+            .group_by(ranked.c.scenario_result_id)
+            .order_by(ranked.c.scenario_result_id)
+        )
+
+    def _build_scenario_history_unit_statement(self, *, attempts: Any, plan_entry_ids: Sequence[uuid.UUID]) -> Any:
+        """
+        Resolve every persisted attempt to the logical work unit whose counters it feeds.
+
+        Returns:
+            Any: A statement selecting one row per attempt with its resolved unit identity.
+        """
+        if not plan_entry_ids:
+            return select(
+                attempts.c.scenario_result_id,
+                attempts.c.attempt_id,
+                attempts.c.outcome,
+                attempts.c.timestamp,
+                attempts.c.total_retries,
+                attempts.c.atomic_attack_name.label("unit_group_id"),
+                attempts.c.seed_group_id.label("unit_seed_id"),
+                literal(1).label("is_planned"),
+            )
+
+        planned_units, plan_seeds = self._get_scenario_plan_unit_subqueries(scenario_result_ids=plan_entry_ids)
+        planned = (
+            select(
+                planned_units.c.scenario_result_id,
+                planned_units.c.group_ordinal,
+                planned_units.c.atomic_group_id,
+                planned_units.c.atomic_attack_name,
+                planned_units.c.technique_eval_hash,
+                planned_units.c.seed_group_id,
+                plan_seeds.c.objective_sha256,
+            )
+            .select_from(
+                planned_units.outerjoin(
+                    plan_seeds,
+                    and_(
+                        plan_seeds.c.scenario_result_id == planned_units.c.scenario_result_id,
+                        plan_seeds.c.seed_group_id == planned_units.c.seed_group_id,
+                    ),
                 )
             )
-        return records, units_by_run, len(rows) > limit
+            .subquery("history_planned_units")
+        )
+        # An attempt persisted without seed-group attribution falls back to its objective hash,
+        # so it is matched against the planned seed group carrying that same objective hash.
+        seed_matches_exactly = planned.c.seed_group_id == attempts.c.seed_group_id
+        match_condition = and_(
+            planned.c.scenario_result_id == attempts.c.scenario_result_id,
+            planned.c.atomic_attack_name == attempts.c.atomic_attack_name,
+            or_(
+                attempts.c.technique_eval_hash == "",
+                planned.c.technique_eval_hash == attempts.c.technique_eval_hash,
+            ),
+            or_(
+                seed_matches_exactly,
+                and_(
+                    attempts.c.seed_group_id == attempts.c.objective_sha256,
+                    planned.c.objective_sha256 == attempts.c.seed_group_id,
+                ),
+            ),
+        )
+        matched = (
+            select(
+                attempts.c.scenario_result_id,
+                attempts.c.attempt_id,
+                attempts.c.outcome,
+                attempts.c.timestamp,
+                attempts.c.total_retries,
+                attempts.c.atomic_attack_name,
+                attempts.c.seed_group_id,
+                planned.c.atomic_group_id,
+                planned.c.seed_group_id.label("planned_seed_group_id"),
+                func.row_number()
+                .over(
+                    partition_by=attempts.c.attempt_id,
+                    order_by=(
+                        case((seed_matches_exactly, 0), else_=1),
+                        planned.c.group_ordinal,
+                        planned.c.seed_group_id,
+                    ),
+                )
+                .label("match_rank"),
+            )
+            .select_from(attempts.outerjoin(planned, match_condition))
+            .subquery("history_matched_attempts")
+        )
+        return select(
+            matched.c.scenario_result_id,
+            matched.c.attempt_id,
+            matched.c.outcome,
+            matched.c.timestamp,
+            matched.c.total_retries,
+            func.coalesce(matched.c.atomic_group_id, matched.c.atomic_attack_name).label("unit_group_id"),
+            func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
+            # Runs outside the plan-resolution set keep their raw identity and stay counted.
+            case(
+                (matched.c.scenario_result_id.notin_(plan_entry_ids), 1),
+                (matched.c.planned_seed_group_id.is_(None), 0),
+                else_=1,
+            ).label("is_planned"),
+        ).where(matched.c.match_rank == 1)
 
     @staticmethod
     def _parse_scenario_started_at(*, raw_value: Any) -> datetime | None:
@@ -4502,7 +4867,10 @@ class MemoryInterface(abc.ABC):
                 ScoreEntry.score_rationale,
                 ScoreEntry.scorer_class_identifier,
             )
-            .outerjoin(ScoreEntry, AttackResultEntry.last_score_id == ScoreEntry.id)
+            .outerjoin(
+                ScoreEntry,
+                func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id) == ScoreEntry.id,
+            )
             .where(and_(*conditions))
             .order_by(AttackResultEntry.timestamp.asc(), AttackResultEntry.id.asc())
             .limit(limit + 1)
@@ -4794,7 +5162,7 @@ class MemoryInterface(abc.ABC):
                 )
                 continue
 
-            sort_key = row.timestamp or datetime.min.replace(tzinfo=timezone.utc)
+            sort_key = row.timestamp or datetime.min.replace(tzinfo=UTC)
             grouped[scenario_id].setdefault(name, []).append((sort_key, row.get_attack_result()))
 
         return {

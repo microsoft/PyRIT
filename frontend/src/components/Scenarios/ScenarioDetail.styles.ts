@@ -47,8 +47,15 @@ export const useScenarioDetailStyles = makeStyles({
     lineHeight: tokens.lineHeightBase200,
   },
   layout: {
-    display: 'block',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(20rem, 24rem)',
+    alignItems: 'start',
+    gap: tokens.spacingHorizontalXL,
     minWidth: 0,
+    [NARROW_VIEWPORT_QUERY]: {
+      gridTemplateColumns: 'minmax(0, 1fr)',
+      gap: tokens.spacingVerticalL,
+    },
   },
   formColumn: {
     display: 'flex',
@@ -85,6 +92,31 @@ export const useScenarioDetailStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalS,
+  },
+  techniqueGroups: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(12rem, 1fr) minmax(0, 2fr)',
+    alignItems: 'start',
+    gap: tokens.spacingHorizontalL,
+    [NARROW_VIEWPORT_QUERY]: {
+      gridTemplateColumns: 'minmax(0, 1fr)',
+      gap: tokens.spacingVerticalM,
+    },
+  },
+  resolvedMembers: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalS,
+    minWidth: 0,
+    padding: tokens.spacingVerticalM,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  checkboxGroup: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(14rem, 1fr))',
+    gap: tokens.spacingVerticalS,
+    minWidth: 0,
   },
   selectionControl: {
     ...mobileTouchTargetHeight,
@@ -166,6 +198,17 @@ export const useScenarioDetailStyles = makeStyles({
       minHeight: MINIMUM_TOUCH_TARGET_SIZE,
     },
   },
+  advancedSection: {
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
+  advancedFields: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(12rem, 1fr))',
+    gap: tokens.spacingVerticalL,
+    minWidth: 0,
+  },
   launchSection: {
     display: 'flex',
     minWidth: 0,
@@ -227,6 +270,26 @@ export const useScenarioDetailStyles = makeStyles({
     maxHeight: '65vh',
     overflowY: 'auto',
   },
+  previewRail: {
+    position: 'sticky',
+    top: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalL,
+    minWidth: 0,
+    padding: tokens.spacingVerticalL,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: tokens.colorNeutralBackground1,
+    [NARROW_VIEWPORT_QUERY]: {
+      position: 'static',
+    },
+  },
+  previewHeader: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXS,
+  },
   previewList: {
     display: 'flex',
     flexDirection: 'column',
@@ -277,6 +340,17 @@ export const useScenarioDetailStyles = makeStyles({
       fontWeight: tokens.fontWeightSemibold,
       overflowWrap: 'anywhere',
     },
+  },
+  estimateGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    paddingTop: tokens.spacingVerticalL,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  previewActions: {
+    paddingTop: tokens.spacingVerticalL,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   errorText: {
     color: tokens.colorPaletteRedForeground1,

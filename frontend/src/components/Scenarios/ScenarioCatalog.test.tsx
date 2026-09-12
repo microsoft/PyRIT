@@ -170,7 +170,7 @@ describe('ScenarioCatalog', () => {
       })
     })
 
-    expect(await screen.findByText('4 attacks')).toBeInTheDocument()
+    expect(await screen.findByText('4 planned attacks')).toBeInTheDocument()
     expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
   })
 
@@ -293,18 +293,20 @@ describe('ScenarioCatalog', () => {
       screen.getByText('Launch comprehensive testing campaigns with multiple attack techniques against a target.'),
     ).toBeInTheDocument()
     const headers = within(table).getAllByRole('columnheader')
-    expect(headers).toHaveLength(4)
+    expect(headers).toHaveLength(5)
     expect(headers.map((header) => header.textContent)).toEqual([
       'Scenario / purpose',
+      'Configure',
       'Default datasets',
       'Default techniques',
       'Default run size',
     ])
     expect(headers.every((cell) => cell.classList.contains('scenario-catalog-cell-padding'))).toBe(true)
     const cells = within(screen.getByTestId('scenario-card-foundry.red_team_agent')).getAllByRole('cell')
-    expect(cells).toHaveLength(4)
+    expect(cells).toHaveLength(5)
     expect(cells.every((cell) => cell.classList.contains('scenario-catalog-cell-padding'))).toBe(true)
     expect(within(cells[0]).getByRole('link', { name: 'foundry.red_team_agent' })).toBeInTheDocument()
+    expect(within(cells[1]).getByRole('button', { name: 'Configure run' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /show details|hide details/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: /details/i })).not.toBeInTheDocument()
   })
@@ -685,7 +687,7 @@ describe('ScenarioCatalog', () => {
     expect(within(row).getByText('harmbench')).toBeInTheDocument()
     expect(within(row).getByText('2 techniques')).toBeInTheDocument()
     expect(within(row).getByText('prompt_sending · jailbreak_system_prompt')).toBeInTheDocument()
-    expect(within(row).getByText('12-20 attacks')).toBeInTheDocument()
+    expect(within(row).getByText('12–20 planned attacks')).toBeInTheDocument()
     expect(within(row).queryByText('default')).not.toBeInTheDocument()
     expect(within(row).queryByText(/aggregate presets|compatible concrete/i)).not.toBeInTheDocument()
     expect(within(row).queryByText(REMOVED_NORMAL_ESTIMATE_LABELS)).not.toBeInTheDocument()

@@ -5,7 +5,7 @@
 Tests for scenario run API routes.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import get_ident
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.main import app
+from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.routes.scenarios import get_scenario_run_progress, list_scenario_runs
 from pyrit.models import (
@@ -59,8 +60,8 @@ def _mock_run_response(
         scenario_result_id=run_id,
         scenario_name=scenario_name,
         status=run_status,
-        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        updated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2025, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2025, 1, 1, tzinfo=UTC),
         error=None,
     )
 
@@ -177,7 +178,11 @@ class TestListScenarioRunsRoute:
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
             mock_service.list_runs.side_effect = lambda **_: (
-                route_thread.append(get_ident()) or ScenarioRunListResponse(items=[])
+                route_thread.append(get_ident())
+                or ScenarioRunListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=100, has_more=False),
+                )
             )
             mock_get.return_value = mock_service
 
@@ -209,7 +214,10 @@ class TestListScenarioRunsRoute:
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.list_runs.return_value = ScenarioRunListResponse(items=runs)
+            mock_service.list_runs.return_value = ScenarioRunListResponse(
+                items=runs,
+                pagination=PaginationInfo(limit=100, has_more=False),
+            )
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs")
@@ -221,7 +229,10 @@ class TestListScenarioRunsRoute:
         """Test that history query parameters preserve repeated values."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.list_runs.return_value = ScenarioRunListResponse(items=[])
+            mock_service.list_runs.return_value = ScenarioRunListResponse(
+                items=[],
+                pagination=PaginationInfo(limit=10, has_more=False),
+            )
             mock_get.return_value = mock_service
 
             response = client.get(
@@ -241,24 +252,12 @@ class TestListScenarioRunsRoute:
             cursor="opaque",
         )
 
-    def test_list_runs_returns_400_for_invalid_cursor(self, client: TestClient) -> None:
-        """Test that invalid cursors are surfaced clearly."""
-        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
-            mock_service = MagicMock()
-            mock_service.list_runs.side_effect = ValueError("Malformed scenario history cursor.")
-            mock_get.return_value = mock_service
-
-            response = client.get("/api/scenarios/runs?cursor=bad")
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.json()["detail"] == "Malformed scenario history cursor."
-
 
 class TestScenarioRunQueueRoute:
     """Tests for GET /api/scenarios/runs/queue."""
 
     def test_queue_returns_active_and_ordered_entries(self, client: TestClient) -> None:
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         snapshot = ScenarioQueueSnapshot(
             revision=4,
             snapshot_at=now,
@@ -328,7 +327,7 @@ class TestGetScenarioRunRoute:
             conversation_id="conversation-1",
             objective="objective",
             outcome=AttackOutcome.SUCCESS,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
             attribution_data={"parent_collection": "legacy attack"},
         )
         db_result = make_scenario_result(
@@ -377,7 +376,7 @@ class TestGetScenarioRunRoute:
                 scenario_registry_name="test.scenario",
                 scenario_version=1,
                 status=ScenarioRunState.IN_PROGRESS,
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                created_at=datetime(2025, 1, 1, tzinfo=UTC),
             ),
             plan=ScenarioRunPlan(
                 scenario_registry_name="test.scenario",
@@ -434,7 +433,7 @@ class TestGetScenarioRunRoute:
                 scenario_registry_name="test.scenario",
                 scenario_version=1,
                 status=ScenarioRunState.IN_PROGRESS,
-                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                created_at=datetime(2025, 1, 1, tzinfo=UTC),
             ),
             plan=ScenarioRunPlan(
                 scenario_registry_name="test.scenario",
@@ -533,7 +532,7 @@ class TestGetScenarioRunResultsRoute:
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
             execution_time_ms=100,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         )
         scenario_result = make_scenario_result(
             scenario_name="foundry.red_team_agent",

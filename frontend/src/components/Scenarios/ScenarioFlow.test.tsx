@@ -214,7 +214,7 @@ describe('Scenario catalog-to-run integration', () => {
 
     const expectedEstimateRequest = {
       target_name: TARGET.target_registry_name,
-      techniques: SCENARIO.default_techniques,
+      techniques: [SCENARIO.default_technique],
       include_baseline: true,
     }
     await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
@@ -226,8 +226,6 @@ describe('Scenario catalog-to-run integration', () => {
       .getByRole('group', { name: '2 planned attacks.' })).toBeInTheDocument()
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
-    const preview = await screen.findByRole('dialog', { hidden: true })
-    await user.click(within(preview).getByTestId('confirm-launch-scenario-btn'))
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith({
       scenario_name: SCENARIO_NAME,
