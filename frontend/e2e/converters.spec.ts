@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { test, expect, type APIRequestContext, type Locator, type Page, type Request } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Locator, type Page, type Request } from "./_fixtures";
 
 import type {
   AddMessageRequest,
@@ -11,6 +11,7 @@ import type {
   TargetInstance,
 } from "@/types";
 
+import { compatibilityHeaders, mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
@@ -467,7 +468,7 @@ async function mockBackendAPIs(page: Page) {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "healthy" }) });
   });
   await page.route(/\/api\/version/, async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: "0.11.1" }) });
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockVersion()) });
   });
 }
 
@@ -509,7 +510,7 @@ async function registerConverter(
   params: Record<string, unknown> = {},
 ): Promise<string> {
   const name = `e2e-${randomUUID()}`;
-  const response = await request.post("/api/converters", { data: { name, type, params } });
+  const response = await request.post("/api/converters", { headers: compatibilityHeaders(), data: { name, type, params } });
   expect(response.status()).toBe(201);
   return name;
 }
@@ -544,6 +545,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
 
   test.beforeAll(async ({ request }) => {
     const targetResponse = await request.post("/api/targets", {
+      headers: compatibilityHeaders(),
       data: { type: "TextTarget", name: `e2e-converters-${randomUUID()}`, params: {} },
     });
     expect(targetResponse.status()).toBe(201);
@@ -566,7 +568,9 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
 
   test.afterAll(async ({ request }) => {
     for (const converterId of registeredConverters) {
-      const response = await request.delete(`/api/converters/${encodeURIComponent(converterId)}`);
+      const response = await request.delete(`/api/converters/${encodeURIComponent(converterId)}`, {
+        headers: compatibilityHeaders(),
+      });
       expect(response.status()).toBe(204);
     }
   });
@@ -709,6 +713,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     const sent: AddMessageResponse = await response.json();
     const historyResponse = await request.get(
       `/api/attacks/${sent.attack.attack_result_id}/messages?conversation_id=${sent.attack.conversation_id}`,
+      { headers: compatibilityHeaders() },
     );
     expect(historyResponse.ok()).toBeTruthy();
     const history: AddMessageResponse["messages"] = await historyResponse.json();

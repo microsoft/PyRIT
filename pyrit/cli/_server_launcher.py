@@ -27,7 +27,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from pyrit.cli._config_reader import DEFAULT_SERVER_STARTUP_TIMEOUT
-from pyrit.cli.api_client import PyRITApiClient
 
 _logger = logging.getLogger(__name__)
 _HEALTH_PROBE_TIMEOUT = 5.0
@@ -663,8 +662,21 @@ class ServerLauncher:
         Returns:
             bool: ``True`` if ``GET /api/health`` returned 200.
         """
-        async with PyRITApiClient(base_url=base_url) as client:
-            return await client.health_check_async()
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(base_url=base_url, timeout=_HEALTH_PROBE_TIMEOUT) as client:
+                response = await client.get("/api/health")
+                if response.status_code != 200:
+                    return False
+                payload = response.json()
+                return (
+                    isinstance(payload, dict)
+                    and payload.get("status") == "healthy"
+                    and (payload.get("service") == "pyrit-backend")
+                )
+        except (httpx.HTTPError, ValueError):
+            return False
 
     async def _probe_health_with_timeout_async(self, *, base_url: str, timeout: float) -> bool:
         """

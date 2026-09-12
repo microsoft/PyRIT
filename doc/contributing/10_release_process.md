@@ -11,6 +11,43 @@ Follow the instructions according to the order provided.
 
 Before starting the release process, verify the codebase is in a healthy state.
 
+### Coordinated API Release Gate
+
+Publish the frontend bundle, CLI wheel/sdist, and backend image from one clean source
+commit. They must share `<Python package version>+g<full source commit>` without
+changing the existing package `version`. Package preparation and PEP 517 wheel/sdist
+hooks stamp and seal frontend assets; Git-free sdist builds reuse and verify those
+assets. Do not publish builds created with `--development` or dirty provenance.
+
+Apply this gate separately to each deployment's artifact set. A PyPI wheel from a
+release-branch commit does not match a CoPyRIT image built from `main`, even when the
+package version or source changes appear equivalent. Section 12 describes how to
+distribute matching clients while retaining the production pipeline's `main`-only policy.
+
+Before routing traffic to the first compatibility-enforcing backend:
+
+1. Stage all matching artifacts and verify installed Python and bundled frontend
+   identities, including a wheel built from the sdist without Git or Node.
+2. Verify authenticated `/api/version`, exact-match startup for browser and CLI,
+   and same-version/different-commit rejection before mutation side effects.
+3. Run focused backend, client, frontend, packaging, and CLI import-guard tests,
+   then existing pre-commit, unit-test, frontend coverage/type/lint/build, and E2E gates.
+4. Make matching client downloads and frontend assets available before switching
+   backend traffic. Coordinate clients rather than adding an enforcement bypass.
+5. Record the first guarded release as the rollback floor in deployment operations.
+   Never roll back below it while new clients remain active: older servers may ignore
+   the marker. Recovery requires coordinated artifacts or draining those clients first.
+
+Source Docker callers must supply the actual full source commit and dirty state
+(`GIT_COMMIT`, `GIT_MODIFIED`); publication rejects dirty source builds. The helper
+`python docker/build_pyrit_docker.py --source local` reads these from the source root.
+Compose callers must set `PYRIT_SOURCE_COMMIT` and `PYRIT_SOURCE_DIRTY` from that same
+checkout. PyPI Docker builds preserve and validate the installed wheel's stamp, never
+replace it with the Docker repository commit. Pre-guarded PyPI wheels intentionally
+fail this validation; use the coordinated release, not an older fallback.
+
+These checks do not establish dependency equality or distinguish uncommitted edits.
+
 ### Customer-Facing Review
 
 Use an existing release work item, or create one if none exists, to track release
@@ -202,11 +239,13 @@ the Actions tab.
 
 You'll need the build package to build the project. If it’s not already installed, install it `pip install build`.
 
-### Build the Frontend
+### Frontend Preparation Is Automatic
 
-The PyRIT package includes a web-based frontend that must be built before packaging. This requires Node.js and npm to be installed.
+The PyRIT package includes a web-based frontend. Source builds require Node.js and npm
+to be installed. The PEP 517 hooks run frontend preparation automatically during
+`python -m build`; no separate preparation command is required.
 
-Run the prepare script to build the frontend and copy it into the package structure:
+For optional inspection or troubleshooting only, run preparation directly:
 
 ```bash
 python -m build_scripts.prepare_package
@@ -214,8 +253,16 @@ python -m build_scripts.prepare_package
 
 This will:
 
-1. Run `npm install` and `npm run build` in the `frontend/` directory
-2. Copy the built assets from `frontend/dist/` to `pyrit/backend/frontend/`. Double check to make sure the files exist after running the `prepare_package.py` script. This should at least include index.html, an `assets` folder with `js` and `css` files.
+1. Validate clean source provenance and write the Python compatibility stamp.
+2. Run `npm ci --legacy-peer-deps` and `npm run build` in `frontend/` with that identity.
+3. Copy assets to `pyrit/backend/frontend/`, verify `compatibility.json`, and seal
+   their content hashes in the Python stamp. Check for `index.html`, `compatibility.json`,
+   and the `assets` folder with JavaScript and CSS files.
+
+Running preparation manually does not skip the build hooks; a subsequent source build
+will repeat it, so omit the manual command during the normal release flow.
+The wheel built from a prepared sdist verifies and reuses its sealed assets without
+requiring Node or Git. Do not change source files between stamping and publishing.
 
 ### Build the Python Package
 
@@ -455,15 +502,40 @@ skip this section. The details live at
    restarts the application and clears its in-memory state, so targets onboarded into a running
    instance are lost when it reloads, and an unannounced run can interrupt work in progress. Agree
    with the CoPyRIT maintainers on who queues it and when, rather than assuming that falls to the
-   release owner; they have taken it themselves in the past. Whoever runs it should do so only
-   after the package is on PyPI, so production runs a version users can install, and after the
-   production database migration in step 8 has completed, so the application and the shared
-   database schema agree. The pipeline definition, today `gui-deploy.yml` in this repository,
-   restricts which branch may deploy to production and fails the run if it is queued from anywhere
-   else; read it rather than assuming the rule. It also builds the image from a specific commit
-   rather than from the published package, so the deployed application tracks that commit and not
-   the release tag. Record the deployed commit in the release work item once the run finishes;
-   step 12 is complete when that commit is recorded.
+   release owner; they have taken it themselves in the past. Wait until the public package release
+   and the production database migration in step 8 are complete. Neither condition establishes
+   client compatibility with the production image: `gui-deploy.yml` builds source from `main`,
+   not the release-branch wheel on PyPI, and permits production only from `refs/heads/main`.
+   Do not relax that branch policy or claim that installing the PyPI release matches production.
+
+### Matching Clients for the Production Commit
+
+Use a commit-specific internal client distribution for this source-built deployment:
+
+1. Agree on the exact full `main` commit to deploy. In a separate clean checkout at that
+   commit, follow sections 6 and 7 to build and test its wheel and sdist with the bundled
+   frontend. Do not change the package version or substitute artifacts from the release
+   branch. Record the packaged `compatibility_id` and artifact checksums in the release
+   work item.
+2. Make those exact wheel/sdist files available at an immutable, commit-specific download
+   location accessible to all production CLI users **before** approving production traffic.
+   Provide the wheel download and installation instructions, for example
+   `python -m pip install --force-reinstall "/path/to/downloaded/pyrit-wheel.whl"`
+   with the actual downloaded wheel filename. A generic `pip install pyrit` or a shared
+   package version is not sufficient; use a dedicated environment for each deployment's
+   client. Include the supported Python version and required extras from package testing.
+3. Queue the pipeline from `main` for the agreed commit. Before approving production,
+   compare the run's `Build.SourceVersion` with the staged artifacts' full source commit,
+   and use the authenticated test deployment's `/api/version` to verify exact identity
+   equality with an installed staged client. If the queued run picked a newer `main`
+   commit, stop: stage and test matching clients for that commit or queue the intended
+   commit instead. Do not approve an unmatched run.
+4. Notify users of the maintenance window and matching client download. After deployment,
+   verify the authenticated production version and a client handshake. Record the deployed
+   image digest, full source commit, compatibility ID, immutable client download, and
+   successful verification in the release work item. Section 12 is complete only when
+   production users can obtain the matching client and these checks pass. Retain matching
+   artifact sets for permitted rollbacks, subject to the guarded-release rollback floor.
 
 ## Appendix: Patch Releases (Cherry-Pick Process)
 

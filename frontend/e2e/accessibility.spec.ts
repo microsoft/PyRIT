@@ -1,4 +1,4 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./_fixtures";
 import { makeTarget } from "./_targets";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };

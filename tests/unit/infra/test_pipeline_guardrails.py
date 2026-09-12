@@ -36,6 +36,14 @@ class TestPipelineGuardrails(unittest.TestCase):
             if "template" in stage
         }
 
+    def test_published_images_require_verified_clean_source_provenance(self) -> None:
+        assert "source_commit=$(git rev-parse HEAD)" in self.pipeline_text
+        assert '"$source_commit" != "$PYRIT_SOURCE_VERSION"' in self.pipeline_text
+        assert '-n "$(git status --porcelain)"' in self.pipeline_text
+        assert '--build-arg GIT_COMMIT="$source_commit"' in self.pipeline_text
+        assert "--build-arg GIT_MODIFIED=false" in self.pipeline_text
+        assert self.pipeline_text.index("source_commit=$(git rev-parse HEAD)") < self.pipeline_text.index("docker build")
+
     def test_all_deployment_stages_share_one_template_and_remain_visible(self) -> None:
         stages = self.pipeline["stages"]
         assert [stage.get("stage") or stage["parameters"]["stageName"] for stage in stages] == [

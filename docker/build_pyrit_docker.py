@@ -24,11 +24,16 @@ def get_git_info():
     """Get current git commit hash and check for uncommitted changes."""
     try:
         # Get commit hash
-        result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+        root = Path(__file__).resolve().parent.parent
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        )
         commit = result.stdout.strip()
 
         # Check for uncommitted changes
-        result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"], capture_output=True, text=True, check=True
+        )
         modified = len(result.stdout.strip()) > 0
 
         return commit, modified

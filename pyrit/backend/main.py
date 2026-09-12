@@ -19,8 +19,10 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 import pyrit
+from pyrit import _compatibility
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
+from pyrit.backend.middleware.compatibility import CompatibilityMiddleware
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import (
     attacks,
@@ -56,6 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     2. ``~/.pyrit/.pyrit_conf`` when present
     3. ``PYRIT_CONFIG_FILE`` local path or Azure Blob URI when set
     """
+    app.state.compatibility_id = _compatibility.get_compatibility_id()
     configuration_file_service = ConfigurationFileService(config_file_value=os.getenv("PYRIT_CONFIG_FILE"))
     app.state.configuration_file_service = configuration_file_service
     runtime = RuntimeLifecycle(app=app, source=configuration_file_service)
@@ -86,17 +89,12 @@ app = FastAPI(
 # Register RFC 7807 error handlers
 register_error_handlers(app)
 
-# Security response headers (CSP, HSTS, X-Frame-Options, etc.)
-# Registered first so headers are applied even on early returns (e.g. auth 401s)
-app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
-
-# Attach X-Request-ID to every request/response for log correlation
-app.add_middleware(RequestIdMiddleware)
 app.add_middleware(RuntimeAdmissionMiddleware)
 
 # Microsoft Graph-backed authentication (PKCE — no client secrets needed)
 # Disabled if tenant/client configuration is absent; enabled deployments require allowed groups.
 app.add_middleware(EntraAuthMiddleware)
+app.add_middleware(CompatibilityMiddleware)
 
 
 # Configure CORS
@@ -108,8 +106,10 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", _compatibility.COMPATIBILITY_HEADER],
 )
+app.add_middleware(RequestIdMiddleware)
+app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
 
 
 # Include API routes
