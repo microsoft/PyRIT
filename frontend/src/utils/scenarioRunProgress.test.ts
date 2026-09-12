@@ -6,6 +6,9 @@ import type {
 
 import {
   INITIAL_SCENARIO_RUN_PROGRESS_STATE,
+  getAttemptAccounting,
+  getAttemptPresentations,
+  getAttemptRollups,
   getElapsedMilliseconds,
   getEtaMilliseconds,
   scenarioRunProgressReducer,
@@ -32,7 +35,11 @@ const SUMMARY = {
   atomic_groups: [],
 }
 
-function makeResult(id: string, minute: number): ScenarioProgressResult {
+function makeResult(
+  id: string,
+  minute: number,
+  overrides: Partial<ScenarioProgressResult> = {},
+): ScenarioProgressResult {
   return {
     attack_result_id: id,
     atomic_group_id: 'group-a',
@@ -43,6 +50,7 @@ function makeResult(id: string, minute: number): ScenarioProgressResult {
     timestamp: `2026-01-01T00:${String(minute).padStart(2, '0')}:00Z`,
     total_retries: 0,
     retries: [],
+    ...overrides,
   }
 }
 
@@ -165,6 +173,83 @@ describe('scenarioRunProgressReducer', () => {
   })
 })
 
+describe('scenario result accounting', () => {
+  it('keeps target-facing attacks separate from orchestration records', () => {
+    const results = [
+      makeResult('baseline', 1, { result_kind: 'direct_baseline' }),
+      makeResult('technique', 2, {
+        result_kind: 'adaptive_technique',
+        technique_name: 'Fairness technique',
+      }),
+      makeResult('aggregate', 3, {
+        result_kind: 'aggregate_parent',
+        total_retries: 7,
+      }),
+    ]
+    const state = scenarioRunProgressReducer(INITIAL_SCENARIO_RUN_PROGRESS_STATE, {
+      type: 'apply-page',
+      page: makePage({
+        results,
+        summary: {
+          ...SUMMARY,
+          overall: { ...SUMMARY.overall, completed: 2, planned: 2 },
+        },
+      }),
+      fresh: true,
+    })
+
+    expect(getAttemptPresentations(state).get('technique')).toEqual({
+      role: 'adaptive_technique',
+      label: 'Fairness technique',
+      techniqueName: 'Fairness technique',
+    })
+    expect(getAttemptAccounting(state)).toMatchObject({
+      attackAttempts: 2,
+      persistedAttempts: 3,
+      aggregateParentRecords: 1,
+      completedProgressUnits: 2,
+      plannedProgressUnits: 2,
+      retries: 0,
+    })
+    expect(getAttemptRollups(state).map(({ role, retries }) => ({ role, retries }))).toEqual([
+      { role: 'direct_baseline', retries: 0 },
+      { role: 'adaptive_technique', retries: 0 },
+      { role: 'aggregate_parent', retries: 0 },
+    ])
+  })
+
+  it('groups changing Adaptive techniques as one unit and prefers canonical retries', () => {
+    const results = [
+      makeResult('first', 1, {
+        result_kind: 'adaptive_technique',
+        technique_name: 'Fairness technique',
+      }),
+      makeResult('second', 2, {
+        result_kind: 'adaptive_technique',
+        technique_name: 'Harassment technique',
+      }),
+    ]
+    const state = scenarioRunProgressReducer(INITIAL_SCENARIO_RUN_PROGRESS_STATE, {
+      type: 'apply-page',
+      page: makePage({
+        results,
+        summary: {
+          ...SUMMARY,
+          overall: { ...SUMMARY.overall, retries: 7 },
+        },
+      }),
+      fresh: true,
+    })
+
+    expect(getAttemptAccounting(state).retries).toBe(7)
+    expect(getAttemptAccounting({ ...state, summary: null }).retries).toBe(1)
+    expect(getAttemptRollups(state).map(({ label, retries }) => ({ label, retries }))).toEqual([
+      { label: 'Fairness technique', retries: 0 },
+      { label: 'Harassment technique', retries: 1 },
+    ])
+  })
+})
+
 describe('scenario run timing', () => {
   it('uses now for active elapsed time and completed_at for terminal elapsed time', () => {
     const active = {
@@ -193,9 +278,7 @@ describe('scenario run timing', () => {
     const now = Date.parse('2026-01-01T01:00:00Z')
 
     expect(getElapsedMilliseconds(queued, now)).toBe(0)
-
     expect(getEtaMilliseconds(queued, SUMMARY.overall, now)).toBeNull()
-
     expect(getElapsedMilliseconds(
       { ...queued, status: 'CANCELLED', completed_at: '2026-01-01T00:30:00Z' },
       now,

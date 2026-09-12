@@ -241,7 +241,6 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     if (pieceError && !error) {
       error = pieceError
     }
-
     // Extract reasoning summaries from reasoning-type pieces
     if (isReasoningDataType(piece.converted_value_data_type)) {
       const summaries = extractReasoningSummaries(piece.converted_value)

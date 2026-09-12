@@ -29,6 +29,11 @@ from pyrit.executor.attack.compound.sequential_attack import (
     SequentialAttack,
     SequentialChildAttack,
 )
+from pyrit.models import (
+    ADAPTIVE_ATTEMPT_LABEL,
+    ADAPTIVE_TECHNIQUE_ID_LABEL,
+    ADAPTIVE_TECHNIQUE_NAME_LABEL,
+)
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
@@ -38,18 +43,6 @@ if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
-
-
-# Memory-label key stamped onto persisted prompt rows so adaptive attempts
-# can be filtered/grouped after a run.
-ADAPTIVE_ATTEMPT_LABEL: str = "_adaptive_attempt"
-"""1-based attempt index within the per-objective loop."""
-
-ADAPTIVE_TECHNIQUE_ID_LABEL: str = "_adaptive_technique_id"
-"""Joined registered-factory and behavioral-history identity for the selected arm."""
-
-ADAPTIVE_TECHNIQUE_NAME_LABEL: str = "_adaptive_technique_name"
-"""Registered technique name for human-readable result attribution."""
 
 
 @dataclass(frozen=True)

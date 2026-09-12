@@ -285,6 +285,7 @@ class TestManyShotJailbreakAttackExecution:
             assert len(basic_context.next_message.message_pieces) == 1
             assert basic_context.next_message.message_pieces[0].original_value == rendered_prompt
             assert basic_context.next_message.message_pieces[0].original_value_data_type == "text"
+            assert basic_context.next_message.message_pieces[0].prompt_metadata == {}
 
             # Verify parent method was called
             mock_perform.assert_called_once_with(context=basic_context)

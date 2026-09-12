@@ -19,8 +19,11 @@ from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMem
 from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
+    SEQUENTIAL_ATTACK_CLASS_NAME,
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
@@ -345,6 +348,73 @@ def test_history_aggregate_uses_latest_attempt_outcome(sqlite_instance: MemoryIn
     assert aggregate.successful_units == 0
     assert aggregate.error_attempts == 1
     assert aggregate.latest_attempt_timestamp == timestamp + timedelta(seconds=1)
+
+
+def test_history_aggregate_excludes_sequential_envelopes(sqlite_instance: MemoryInterface) -> None:
+    """Only target-facing child attacks contribute to history aggregates."""
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
+    scenario = _make_scenario(
+        result_id=uuid.UUID(int=60),
+        timestamp=timestamp,
+        name="SequentialScenario",
+        state=ScenarioRunState.COMPLETED,
+        labels={},
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=61)),
+                conversation_id="conversation-61",
+                objective="objective",
+                outcome=AttackOutcome.SUCCESS,
+                execution_time_ms=1,
+                timestamp=timestamp,
+                attribution_parent_id=str(scenario.id),
+                attribution_data={"parent_collection": "child-attack", "seed_group_id": "seed-1"},
+            ),
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=62)),
+                conversation_id="",
+                objective="objective",
+                atomic_attack_identifier=AtomicAttackIdentifier.build(
+                    attack_identifier=ComponentIdentifier(
+                        class_name=SEQUENTIAL_ATTACK_CLASS_NAME,
+                        class_module="pyrit.executor.attack.compound.sequential_attack",
+                    )
+                ),
+                outcome=AttackOutcome.ERROR,
+                execution_time_ms=1,
+                timestamp=timestamp + timedelta(seconds=1),
+                total_retries=2,
+                attribution_parent_id=str(scenario.id),
+                attribution_data={"parent_collection": "typed-envelope", "seed_group_id": "seed-2"},
+            ),
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=63)),
+                conversation_id="",
+                objective="legacy objective",
+                outcome=AttackOutcome.ERROR,
+                execution_time_ms=1,
+                timestamp=timestamp + timedelta(seconds=2),
+                total_retries=3,
+                attribution_parent_id=str(scenario.id),
+                attribution_data={"parent_collection": "legacy-envelope", "seed_group_id": "seed-3"},
+            ),
+        ]
+    )
+
+    aggregate = sqlite_instance.get_scenario_history_aggregates(scenario_result_ids=[str(scenario.id)])[
+        str(scenario.id)
+    ]
+
+    assert aggregate.unit_count == 1
+    assert aggregate.completed_units == 1
+    assert aggregate.successful_units == 1
+    assert aggregate.error_attempts == 0
+    assert aggregate.total_retries == 0
+    assert aggregate.atomic_attack_names == ("child-attack",)
+    assert aggregate.latest_attempt_timestamp == timestamp
 
 
 def test_history_aggregates_ignore_unplanned_units_and_remap_hash_seeds(

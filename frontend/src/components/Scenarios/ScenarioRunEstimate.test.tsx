@@ -409,7 +409,7 @@ describe('ScenarioRunEstimate', () => {
     expect(equation).toHaveTextContent('12–20planned attacks')
   })
 
-  it('shows adaptive progress objectives and the bounded underlying attempt work', () => {
+  it('shows bounded attack attempts and separates progress planning', () => {
     const estimate = makeEstimate({
       status: 'conditional',
       total_attack_count: null,
@@ -433,21 +433,21 @@ describe('ScenarioRunEstimate', () => {
       </TestWrapper>,
     )
 
-    expect(screen.getByText('21 objectives · up to 42 technique attempts')).toBeInTheDocument()
+    expect(screen.getByText('21 objectives · up to 42 attack attempts')).toBeInTheDocument()
     expect(screen.getByRole('group', {
-      name: '21 objectives multiplied by up to 2 techniques per objective, the smaller of 2 selected candidates and limit 3, equals up to 42 technique attempts.',
+      name: '21 objectives multiplied by up to 2 Adaptive techniques per objective, the smaller of 2 selected candidates and limit 3, equals up to 42 attack attempts. Direct baseline comparison is not included.',
     })).toBeInTheDocument()
     expect(screen.getByText('2 selected candidates · limit 3')).toBeInTheDocument()
     expect(screen.getByRole('group', {
-      name: 'Direct baseline comparison is not included: up to 21 Adaptive attacks. Planned total is confirmed at launch.',
+      name: 'Progress units are confirmed at launch. Progress units track resumable evaluation groups, not every persisted attack attempt.',
     })).toBeInTheDocument()
     expect(screen.queryByText('Exact total')).not.toBeInTheDocument()
     expect(screen.getByText(
-      'Technique-attempt totals exclude multi-turn target exchanges and retries. Adaptive stops each objective after the first successful technique. Compatibility may reduce how many candidates each objective can try.',
+      'Attack-attempt totals exclude multi-turn target exchanges and retries. Adaptive techniques run sequentially and stop each objective after the first successful technique. Compatibility may reduce how many candidates each objective can try.',
     )).toBeInTheDocument()
   })
 
-  it('shows baseline-aware planned attacks before unchanged Adaptive work', () => {
+  it('includes a supported baseline inside the unified per-objective attempt factor', () => {
     const estimate = makeEstimate({
       status: 'conditional',
       total_attack_count: null,
@@ -488,24 +488,21 @@ describe('ScenarioRunEstimate', () => {
       </TestWrapper>,
     )
 
-    expect(screen.getByText('21–42 planned attacks · up to 42 technique attempts')).toBeInTheDocument()
-    const plannedEquation = screen.getByRole('group', {
-      name: 'Direct baseline comparison is included: 21 direct baseline attacks plus up to 21 Adaptive attacks equals 21–42 planned attacks.',
+    expect(screen.getByText('up to 63 attack attempts · 21–42 progress units')).toBeInTheDocument()
+    const attemptEquation = screen.getByRole('group', {
+      name: '21 objectives multiplied by 1 direct baseline plus up to 2 Adaptive techniques per objective, the smaller of 2 selected candidates and limit 3, equals up to 63 attack attempts. Direct baseline comparison is included.',
     })
-    expect(plannedEquation).toHaveTextContent(
-      '21direct baseline attacks+up to 21Adaptive attacks=21–42planned attacks',
+    expect(attemptEquation).toHaveTextContent(
+      '21objectives×(1direct baseline per objective+up to 2Adaptive techniques per objective2 selected candidates · limit 3)=up to 63attack attempts',
     )
-    expect(screen.getByRole('heading', { name: 'Planned attacks' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Adaptive work' })).toBeInTheDocument()
-    const adaptiveWork = screen.getByTestId('adaptive-work-calculation')
-    expect(adaptiveWork).toHaveTextContent('21objectives×up to 2techniques per objective')
-    expect(adaptiveWork).toHaveTextContent('=up to 42technique attempts')
+    expect(screen.getByRole('heading', { name: 'Attack attempts' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Progress planning' })).toBeInTheDocument()
+    expect(screen.getByTestId('progress-unit-calculation')).toHaveTextContent('21–42progress units')
     expect(screen.queryByText(/Attempt ceiling:/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/Progress tracks/)).not.toBeInTheDocument()
     expect(screen.queryByText(/objective envelope|logical seed groups|selected seed groups/i)).not.toBeInTheDocument()
   })
 
-  it('removes the baseline term while keeping Adaptive work unchanged', () => {
+  it('removes the baseline factor while retaining the Adaptive attempt ceiling', () => {
     renderDetails(makeEstimate({
       status: 'conditional',
       total_attack_count: null,
@@ -532,17 +529,17 @@ describe('ScenarioRunEstimate', () => {
       },
     }))
 
-    const plannedEquation = screen.getByRole('group', {
-      name: 'Direct baseline comparison is not included: up to 21 Adaptive attacks equals up to 21 planned attacks.',
+    const attemptEquation = screen.getByRole('group', {
+      name: '21 objectives multiplied by up to 14 Adaptive techniques per objective, the smaller of 14 selected candidates and limit 14, equals up to 294 attack attempts. Direct baseline comparison is not included.',
     })
-    expect(plannedEquation).toHaveTextContent('up to 21Adaptive attacks=up to 21planned attacks')
-    expect(within(plannedEquation).queryByText(/baseline attack/)).not.toBeInTheDocument()
-    const adaptiveWork = screen.getByTestId('adaptive-work-calculation')
-    expect(adaptiveWork).toHaveTextContent('21objectives×up to 14techniques per objective')
-    expect(adaptiveWork).toHaveTextContent('=up to 294technique attempts')
+    expect(attemptEquation).toHaveTextContent(
+      '21objectives×up to 14Adaptive techniques per objective14 selected candidates · limit 14=up to 294attack attempts',
+    )
+    expect(within(attemptEquation).queryByText(/baseline/)).not.toBeInTheDocument()
+    expect(screen.getByTestId('progress-unit-calculation')).toHaveTextContent('Up to 21progress units')
   })
 
-  it('renders exact Adaptive planned values without inventing a range', () => {
+  it('renders exact Adaptive progress units without inventing a range', () => {
     renderDetails(makeEstimate({
       status: 'exact',
       total_attack_count: 42,
@@ -577,12 +574,13 @@ describe('ScenarioRunEstimate', () => {
     }))
 
     expect(screen.getByRole('group', {
-      name: 'Direct baseline comparison is included: 21 direct baseline attacks plus 21 Adaptive attacks equals 42 planned attacks.',
+      name: '21 objectives multiplied by 1 direct baseline plus up to 14 Adaptive techniques per objective, the smaller of 14 selected candidates and limit 14, equals up to 315 attack attempts. Direct baseline comparison is included.',
     })).toBeInTheDocument()
+    expect(screen.getByTestId('progress-unit-calculation')).toHaveTextContent('42progress units')
     expect(screen.queryByText('21–42')).not.toBeInTheDocument()
   })
 
-  it('preserves a nonzero Adaptive planned range when no baseline is included', () => {
+  it('preserves a nonzero Adaptive progress range when no baseline is included', () => {
     renderDetails(makeEstimate({
       status: 'conditional',
       total_attack_count: null,
@@ -602,8 +600,9 @@ describe('ScenarioRunEstimate', () => {
     }))
 
     expect(screen.getByRole('group', {
-      name: 'Direct baseline comparison is not included: 5–21 Adaptive attacks equals 5–21 planned attacks.',
+      name: '5–21 progress units. Progress units track resumable evaluation groups, not every persisted attack attempt.',
     })).toBeInTheDocument()
+    expect(screen.getByTestId('run-calculation')).toHaveTextContent('up to 42attack attempts')
   })
 
   it('uses the configured max when it is lower than the adaptive candidate pool', () => {
@@ -644,7 +643,7 @@ describe('ScenarioRunEstimate', () => {
       },
     }))
 
-    expect(screen.getByText('techniques per objective')).toBeInTheDocument()
+    expect(screen.getByText('Adaptive techniques per objective')).toBeInTheDocument()
     expect(screen.getByText('2 selected candidates · limit 5')).toBeInTheDocument()
     expect(screen.getByText('up to 42')).toBeInTheDocument()
   })

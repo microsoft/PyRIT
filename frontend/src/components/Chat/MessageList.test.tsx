@@ -99,6 +99,101 @@ describe("MessageList", () => {
     expect(screen.getByText("User message test")).toBeInTheDocument();
   });
 
+  it("should not collapse a long original prompt when long-prompt collapsing is disabled", () => {
+    const originalContent = "demonstration ".repeat(500);
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[{
+            role: "user",
+            content: "converted payload",
+            originalContent,
+            timestamp: new Date().toISOString(),
+          }]}
+        />
+      </TestWrapper>
+    );
+
+    const original = screen.getByTestId("original-section");
+    expect(original).toHaveTextContent(originalContent.trim());
+    expect(within(original).queryByText("Show full prompt")).not.toBeInTheDocument();
+    expect(screen.getByText("converted payload")).toBeInTheDocument();
+    expect(screen.getByTestId("converted-label")).toBeInTheDocument();
+  });
+
+  it("should collapse a long original prompt when long-prompt collapsing is enabled", () => {
+    const originalContent = "demonstration ".repeat(500);
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[{
+            role: "user",
+            content: "converted payload",
+            originalContent,
+            timestamp: new Date().toISOString(),
+          }]}
+          collapseLongPrompts
+        />
+      </TestWrapper>
+    );
+
+    const original = screen.getByTestId("original-section");
+    expect(within(original).getByText(`Long prompt · ${originalContent.length.toLocaleString()} characters`))
+      .toBeInTheDocument();
+    expect(within(original).getByText("Show full prompt")).toBeInTheDocument();
+    const details = within(original).getByText("Show full prompt").closest("details");
+    expect(details).not.toHaveAttribute("open");
+    expect(details).toHaveTextContent("demonstration");
+  });
+
+  it("should collapse generic long historical prompts without changing ordinary short prompts", () => {
+    const longPrompt = "x".repeat(4_001);
+    const first = render(
+      <TestWrapper>
+        <MessageList
+          messages={[{ role: "user", content: longPrompt, timestamp: new Date().toISOString() }]}
+          collapseLongPrompts
+        />
+      </TestWrapper>
+    );
+    expect(screen.getByText("Long prompt · 4,001 characters")).toBeInTheDocument();
+    expect(screen.getByText("Show full prompt")).toBeInTheDocument();
+    first.unmount();
+
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[{ role: "user", content: "Short prompt", timestamp: new Date().toISOString() }]}
+          collapseLongPrompts
+        />
+      </TestWrapper>
+    );
+    expect(screen.getByText("Short prompt")).toBeInTheDocument();
+    expect(screen.queryByText("Show full prompt")).not.toBeInTheDocument();
+  });
+
+  it("should copy the complete collapsed prompt", async () => {
+    const user = userEvent.setup();
+    const content = "generated ".repeat(500);
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[{ role: "user", content, timestamp: new Date().toISOString() }]}
+          collapseLongPrompts
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByRole("button", { name: "Copy full prompt" }));
+    expect(writeText).toHaveBeenCalledWith(content);
+    expect(screen.getByRole("button", { name: "Full prompt copied" })).toBeInTheDocument();
+  });
+
   it("should render assistant messages", () => {
     const assistantMessages: Message[] = [
       {
