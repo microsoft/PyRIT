@@ -1,5 +1,6 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./_fixtures";
 import { makeAddMessageResponse } from "./_attacks";
+import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -146,6 +147,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
     if (apiPath === "/version") {
       await route.fulfill(
         jsonResponse({
+          ...mockVersion(),
           version: "touch-target-test",
           display: "touch-target-test",
           default_labels: {

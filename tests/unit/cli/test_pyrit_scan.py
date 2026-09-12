@@ -39,6 +39,33 @@ def _sp(*, name, description="", default=None, param_type="str", choices=None, i
     )
 
 
+@pytest.mark.parametrize("stage", ["entry", "poll"])
+def test_compatibility_failure_exits_without_replay(stage, capsys):
+    from pyrit.cli.api_client import CompatibilityError
+
+    client = _mock_api_client()
+    if stage == "entry":
+        client.__aenter__.side_effect = CompatibilityError("Wrong build")
+    else:
+        client.get_scenario_run_async.side_effect = CompatibilityError("Backend changed")
+    with (
+        patch("pyrit.cli.api_client.PyRITApiClient", return_value=client),
+        patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", AsyncMock(return_value=True)),
+    ):
+        assert pyrit_scan.main(["run", "test_scenario", "--target", "t"]) == 1
+    output = capsys.readouterr().out
+    assert "CompatibilityError" in output
+    assert "same PyRIT build" in output
+    assert "No request was automatically replayed" in output
+    client.cancel_scenario_run_async.assert_not_awaited()
+    if stage == "entry":
+        client.start_scenario_run_async.assert_not_awaited()
+    else:
+        client.start_scenario_run_async.assert_awaited_once()
+        client.get_scenario_run_async.assert_awaited_once()
+        assert "server run may still be active" in output
+
+
 def test_dataset_filter_help_covers_every_request_model_key():
     """
     The frontend per-key ``--dataset-filters`` help must describe exactly the server-side allow-list.

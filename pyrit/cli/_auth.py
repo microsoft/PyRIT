@@ -391,7 +391,7 @@ async def _verify_provider_async(*, provider: TokenProvider) -> TokenProvider:
     """
     try:
         await provider.get_token_async()
-    except CliAuthenticationError:
+    except BaseException:
         await provider.close_async()
         raise
     return provider

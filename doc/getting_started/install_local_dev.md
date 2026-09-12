@@ -156,6 +156,28 @@ uv sync --extra playwright --extra gcg
 
 ### Development Workflow
 
+#### Keep the backend, CLI, and frontend in lockstep
+
+The backend, CLI, and browser bundle must have exactly the same
+`<Python package version>+g<full source commit>` compatibility identity. Editable
+installation stamps the checkout; Vite stamps its bundle from the same source.
+After changing commits, refresh the stamp and restart the backend and Vite:
+
+```bash
+python -m build_scripts.stamp_compatibility --development
+```
+
+For locally packaged frontend assets, run
+`python -m build_scripts.prepare_package --development`. Dirty local changes warn
+but do not change the identity. These assets cannot be published. Wheel and sdist
+build hooks reject dirty sources and build matching assets automatically; installed
+clients read their packaged stamp, never local Git or the connected backend.
+
+A compatibility failure requires matching artifacts, not bypassing the header.
+Reload the browser only after matching artifacts are deployed; mounted UI state is
+retained when a later mismatch blocks work. Do not automatically replay mutations.
+See [the protocol and API example](../../pyrit/backend/README.md#strict-lockstep-compatibility).
+
 #### Adding New Dependencies
 
 Edit `pyproject.toml` to add dependencies, then run:

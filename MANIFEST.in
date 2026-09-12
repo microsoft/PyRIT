@@ -14,3 +14,4 @@ recursive-include LICENSES *.txt
 recursive-include third_party *.json
 include pyrit/executor/promptgen/gcg/src/Dockerfile
 recursive-include pyrit/backend/frontend *
+recursive-include build_scripts *.py

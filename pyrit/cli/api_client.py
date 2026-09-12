@@ -35,6 +35,20 @@ class ServerNotAvailableError(Exception):
     """Raised when the CLI cannot reach the PyRIT backend server."""
 
 
+class CompatibilityError(Exception):
+    """Raised when client and backend cannot safely operate in strict lockstep."""
+
+    def __init__(self, message: str, *, expected: object = None, actual: object = None) -> None:
+        """Initialize an actionable compatibility failure with the reported identities."""
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"{message} Expected: {expected!r}; actual: {actual!r}. "
+            "Install client and backend from the same PyRIT build, then reconnect. "
+            "No request was automatically replayed; check scenario history before retrying a run."
+        )
+
+
 class PyRITApiClient:
     """
     Lightweight async REST client for the PyRIT backend.
@@ -74,6 +88,8 @@ class PyRITApiClient:
         self._interactive = interactive
         self._client: Any = None  # httpx.AsyncClient (typed Any to avoid top-level import)
         self._token_provider: TokenProvider | None = None
+        self._compatibility_id: str | None = None
+        self._compatibility_error: CompatibilityError | None = None
 
     async def __aenter__(self) -> PyRITApiClient:
         """
@@ -84,25 +100,35 @@ class PyRITApiClient:
 
         Raises:
             CliAuthenticationError: If authentication discovery or login fails.
-            httpx.HTTPError: If the authentication discovery request fails.
+            CompatibilityError: If the installed stamp or backend identity is invalid or mismatched.
+            httpx.HTTPError: If authentication discovery or the version request fails.
         """
         import httpx
 
-        client_kwargs: dict[str, Any] = {
-            "base_url": self._base_url,
-            "timeout": self._request_timeout,
-        }
-        if self._auth_mode != "none":
-            client_kwargs["event_hooks"] = {"request": [self._add_authorization_header_async]}
-        self._client = httpx.AsyncClient(**client_kwargs)
-        if self._auth_mode != "none":
-            from pyrit.cli._auth import CliAuthenticationError
+        from pyrit._compatibility import get_compatibility_id
 
+        try:
+            if self._compatibility_error is not None:
+                raise self._compatibility_error
             try:
+                self._compatibility_id = get_compatibility_id()
+            except ValueError as exc:
+                self._compatibility_error = CompatibilityError(f"Invalid installed PyRIT compatibility stamp: {exc}")
+                raise self._compatibility_error from exc
+            self._client = httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=self._request_timeout,
+                event_hooks={
+                    "request": [self._prepare_request_async],
+                    "response": [self._check_compatibility_response_async],
+                },
+            )
+            if self._auth_mode != "none":
                 await self._configure_authentication_async()
-            except (CliAuthenticationError, httpx.HTTPError):
-                await self.close_async()
-                raise
+            await self._verify_compatibility_async()
+        except BaseException:
+            await self.close_async()
+            raise
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -119,6 +145,9 @@ class PyRITApiClient:
 
         Returns:
             bool: ``True`` if the server returned a healthy response.
+
+        Raises:
+            CompatibilityError: If the client is blocked by a compatibility failure.
         """
         import httpx
 
@@ -129,6 +158,8 @@ class PyRITApiClient:
                 return False
             payload = resp.json()
             return bool(payload.get("status") == "healthy" and payload.get("service") == "pyrit-backend")
+        except CompatibilityError:
+            raise
         except httpx.ConnectError:
             return False
         except Exception:
@@ -428,6 +459,56 @@ class PyRITApiClient:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    async def _verify_compatibility_async(self) -> None:
+        """Require a valid backend identity matching the installed packaged stamp."""
+        from pyrit._compatibility import is_valid_compatibility_id
+
+        response = await self._get_client().get("/api/version")
+        self._raise_for_status(response)
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            self._compatibility_error = CompatibilityError("Invalid JSON from /api/version.")
+            raise self._compatibility_error from exc
+        actual = payload.get("compatibility_id") if isinstance(payload, dict) else None
+        if not is_valid_compatibility_id(actual) or actual != self._compatibility_id:
+            self._compatibility_error = CompatibilityError(
+                "PyRIT client/backend compatibility check failed.", expected=self._compatibility_id, actual=actual
+            )
+            raise self._compatibility_error
+
+    async def _prepare_request_async(self, request: Any) -> None:
+        """Block a failed client and stamp every outgoing request before authentication."""
+        from pyrit._compatibility import COMPATIBILITY_HEADER
+
+        if self._compatibility_error is not None:
+            raise self._compatibility_error
+        request.headers[COMPATIBILITY_HEADER] = self._compatibility_id
+        await self._add_authorization_header_async(request)
+        if self._compatibility_error is not None:
+            raise self._compatibility_error
+
+    async def _check_compatibility_response_async(self, response: Any) -> None:
+        """Latch stable compatibility problem responses, including failures during polling."""
+        from pyrit._compatibility import INVALID_COMPATIBILITY_TYPE, MISMATCH_COMPATIBILITY_TYPE
+
+        problem_types = {400: INVALID_COMPATIBILITY_TYPE, 409: MISMATCH_COMPATIBILITY_TYPE}
+        if response.status_code not in problem_types:
+            return
+        await response.aread()
+        try:
+            payload = response.json()
+        except ValueError:
+            return
+        if not isinstance(payload, dict) or payload.get("type") != problem_types[response.status_code]:
+            return
+        self._compatibility_error = CompatibilityError(
+            "The backend rejected this client's PyRIT compatibility identity; further requests are blocked.",
+            expected=payload.get("expected"),
+            actual=payload.get("actual"),
+        )
+        raise self._compatibility_error
+
     async def _configure_authentication_async(self) -> None:
         """
         Discover backend authentication requirements and select a credential.
@@ -482,7 +563,10 @@ class PyRITApiClient:
 
         Raises:
             ServerNotAvailableError: If the client has not been opened via ``__aenter__``.
+            CompatibilityError: If a compatibility failure has blocked the client.
         """
+        if self._compatibility_error is not None:
+            raise self._compatibility_error
         if self._client is None:
             raise ServerNotAvailableError(
                 f"API client is not connected to {self._base_url}. "

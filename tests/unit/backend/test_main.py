@@ -92,7 +92,7 @@ class TestLifespan:
                 assert not path.exists()
         assert paths[0] != paths[1]
 
-    async def test_lifespan_yields(self, mock_scenario_run_lifecycle) -> None:
+    async def test_lifespan_yields(self, compatibility_id: str, mock_scenario_run_lifecycle) -> None:
         """Test that lifespan delegates to ConfigurationLoader and yields."""
         fake_config = ConfigurationLoader()
         with (
@@ -104,6 +104,7 @@ class TestLifespan:
                 pass
 
             init_mock.assert_awaited_once_with(raise_on_initializer_error=False)
+            assert app.state.compatibility_id == compatibility_id
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False

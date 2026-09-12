@@ -277,7 +277,8 @@ constraint-dependencies = [
 
 [build-system]
 requires = ["setuptools>=64.0.0", "wheel>=0.46.2"]
-build-backend = "setuptools.build_meta"
+build-backend = "build_scripts.build_backend"
+backend-path = ["."]
 
 [tool.setuptools.packages.find]
 include = ["pyrit", "pyrit.*"]
@@ -294,6 +295,7 @@ license-files = [
 
 [tool.setuptools.package-data]
 pyrit = [
+    "_compatibility.json",
     "backend/frontend/**/*",
     "memory/alembic/**/*",
     "memory/alembic.ini",

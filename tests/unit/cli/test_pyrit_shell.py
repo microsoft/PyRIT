@@ -90,6 +90,19 @@ def shell(mock_api_client):
     return s, mock_api_client
 
 
+def test_open_client_compatibility_failure_stays_in_shell(shell, capsys):
+    from pyrit.cli.api_client import CompatibilityError
+
+    shell_instance, client = shell
+    client.__aenter__.side_effect = CompatibilityError("Wrong build")
+    with patch("pyrit.cli.api_client.PyRITApiClient", return_value=client):
+        assert shell_instance._open_client(base_url="http://localhost:8000") is False
+    assert shell_instance._api_client is None
+    output = capsys.readouterr().out
+    assert "CompatibilityError" in output
+    assert "same PyRIT build" in output
+
+
 class TestPyRITShell:
     """Tests for PyRITShell class."""
 
@@ -651,6 +664,25 @@ class TestDoRun:
         out = capsys.readouterr().out
         assert "The scenario could not be started." in out
         assert "Error (RuntimeError): nope" in out
+
+    def test_run_poll_compatibility_failure_returns_to_shell(self, shell, capsys):
+        from pyrit.cli.api_client import CompatibilityError
+
+        shell_instance, client = shell
+        client.start_scenario_run_async.return_value = self._run_payload()
+        client.get_scenario_run_async.side_effect = CompatibilityError("Backend changed")
+        with patch(
+            "pyrit.cli._cli_args.parse_run_arguments",
+            return_value={"scenario_name": "foo", "target": "t"},
+        ):
+            shell_instance.do_run("foo --target t")
+        output = capsys.readouterr().out
+        assert "CompatibilityError" in output
+        assert "Returning to shell" in output
+        assert "server run may still be active" in output
+        client.start_scenario_run_async.assert_awaited_once()
+        client.get_scenario_run_async.assert_awaited_once()
+        client.cancel_scenario_run_async.assert_not_awaited()
 
     def test_run_start_failure_read_timeout_reports_type_and_hint(self, shell, capsys):
         """A ReadTimeout stringifies to '', so the type and a hint have to carry the message."""

@@ -78,6 +78,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setAuthConfig(config)
 
         if (!config.clientId || !config.tenantId) {
+          setApiMsalInstance(null)
           setAuthDisabled(true)
           return
         }

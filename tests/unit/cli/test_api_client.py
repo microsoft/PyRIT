@@ -5,14 +5,16 @@
 Unit tests for pyrit.cli.api_client.PyRITApiClient.
 """
 
+import asyncio
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
 
+from pyrit._compatibility import COMPATIBILITY_HEADER, INVALID_COMPATIBILITY_TYPE, MISMATCH_COMPATIBILITY_TYPE
 from pyrit.cli._auth import CliAuthenticationError
-from pyrit.cli.api_client import PyRITApiClient, ServerNotAvailableError
+from pyrit.cli.api_client import CompatibilityError, PyRITApiClient, ServerNotAvailableError
 from pyrit.models import ScenarioRunState, TargetCapabilities
 from pyrit.models.catalog import (
     RegisteredInitializer,
@@ -24,12 +26,255 @@ from pyrit.models.catalog import (
 )
 from unit.mocks import make_scenario_result
 
+COMPATIBILITY_ID = "0.14.0+g" + "a" * 40
+
+
+@pytest.fixture(autouse=True)
+def packaged_stamp():
+    """Use an installed build identity independent of the test checkout."""
+    with patch("pyrit._compatibility.get_compatibility_id", return_value=COMPATIBILITY_ID):
+        yield
+
+
+OTHER_ID = "0.14.0+g" + "b" * 40
+
+
+async def test_request_waiting_for_auth_stops_after_concurrent_mismatch(monkeypatch):
+    client = PyRITApiClient(base_url="http://localhost:8000")
+    client._compatibility_id = COMPATIBILITY_ID
+    error = CompatibilityError("Backend replaced", expected=OTHER_ID, actual=COMPATIBILITY_ID)
+
+    async def invalidate_while_authenticating(request):
+        client._compatibility_error = error
+
+    monkeypatch.setattr(client, "_add_authorization_header_async", invalidate_while_authenticating)
+    request = httpx.Request("POST", "http://localhost:8000/api/scenarios/runs")
+    with pytest.raises(CompatibilityError) as raised:
+        await client._prepare_request_async(request)
+    assert raised.value is error
+
+
+@pytest.fixture()
+def transport_client(monkeypatch):
+    """Install real HTTPX clients with an in-memory transport and real hooks."""
+    client_type = httpx.AsyncClient
+    opened = []
+
+    def install(handler):
+        def factory(**kwargs):
+            client = client_type(transport=httpx.MockTransport(handler), **kwargs)
+            opened.append(client)
+            return client
+
+        monkeypatch.setattr(httpx, "AsyncClient", factory)
+        return opened
+
+    return install
+
+
+async def test_handshake_authenticates_before_version_and_stamps_business_requests(transport_client):
+    requests = []
+    provider = MagicMock(get_token_async=AsyncMock(return_value="token"), close_async=AsyncMock())
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path == "/api/auth/config":
+            assert "Authorization" not in request.headers
+            return httpx.Response(
+                200,
+                json={
+                    "enabled": True,
+                    "tenantId": "tenant",
+                    "clientId": "client",
+                    "scopes": ["https://graph.microsoft.com/User.Read"],
+                },
+            )
+        assert request.headers["Authorization"] == "Bearer token"
+        assert request.headers[COMPATIBILITY_HEADER] == COMPATIBILITY_ID
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"compatibility_id": COMPATIBILITY_ID})
+        return httpx.Response(200, json=_run_summary_payload())
+
+    opened = transport_client(handler)
+    with patch("pyrit.cli._auth.create_token_provider_async", AsyncMock(return_value=provider)):
+        async with PyRITApiClient(base_url="https://backend.example", auth_mode="auto") as client:
+            await client.start_scenario_run_async(
+                request=RunScenarioRequest(scenario_name="test", target_name="target")
+            )
+            await client.get_scenario_run_async(scenario_result_id="abc")
+            await client.cancel_scenario_run_async(scenario_result_id="abc")
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("GET", "/api/auth/config"),
+        ("GET", "/api/version"),
+        ("POST", "/api/scenarios/runs"),
+        ("GET", "/api/scenarios/runs/abc"),
+        ("POST", "/api/scenarios/runs/abc/cancel"),
+    ]
+    assert opened[0].is_closed
+    provider.close_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"compatibility_id": OTHER_ID},
+        {},
+        [],
+        {"compatibility_id": None},
+        {"compatibility_id": 42},
+        {"compatibility_id": "0.14.0+gaaaaaaa"},
+        {"compatibility_id": COMPATIBILITY_ID.upper()},
+    ],
+)
+async def test_failed_handshake_closes_and_blocks_business_requests(transport_client, payload):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=payload)
+
+    opened = transport_client(handler)
+    client = PyRITApiClient(base_url="http://localhost:8000")
+    with pytest.raises(CompatibilityError) as failure:
+        await client.__aenter__()
+    assert failure.value.expected == COMPATIBILITY_ID
+    assert opened[0].is_closed
+    assert client._client is None
+    with pytest.raises(CompatibilityError):
+        await client.cancel_scenario_run_async(scenario_result_id="abc")
+    assert [request.url.path for request in requests] == ["/api/version"]
+
+
+async def test_invalid_packaged_stamp_fails_before_network():
+    with (
+        patch("pyrit._compatibility.get_compatibility_id", side_effect=ValueError("missing stamp")),
+        patch("httpx.AsyncClient") as factory,
+        pytest.raises(CompatibilityError, match="Invalid installed"),
+    ):
+        await PyRITApiClient(base_url="http://localhost:8000").__aenter__()
+    factory.assert_not_called()
+
+
+async def test_cancelling_entry_awaits_resource_cleanup(transport_client):
+    waiting = asyncio.Event()
+    provider = MagicMock(get_token_async=AsyncMock(return_value="token"), close_async=AsyncMock())
+
+    async def handler(request):
+        waiting.set()
+        await asyncio.Event().wait()
+
+    opened = transport_client(handler)
+    client = PyRITApiClient(base_url="http://localhost:8000", auth_mode="auto")
+
+    async def configure():
+        client._token_provider = provider
+
+    with patch.object(client, "_configure_authentication_async", side_effect=configure):
+        task = asyncio.create_task(client.__aenter__())
+        await asyncio.wait_for(waiting.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert opened[0].is_closed
+    assert client._client is None
+    assert client._token_provider is None
+    provider.close_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize("failure", ["json", "missing", "http", "cancel", "unexpected"])
+async def test_failed_entry_closes_http_and_credentials(transport_client, failure):
+    provider = MagicMock(get_token_async=AsyncMock(return_value="token"), close_async=AsyncMock())
+
+    def handler(request):
+        if request.url.path == "/api/auth/config":
+            return httpx.Response(
+                200,
+                json={
+                    "enabled": True,
+                    "tenantId": "tenant",
+                    "clientId": "client",
+                    "scopes": ["https://graph.microsoft.com/User.Read"],
+                },
+            )
+        if failure == "json":
+            return httpx.Response(200, content=b"not JSON")
+        if failure == "missing":
+            return httpx.Response(200, json={})
+        if failure == "http":
+            raise httpx.ConnectError("offline")
+        if failure == "cancel":
+            raise asyncio.CancelledError
+        raise RuntimeError("unexpected failure")
+
+    opened = transport_client(handler)
+    expected = {
+        "json": CompatibilityError,
+        "missing": CompatibilityError,
+        "http": httpx.ConnectError,
+        "cancel": asyncio.CancelledError,
+        "unexpected": RuntimeError,
+    }[failure]
+    client = PyRITApiClient(base_url="https://backend.example", auth_mode="auto")
+    with patch("pyrit.cli._auth.create_token_provider_async", AsyncMock(return_value=provider)):
+        with pytest.raises(expected):
+            await client.__aenter__()
+    assert opened[0].is_closed
+    assert client._client is None
+    assert client._token_provider is None
+    provider.close_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("status", "problem_type"), [(400, INVALID_COMPATIBILITY_TYPE), (409, MISMATCH_COMPATIBILITY_TYPE)]
+)
+@pytest.mark.parametrize("operation", ["poll", "mutation"])
+async def test_later_rejection_latches_without_replaying(transport_client, status, problem_type, operation):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"compatibility_id": COMPATIBILITY_ID})
+        return httpx.Response(status, json={"type": problem_type, "expected": OTHER_ID, "actual": COMPATIBILITY_ID})
+
+    transport_client(handler)
+    async with PyRITApiClient(base_url="http://localhost:8000") as client:
+        with pytest.raises(CompatibilityError) as failure:
+            if operation == "poll":
+                await client.get_scenario_run_async(scenario_result_id="abc")
+            else:
+                await client.start_scenario_run_async(
+                    request=RunScenarioRequest(scenario_name="test", target_name="target")
+                )
+        assert failure.value.expected == OTHER_ID
+        assert failure.value.actual == COMPATIBILITY_ID
+        with pytest.raises(CompatibilityError):
+            await client.cancel_scenario_run_async(scenario_result_id="abc")
+        with pytest.raises(CompatibilityError):
+            await client._client.get("/api/targets")
+    assert len(requests) == 2
+    assert all(request.headers[COMPATIBILITY_HEADER] == COMPATIBILITY_ID for request in requests)
+
+
+@pytest.mark.parametrize("payload", [{"detail": "busy"}, [], {"type": INVALID_COMPATIBILITY_TYPE}])
+async def test_unrelated_conflict_does_not_latch(transport_client, payload):
+    def handler(request):
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"compatibility_id": COMPATIBILITY_ID})
+        return httpx.Response(409, json=payload)
+
+    transport_client(handler)
+    async with PyRITApiClient(base_url="http://localhost:8000") as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.cancel_scenario_run_async(scenario_result_id="abc")
+        assert client._compatibility_error is None
+
 
 @pytest.fixture()
 def mock_httpx_client():
     """A MagicMock standing in for an opened ``httpx.AsyncClient``."""
     client = MagicMock()
-    client.get = AsyncMock()
+    client.get = AsyncMock(return_value=_make_response(json_data={"compatibility_id": COMPATIBILITY_ID}))
     client.post = AsyncMock()
     client.aclose = AsyncMock()
     return client
@@ -130,7 +375,7 @@ async def test_async_context_manager_opens_and_closes(mock_httpx_client):
         mock_httpx_client.aclose.assert_awaited_once()
         assert c._client is None
     # Default request_timeout (60s) propagates to the httpx client constructor.
-    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=60.0)
+    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=60.0, event_hooks=ANY)
 
 
 async def test_async_context_manager_passes_custom_request_timeout(mock_httpx_client):
@@ -139,7 +384,7 @@ async def test_async_context_manager_passes_custom_request_timeout(mock_httpx_cl
     with patch("httpx.AsyncClient", fake_async_client_cls):
         async with c:
             pass
-    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=120.0)
+    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=120.0, event_hooks=ANY)
 
 
 async def test_async_context_manager_uses_default_when_request_timeout_is_none(
@@ -150,7 +395,7 @@ async def test_async_context_manager_uses_default_when_request_timeout_is_none(
     with patch("httpx.AsyncClient", fake_async_client_cls):
         async with c:
             pass
-    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=60.0)
+    fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=60.0, event_hooks=ANY)
 
 
 async def test_close_async_is_noop_when_already_closed():
@@ -170,6 +415,10 @@ async def test_context_manager_discovers_auth_and_attaches_bearer_token(mock_htt
         }
     )
     provider = MagicMock()
+    mock_httpx_client.get.side_effect = [
+        mock_httpx_client.get.return_value,
+        _make_response(json_data={"compatibility_id": COMPATIBILITY_ID}),
+    ]
     provider.get_token_async = AsyncMock(return_value="access-token")
     provider.close_async = AsyncMock()
 
@@ -187,7 +436,7 @@ async def test_context_manager_discovers_auth_and_attaches_bearer_token(mock_htt
             await request_hook(request)
             assert request.headers["Authorization"] == "Bearer access-token"
 
-    mock_httpx_client.get.assert_awaited_once_with("/api/auth/config")
+    assert mock_httpx_client.get.await_args_list == [call("/api/auth/config"), call("/api/version")]
     create_provider.assert_awaited_once()
     provider.close_async.assert_awaited_once()
 
@@ -204,6 +453,10 @@ async def test_context_manager_leaves_public_requests_unauthenticated(mock_httpx
         }
     )
 
+    mock_httpx_client.get.side_effect = [
+        mock_httpx_client.get.return_value,
+        _make_response(json_data={"compatibility_id": COMPATIBILITY_ID}),
+    ]
     with patch("httpx.AsyncClient", fake_async_client_cls):
         async with c:
             request_hook = fake_async_client_cls.call_args.kwargs["event_hooks"]["request"][0]
@@ -212,10 +465,13 @@ async def test_context_manager_leaves_public_requests_unauthenticated(mock_httpx
             assert "Authorization" not in request.headers
 
 
-async def test_context_manager_accepts_legacy_backend_without_auth_endpoint(mock_httpx_client):
+async def test_context_manager_accepts_matching_backend_without_auth_endpoint(mock_httpx_client):
     c = PyRITApiClient(base_url="http://legacy.example.com", auth_mode="auto")
     fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
-    mock_httpx_client.get.return_value = _make_response(status_code=404)
+    mock_httpx_client.get.side_effect = [
+        _make_response(status_code=404),
+        _make_response(json_data={"compatibility_id": COMPATIBILITY_ID}),
+    ]
 
     with patch("httpx.AsyncClient", fake_async_client_cls):
         async with c:
