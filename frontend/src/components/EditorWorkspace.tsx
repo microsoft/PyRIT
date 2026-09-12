@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { Button, makeStyles, Text, tokens } from '@fluentui/react-components'
+import { Button, makeStyles, mergeClasses, Text, tokens } from '@fluentui/react-components'
 
 import {
   MINIMUM_TOUCH_TARGET_SIZE,
@@ -92,6 +92,9 @@ const useStyles = makeStyles({
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   },
+  selectedSecondaryText: {
+    color: tokens.colorNeutralForegroundOnBrand,
+  },
   editorPane: {
     display: 'flex',
     flexDirection: 'column',
@@ -141,7 +144,15 @@ export default function EditorWorkspace({
                 <span className={styles.navigationContent}>
                   <span>{item.label}</span>
                   {item.secondaryText && (
-                    <span className={styles.secondaryText} title={item.secondaryText}>{item.secondaryText}</span>
+                    <span
+                      className={mergeClasses(
+                        styles.secondaryText,
+                        item.id === selectedId && styles.selectedSecondaryText,
+                      )}
+                      title={item.secondaryText}
+                    >
+                      {item.secondaryText}
+                    </span>
                   )}
                 </span>
               </Button>
