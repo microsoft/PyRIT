@@ -64,18 +64,18 @@ class BinaryConverter(WordLevelConverter):
             }
         )
 
-    def validate_input(self, prompt: str) -> None:
+    def _validate_word(self, word: str) -> None:
         """
-        Check if ``bits_per_char`` is sufficient for the characters in the prompt.
+        Check if ``bits_per_char`` is sufficient for the characters in a word being converted.
 
         Args:
-            prompt (str): The input text prompt to validate.
+            word (str): The word that is about to be converted.
 
         Raises:
-            ValueError: If ``bits_per_char`` is too small to represent any character in the prompt.
+            ValueError: If ``bits_per_char`` is too small to represent any character in the word.
         """
         bits = self.bits_per_char.value
-        max_code_point = max((ord(char) for char in prompt), default=0)
+        max_code_point = max((ord(char) for char in word), default=0)
         min_bits_required = max_code_point.bit_length()
         if bits < min_bits_required:
             raise ValueError(
@@ -92,7 +92,14 @@ class BinaryConverter(WordLevelConverter):
 
         Returns:
             str: The converted word.
+
+        Raises:
+            ValueError: If ``bits_per_char`` is too small to represent any character in the word.
         """
+        # Validated per word rather than over the whole prompt: a word selection strategy may
+        # leave words untouched, and a character that is never encoded cannot overflow
+        # bits_per_char.
+        self._validate_word(word)
         bits = self.bits_per_char.value
         return " ".join(format(ord(char), f"0{bits}b") for char in word)
 
