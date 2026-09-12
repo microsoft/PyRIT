@@ -36,6 +36,10 @@ export const useTargetTableStyles = makeStyles({
     overflowWrap: 'anywhere',
     wordBreak: 'break-word',
   },
+  hiddenRow: {
+    backgroundColor: tokens.colorNeutralBackground2,
+    opacity: 0.65,
+  },
   endpointCell: {
     overflowWrap: 'break-word',
     wordBreak: 'break-all',
@@ -108,6 +112,14 @@ export const useTargetTableStyles = makeStyles({
         minHeight: MINIMUM_TOUCH_TARGET_SIZE,
       },
     },
+  },
+  actionCell: {
+    width: '220px',
+  },
+  rowActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
   },
   rowAction: {
     ...mobileTouchTarget,
