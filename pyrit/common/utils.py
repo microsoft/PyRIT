@@ -56,24 +56,34 @@ def combine_dict(existing_dict: dict[str, Any] | None = None, new_dict: dict[str
     return result
 
 
-def combine_list(list1: str | list[str], list2: str | list[str]) -> list[str]:
+def combine_list(
+    list1: str | list[str] | None,
+    list2: str | list[str] | None,
+) -> list[str]:
     """
     Combine two lists or strings into a single list with unique values.
 
+    Order is preserved: items appear in first-occurrence order, taking ``list1``
+    before ``list2``. ``None`` is treated as empty and a bare string as a
+    single-element list.
+
     Args:
-        list1 (str | list[str]): First list or string to combine.
-        list2 (str | list[str]): Second list or string to combine.
+        list1 (str | list[str] | None): First list or string to combine.
+        list2 (str | list[str] | None): Second list or string to combine.
 
     Returns:
-        list: Combined list containing unique values from both inputs.
+        list: Combined list containing unique values from both inputs, in
+            first-occurrence order.
     """
-    if isinstance(list1, str):
-        list1 = [list1]
-    if isinstance(list2, str):
-        list2 = [list2]
 
-    # Merge and keep only unique values
-    return list(set(list1 + list2))
+    def _as_list(value: str | list[str] | None) -> list[str]:
+        if not value:
+            return []
+        return [value] if isinstance(value, str) else list(value)
+
+    # dict.fromkeys deduplicates while preserving insertion order; set() would
+    # make the result vary across processes under hash randomization.
+    return list(dict.fromkeys(_as_list(list1) + _as_list(list2)))
 
 
 def get_random_indices(*, start: int, size: int, proportion: float) -> list[int]:
