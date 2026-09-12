@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import {
   Button,
@@ -12,10 +12,11 @@ import {
 } from '@fluentui/react-components'
 import type { SelectTabData, SelectTabEvent } from '@fluentui/react-components'
 import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
-import { useSearchParams } from 'react-router'
+import { useBeforeUnload, useBlocker, useSearchParams } from 'react-router'
 
 import { configurationApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import EditorWorkspace from '@/components/EditorWorkspace'
 import Initializers from '@/components/Initializers/Initializers'
 
@@ -54,7 +55,21 @@ export default function Configuration() {
   const [saving, setSaving] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
+  const [environmentHasUnsavedChanges, setEnvironmentHasUnsavedChanges] = useState(false)
+  const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null)
   const selectedTab = configurationTabFromSearchParams(searchParams)
+  const configurationHasUnsavedChanges = content !== savedContent
+  const hasUnsavedChanges = selectedTab === 'configuration'
+    ? configurationHasUnsavedChanges
+    : selectedTab === 'environment' && environmentHasUnsavedChanges
+  const blocker = useBlocker(hasUnsavedChanges)
+
+  useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
+    if (hasUnsavedChanges) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+  }, [hasUnsavedChanges]))
 
   useEffect(() => {
     let cancelled = false
@@ -88,7 +103,15 @@ export default function Configuration() {
   }, [reloadCount])
 
   const handleReload = (): void => {
-    setReloadCount((currentCount: number) => currentCount + 1)
+    const reload = (): void => {
+      setReloadCount((currentCount: number) => currentCount + 1)
+    }
+
+    if (configurationHasUnsavedChanges) {
+      setPendingDiscardAction(() => reload)
+      return
+    }
+    reload()
   }
 
   const handleSave = async (): Promise<void> => {
@@ -111,8 +134,6 @@ export default function Configuration() {
     }
   }
 
-  const hasUnsavedChanges = content !== savedContent
-
   const handleTabSelect = (_: SelectTabEvent, data: SelectTabData): void => {
     if (!isConfigurationTab(data.value) || data.value === selectedTab) {
       return
@@ -125,6 +146,25 @@ export default function Configuration() {
       nextSearchParams.set('tab', data.value)
     }
     setSearchParams(nextSearchParams)
+  }
+
+  const handleDiscardChanges = (): void => {
+    const discardAction = pendingDiscardAction
+    setPendingDiscardAction(null)
+    setContent(savedContent)
+    setEnvironmentHasUnsavedChanges(false)
+    if (blocker.state === 'blocked') {
+      blocker.proceed()
+    } else {
+      discardAction?.()
+    }
+  }
+
+  const handleKeepEditing = (): void => {
+    setPendingDiscardAction(null)
+    if (blocker.state === 'blocked') {
+      blocker.reset()
+    }
   }
 
   return (
@@ -151,7 +191,12 @@ export default function Configuration() {
       ) : selectedTab === 'initializers' ? (
         <Initializers />
       ) : selectedTab === 'environment' ? (
-        <EnvironmentFiles />
+        <EnvironmentFiles
+          onUnsavedChangesChange={setEnvironmentHasUnsavedChanges}
+          onRequestDiscardChanges={(discardChanges: () => void): void => {
+            setPendingDiscardAction(() => discardChanges)
+          }}
+        />
       ) : loading ? (
         <div className={styles.loadingState}>
           <Spinner label="Loading PyRIT configuration..." />
@@ -178,7 +223,7 @@ export default function Configuration() {
                 appearance="primary"
                 className={styles.action}
                 icon={<SaveRegular />}
-                disabled={loading || saving || !hasUnsavedChanges}
+                disabled={loading || saving || !configurationHasUnsavedChanges}
                 onClick={() => void handleSave()}
               >
                 {saving ? 'Saving...' : 'Save'}
@@ -199,6 +244,16 @@ export default function Configuration() {
           </Field>
         </EditorWorkspace>
       )}
+      <ConfirmDialog
+        open={blocker.state === 'blocked' || pendingDiscardAction !== null}
+        title="Discard unsaved changes?"
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        onConfirm={handleDiscardChanges}
+        onCancel={handleKeepEditing}
+      >
+        Your unsaved configuration changes will be lost if you continue.
+      </ConfirmDialog>
     </div>
   )
 }

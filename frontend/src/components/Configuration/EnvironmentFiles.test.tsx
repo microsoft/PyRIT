@@ -16,10 +16,16 @@ jest.mock('@/services/api', () => ({
 
 const mockedConfigurationApi = jest.mocked(configurationApi)
 
-function renderFiles(): void {
+function renderFiles(
+  onUnsavedChangesChange = jest.fn(),
+  onRequestDiscardChanges = (discardChanges: () => void): void => discardChanges(),
+): void {
   render(
     <FluentProvider theme={webLightTheme}>
-      <EnvironmentFiles />
+      <EnvironmentFiles
+        onUnsavedChangesChange={onUnsavedChangesChange}
+        onRequestDiscardChanges={onRequestDiscardChanges}
+      />
     </FluentProvider>,
   )
 }
@@ -90,5 +96,33 @@ describe('EnvironmentFiles', () => {
     expect(await screen.findByText(reason)).toBeInTheDocument()
     expect(await screen.findByRole('textbox', { name: 'Environment file contents' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('should report unsaved changes across environment file selection', async () => {
+    const user = userEvent.setup()
+    const onUnsavedChangesChange = jest.fn()
+    mockedConfigurationApi.listEnvironmentFiles.mockResolvedValue({
+      items: [
+        { id: '0', name: '.env', path: 'C:/config/.env', content: '', exists: true },
+        { id: '1', name: '.env.local', path: 'C:/config/.env.local', content: '', exists: true },
+      ],
+    })
+    mockedConfigurationApi.getEnvironmentFile.mockImplementation(async (id: string) => ({
+      id,
+      name: id === '0' ? '.env' : '.env.local',
+      path: id === '0' ? 'C:/config/.env' : 'C:/config/.env.local',
+      content: id === '0' ? 'FIRST=saved\n' : 'SECOND=saved\n',
+      exists: true,
+      version: 'version-1',
+    }))
+    renderFiles(onUnsavedChangesChange)
+
+    const firstEditor = await screen.findByRole('textbox', { name: 'Environment file contents' })
+    await user.type(firstEditor, '# unsaved')
+    expect(onUnsavedChangesChange).toHaveBeenLastCalledWith(true)
+
+    await user.click(screen.getByRole('button', { name: /.env.local/i }))
+    expect(await screen.findByRole('textbox', { name: 'Environment file contents' })).toHaveValue('SECOND=saved\n')
+    expect(onUnsavedChangesChange).toHaveBeenLastCalledWith(true)
   })
 })
