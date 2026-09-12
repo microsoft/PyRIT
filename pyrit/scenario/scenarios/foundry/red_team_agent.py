@@ -53,7 +53,11 @@ from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, At
 from pyrit.models import (
     AttackSeedGroup,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimate,
+)
+from pyrit.models.catalog import (
+    ScenarioDefaultRunSizeEstimate,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
 )
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
@@ -418,7 +422,7 @@ class RedTeamAgent(Scenario):
         self._scenario_composites = composites
         return flat
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
         """
         Estimate one selected seed population per resolved Foundry composition.
 
@@ -431,6 +435,10 @@ class RedTeamAgent(Scenario):
             ScenarioRunSizeComponent(
                 label=composition.name,
                 count=selected_count,
+                factors=[
+                    ScenarioRunSizeFactor(label="resolved Foundry composites", count=1),
+                    ScenarioRunSizeFactor(label="selected logical seed groups", count=selected_count),
+                ],
             )
             for composition in self._scenario_composites
         ]
@@ -439,11 +447,13 @@ class RedTeamAgent(Scenario):
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=selected_count,
+                    factors=[ScenarioRunSizeFactor(label="selected logical seed groups", count=selected_count)],
                     is_baseline=True,
                 )
             )
-        return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(component.count for component in components),
+        return ScenarioDefaultRunSizeEstimate(
+            status=ScenarioRunSizeEstimateStatus.Exact,
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note="Counts one population per resolved Foundry composite, not per flattened constituent technique.",

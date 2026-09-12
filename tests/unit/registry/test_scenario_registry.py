@@ -3,12 +3,21 @@
 
 """Tests for ScenarioRegistry._build_metadata and create_and_initialize_async."""
 
-from unittest.mock import AsyncMock, MagicMock
+from typing import Literal
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.registry.components.scenario_registry import ScenarioRegistry
-from pyrit.scenario.core import BaselineAttackPolicy, ScenarioTechnique
+from pyrit.registry import ScenarioRegistry
+from pyrit.scenario import (
+    BaselineAttackPolicy,
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    ScenarioTechnique,
+)
+from pyrit.scenario.scenarios.adaptive import TextAdaptive
+from pyrit.scenario.scenarios.airt import Psychosocial
+from pyrit.scenario.scenarios.garak import WebInjection
 
 
 class _NotNoArgScenario:
@@ -61,6 +70,10 @@ class _MetadataScenario:
         """Resolve the concrete defaults."""
         return _MetadataTechnique.resolve(scenario_techniques, default=self._default_technique)
 
+    def get_dataset_size_limit_override_scope(self) -> Literal["per_dataset"]:
+        """Return the test scenario's conventional single-dataset override scope."""
+        return "per_dataset"
+
 
 class _MarkdownMetadataScenario(_MetadataScenario):
     """
@@ -102,6 +115,92 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
         "all": ("one", "two"),
         "default": ("one", "two"),
     }
+
+
+@pytest.mark.parametrize(
+    ("configuration", "declared_override_scope", "default_scope", "default_count", "override_scope"),
+    [
+        (DatasetAttackConfiguration(dataset_names=["sample"]), "per_dataset", "none", None, "per_dataset"),
+        (
+            DatasetAttackConfiguration(dataset_names=["one", "two"]),
+            "per_dataset",
+            "none",
+            None,
+            "per_dataset",
+        ),
+        (
+            DatasetAttackConfiguration(dataset_names=["one", "two"]),
+            "unsupported",
+            "none",
+            None,
+            "unsupported",
+        ),
+        (
+            DatasetAttackConfiguration(dataset_names=["one", "two"], max_dataset_size=6),
+            "combined",
+            "combined",
+            6,
+            "combined",
+        ),
+        (
+            CompoundDatasetAttackConfiguration.per_dataset(
+                dataset_names=["one", "two"],
+                max_dataset_size=4,
+            ),
+            "per_dataset",
+            "per_dataset",
+            4,
+            "per_dataset",
+        ),
+        (
+            CompoundDatasetAttackConfiguration(
+                configurations=[
+                    DatasetAttackConfiguration(dataset_names=["one"], max_dataset_size=3),
+                    DatasetAttackConfiguration(dataset_names=["two"], max_dataset_size=4),
+                ]
+            ),
+            "per_dataset",
+            "heterogeneous",
+            None,
+            "per_dataset",
+        ),
+    ],
+)
+def test_build_dataset_size_limit_normalizes_configuration_semantics(
+    configuration: DatasetAttackConfiguration,
+    declared_override_scope: Literal["per_dataset", "combined", "unsupported"],
+    default_scope: str,
+    default_count: int | None,
+    override_scope: str,
+) -> None:
+    """Catalog limit metadata preserves no-cap, combined, per-dataset, and heterogeneous defaults."""
+    limit = ScenarioRegistry._build_dataset_size_limit(
+        default_dataset_config=configuration,
+        override_scope=declared_override_scope,
+    )
+
+    assert limit.default_scope == default_scope
+    assert limit.default_count == default_count
+    assert limit.override_scope == override_scope
+
+
+def test_specialized_scenarios_declare_nonstandard_dataset_override_semantics() -> None:
+    """Catalog metadata can remain truthful when a scenario reshapes or ignores generic dataset caps."""
+    assert Psychosocial.DATASET_SIZE_LIMIT_OVERRIDE_SCOPE == "per_dataset"
+    assert WebInjection.DATASET_SIZE_LIMIT_OVERRIDE_SCOPE == "unsupported"
+
+
+def test_text_adaptive_metadata_exposes_per_dataset_default_limit() -> None:
+    """TextAdaptive publishes its canonical four-objective child cap without scenario-name special cases."""
+    with (
+        patch.object(TextAdaptive, "_get_default_objective_scorer", return_value=MagicMock()),
+        patch("pyrit.scenario.core.scenario.CentralMemory.get_memory_instance", return_value=MagicMock()),
+    ):
+        metadata = ScenarioRegistry()._build_metadata("adaptive.text_adaptive", TextAdaptive)
+
+    assert metadata.dataset_size_limit.default_scope == "per_dataset"
+    assert metadata.dataset_size_limit.default_count == 4
+    assert metadata.dataset_size_limit.override_scope == "per_dataset"
 
 
 def test_build_metadata_preserves_structured_markdown_separately() -> None:

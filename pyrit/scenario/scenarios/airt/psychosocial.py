@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH
@@ -32,8 +32,12 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import (
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimate,
     SeedPrompt,
+)
+from pyrit.models.catalog import (
+    ScenarioDefaultRunSizeEstimate,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
 )
 from pyrit.models.parameter import Parameter
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
@@ -342,6 +346,9 @@ class Psychosocial(Scenario):
     """
 
     VERSION: int = 3
+    DATASET_SIZE_LIMIT_OVERRIDE_SCOPE: ClassVar[Literal["per_dataset", "combined", "unsupported"] | None] = (
+        "per_dataset"
+    )
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:
@@ -486,7 +493,7 @@ class Psychosocial(Scenario):
             self._dataset_config = rebuilt
         return await super()._resolve_seed_groups_by_dataset_async(apply_sampling=apply_sampling)
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
         """
         Estimate the independent sub-harm technique sweeps and per-harm baselines.
 
@@ -502,6 +509,10 @@ class Psychosocial(Scenario):
                 ScenarioRunSizeComponent(
                     label=f"{dataset_name} technique sweep",
                     count=seed_group_count * technique_count,
+                    factors=[
+                        ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count),
+                        ScenarioRunSizeFactor(label="default concrete techniques", count=technique_count),
+                    ],
                 )
             )
             if self._include_baseline:
@@ -509,12 +520,14 @@ class Psychosocial(Scenario):
                     ScenarioRunSizeComponent(
                         label=f"{dataset_name} baseline",
                         count=seed_group_count,
+                        factors=[ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count)],
                         is_baseline=True,
                         note="Psychosocial uses a distinct baseline and scorer for each sub-harm.",
                     )
                 )
-        return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(component.count for component in components),
+        return ScenarioDefaultRunSizeEstimate(
+            status=ScenarioRunSizeEstimateStatus.Exact,
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note="Each default sub-harm is planned independently; retries and internal turns are excluded.",

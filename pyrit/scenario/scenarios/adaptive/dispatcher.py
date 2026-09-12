@@ -12,15 +12,10 @@ initialization, wraps each returned attack in its own ``AtomicAttack``, and
 hands them to the scenario base for execution.
 
 The returned attack is a plain ``SequentialAttack`` with
-``SequenceCompletionPolicy.FIRST_SUCCESS``. The per-attempt dispatch trail
-(which technique ran, with what outcome, in what order) is not stamped onto
-the envelope — every child ``AttackResult`` in
-``SequentialAttackResult.child_attack_results`` already carries its own
-``outcome`` and its own ``atomic_attack_identifier.eval_hash``. Callers that
-want a human-readable technique label per child read it directly from the
-child via ``child.get_attack_strategy_identifier().unique_name`` (the
-executor auto-stamps ``class_name`` and ``unique_name`` on every persisted
-row), so there is no separate ``{eval_hash: name}`` map to consult.
+``SequenceCompletionPolicy.FIRST_SUCCESS``. Each child result carries the
+stable registered-factory identity and friendly technique name in labels so
+different configured techniques remain attributable even when their inner
+attack implementations are execution-equivalent.
 """
 
 from __future__ import annotations
@@ -50,6 +45,12 @@ logger = logging.getLogger(__name__)
 ADAPTIVE_ATTEMPT_LABEL: str = "_adaptive_attempt"
 """1-based attempt index within the per-objective loop."""
 
+ADAPTIVE_TECHNIQUE_ID_LABEL: str = "_adaptive_technique_id"
+"""Joined registered-factory and behavioral-history identity for the selected arm."""
+
+ADAPTIVE_TECHNIQUE_NAME_LABEL: str = "_adaptive_technique_name"
+"""Registered technique name for human-readable result attribution."""
+
 
 @dataclass(frozen=True)
 class TechniqueBundle:
@@ -58,16 +59,8 @@ class TechniqueBundle:
 
     Carries the inner attack strategy alongside the factory-supplied
     ``seed_technique`` (if any) and ``adversarial_chat`` (required when the
-    seed_technique contains a simulated-conversation config). ``name`` is the
-    factory-registration key; the dispatcher does not consume it, but it is
-    convenient for diagnostics and is preserved here so callers/tests can
-    cross-check which factory each bundle came from.
-
-    Notebook/report code that wants a human-readable label for a persisted
-    child ``AttackResult`` should read it from the child itself via
-    ``child.get_attack_strategy_identifier()`` — the executor already stamps
-    ``class_name`` and ``unique_name`` on every row, so there is no need to
-    publish a separate ``{eval_hash: name}`` map.
+    seed technique contains a simulated-conversation config). ``name`` is the
+    factory-registration key and is persisted on every selected child result.
     """
 
     attack: AttackStrategy[Any, AttackResult]
@@ -110,7 +103,7 @@ class AdaptiveTechniqueDispatcher:
         Args:
             objective_target (PromptTarget): The target inner attacks run against.
             techniques (dict[str, TechniqueBundle]): Mapping from
-                technique eval hash to its bundle. Must be non-empty.
+                joined Adaptive technique identity to its bundle. Must be non-empty.
             selector (TechniqueSelector): Stateless technique selector.
             objective_scorer (TrueFalseScorer | None): Scorer forwarded
                 to inner attacks that generate simulated conversations.
@@ -137,14 +130,14 @@ class AdaptiveTechniqueDispatcher:
 
     def compatible_techniques(self, *, seed_group: AttackSeedGroup) -> list[str]:
         """
-        Return technique hashes whose ``seed_technique`` is compatible with ``seed_group``.
+        Return technique identifiers whose ``seed_technique`` is compatible with ``seed_group``.
 
         Techniques with no ``seed_technique`` are universally compatible.
         Used by ``AdaptiveScenario`` to drop seed groups with no usable
         techniques before building atomic attacks.
 
         Returns:
-            list[str]: Technique eval hashes in declaration order.
+            list[str]: Joined Adaptive technique identities in declaration order.
         """
         return [
             name
@@ -179,12 +172,8 @@ class AdaptiveTechniqueDispatcher:
                 technique map.
 
         Returns:
-            SequentialAttack: The ready-to-run attack. Each child's
-                identity is captured by its own
-                ``atomic_attack_identifier.eval_hash`` after execution;
-                callers wanting the friendly technique name read it
-                directly from the child via
-                ``child.get_attack_strategy_identifier().unique_name``.
+            SequentialAttack: The ready-to-run attack. Each child carries its
+                canonical factory identity and registered name in result labels.
 
         Raises:
             ValueError: If ``seed_group.objective`` is not initialized,
@@ -202,7 +191,7 @@ class AdaptiveTechniqueDispatcher:
                 f"(objective={seed_group.objective.value!r})."
             )
 
-        chosen_hashes = await self._selector.select_async(
+        chosen_identifiers = await self._selector.select_async(
             technique_identifiers=compatible,
             objective=seed_group.objective.value,
             num_top_techniques=self._max_attempts,
@@ -210,7 +199,7 @@ class AdaptiveTechniqueDispatcher:
         )
 
         child_attacks: list[SequentialChildAttack] = []
-        for attempt_idx, chosen in enumerate(chosen_hashes):
+        for attempt_idx, chosen in enumerate(chosen_identifiers):
             bundle = self._techniques[chosen]
             execution_group = (
                 seed_group.with_technique(technique=bundle.seed_technique)
@@ -223,7 +212,11 @@ class AdaptiveTechniqueDispatcher:
                     seed_group=execution_group,
                     adversarial_chat=bundle.adversarial_chat,
                     objective_scorer=self._objective_scorer,
-                    memory_labels={ADAPTIVE_ATTEMPT_LABEL: str(attempt_idx + 1)},
+                    memory_labels={
+                        ADAPTIVE_ATTEMPT_LABEL: str(attempt_idx + 1),
+                        ADAPTIVE_TECHNIQUE_ID_LABEL: chosen,
+                        ADAPTIVE_TECHNIQUE_NAME_LABEL: bundle.name,
+                    },
                 )
             )
 

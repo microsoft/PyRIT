@@ -338,9 +338,10 @@ class DatasetConfiguration:
         self._dataset_names = list(dataset_names) if dataset_names is not None else None
         self.max_dataset_size = max_dataset_size
         self._filters: dict[str, list[str]] = dict(filters or {})
+        self._custom_validators = list(validators) if validators else []
         self._validators: list[Callable[[ResolvedDataset], None]] = [
             *self._default_validators(),
-            *(list(validators) if validators else []),
+            *self._custom_validators,
         ]
         self._auto_fetch = auto_fetch
 
@@ -742,6 +743,28 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
         return result
 
+    async def resolve_attack_groups_for_estimate_async(
+        self,
+    ) -> tuple[dict[str, list[AttackSeedGroup]], dict[str, list[AttackSeedGroup]]]:
+        """
+        Resolve full and sampled attack groups with one dataset fetch.
+
+        Returns:
+            tuple: Full groups and effectively selected groups, both keyed by dataset.
+
+        Raises:
+            DatasetConstraintError: If the resolved or sampled attack-group population is empty.
+        """
+        groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
+        self.validate(resolved)
+        selected = {
+            name: groups for name, groups in self._sample_groups_by_dataset(groups_by_dataset).items() if groups
+        }
+        if not groups_by_dataset or not selected:
+            names = ", ".join(self._dataset_names) if self._dataset_names else "<inline>"
+            raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
+        return groups_by_dataset, selected
+
     def _sample_groups_by_dataset(
         self, groups_by_dataset: dict[str, list[AttackSeedGroup]]
     ) -> dict[str, list[AttackSeedGroup]]:
@@ -849,6 +872,75 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             ]
         )
 
+    def with_dataset_names(
+        self,
+        *,
+        dataset_names: Sequence[str],
+        max_dataset_size: int | None = None,
+        filters: dict[str, list[str]] | None = None,
+    ) -> CompoundDatasetAttackConfiguration:
+        """
+        Rebuild a homogeneous per-dataset compound for an explicit name selection.
+
+        This preserves the scenario's per-dataset cap, auto-fetch policy, and shared
+        filters when every child is a plain single-dataset attack configuration.
+        Heterogeneous compounds must provide their own scenario-specific override
+        path rather than silently losing child shaping behavior.
+
+        Args:
+            dataset_names (Sequence[str]): Selected dataset names in request order.
+            max_dataset_size (int | None): Optional replacement per-dataset cap.
+            filters (dict[str, list[str]] | None): Filters merged over the shared defaults.
+
+        Returns:
+            CompoundDatasetAttackConfiguration: A fresh compound for the selected datasets.
+
+        Raises:
+            TypeError: If the compound has heterogeneous or shaped child configurations.
+            ValueError: If ``dataset_names`` is empty or contains duplicates.
+        """
+        if len(set(dataset_names)) != len(dataset_names):
+            raise ValueError("dataset-name overrides cannot contain duplicates")
+        if any(
+            type(child) is not DatasetAttackConfiguration or len(child.dataset_names) != 1
+            for child in self._configurations
+        ):
+            raise TypeError(
+                "dataset-name overrides require homogeneous single-dataset DatasetAttackConfiguration children"
+            )
+
+        child_caps = {child.max_dataset_size for child in self._configurations}
+        child_auto_fetch = {child._auto_fetch for child in self._configurations}
+        child_filters = {
+            tuple(sorted((key, tuple(values)) for key, values in child.filters.items()))
+            for child in self._configurations
+        }
+        template_child = self._configurations[0]
+        child_validators_match = all(
+            child._custom_validators == template_child._custom_validators for child in self._configurations[1:]
+        )
+        if len(child_caps) != 1 or len(child_auto_fetch) != 1 or len(child_filters) != 1 or not child_validators_match:
+            raise TypeError(
+                "dataset-name overrides require children with shared caps, filters, validators, and auto-fetch policy"
+            )
+
+        inherited_filters = {key: list(values) for key, values in next(iter(child_filters))}
+        inherited_filters.update(filters or {})
+        per_dataset_cap = max_dataset_size if max_dataset_size is not None else next(iter(child_caps))
+        rebuilt = type(self).per_dataset(
+            dataset_names=dataset_names,
+            max_dataset_size=per_dataset_cap,
+            auto_fetch=next(iter(child_auto_fetch)),
+            filters=inherited_filters or None,
+        )
+        for child in rebuilt._configurations:
+            child._custom_validators = list(template_child._custom_validators)
+            child._validators = list(template_child._validators)
+        rebuilt.max_dataset_size = self.max_dataset_size
+        rebuilt._custom_validators = list(self._custom_validators)
+        rebuilt._validators = list(self._validators)
+        return rebuilt
+
     @property
     def dataset_names(self) -> list[str]:
         """
@@ -911,6 +1003,21 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         for child in self._configurations:
             child.update_filters(filters=filters)
 
+    def update_child_max_dataset_size(self, *, max_dataset_size: int) -> None:
+        """
+        Apply the same independent sampling cap to every child configuration.
+
+        Args:
+            max_dataset_size (int): Positive per-child logical-group cap.
+
+        Raises:
+            ValueError: If ``max_dataset_size`` is less than one.
+        """
+        if max_dataset_size < 1:
+            raise ValueError("'max_dataset_size' must be a positive integer (>= 1).")
+        for child in self._configurations:
+            child.max_dataset_size = max_dataset_size
+
     async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
         """
         Concatenate every child's flat result, then validate and apply the global cap.
@@ -960,6 +1067,27 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
                 merged.setdefault(name, []).extend(groups)
         self.validate(self._resolved_from_groups([group for groups in merged.values() for group in groups]))
         return self._sample_groups_by_dataset(merged) if apply_sampling else merged
+
+    async def resolve_attack_groups_for_estimate_async(
+        self,
+    ) -> tuple[dict[str, list[AttackSeedGroup]], dict[str, list[AttackSeedGroup]]]:
+        """
+        Resolve every child's full and sampled populations with one fetch per child.
+
+        Returns:
+            tuple: Full groups and effectively selected groups, both keyed by dataset.
+        """
+        full_merged: dict[str, list[AttackSeedGroup]] = {}
+        selected_merged: dict[str, list[AttackSeedGroup]] = {}
+        for child in self._configurations:
+            full_groups, selected_groups = await child.resolve_attack_groups_for_estimate_async()
+            for name, groups in full_groups.items():
+                full_merged.setdefault(name, []).extend(groups)
+            for name, groups in selected_groups.items():
+                selected_merged.setdefault(name, []).extend(groups)
+        self.validate(self._resolved_from_groups([group for groups in full_merged.values() for group in groups]))
+        selected = {name: groups for name, groups in self._sample_groups_by_dataset(selected_merged).items() if groups}
+        return full_merged, selected
 
     def _resolved_from_groups(self, groups: list[AttackSeedGroup]) -> ResolvedDataset:
         """

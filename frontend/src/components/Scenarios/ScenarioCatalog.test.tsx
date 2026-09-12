@@ -170,7 +170,7 @@ describe('ScenarioCatalog', () => {
       })
     })
 
-    expect(await screen.findByText('4 attacks')).toBeInTheDocument()
+    expect(await screen.findByText('4 planned attacks')).toBeInTheDocument()
     expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
   })
 
@@ -293,18 +293,20 @@ describe('ScenarioCatalog', () => {
       screen.getByText('Launch comprehensive testing campaigns with multiple attack techniques against a target.'),
     ).toBeInTheDocument()
     const headers = within(table).getAllByRole('columnheader')
-    expect(headers).toHaveLength(4)
+    expect(headers).toHaveLength(5)
     expect(headers.map((header) => header.textContent)).toEqual([
       'Scenario / purpose',
+      'Configure',
       'Default datasets',
       'Default techniques',
       'Default run size',
     ])
     expect(headers.every((cell) => cell.classList.contains('scenario-catalog-cell-padding'))).toBe(true)
     const cells = within(screen.getByTestId('scenario-card-foundry.red_team_agent')).getAllByRole('cell')
-    expect(cells).toHaveLength(4)
+    expect(cells).toHaveLength(5)
     expect(cells.every((cell) => cell.classList.contains('scenario-catalog-cell-padding'))).toBe(true)
     expect(within(cells[0]).getByRole('link', { name: 'foundry.red_team_agent' })).toBeInTheDocument()
+    expect(within(cells[1]).getByRole('button', { name: 'Configure run' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /show details|hide details/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: /details/i })).not.toBeInTheDocument()
   })
@@ -544,31 +546,49 @@ describe('ScenarioCatalog', () => {
     expect(within(row).getByText('population-a · population-b')).toBeInTheDocument()
   })
 
-  it('shows an adaptive estimate as a plain attack range', async () => {
+  it('shows adaptive planned attacks together with the technique attempt bound', async () => {
     mockListCatalog.mockResolvedValue({
       items: [
         makeScenario({
           scenario_name: 'adaptive.text_adaptive',
           default_run_size: {
-            estimated_attack_count: null,
+            version: 1,
+            status: 'conditional',
+            total_attack_count: null,
             minimum_attack_count: 21,
             maximum_attack_count: 42,
+            condition: 'target_capabilities',
             components: [
               {
                 label: 'Baseline',
                 count: 21,
+                factors: [{ label: 'objectives', count: 21 }],
                 is_baseline: true,
+                condition: null,
                 note: null,
               },
               {
                 label: 'Adaptive objectives',
                 count: 21,
+                factors: [{ label: 'compatible objectives', count: 21 }],
                 is_baseline: false,
+                condition: null,
                 note: null,
               },
             ],
             datasets: [],
+            adaptive_details: {
+              objective_count: 21,
+              selected_candidate_technique_count: 2,
+              candidate_technique_count: 2,
+              max_attempts_per_objective: 3,
+              techniques_per_objective_upper_bound: 2,
+              technique_attempt_count_upper_bound: 42,
+              stop_on_first_success: true,
+              compatibility_may_reduce_attempts: true,
+            },
             note: null,
+            retries_included: false,
           },
         }),
       ],
@@ -578,8 +598,8 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     const row = await screen.findByTestId('scenario-card-adaptive.text_adaptive')
-    expect(within(row).getByText('21-42 attacks')).toBeInTheDocument()
-    expect(within(row).queryByText(/progress units|attack attempts/i)).not.toBeInTheDocument()
+    expect(within(row).getByText('21–42 planned attacks · up to 42 technique attempts')).toBeInTheDocument()
+    expect(within(row).queryByText(/objective envelope/i)).not.toBeInTheDocument()
   })
 
   it('keeps declared datasets visible when backend population summaries are unavailable', async () => {
@@ -667,7 +687,7 @@ describe('ScenarioCatalog', () => {
     expect(within(row).getByText('harmbench')).toBeInTheDocument()
     expect(within(row).getByText('2 techniques')).toBeInTheDocument()
     expect(within(row).getByText('prompt_sending · jailbreak_system_prompt')).toBeInTheDocument()
-    expect(within(row).getByText('12-20 attacks')).toBeInTheDocument()
+    expect(within(row).getByText('12–20 planned attacks')).toBeInTheDocument()
     expect(within(row).queryByText('default')).not.toBeInTheDocument()
     expect(within(row).queryByText(/aggregate presets|compatible concrete/i)).not.toBeInTheDocument()
     expect(within(row).queryByText(REMOVED_NORMAL_ESTIMATE_LABELS)).not.toBeInTheDocument()

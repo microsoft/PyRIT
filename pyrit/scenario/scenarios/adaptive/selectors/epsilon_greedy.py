@@ -11,8 +11,10 @@ import random
 import struct
 from typing import TYPE_CHECKING
 
-from pyrit.analytics.technique_analysis import compute_technique_stats
+from pyrit.analytics.technique_analysis import compute_labeled_technique_stats
+from pyrit.scenario.scenarios.adaptive.dispatcher import ADAPTIVE_TECHNIQUE_ID_LABEL
 from pyrit.scenario.scenarios.adaptive.selectors.technique_selector import SelectorScope
+from pyrit.scenario.scenarios.adaptive.technique_identity import get_history_eval_hash
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -129,8 +131,13 @@ class EpsilonGreedyTechniqueSelector:
         rng = _derive_rng(self._seed, decision_key)
 
         effective_run_id = scenario_result_id if self._scope.current_run_only else None
-        stats = compute_technique_stats(
-            technique_eval_hashes=technique_list,
+        stats = compute_labeled_technique_stats(
+            technique_identifiers=technique_list,
+            label_name=ADAPTIVE_TECHNIQUE_ID_LABEL,
+            technique_eval_hashes_by_identifier={
+                technique_identifier: get_history_eval_hash(technique_identifier=technique_identifier)
+                for technique_identifier in technique_list
+            },
             scenario_result_id=effective_run_id,
             targeted_harm_categories=self._scope.targeted_harm_categories,
         )

@@ -6,14 +6,12 @@
 
 Picks attack techniques per-objective using an epsilon-greedy selector
 informed by observed success rates. Runs up to ``max_attempts_per_objective``
-techniques per objective and stops early on success. ``prompt_sending`` is
-excluded from the adaptive technique pool and runs as the baseline comparison
-instead.
+techniques per objective and stops early on success. The shared catalog omits
+``prompt_sending`` because scenarios provide it through their baseline policy.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
@@ -27,49 +25,22 @@ if TYPE_CHECKING:
     from pyrit.scenario.scenarios.adaptive.selectors import TechniqueSelector
     from pyrit.score import TrueFalseScorer
 
-logger = logging.getLogger(__name__)
-
-# Techniques excluded from the adaptive technique pool. These run as the
-# baseline comparison rather than as adversarial moves the selector chooses.
-_EXCLUDED_TECHNIQUES = frozenset({"prompt_sending"})
-
 
 def _build_text_adaptive_technique() -> type[ScenarioTechnique]:
     """
-    Build the technique enum from the core scenario-techniques catalog,
-    excluding techniques that run as baseline.
+    Build the technique enum from the scenario-techniques catalog.
 
     Returns:
         type[ScenarioTechnique]: The dynamically-built technique enum class.
-
-    Logs a warning if any name in ``_EXCLUDED_TECHNIQUES`` is not present
-    in the current catalog. The exclusion is defensive — when the catalog
-    does not contain the named technique, the filter is a no-op, and we
-    surface that so a stale entry in the exclusion list (or a renamed
-    catalog entry) doesn't silently break the intended exclusion.
     """
     # Local import: ``techniques`` imports ``pyrit.scenario.core``,
     # which transitively re-imports this module, so a top-level import would
     # form a cycle during ``pyrit.scenario`` package initialization.
     from pyrit.setup.initializers.techniques import build_technique_factories
 
-    all_factories = list(build_technique_factories())
-    catalog_names = {factory.name for factory in all_factories}
-    unmatched = _EXCLUDED_TECHNIQUES - catalog_names
-    if unmatched:
-        logger.warning(
-            "TextAdaptive: _EXCLUDED_TECHNIQUES entries %s are not in the current "
-            "scenario-techniques catalog %s; the exclusion is a no-op for those entries. "
-            "Remove stale entries or update the catalog.",
-            sorted(unmatched),
-            sorted(catalog_names),
-        )
-
-    factories = [factory for factory in all_factories if factory.name not in _EXCLUDED_TECHNIQUES]
-
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="TextAdaptiveTechnique",
-        factories=factories,
+        factories=build_technique_factories(),
         default_names={"role_play_movie_script", "many_shot"},
     )
 
@@ -126,7 +97,10 @@ class TextAdaptive(AdaptiveScenario):
         return [
             Parameter(
                 name="max_attempts_per_objective",
-                description="Max techniques tried per objective. Defaults to 3.",
+                description=(
+                    "Maximum different compatible techniques Adaptive may try for one objective, stopping after "
+                    "the first success. This is separate from retries."
+                ),
                 param_type=int,
                 default=3,
             ),
