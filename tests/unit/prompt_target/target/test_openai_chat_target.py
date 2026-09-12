@@ -686,6 +686,7 @@ def test_inheritance_from_prompt_target(target: OpenAIChatTarget):
     assert target.capabilities.supports_editable_history is True
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_inheritance_from_prompt_target_base():
     """OpenAIChatTarget (via OpenAIChatTargetBase) inherits from PromptTarget."""
     target = OpenAIChatTarget(model_name="test-model", endpoint="https://test.com", api_key="test-key")

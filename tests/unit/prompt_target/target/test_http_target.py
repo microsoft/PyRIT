@@ -470,6 +470,7 @@ async def test_http_target_with_injected_client(patch_central_database):
     await custom_client.aclose()
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_http_target_init_basic():
     http_request = "POST / HTTP/1.1\nHost: example.com\n\n"
     target = HTTPTarget(http_request=http_request)
@@ -481,6 +482,7 @@ def test_http_target_init_basic():
     assert target._client is None
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_http_target_init_with_all_args():
     http_request = "POST / HTTP/1.1\nHost: example.com\n\n"
 
@@ -506,6 +508,7 @@ def test_http_target_init_with_all_args():
     assert target._client is None
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_http_target_init_with_client_and_kwargs_raises():
     http_request = "POST / HTTP/1.1\nHost: example.com\n\n"
     client = MagicMock(spec=httpx.AsyncClient)
@@ -518,6 +521,7 @@ def test_http_target_init_with_client_and_kwargs_raises():
     assert "Cannot provide both a pre-configured client and additional httpx client kwargs." in str(excinfo.value)
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_http_target_init_with_client_only():
     http_request = "POST / HTTP/1.1\nHost: example.com\n\n"
     client = MagicMock(spec=httpx.AsyncClient)

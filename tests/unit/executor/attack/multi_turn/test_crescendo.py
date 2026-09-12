@@ -3016,6 +3016,7 @@ class TestModalityRouterIntegration:
         assert sent_message.message_pieces[0].converted_value_data_type == "text"
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestCrescendoAdversarialIdentity:
     """Tests for adversarial config in the Crescendo attack identity and inline system prompt."""
 

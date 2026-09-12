@@ -17,6 +17,7 @@ def test_gandalf_initializes(gandalf_target: GandalfTarget):
     assert gandalf_target
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_gandalf_sets_endpoint_and_rate_limit():
     target = GandalfTarget(level=GandalfLevel.LEVEL_1, max_requests_per_minute=15)
     identifier = target.get_identifier()
