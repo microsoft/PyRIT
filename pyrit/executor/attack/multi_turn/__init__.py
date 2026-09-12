@@ -10,6 +10,7 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.multi_turn.chunked_request import ChunkedRequestAttack, ChunkedRequestAttackContext
+    from pyrit.executor.attack.multi_turn.cot_hijacking import CoTHijackingAttack, CoTHijackingAttackContext
     from pyrit.executor.attack.multi_turn.crescendo import (
         CrescendoAttack,
         CrescendoAttackContext,
@@ -39,6 +40,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ChunkedRequestAttack": "pyrit.executor.attack.multi_turn.chunked_request",
     "ChunkedRequestAttackContext": "pyrit.executor.attack.multi_turn.chunked_request",
     "ConversationSession": "pyrit.executor.attack.multi_turn.multi_turn_attack_strategy",
+    "CoTHijackingAttack": "pyrit.executor.attack.multi_turn.cot_hijacking",
+    "CoTHijackingAttackContext": "pyrit.executor.attack.multi_turn.cot_hijacking",
     "CrescendoAttack": "pyrit.executor.attack.multi_turn.crescendo",
     "CrescendoAttackContext": "pyrit.executor.attack.multi_turn.crescendo",
     "CrescendoAttackResult": "pyrit.executor.attack.multi_turn.crescendo",
