@@ -98,6 +98,17 @@ class ProgressiveScheduleState:
     stop_inner_on_success: bool = False
 
 
+@dataclass
+class RngBundle:
+    """Per-run RNG state bundle for deterministic GCG execution."""
+
+    np_rng: np.random.Generator
+    py_rng: random.Random
+    torch_gens: dict[int, torch.Generator]
+    base_seed: int
+    derived_seeds: dict[int, int]
+
+
 class NpEncoder(json.JSONEncoder):
     """Encode NumPy scalar and array values for JSON output."""
 
@@ -1008,13 +1019,14 @@ class MultiPromptAttack:
         if rng_bundle:
             self._torch_gens = rng_bundle.torch_gens
         else:
+            workers = getattr(self, "workers", [])
             try:
+                sampling_device = workers[0].model.device
                 self._torch_gens = {
-                    i: torch.Generator(device=self.models[i].device).manual_seed(random_seed + i)
-                    for i in range(len(self.workers))
+                    i: torch.Generator(device=sampling_device).manual_seed(random_seed + i) for i in range(len(workers))
                 }
-            except (AttributeError, TypeError):
-                self._torch_gens = {0: torch.Generator().manual_seed(random_seed)}
+            except (TypeError, AttributeError, IndexError):
+                self._torch_gens = {i: torch.Generator().manual_seed(random_seed + i) for i in range(len(workers))}
 
         def acceptance_probability(e: float, e_prime: float, k: int) -> bool:
             temperature = max(1 - float(k + 1) / (n_steps + anneal_from), 1.0e-7)
@@ -1435,6 +1447,23 @@ class ProgressiveMultiPromptAttack:
         self.last_schedule_state = None
 
         rng_bundle = getattr(self, "_rng_bundle", None)
+        if rng_bundle is None:
+            derived_seeds = {i: random_seed + i for i in range(len(self.workers))}
+            try:
+                sampling_device = self.workers[0].model.device
+                torch_gens = {
+                    i: torch.Generator(device=sampling_device).manual_seed(derived_seeds[i])
+                    for i in range(len(self.workers))
+                }
+            except (TypeError, AttributeError):
+                torch_gens = {i: torch.Generator().manual_seed(derived_seeds[i]) for i in range(len(self.workers))}
+            rng_bundle = RngBundle(
+                np_rng=np.random.default_rng(random_seed),
+                py_rng=random.Random(random_seed),
+                torch_gens=torch_gens,
+                base_seed=random_seed,
+                derived_seeds=derived_seeds,
+            )
 
         _update_attack_log_params(
             logfile=self.logfile,
@@ -1451,7 +1480,7 @@ class ProgressiveMultiPromptAttack:
                 "incr_control": incr_control,
                 "stop_on_success": stop_on_success,
                 "random_seed": random_seed,
-                "derived_seeds": rng_bundle.derived_seeds if rng_bundle else {},
+                "derived_seeds": rng_bundle.derived_seeds,
             },
         )
 
@@ -1695,6 +1724,23 @@ class IndividualPromptAttack:
             tuple[str, int]: The final control suffix and configured step count.
         """
         rng_bundle = getattr(self, "_rng_bundle", None)
+        if rng_bundle is None:
+            derived_seeds = {i: random_seed + i for i in range(len(self.workers))}
+            try:
+                sampling_device = self.workers[0].model.device
+                torch_gens = {
+                    i: torch.Generator(device=sampling_device).manual_seed(derived_seeds[i])
+                    for i in range(len(self.workers))
+                }
+            except (TypeError, AttributeError):
+                torch_gens = {i: torch.Generator().manual_seed(derived_seeds[i]) for i in range(len(self.workers))}
+            rng_bundle = RngBundle(
+                np_rng=np.random.default_rng(random_seed),
+                py_rng=random.Random(random_seed),
+                torch_gens=torch_gens,
+                base_seed=random_seed,
+                derived_seeds=derived_seeds,
+            )
 
         _update_attack_log_params(
             logfile=self.logfile,
@@ -1711,7 +1757,7 @@ class IndividualPromptAttack:
                 "incr_control": incr_control,
                 "stop_on_success": stop_on_success,
                 "random_seed": random_seed,
-                "derived_seeds": rng_bundle.derived_seeds if rng_bundle else {},
+                "derived_seeds": rng_bundle.derived_seeds,
             },
         )
 

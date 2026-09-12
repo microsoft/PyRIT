@@ -1495,55 +1495,130 @@ class TestRandomSeedDeterminism:
 
         assert not torch.equal(result1, result2)
 
-    def test_annealing_deterministic_same_seed(self) -> None:
-        """run() with same seed produces identical annealing acceptance decisions."""
+    @staticmethod
+    def _run_annealing_with_boolean_tracking(
+        seed: int,
+    ) -> tuple[str, list[bool]]:
+        """Run annealing and capture per-step acceptance booleans.
+
+        ``run()`` sets ``self.control_str`` only when a candidate is accepted.
+        We snapshot ``control_str`` at the *start* of each ``step()`` call; a
+        change between consecutive snapshots proves the previous candidate was
+        accepted.  The last step's decision is derived from the final control.
+        """
+        steps = [("c1", 2.1), ("c2", 2.2), ("c3", 2.3)]
         attack = object.__new__(MultiPromptAttack)
-        prompt_manager = MagicMock()
-        prompt_manager.control_str = "initial"
-        attack.prompts = [prompt_manager]
+        attack.prompts = [MagicMock(control_str="initial")]
         attack.logfile = None
 
-        # Step returns a slightly worse loss so annealing decides acceptance
-        attack.step = MagicMock(return_value=("candidate", 2.5))
+        snapshots: list[str] = []
+        real_step = MagicMock(side_effect=list(steps))
 
-        _, loss1, _ = attack.run(n_steps=3, prev_loss=2.0, stop_on_success=False, anneal=True, random_seed=42)
-        attack.step = MagicMock(return_value=("candidate", 2.5))
-        prompt_manager.control_str = "initial"
-        _, loss2, _ = attack.run(n_steps=3, prev_loss=2.0, stop_on_success=False, anneal=True, random_seed=42)
+        def tracking_step(**kwargs: Any) -> tuple[str, float]:
+            snapshots.append(attack.control_str)
+            return real_step(**kwargs)
 
-        assert loss1 == loss2
+        attack.step = MagicMock(side_effect=tracking_step)
 
-    def test_annealing_different_seed_can_differ(self) -> None:
-        """run() with different seeds produces different annealing acceptance histories."""
-        results = []
-        for seed in [1, 999]:
-            attack = object.__new__(MultiPromptAttack)
-            prompt_manager = MagicMock()
-            prompt_manager.control_str = "initial"
-            attack.prompts = [prompt_manager]
-            attack.logfile = None
-            attack.step = MagicMock(side_effect=[("c1", 2.1), ("c2", 2.2), ("c3", 2.3)])
-            control, _, _ = attack.run(n_steps=3, prev_loss=2.0, stop_on_success=False, anneal=True, random_seed=seed)
-            results.append(control)
+        control, _, _ = attack.run(
+            n_steps=3,
+            prev_loss=2.0,
+            stop_on_success=False,
+            anneal=True,
+            random_seed=seed,
+        )
 
-        assert results[0] != results[1], f"different seeds produced same control: {results}"
+        accepted = [snapshots[i + 1] != snapshots[i] for i in range(len(snapshots) - 1)]
+        accepted.append(control != snapshots[-1])
 
-    def test_concurrent_runs_isolated(self) -> None:
-        """Two runs with different seeds don't interfere with each other's RNG state."""
-        targets = ["Sure, here is how to hack"] * 10
+        return control, accepted
 
-        rng_a = np.random.default_rng(42)
-        result_a, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng_a)
+    def test_annealing_exact_history_same_seed(self) -> None:
+        """Same seed reproduces the exact step-by-step acceptance booleans."""
+        for _ in range(2):
+            control, accepted = self._run_annealing_with_boolean_tracking(seed=42)
+            # seed=42: accept c1 (draw=0.64 < threshold=0.86), accept c2 (draw=0.02 < 0.74),
+            # reject c3 (draw=0.28 > threshold≈0 at temp≈1e-7) → final="c2"
+            assert accepted == [True, True, False]
+            assert control == "c2"
 
-        # Interleave: run a different seed in between
-        rng_other = np.random.default_rng(999)
-        GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng_other)
+    def test_annealing_exact_history_different_seeds(self) -> None:
+        """Different seeds produce verifiably different acceptance boolean sequences."""
+        control_1, accepted_1 = self._run_annealing_with_boolean_tracking(seed=1)
+        control_999, accepted_999 = self._run_annealing_with_boolean_tracking(seed=999)
 
-        # Fresh rng with seed 42 still gives same result
-        rng_b = np.random.default_rng(42)
-        result_b, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng_b)
+        # Pre-computed from random.Random(seed) draws against acceptance_probability.
+        # seed=1: draw=0.13<0.86→accept, draw=0.85>0.74→reject, draw=0.76>≈0→reject
+        assert accepted_1 == [True, False, False]
+        assert control_1 == "c1"
+        # seed=999: draw=0.78<0.86→accept, draw=0.08<0.74→accept, draw=0.87>≈0→reject
+        assert accepted_999 == [True, True, False]
+        assert control_999 == "c2"
 
-        assert result_a == result_b
+    def test_concurrent_runs_isolated_across_all_rng_types(self) -> None:
+        """Progressive inner phases draw from all three bundle RNG streams
+        (NumPy, Torch, Python) without restarting, and repeating the full
+        run with the same seed reproduces the exact sequence."""
+
+        @dataclass
+        class PhaseSnapshot:
+            np_draw: float
+            torch_draw: list[int]
+            py_draw: float
+
+        all_runs: list[list[PhaseSnapshot]] = []
+
+        for _ in range(2):
+            captured: list[PhaseSnapshot] = []
+            inner = MagicMock()
+
+            def make_inner_run(captured_ref: list[PhaseSnapshot], attack_mock: Any) -> Any:
+                def inner_run(**kwargs: Any) -> tuple[str, float, int]:
+                    bundle = getattr(attack_mock, "_rng_bundle", None)
+                    assert bundle is not None, "inner MPA should receive a bundle"
+                    snap = PhaseSnapshot(
+                        np_draw=float(bundle.np_rng.random()),
+                        torch_draw=torch.randint(
+                            0,
+                            1000,
+                            (3,),
+                            generator=bundle.torch_gens[0],
+                        ).tolist(),
+                        py_draw=bundle.py_rng.random(),
+                    )
+                    captured_ref.append(snap)
+                    return ("ctrl", 0.5, 1)
+
+                return inner_run
+
+            inner.run = MagicMock(side_effect=make_inner_run(captured, inner))
+
+            progressive = object.__new__(ProgressiveMultiPromptAttack)
+            progressive.goals = ["g1", "g2"]
+            progressive.targets = ["t1", "t2"]
+            progressive.workers = [MagicMock()]
+            progressive.test_goals = []
+            progressive.test_targets = []
+            progressive.test_workers = []
+            progressive.test_prefixes = []
+            progressive.managers = {"MPA": MagicMock(return_value=inner)}
+            progressive.control = "initial"
+            progressive.logfile = None
+            progressive.progressive_goals = True
+            progressive.progressive_models = False
+
+            progressive.run(n_steps=4, stop_on_success=False, random_seed=42)
+            all_runs.append(captured)
+
+        # Same seed → identical sequence across both runs
+        for field in ("np_draw", "torch_draw", "py_draw"):
+            assert [getattr(s, field) for s in all_runs[0]] == [getattr(s, field) for s in all_runs[1]]
+
+        # Phases advanced all three streams (no restart)
+        phase1, phase2 = all_runs[0][0], all_runs[0][1]
+        assert phase1.np_draw != phase2.np_draw
+        assert phase1.torch_draw != phase2.torch_draw
+        assert phase1.py_draw != phase2.py_draw
 
     def test_run_creates_torch_gen_for_step(self) -> None:
         """run() sets self._torch_gen so step() can access it for sampling."""
@@ -1596,3 +1671,30 @@ class TestRandomSeedDeterminism:
         )
 
         assert torch.equal(result, sampled_tokens)
+
+    def test_multi_device_generators_must_match_sampling_device(self) -> None:
+        """Regression: generators on a different device than the sampling
+        tensor make torch.randint raise.  When workers span devices, all
+        generators must live on workers[0].model.device (the sampling
+        device).  This test goes through the real MPA.run() bundle-creation
+        fallback with workers on different devices."""
+        attack = object.__new__(MultiPromptAttack)
+        attack.prompts = [MagicMock(control_str="initial")]
+        attack.logfile = None
+        attack.step = MagicMock(return_value=("result", 0.5))
+
+        worker0 = MagicMock()
+        worker0.model.device = torch.device("cuda:0")
+        worker1 = MagicMock()
+        worker1.model.device = torch.device("cuda:1")
+        attack.workers = [worker0, worker1]
+
+        attack.run(n_steps=1, stop_on_success=False, anneal=False, random_seed=42)
+
+        # All generators must be on the sampling device (worker 0), not
+        # their own worker's device.  If worker 1's generator were on cuda:1,
+        # torch.randint with device=cuda:0 would raise RuntimeError.
+        sampling_device = torch.device("cuda:0")
+        assert len(attack._torch_gens) == 2
+        for i, gen in attack._torch_gens.items():
+            assert gen.device == sampling_device, f"Generator {i} on {gen.device}, expected {sampling_device}"

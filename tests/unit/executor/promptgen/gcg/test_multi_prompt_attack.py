@@ -212,7 +212,7 @@ def test_attack_manager_records_run_params_before_creating_mpa(
         "incr_control": False,
         "stop_on_success": False,
         "random_seed": 42,
-        "derived_seeds": {},
+        "derived_seeds": {"0": 42},
     }
 
 

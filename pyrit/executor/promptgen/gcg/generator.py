@@ -57,6 +57,7 @@ from pyrit.executor.promptgen.core.prompt_generator_strategy import (
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     IndividualPromptAttack,
     ProgressiveMultiPromptAttack,
+    RngBundle,
     get_workers,
 )
 from pyrit.executor.promptgen.gcg.config import (
@@ -69,17 +70,6 @@ from pyrit.executor.promptgen.gcg.experiments.log import log_gpu_memory, log_tra
 from pyrit.models import ComponentIdentifier, Identifiable
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class RngBundle:
-    """Per-run RNG state bundle for deterministic GCG execution."""
-
-    np_rng: np.random.Generator
-    py_rng: random.Random
-    torch_gens: dict[int, torch.Generator]
-    base_seed: int
-    derived_seeds: dict[int, int]
 
 
 @dataclass
@@ -283,8 +273,9 @@ class GCGGenerator(
         seed = self._algorithm.random_seed
         derived_seeds = {i: seed + i for i in range(len(context.workers))}
         try:
+            sampling_device = context.workers[0].model.device
             torch_gens = {
-                i: torch.Generator(device=context.workers[i].model.device).manual_seed(derived_seeds[i])
+                i: torch.Generator(device=sampling_device).manual_seed(derived_seeds[i])
                 for i in range(len(context.workers))
             }
         except (TypeError, AttributeError):
