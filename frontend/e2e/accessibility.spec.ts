@@ -199,6 +199,50 @@ test.describe("Accessibility", () => {
     await expect(page.locator(":focus")).toBeVisible();
   });
 
+  test("skip link is the first Tab stop, becomes visible on focus, and moves focus to main on activation", async ({
+    page,
+  }) => {
+    // Mock everything the app calls while booting, so this test does not
+    // depend on the dev-server proxy having a real backend behind it (see
+    // the same technique in labels-operation-picker.spec.ts). The shared
+    // beforeEach above already navigated once before these routes existed,
+    // so reload to get a fresh, intercepted navigation.
+    await page.route(/\/api\//, async (route) => {
+      const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
+      const json = (body: unknown) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(body),
+        });
+      if (path === "/health") return json({ status: "healthy" });
+      if (path === "/auth/config") {
+        return json({ clientId: "", tenantId: "", allowedGroupIds: "" });
+      }
+      if (path === "/version") return json({ version: "a11y-test", display: "a11y-test" });
+      if (path === "/labels") {
+        return json({ source: "attacks", labels: { operator: ["roakey"], operation: [] } });
+      }
+      if (path === "/attacks") return json({ items: [], total: 0, limit: 5, offset: 0 });
+      return json({});
+    });
+    await page.reload();
+
+    await expect(page.getByTitle("Home")).toBeVisible();
+
+    const skipLink = page.getByRole("link", { name: "Skip to main content" });
+    await expect(skipLink).not.toBeInViewport();
+
+    // See the note on "should be navigable with keyboard" above: dispatch
+    // through `body` to guarantee the document has focus when Tab fires.
+    await page.locator("body").press("Tab");
+    await expect(skipLink).toBeFocused();
+    await expect(skipLink).toBeInViewport({ ratio: 1 });
+
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#main-content")).toBeFocused();
+  });
+
   test("should have proper focus management", async ({ page }) => {
     // Mock a target so the input is enabled
     await page.route(/\/api\/targets/, async (route) => {

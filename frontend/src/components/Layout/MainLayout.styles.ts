@@ -8,6 +8,30 @@ export const useMainLayoutStyles = makeStyles({
     width: '100vw',
     overflow: 'hidden',
   },
+  skipLink: {
+    position: 'absolute',
+    top: '0',
+    left: '0',
+    zIndex: 1000,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    backgroundColor: tokens.colorBrandBackground,
+    color: tokens.colorNeutralForegroundOnBrand,
+    fontWeight: tokens.fontWeightSemibold,
+    textDecorationLine: 'none',
+    borderBottomRightRadius: tokens.borderRadiusMedium,
+    // translateY(-100%) hides the link above the viewport regardless of its
+    // own rendered height (text zoom, a different font, or longer copy can
+    // all change that height), unlike a fixed 'top' offset.
+    transform: 'translateY(-100%)',
+    transitionProperty: 'transform',
+    transitionDuration: tokens.durationFast,
+    '@media (prefers-reduced-motion: reduce)': {
+      transitionDuration: '0s',
+    },
+    ':focus-visible': {
+      transform: 'translateY(0)',
+    },
+  },
   topBar: {
     height: '60px',
     backgroundColor: tokens.colorNeutralBackground3,
