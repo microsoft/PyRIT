@@ -18,6 +18,7 @@ from pyrit.models import (
 )
 from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggregatorFunc, FloatScaleScoreAggregator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.observation import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -188,6 +189,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
                     scorer_class_identifier=self.get_identifier(),
                     message_piece_id=message_piece_id,
                     scorable=scorable,
+                    observation_ids=_merge_observation_ids(scores=scores),
                     objective=objective,
                 )
             ]
@@ -220,6 +222,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         score.score_category = aggregate_score.category
         score.id = uuid.uuid4()
         score.scorer_class_identifier = self.get_identifier()
+        score.observation_ids = _merge_observation_ids(scores=scores)
         # Store the original float value in metadata for granular comparison
         score.score_metadata = {
             **aggregate_score.metadata,

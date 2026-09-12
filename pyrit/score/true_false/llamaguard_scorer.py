@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import enum
 from functools import partial
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
 from pyrit.score.response_handler import CallableResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -21,6 +21,10 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseScoreAggregator,
 )
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
+
+if TYPE_CHECKING:
+    from pyrit.models import Observation, ScoringExpectation
+    from pyrit.score.observation import _ObservationEvidence
 
 _LLAMAGUARD_DATA_PATH = SCORER_SEED_PROMPT_PATH / "llamaguard"
 _DEFAULT_LLAMA_GUARD_3_POLICY_PATH = _LLAMAGUARD_DATA_PATH / "llamaguard_3_policy.yaml"
@@ -76,6 +80,7 @@ class LlamaGuardScorer(MessageTrueFalseScorer):
     """
 
     SCORE_CATEGORY: ClassVar[str] = "llamaguard"
+    RESPONSE_PARSER_FINGERPRINT: ClassVar[str] = "llamaguard-response-v1"
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
@@ -116,7 +121,8 @@ class LlamaGuardScorer(MessageTrueFalseScorer):
             parser=partial(
                 parse_llamaguard_response,
                 allowed_categories=self._policy.category_codes,
-            )
+            ),
+            parser_fingerprint=self.RESPONSE_PARSER_FINGERPRINT,
         )
 
         super().__init__(
@@ -168,12 +174,45 @@ class LlamaGuardScorer(MessageTrueFalseScorer):
             data_type="text",
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             category=self.SCORE_CATEGORY,
-            objective=objective,
         )
         return [
             unvalidated_score.to_score(
                 score_value=unvalidated_score.raw_score_value,
+                score_type="true_false",
+            )
+        ]
+
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared LlamaGuard judgment contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained LlamaGuard judgment evidence.
+
+        Returns:
+            list[Score]: The replayed LlamaGuard score.
+        """
+        unvalidated = _parse_judgment_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
+            expectation=expectation,
+            category=self.SCORE_CATEGORY,
+        )
+        return [
+            unvalidated.to_score(
+                score_value=unvalidated.raw_score_value.lower(),
                 score_type="true_false",
             )
         ]

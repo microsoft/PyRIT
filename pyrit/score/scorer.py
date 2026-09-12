@@ -19,6 +19,7 @@ from pyrit.models import (
     Identifiable,
     Message,
     MessageScorable,
+    Observation,
     Scorable,
     ScorableUnion,
     Score,
@@ -30,10 +31,19 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.score.observation import (
+    NonReplayableObservationError,
+    _observation_collection,
+    _ObservationEvidence,
+    _ObservationEvidenceResolver,
+    _scoring_expectation_context,
+    _scoring_message_context,
+    _scoring_scorable_context,
+)
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
     from pyrit.models import ChatMessageRole
     from pyrit.prompt_target import PromptTarget
@@ -70,7 +80,11 @@ async def _legacy_score_scorable_async(
     resolver = getattr(self, "_message_resolver", None) or MessageScorableResolver()
     message = resolver.resolve(scorable=scorable, memory=self._memory)
     legacy_score_async = self._score_async  # type: ignore[ty:unresolved-attribute]
-    scores: list[Score] = await legacy_score_async(message, objective=expectation.objective if expectation else None)
+    with _scoring_message_context(message):
+        scores: list[Score] = await legacy_score_async(
+            message,
+            objective=expectation.objective if expectation else None,
+        )
     return scores
 
 
@@ -322,16 +336,23 @@ class Scorer(Identifiable, abc.ABC):
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
         self._validate_expectation(expectation=expectation)
-        try:
-            scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
-        except PyritException as e:
-            e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
-            e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
-            raise
-        except Exception as e:
-            raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
-        self._stamp_scored_expectation(scores=scores, expectation=expectation)
-        return await self._validate_and_persist_scores_async(scores=scores)
+        with _observation_collection() as collector:
+            try:
+                with _scoring_scorable_context(scorable), _scoring_expectation_context(expectation):
+                    scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
+            except PyritException as e:
+                e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
+                e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
+                raise
+            except Exception as e:
+                raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
+
+            self._stamp_scored_expectation(scores=scores, expectation=expectation)
+            observations = collector.referenced_by(scores=scores)
+            return await self._validate_and_persist_scores_async(
+                scores=scores,
+                observations=observations,
+            )
 
     @staticmethod
     def _stamp_scored_expectation(*, scores: list[Score], expectation: ScoringExpectation | None) -> None:
@@ -398,7 +419,12 @@ class Scorer(Identifiable, abc.ABC):
             names = ", ".join(sorted(condition_type.__name__ for condition_type in missing))
             raise ValueError(f"{type(self).__name__} requires the condition(s) {names}.")
 
-    async def _validate_and_persist_scores_async(self, *, scores: list[Score]) -> list[Score]:
+    async def _validate_and_persist_scores_async(
+        self,
+        *,
+        scores: list[Score],
+        observations: Sequence[Observation] = (),
+    ) -> list[Score]:
         """
         Validate and persist non-empty scorer output.
 
@@ -414,9 +440,21 @@ class Scorer(Identifiable, abc.ABC):
             for score in scores
         )
         if requires_file_copy:
-            await self._memory.add_scores_to_memory_async(scores=scores)
+            if observations:
+                await self._memory.add_scores_to_memory_async(
+                    scores=scores,
+                    observations=observations,
+                )
+            else:
+                await self._memory.add_scores_to_memory_async(scores=scores)
         else:
-            self._memory.add_scores_to_memory(scores=scores)
+            if observations:
+                self._memory.add_scores_to_memory(
+                    scores=scores,
+                    observations=observations,
+                )
+            else:
+                self._memory.add_scores_to_memory(scores=scores)
         return scores
 
     async def _score_nested_async(
@@ -440,10 +478,68 @@ class Scorer(Identifiable, abc.ABC):
             list[Score]: The validated child scores.
         """
         self._validate_expectation(expectation=expectation, allow_unmatched_conditions=True)
-        scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
+        with _scoring_scorable_context(scorable), _scoring_expectation_context(expectation):
+            scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
+        self._stamp_scored_expectation(scores=scores, expectation=expectation)
         if scores:
             self.validate_return_scores(scores=scores)
         return scores
+
+    async def score_observation_async(
+        self,
+        *,
+        observation: Observation,
+        expectation: ScoringExpectation | None = None,
+    ) -> list[Score]:
+        """
+        Judge managed evidence again without calling its original source.
+
+        Args:
+            observation (Observation): The stored evidence to judge.
+            expectation (ScoringExpectation | None): What to look for. Defaults to None.
+
+        Returns:
+            list[Score]: Newly persisted scores linked to the existing observation.
+
+        Raises:
+            NonReplayableObservationError: If this scorer or payload cannot replay.
+        """
+        self._validate_expectation(expectation=expectation, allow_unmatched_conditions=True)
+        stored_observations = self._memory.get_observations(observation_ids=[observation.id])
+        if not stored_observations:
+            raise NonReplayableObservationError(f"Observation {observation.id} is not stored in memory.")
+        stored_observation = stored_observations[0]
+        if stored_observation != observation:
+            raise NonReplayableObservationError(
+                f"Observation {observation.id} does not match its canonical stored evidence."
+            )
+        evidence = _ObservationEvidenceResolver(memory=self._memory).resolve(observation=observation)
+        scores = self._score_observation(
+            observation=observation,
+            evidence=evidence,
+            expectation=expectation,
+        )
+        for score in scores:
+            score.scorable = observation.scorable
+            if observation.id not in score.observation_ids:
+                score.observation_ids.append(observation.id)
+        self._stamp_scored_expectation(scores=scores, expectation=expectation)
+        return await self._validate_and_persist_scores_async(scores=scores)
+
+    def _score_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Judge resolved evidence without I/O.
+
+        Raises:
+            NonReplayableObservationError: Always, unless a scorer implements replay.
+        """
+        raise NonReplayableObservationError(f"{type(self).__name__} does not implement observation replay.")
 
     def _build_undetermined_score(
         self,
@@ -735,6 +831,52 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             ValueError: If the number of expectations does not match the number of scorables.
         """
+        return await self._score_batch_with_task_async(
+            task_func=self.score_async,
+            scorables=scorables,
+            expectations=expectations,
+            batch_size=batch_size,
+            **score_async_kwargs,
+        )
+
+    async def _score_batch_nested_async(
+        self,
+        *,
+        scorables: Sequence[Scorable],
+        expectations: Sequence[ScoringExpectation | None] | None = None,
+        batch_size: int = 10,
+    ) -> list[Score]:
+        """
+        Score child evidence in a batch without persisting intermediate scores.
+
+        Returns:
+            list[Score]: A flattened list of validated child scores.
+        """
+        return await self._score_batch_with_task_async(
+            task_func=self._score_nested_async,
+            scorables=scorables,
+            expectations=expectations,
+            batch_size=batch_size,
+        )
+
+    async def _score_batch_with_task_async(
+        self,
+        *,
+        task_func: Callable[..., Awaitable[list[Score]]],
+        scorables: Sequence[Scorable],
+        expectations: Sequence[ScoringExpectation | None] | None,
+        batch_size: int,
+        **task_kwargs: Any,
+    ) -> list[Score]:
+        """
+        Run one public or nested scoring task over a batch.
+
+        Returns:
+            list[Score]: A flattened list of scores from every scorable.
+
+        Raises:
+            ValueError: If the number of expectations does not match the number of scorables.
+        """
         if expectations is None:
             resolved_expectations: list[ScoringExpectation | None] = [None] * len(scorables)
         elif len(expectations) != len(scorables):
@@ -748,12 +890,12 @@ class Scorer(Identifiable, abc.ABC):
         # Some scorers do not have an associated prompt target; batch helper validates RPM only when present
         prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
-            task_func=self.score_async,
+            task_func=task_func,
             task_arguments=["scorable", "expectation"],
             prompt_target=cast("PromptTarget", prompt_target),
             batch_size=batch_size,
             items_to_batch=[list(scorables), resolved_expectations],
-            **score_async_kwargs,
+            **task_kwargs,
         )
 
         # results is a list[list[Score]] and needs to be flattened

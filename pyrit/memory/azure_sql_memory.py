@@ -37,6 +37,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioResultEntry,
 )
+from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import AzureBlobStorageIO
 from pyrit.models import ConversationStats
 
@@ -118,7 +119,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         # Enable token-based authorization
         self._enable_azure_authorization()
 
-        self.SessionFactory = sessionmaker(bind=self.engine)
+        self.SessionFactory = sessionmaker(bind=self.engine, class_=MemorySession)
 
         prod_connection_string = default_values.get_non_required_value(
             env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING_PROD
