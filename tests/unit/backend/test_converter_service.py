@@ -30,6 +30,41 @@ from pyrit.converter.converter import get_converter_modalities
 from pyrit.models import ComponentIdentifier
 from pyrit.registry.components import ConverterRegistry
 
+_TOKEN_BIJECTION_VOCAB = (
+    "cat",
+    "dog",
+    "fox",
+    "run",
+    "jump",
+    "tree",
+    "fish",
+    "bird",
+    "rock",
+    "sand",
+    "moon",
+    "star",
+    "rain",
+    "wind",
+    "fire",
+    "lake",
+    "hill",
+    "road",
+    "farm",
+    "town",
+    "book",
+    "door",
+    "hand",
+    "face",
+    "mind",
+    "body",
+)
+
+
+class _MockTokenizerWithVocab:
+    def get_vocab(self) -> dict[str, int]:
+        """Return enough valid whole-word tokens for TokenBijectionConverter."""
+        return {word: i for i, word in enumerate(_TOKEN_BIJECTION_VOCAB)}
+
 
 @pytest.fixture(autouse=True)
 def reset_registry():
@@ -361,6 +396,31 @@ class TestPreviewConversion:
         assert result.converted_value == "encoded_value"
         assert len(result.steps) == 1
         assert result.steps[0].converter_id == "conv-1"
+
+    @pytest.mark.parametrize(
+        ("value", "resolved_value"),
+        [
+            ("https://example.test/image.png", "https://example.test/image.png"),
+            ("/api/media?path=%2Ftmp%2Fimage.png", "/tmp/image.png"),
+        ],
+    )
+    async def test_preview_conversion_resolves_reference_without_persistence(
+        self, value: str, resolved_value: str
+    ) -> None:
+        """Remote and local media references bypass serializer persistence."""
+        service = ConverterService()
+        request = ConverterPreviewRequest(
+            original_value=value,
+            original_value_data_type="image_path",
+            converter_ids=[],
+        )
+
+        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as factory:
+            result = await service.preview_conversion_async(request=request)
+
+        assert result.original_value == value
+        assert result.converted_value == resolved_value
+        factory.assert_not_called()
 
     async def test_preview_conversion_chains_multiple_converters(self) -> None:
         """Test that preview chains multiple converters."""
@@ -696,6 +756,9 @@ def _try_instantiate_converter(converter_name: str):
             from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy
 
             kwargs[pname] = AllWordsSelectionStrategy()
+        # Tokenizer protocol — use a representative vocab object
+        elif "Tokenizer" in ann_str or "WithVocab" in ann_str:
+            kwargs[pname] = _MockTokenizerWithVocab()
         # TextJailBreak — use string template
         elif "TextJailBreak" in ann_str:
             from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak

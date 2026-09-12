@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { Routes, Route, Navigate, useNavigate, useLocation, useSearchParams, matchPath } from 'react-router'
+import { Routes, Route, Navigate, useNavigate, useLocation, useParams, useSearchParams, matchPath } from 'react-router'
 import { useMsal } from '@azure/msal-react'
 import { Joyride } from 'react-joyride'
 import { useTheme } from './hooks/useTheme'
@@ -8,8 +8,14 @@ import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
-import Initializers from './components/Initializers/Initializers'
+import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
+import HistoryPage from './components/History/HistoryPage'
+import type { HistoryTab } from './components/History/HistoryPage'
+import ScenarioHistory from './components/History/ScenarioHistory'
+import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
+import ScenarioDetail from './components/Scenarios/ScenarioDetail'
+import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -17,36 +23,81 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAttackTargetResolution } from './hooks/useAttackTargetResolution'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
+import { readStoredGlobalLabels, persistGlobalLabels } from './components/Labels/labelStorage'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
+import {
+  scenarioHistoryFiltersFromSearchParams,
+  scenarioHistoryFiltersToSearchParams,
+} from './components/History/scenarioHistoryFilters'
+import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
-import type { TargetInfo } from './types'
+import type { AttackOutcome, AttackSummary, BackendScore, TargetInfo } from './types'
 import {
   targetEndpoint,
   targetIdentifierHash,
   targetModelName,
   targetType,
 } from './utils/targetIdentity'
-import { attacksApi, versionApi } from './services/api'
+import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
 import { useTour } from './hooks/useTour'
+import {
+  attackConversationRoutePath,
+  attackRoutePath,
+  routerPathParamValue,
+  scenarioRunProvenance,
+  scenarioRunRoutePath,
+} from './utils/routeParams'
 
 const AUTO_DISMISS_MS = 5_000
+const HISTORY_ATTACKS_PATH = '/history/attacks'
+const HISTORY_SCANNER_PATH = '/history/scanner'
 
 /** Maps each navigable view to its canonical URL path. */
 const VIEW_PATHS: Record<ViewName, string> = {
   home: '/',
   chat: '/chat',
-  history: '/history',
-  config: '/config',
-  initializers: '/initializers',
+  history: HISTORY_ATTACKS_PATH,
+  targets: '/targets',
+  scenarios: '/scanner',
+  configuration: '/config',
 }
 
-/** Resolves the active view from a URL path, defaulting to home for unknown paths. */
+/**
+ * Resolves the active view from a URL path, defaulting to home for unknown
+ * paths. Scanner catalog routes and persisted scanner-history routes are
+ * prefix-matched since they carry path parameters rather than single canonical
+ * `VIEW_PATHS` entries.
+ */
 function viewFromPath(pathname: string): ViewName {
+  if (pathname === '/history' || pathname.startsWith('/history/') || pathname.startsWith('/scanner-history/')) {
+    return 'history'
+  }
+  if (
+    pathname === VIEW_PATHS.scenarios
+    || pathname.startsWith(`${VIEW_PATHS.scenarios}/`)
+  ) {
+    return 'scenarios'
+  }
   const match = (Object.entries(VIEW_PATHS) as [ViewName, string][]).find(
     ([, path]) => path === pathname,
   )
   return match ? match[0] : 'home'
+}
+
+function LegacyScenarioRunRedirect() {
+  const { scenarioResultId } = useParams<{ scenarioResultId: string }>()
+  return <Navigate replace to={scenarioRunRoutePath(routerPathParamValue(scenarioResultId))} />
+}
+
+function LegacyScenarioHistoryRedirect() {
+  const location = useLocation()
+  return <Navigate replace to={`${HISTORY_SCANNER_PATH}${location.search}`} />
+}
+
+function LegacyAttackHistoryRedirect() {
+  const location = useLocation()
+  return <Navigate replace to={`${HISTORY_ATTACKS_PATH}${location.search}`} />
 }
 
 /** Status of the in-flight attack load for an /attacks/:id route. */
@@ -59,14 +110,16 @@ interface LoadedAttack {
   targetSource: 'persisted' | 'active-selection'
   mainConversationId: string | null
   labels: Record<string, string> | null
+  operator: string | null
   target: TargetInfo | null
   relatedConversationIds: string[]
+  objective: string
+  outcome: NonNullable<AttackSummary['outcome']>
+  automatedScore: BackendScore | null
+  humanScore: BackendScore | null
+  lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
 }
-
-const attackPath = (attackId: string) => `/attacks/${attackId}`
-const conversationPath = (attackId: string, conversationId: string) =>
-  `/attacks/${attackId}/conversations/${conversationId}`
 
 function ConnectionBannerContainer() {
   const { status, reconnectCount } = useConnectionHealth()
@@ -104,18 +157,65 @@ function App() {
   const routeAttackId = conversationMatch?.params.attackId ?? attackMatch?.params.attackId ?? null
   const routeConversationId = conversationMatch?.params.conversationId ?? null
   const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
+  const [canManageConfiguration, setCanManageConfiguration] = useState(false)
 
-  const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
+  useEffect(() => {
+    let cancelled = false
+    authApi.getAccess()
+      .then((access) => {
+        if (!cancelled) setCanManageConfiguration(access.isAdmin)
+      })
+      .catch(() => {
+        if (!cancelled) setCanManageConfiguration(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Read once, before the effect below can overwrite what the user picked.
+  const [storedLabels] = useState(readStoredGlobalLabels)
+  const [globalLabels, setGlobalLabels] = useState<Record<string, string>>(
+    () => ({ ...DEFAULT_GLOBAL_LABELS, ...storedLabels }),
+  )
+
+  // What the app would show if the user had never touched anything: the
+  // built-in placeholders, then whatever the backend hands out. Only labels
+  // that differ from this are the user's own, and only those are worth
+  // keeping — otherwise a value that merely came from the config gets stored
+  // as a choice and outranks that same config from then on.
+  const unchosenLabels = useRef<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
+
+  const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
+    setGlobalLabels(labels)
+    persistGlobalLabels(
+      Object.fromEntries(
+        Object.entries(labels).filter(([key, value]) => value !== unchosenLabels.current[key]),
+      ),
+    )
+  }, [])
 
   // History filters live in the URL query string so they are shareable and
   // survive refresh. The breadcrumb ref remembers the last /history query so
   // the History nav button can restore filters after visiting another view.
   const [searchParams, setSearchParams] = useSearchParams()
   const historyFilters = useMemo(() => filtersFromSearchParams(searchParams), [searchParams])
+  const scenarioHistoryFilters = useMemo(
+    () => scenarioHistoryFiltersFromSearchParams(searchParams),
+    [searchParams],
+  )
+  const scenarioResultId = useMemo(
+    () => scenarioRunProvenance(searchParams),
+    [searchParams],
+  )
   const lastHistorySearch = useRef('')
+  const lastScenarioHistorySearch = useRef('')
   useEffect(() => {
-    if (location.pathname === VIEW_PATHS.history) {
+    if (location.pathname === HISTORY_ATTACKS_PATH) {
       lastHistorySearch.current = location.search
+    }
+    if (location.pathname === HISTORY_SCANNER_PATH) {
+      lastScenarioHistorySearch.current = location.search
     }
   }, [location.pathname, location.search])
 
@@ -123,7 +223,17 @@ function App() {
     setSearchParams(filtersToSearchParams(filters), { replace: true })
   }, [setSearchParams])
 
-    /** App version display, attached to feedback context */
+  const handleScenarioHistoryFiltersChange = useCallback((filters: ScenarioHistoryFilters) => {
+    setSearchParams(scenarioHistoryFiltersToSearchParams(filters), { replace: true })
+  }, [setSearchParams])
+
+  const handleHistoryTabChange = useCallback((tab: HistoryTab) => {
+    const path = tab === 'attacks' ? HISTORY_ATTACKS_PATH : HISTORY_SCANNER_PATH
+    const search = tab === 'attacks' ? lastHistorySearch.current : lastScenarioHistorySearch.current
+    navigate(path + search)
+  }, [navigate])
+
+  /** App version display, attached to feedback context */
   const [appVersion, setAppVersion] = useState<string>('')
   /** Whether the feedback dialog is currently open */
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -160,8 +270,25 @@ function App() {
       const account = instance.getActiveAccount?.()
       const alias = account?.username ? account.username.split('@')[0].toLowerCase() : null
 
+      unchosenLabels.current = {
+        ...DEFAULT_GLOBAL_LABELS,
+        ...defaultLabels,
+        ...(alias ? { operator: alias } : {}),
+      }
+
       setGlobalLabels(prev => {
-        const next = { ...prev, ...defaultLabels }
+        const next = { ...prev }
+        for (const [key, value] of Object.entries(defaultLabels)) {
+          // These defaults only fill in what you have not chosen. `prev`
+          // already carries what was stored and anything picked while this
+          // request was in flight, so neither gets overwritten by a late
+          // response.
+          const untouched = prev[key] === DEFAULT_GLOBAL_LABELS[key]
+          if (!(key in storedLabels) && untouched) {
+            next[key] = value
+          }
+        }
+        // The signed-in account still decides who the operator is.
         if (alias) {
           next.operator = alias
         }
@@ -171,7 +298,7 @@ function App() {
 
     initLabels()
     return () => { ignore = true }
-  }, [instance])
+  }, [instance, storedLabels])
 
   // Hydrate loadedAttack from the routed attack id. Depends on routeAttackId
   // ONLY, so switching conversations within an attack never refetches.
@@ -197,8 +324,14 @@ function App() {
       status: 'loading',
       mainConversationId: null,
       labels: null,
+      operator: null,
       target: null,
       relatedConversationIds: [],
+      objective: '',
+      outcome: 'undetermined',
+      automatedScore: null,
+      humanScore: null,
+      lastResponseMessagePieceId: null,
     })
     attacksApi
       .getAttack(routeAttackId)
@@ -210,8 +343,14 @@ function App() {
           targetSource: 'persisted',
           mainConversationId: attack.conversation_id,
           labels: attack.labels ?? {},
+          operator: attack.operator ?? null,
           target: attack.target ?? null,
           relatedConversationIds: attack.related_conversation_ids ?? [],
+          objective: attack.objective ?? '',
+          outcome: attack.outcome ?? 'undetermined',
+          automatedScore: attack.automated_score ?? null,
+          humanScore: attack.human_score ?? null,
+          lastResponseMessagePieceId: attack.last_response?.id ?? null,
           status: 'success',
         })
       })
@@ -228,8 +367,14 @@ function App() {
           status: isMissing ? 'not-found' : 'error',
           mainConversationId: null,
           labels: null,
+          operator: null,
           target: null,
           relatedConversationIds: [],
+          objective: '',
+          outcome: 'undetermined',
+          automatedScore: null,
+          humanScore: null,
+          lastResponseMessagePieceId: null,
         })
       })
     // Drop a stale response once the route has moved on to another attack.
@@ -271,10 +416,10 @@ function App() {
         routeConversationId === readyAttack.mainConversationId ||
         readyAttack.relatedConversationIds.includes(routeConversationId)
       if (!isKnown) {
-        navigate(attackPath(readyAttack.id), { replace: true })
+        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true })
       }
     }
-  }, [readyAttack, routeConversationId, navigate])
+  }, [readyAttack, routeConversationId, navigate, scenarioResultId])
 
   const handleNavigate = useCallback((view: ViewName) => {
     // Re-attach the last filter query so returning to history restores filters.
@@ -289,7 +434,7 @@ function App() {
     navigate(VIEW_PATHS.chat)
   }, [navigate])
 
-  const handleConversationCreated = useCallback((arId: string, convId: string) => {
+  const handleConversationCreated = useCallback((arId: string, convId: string, objective?: string) => {
     // Seed the freshly-created attack synchronously and tell the loader to skip
     // its next fetch for this id, so the attack opens without a redundant load.
     if (activeTarget) {
@@ -316,23 +461,61 @@ function App() {
       mainConversationId: convId,
       // New attack uses the current user's labels, so it is never operator-locked.
       labels: null,
+      operator: null,
       target,
       relatedConversationIds: [],
+      objective: objective ?? '',
+      outcome: 'undetermined',
+      automatedScore: null,
+      humanScore: null,
+      lastResponseMessagePieceId: null,
       status: 'success',
     })
     // Replace when promoting an empty /chat to its attack url (first message);
     // push when branching from an existing attack so Back returns to the source.
-    navigate(attackPath(arId), { replace: routeAttackId === null })
+    navigate(attackRoutePath(arId), { replace: routeAttackId === null })
   }, [activeTarget, handleSetActiveTarget, routeAttackId, navigate])
+
+  const handleObjectiveChange = useCallback((objective: string) => {
+    setLoadedAttack((current) => current ? { ...current, objective } : current)
+  }, [])
+
+  const handleHumanScoreChange = useCallback((humanScore: BackendScore | null, outcome: AttackOutcome) => {
+    setLoadedAttack((current) => current ? { ...current, humanScore, outcome } : current)
+  }, [])
+
+  const handleAttackChange = useCallback((attack: AttackSummary) => {
+    setLoadedAttack((current) => (
+      current && current.id === attack.attack_result_id
+        ? {
+            ...current,
+            objective: attack.objective ?? '',
+            outcome: attack.outcome ?? 'undetermined',
+            automatedScore: attack.automated_score ?? null,
+            humanScore: attack.human_score ?? null,
+            lastResponseMessagePieceId: attack.last_response?.id ?? null,
+          }
+        : current
+    ))
+  }, [])
 
   const handleSelectConversation = useCallback((convId: string) => {
     if (!routeAttackId) return
-    navigate(conversationPath(routeAttackId, convId))
-  }, [routeAttackId, navigate])
+    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId))
+  }, [routeAttackId, navigate, scenarioResultId])
 
   const handleOpenAttack = useCallback((openAttackResultId: string) => {
-    navigate(attackPath(openAttackResultId))
+    navigate(attackRoutePath(openAttackResultId))
   }, [navigate])
+
+  const handleOpenScenarioRun = useCallback((scenarioResultId: string) => {
+    navigate(scenarioRunRoutePath(scenarioResultId), {
+      state: {
+        fromScenarioHistory: true,
+        scenarioHistorySearch: location.search,
+      },
+    })
+  }, [location.search, navigate])
 
   const chatElement = isAttackNotFound || isAttackError ? (
     <AttackNotFound
@@ -350,15 +533,24 @@ function App() {
       activeConversationId={activeConversationId}
       onConversationCreated={handleConversationCreated}
       onSelectConversation={handleSelectConversation}
+      onObjectiveChange={handleObjectiveChange}
+      onHumanScoreChange={handleHumanScoreChange}
+      onAttackChange={handleAttackChange}
       labels={globalLabels}
-      onLabelsChange={setGlobalLabels}
+      onLabelsChange={handleGlobalLabelsChange}
       onNavigate={handleNavigate}
-      attackLabels={readyAttack ? readyAttack.labels : null}
+      attackOperator={readyAttack ? readyAttack.operator : null}
       attackTarget={readyAttack ? readyAttack.target : null}
       targetResolutionStatus={targetResolutionStatus}
       onRetryTargetResolution={retryTargetResolution}
       isLoadingAttack={isLoadingAttack}
       relatedConversationCount={readyAttack ? readyAttack.relatedConversationIds.length : 0}
+      objective={readyAttack ? readyAttack.objective : ''}
+      outcome={readyAttack?.outcome}
+      automatedScore={readyAttack?.automatedScore}
+      humanScore={readyAttack?.humanScore}
+      lastResponseMessagePieceId={readyAttack?.lastResponseMessagePieceId}
+      scenarioResultId={readyAttack ? scenarioResultId : null}
     />
   )
 
@@ -381,6 +573,7 @@ function App() {
             currentView={currentView}
             onNavigate={handleNavigate}
             onOpenFeedback={() => setFeedbackOpen(true)}
+            canManageConfiguration={canManageConfiguration}
             onStartTour={startTour}
           >
             <Routes>
@@ -389,7 +582,7 @@ function App() {
                 element={
                   <Home
                     labels={globalLabels}
-                    onLabelsChange={setGlobalLabels}
+                    onLabelsChange={handleGlobalLabelsChange}
                     activeTarget={activeTarget}
                     onNavigate={handleNavigate}
                     onOpenAttack={handleOpenAttack}
@@ -409,7 +602,7 @@ function App() {
                 element={chatElement}
               />
               <Route
-                path="/config"
+                path="/targets"
                 element={
                   <TargetConfig
                     activeTarget={activeTarget}
@@ -417,17 +610,51 @@ function App() {
                   />
                 }
               />
-              <Route path="/initializers" element={<Initializers />} />
+              <Route path="/scanner" element={<ScenarioCatalog />} />
               <Route
-                path="/history"
+                path="/scanner/:scenarioName"
                 element={
-                  <AttackHistory
-                    onOpenAttack={handleOpenAttack}
-                    filters={historyFilters}
-                    onFiltersChange={handleFiltersChange}
+                  <ScenarioDetail
                     activeTarget={activeTarget}
+                    labels={globalLabels}
                     onNavigate={handleNavigate}
                   />
+                }
+              />
+              <Route path="/scanner-history" element={<LegacyScenarioHistoryRedirect />} />
+              <Route path="/scanner-history/:scenarioResultId/:attackResultId" element={<ScenarioRunPage />} />
+              <Route path="/scanner-history/:scenarioResultId" element={<ScenarioRunPage />} />
+              <Route path="/scenario-history" element={<LegacyScenarioHistoryRedirect />} />
+              <Route path="/scenario-history/:scenarioResultId" element={<LegacyScenarioRunRedirect />} />
+              <Route path="/config" element={<Configuration />} />
+              <Route path="/history" element={<LegacyAttackHistoryRedirect />} />
+              <Route
+                path={HISTORY_ATTACKS_PATH}
+                element={
+                  <HistoryPage selectedTab="attacks" onTabChange={handleHistoryTabChange}>
+                    <AttackHistory
+                      onOpenAttack={handleOpenAttack}
+                      filters={historyFilters}
+                      onFiltersChange={handleFiltersChange}
+                      activeTarget={activeTarget}
+                      onNavigate={handleNavigate}
+                      showTitle={false}
+                    />
+                  </HistoryPage>
+                }
+              />
+              <Route
+                path={HISTORY_SCANNER_PATH}
+                element={
+                  <HistoryPage selectedTab="scanner" onTabChange={handleHistoryTabChange}>
+                    <ScenarioHistory
+                      filters={scenarioHistoryFilters}
+                      onFiltersChange={handleScenarioHistoryFiltersChange}
+                      onOpenRun={handleOpenScenarioRun}
+                      onNavigate={handleNavigate}
+                      showTitle={false}
+                    />
+                  </HistoryPage>
                 }
               />
               <Route path="*" element={<Navigate to="/" replace />} />

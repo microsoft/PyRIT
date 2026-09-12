@@ -53,7 +53,7 @@ def test_image_color_saturation_converter_initialization_output_format_validatio
 def test_image_color_saturation_converter_initialization_level_validation():
     """Test validation of level parameter."""
     for invalid_level in [-0.1, -1.0, -100.0]:
-        with pytest.raises(ValueError, match="Level must be non-negative"):
+        with pytest.raises(ValueError, match="Level must be finite and non-negative"):
             ImageColorSaturationConverter(level=invalid_level)
 
     for valid_level in [0.0, 0.5, 1.0, 2.0, 10.0]:
@@ -213,3 +213,10 @@ async def test_image_color_saturation_converter_output_format_fallback():
         mock_serializer.read_data_async.return_value = img_bytes
         await converter.convert_async(prompt="test.tiff", input_type="image_path")
         assert mock_serializer.file_extension == "jpeg"
+
+
+@pytest.mark.parametrize("level", [float("nan"), float("inf"), float("-inf")])
+def test_invalid_level_non_finite(level: float) -> None:
+    """Non-finite saturation levels should fail during converter construction."""
+    with pytest.raises(ValueError, match="Level must be finite"):
+        ImageColorSaturationConverter(level=level)

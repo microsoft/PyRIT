@@ -3,12 +3,12 @@
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoreStatus
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleAggregatorFunc,
     FloatScaleScorerByCategory,
 )
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.video_scorer import VideoHelper
 
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class VideoFloatScaleScorer(
-    FloatScaleScorer,
+    MessageFloatScaleScorer,
 ):
     """
     A scorer that processes videos by extracting frames and scoring them using a float scale image scorer.
@@ -41,8 +41,8 @@ class VideoFloatScaleScorer(
     def __init__(
         self,
         *,
-        image_capable_scorer: FloatScaleScorer,
-        audio_scorer: FloatScaleScorer | None = None,
+        image_capable_scorer: MessageFloatScaleScorer,
+        audio_scorer: MessageFloatScaleScorer | None = None,
         num_sampled_frames: int | None = None,
         validator: ScorerPromptValidator | None = None,
         score_aggregator: FloatScaleAggregatorFunc = FloatScaleScorerByCategory.MAX,
@@ -78,7 +78,7 @@ class VideoFloatScaleScorer(
         Raises:
             ValueError: If audio_scorer is provided and does not support audio_path data type.
         """
-        FloatScaleScorer.__init__(self, validator=validator or self._DEFAULT_VALIDATOR)
+        MessageFloatScaleScorer.__init__(self, validator=validator or self._DEFAULT_VALIDATOR)
 
         self._video_helper = VideoHelper(
             image_capable_scorer=image_capable_scorer,
@@ -185,7 +185,8 @@ class VideoFloatScaleScorer(
         aggregate_scores: list[Score] = []
         for result in aggregator_results:
             aggregate_score = Score(
-                score_value=str(result.value),
+                score_value=str(result.value) if result.value is not None else None,
+                status=ScoreStatus.UNDETERMINED if result.value is None else ScoreStatus.COMPLETE,
                 score_value_description=result.description,
                 score_type="float_scale",
                 score_category=result.category,

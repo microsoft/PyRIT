@@ -17,6 +17,7 @@ from pyrit.executor.attack.component.prepended_history_send_context import (
 )
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
+from pyrit.message_normalizer._helpers import get_unflattenable_converter_output_types
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
@@ -24,6 +25,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    UndeterminedScoreError,
 )
 from pyrit.prompt_normalizer.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
@@ -557,7 +559,14 @@ class ConversationManager:
                 self._memory.get_prompt_scores(prompt_ids=assistant_piece_ids) if assistant_piece_ids else []
             )
             for score in existing_scores:
-                if score.score_type == "true_false" and score.get_value() is False:
+                if score.score_type != "true_false":
+                    continue
+                try:
+                    # Undetermined is not a refutation, so it is not feedback-worthy here.
+                    is_false = score.get_value() is False
+                except UndeterminedScoreError:
+                    continue
+                if is_false:
                     state.last_assistant_message_scores.append(score)
                     # context.last_score gets the first matching score for single-score use cases.
                     if hasattr(context, "last_score") and context.last_score is None:
@@ -577,17 +586,10 @@ class ConversationManager:
         Raises:
             ValueError: If an applied converter produced non-text prepended history.
         """
-        output_types = {
-            converted_piece.converted_value_data_type
-            for source_piece, converted_piece in zip(
-                source_message.message_pieces,
-                converted_message.message_pieces,
-                strict=True,
-            )
-            if len(converted_piece.converter_identifiers) > len(source_piece.converter_identifiers)
-            and not converted_piece.not_in_memory
-            and converted_piece.converted_value_data_type != "text"
-        }
+        output_types = get_unflattenable_converter_output_types(
+            source_messages=[source_message],
+            converted_messages=[converted_message],
+        )
         if output_types:
             raise ValueError(
                 "Cannot flatten prepended conversation for a target without editable history after "

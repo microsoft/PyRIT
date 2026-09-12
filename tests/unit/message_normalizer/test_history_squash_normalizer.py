@@ -233,15 +233,17 @@ async def test_history_squash_rejects_converted_non_text_history():
 
 
 async def test_history_squash_preserves_original_list():
-    """Normalize should not mutate the input list."""
+    """Normalize should not mutate the input messages."""
     messages = [
         _make_message("user", "hello"),
         _make_message("assistant", "hi"),
         _make_message("user", "bye"),
     ]
-    original_len = len(messages)
+    original_messages = [message.model_copy(deep=True) for message in messages]
+
     await HistorySquashNormalizer().normalize_async(messages)
-    assert len(messages) == original_len
+
+    assert messages == original_messages
 
 
 async def test_history_squash_propagates_last_message_metadata():

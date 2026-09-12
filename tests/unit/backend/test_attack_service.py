@@ -10,7 +10,9 @@ The attack service uses PyRIT memory with AttackResult as the source of truth.
 import base64
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,6 +21,7 @@ from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AttackSummary,
     ConversationMessagesResponse,
+    ConverterConfigurationRequest,
     CreateAttackRequest,
     MessagePieceRequest,
     PrependedMessageRequest,
@@ -26,10 +29,17 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationRequest,
 )
 from pyrit.backend.services.attack_service import (
+    AttackObjectiveConflictError,
     AttackService,
     get_attack_service,
 )
-from pyrit.memory import AttackResultsKeysetCursor
+from pyrit.backend.services.pagination import (
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+    fingerprint_filters,
+    normalize_label_filters,
+)
+from pyrit.common.utils import to_sha256
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -37,8 +47,10 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    Score,
 )
 from pyrit.models.conversation_stats import ConversationStats
+from pyrit.prompt_normalizer import ConverterConfiguration
 
 
 @pytest.fixture
@@ -76,7 +88,7 @@ def make_attack_result(
     updated_at: datetime | None = None,
 ) -> AttackResult:
     """Create a mock AttackResult for testing."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     created = created_at or now
     updated = updated_at or now
 
@@ -123,6 +135,80 @@ def _make_matching_target_mock() -> MagicMock:
     return mock_target
 
 
+async def _send_message_and_get_update_fields(
+    *,
+    attack_service: AttackService,
+    mock_memory: MagicMock,
+    attack_result_id: str,
+    request: AddMessageRequest,
+    attack_result: AttackResult,
+    converter_identifiers: list[ComponentIdentifier],
+) -> dict[str, Any]:
+    """
+    Send a message with common mocks and return the attack result update fields.
+
+    Args:
+        attack_service: The service under test.
+        mock_memory: The mocked memory instance used by the service.
+        attack_result_id: The attack result identifier passed to the service.
+        request: The message request to send.
+        attack_result: The attack result returned by memory.
+        converter_identifiers: The identifiers returned by resolved converters.
+
+    Returns:
+        dict[str, Any]: The fields used to update the attack result.
+    """
+    mock_memory.get_attack_results.return_value = [attack_result]
+    mock_memory.get_message_pieces.return_value = []
+
+    converter_objects: list[MagicMock] = []
+    for identifier in converter_identifiers:
+        converter = MagicMock()
+        converter.get_identifier.return_value = identifier
+        converter_objects.append(converter)
+
+    now = datetime.now(UTC)
+    with (
+        patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
+        patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service,
+        patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_class,
+        patch.object(
+            attack_service,
+            "get_attack_async",
+            new=AsyncMock(
+                return_value=AttackSummary(
+                    attack_result_id=attack_result_id,
+                    conversation_id=request.target_conversation_id,
+                    objective=attack_result.objective,
+                    message_count=0,
+                    labels={},
+                    created_at=now,
+                    updated_at=now,
+                )
+            ),
+        ),
+        patch.object(
+            attack_service,
+            "get_conversation_messages_async",
+            new=AsyncMock(
+                return_value=ConversationMessagesResponse(
+                    conversation_id=request.target_conversation_id,
+                    messages=[],
+                )
+            ),
+        ),
+    ):
+        mock_converter_service = MagicMock()
+        mock_converter_service.get_converter_objects_for_ids.return_value = converter_objects
+        mock_get_converter_service.return_value = mock_converter_service
+        mock_get_target_service.return_value.get_target_object.return_value = _make_matching_target_mock()
+        mock_normalizer_class.return_value.send_prompt_async = AsyncMock()
+
+        await attack_service.add_message_async(attack_result_id=attack_result_id, request=request)
+
+    return mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+
+
 def _keyset_side_effect(backing):
     """Return a get_attack_results side_effect simulating a recency-ordered keyset seek.
 
@@ -158,10 +244,39 @@ def _cursor_for(result: AttackResult, *, fingerprint: str | None = None) -> str:
     Mirrors what ``list_attacks_async`` mints internally, so tests can feed a cursor back
     in without depending on the fingerprint's exact value.
     """
-    effective_fingerprint = fingerprint if fingerprint is not None else AttackService._attack_filter_fingerprint()
-    return AttackService._encode_attack_cursor(
-        cursor=AttackResultsKeysetCursor.from_attack_result(result),
+    effective_fingerprint = fingerprint if fingerprint is not None else _attack_filter_fingerprint()
+    return encode_keyset_cursor(
+        timestamp=result.timestamp,
+        identifier=result.attack_result_id,
         fingerprint=effective_fingerprint,
+    )
+
+
+def _attack_filter_fingerprint(
+    *,
+    attack_types: list[str] | None = None,
+    converter_types: list[str] | None = None,
+    converter_types_match: str = "all",
+    has_converters: bool | None = None,
+    include_scenario_attacks: bool = True,
+    outcome: str | None = None,
+    labels: dict[str, str | list[str]] | None = None,
+    min_turns: int | None = None,
+    max_turns: int | None = None,
+) -> str:
+    """Build the fingerprint used by ``AttackService.list_attacks_async``."""
+    return fingerprint_filters(
+        filters={
+            "attack_types": attack_types,
+            "converter_types": converter_types,
+            "converter_types_match": converter_types_match,
+            "has_converters": has_converters,
+            "include_scenario_attacks": include_scenario_attacks,
+            "outcome": outcome,
+            "labels": normalize_label_filters(labels=labels),
+            "min_turns": min_turns,
+            "max_turns": max_turns,
+        }
     )
 
 
@@ -213,7 +328,7 @@ def make_mock_piece(
     piece.converted_value_data_type = "text"
     piece.original_value_data_type = "text"
     piece.response_error = "none"
-    piece.timestamp = timestamp or datetime.now(timezone.utc)
+    piece.timestamp = timestamp or datetime.now(UTC)
     # MessagePiece no longer carries scores — they are fetched from memory.
     # Pin original_prompt_id so the mapper's score-lookup key is deterministic.
     piece.original_prompt_id = None
@@ -356,6 +471,14 @@ class TestListAttacks:
 
         call_kwargs = mock_memory.get_attack_results.call_args[1]
         assert call_kwargs["has_converters"] is False
+
+    async def test_list_attacks_forwards_scenario_attack_filter(self, attack_service, mock_memory) -> None:
+        """The scenario-attack inclusion flag is forwarded to memory."""
+        mock_memory.get_attack_results.return_value = []
+
+        await attack_service.list_attacks_async(include_scenario_attacks=False)
+
+        assert mock_memory.get_attack_results.call_args.kwargs["include_scenario_attacks"] is False
 
     async def test_list_attacks_filters_by_converter_types_and_logic(self, attack_service, mock_memory) -> None:
         """Test that list_attacks passes converter_types to memory layer."""
@@ -510,22 +633,24 @@ class TestListAttacks:
         assert preview == "[Image: 1780010098266691.png]"
         assert "C:\\" not in (preview or "")
 
-    async def test_list_attacks_filters_by_labels_directly(self, attack_service, mock_memory) -> None:
-        """Test that label filters are passed directly to the DB query (no legacy expansion)."""
+    async def test_list_attacks_filters_by_dedicated_attribution(self, attack_service, mock_memory) -> None:
+        """Dedicated attribution filters are passed to indexed memory columns."""
         ar = make_attack_result(conversation_id="attack-canonical")
+        ar.operator = "alice"
+        ar.operation = "red"
 
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_conversation_stats.side_effect = lambda conversation_ids: {
-            cid: ConversationStats(message_count=1, labels={"operator": "alice", "operation": "red"})
-            for cid in conversation_ids
+            cid: ConversationStats(message_count=1) for cid in conversation_ids
         }
 
-        result = await attack_service.list_attacks_async(labels={"operator": "alice", "operation": "red"})
+        result = await attack_service.list_attacks_async(operator=["alice"], operation=["red"])
 
         assert len(result.items) == 1
         mock_memory.get_attack_results.assert_called_once()
         call_kwargs = mock_memory.get_attack_results.call_args[1]
-        assert call_kwargs["labels"] == {"operator": "alice", "operation": "red"}
+        assert call_kwargs["operator"] == ["alice"]
+        assert call_kwargs["operation"] == ["red"]
 
     async def test_list_attacks_forwards_min_and_max_turns(self, attack_service, mock_memory) -> None:
         """Both min_turns and max_turns are forwarded to the memory query."""
@@ -660,6 +785,46 @@ class TestGetConversationMessages:
         assert result.conversation_id == "test-id"
         assert result.messages == []
 
+    async def test_get_conversation_messages_marks_attack_objective_score(self, attack_service, mock_memory) -> None:
+        """The message mapper receives the attack's canonical objective score ID."""
+        ar = make_attack_result(conversation_id="test-id")
+        objective_score_id = uuid.uuid4()
+        ar.automated_score = MagicMock(id=objective_score_id)
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        with patch(
+            "pyrit.backend.services.attack_service.pyrit_messages_to_dto_async",
+            new=AsyncMock(return_value=[]),
+        ) as mock_mapper:
+            await attack_service.get_conversation_messages_async(
+                attack_result_id="test-id",
+                conversation_id="test-id",
+            )
+
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id)
+
+    async def test_get_conversation_messages_preserves_string_objective_score_id(
+        self, attack_service, mock_memory
+    ) -> None:
+        """The message mapper receives string score IDs without UUID conversion."""
+        ar = make_attack_result(conversation_id="test-id")
+        objective_score_id = str(uuid.uuid4())
+        ar.automated_score = MagicMock(id=objective_score_id)
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        with patch(
+            "pyrit.backend.services.attack_service.pyrit_messages_to_dto_async",
+            new=AsyncMock(return_value=[]),
+        ) as mock_mapper:
+            await attack_service.get_conversation_messages_async(
+                attack_result_id="test-id",
+                conversation_id="test-id",
+            )
+
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id)
+
     async def test_get_conversation_messages_raises_for_unrelated_conversation(
         self, attack_service, mock_memory
     ) -> None:
@@ -707,7 +872,13 @@ class TestCreateAttack:
             mock_get_target_service.return_value = mock_target_service
 
             result = await attack_service.create_attack_async(
-                request=CreateAttackRequest(target_registry_name="target-1", name="My Attack")
+                request=CreateAttackRequest(
+                    target_registry_name="target-1",
+                    name="My Attack",
+                    operator="alice",
+                    operation="nightly",
+                    labels={"team": "red"},
+                )
             )
 
             assert result.conversation_id is not None
@@ -715,6 +886,9 @@ class TestCreateAttack:
             mock_memory.add_attack_results_to_memory.assert_called_once()
             stored_attack = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
             assert stored_attack.metadata["target_registry_name"] == "target-1"
+            assert stored_attack.operator == "alice"
+            assert stored_attack.operation == "nightly"
+            assert stored_attack.labels == {"team": "red", "source": "gui"}
 
     async def test_create_attack_stores_prepended_conversation(self, attack_service, mock_memory) -> None:
         """Test that create_attack stores prepended conversation messages."""
@@ -954,7 +1128,7 @@ class TestCreateAttack:
             assert stored_ar.labels["source"] == "api-test"
 
     async def test_create_attack_default_name(self, attack_service, mock_memory) -> None:
-        """Test that request.name=None uses default class_name and objective."""
+        """Test that request.name=None uses default class_name and an empty objective."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
             mock_target_obj = MagicMock()
             mock_target_obj.get_identifier.return_value = ComponentIdentifier(
@@ -969,8 +1143,29 @@ class TestCreateAttack:
 
             call_args = mock_memory.add_attack_results_to_memory.call_args
             stored_ar = call_args[1]["attack_results"][0]
-            assert stored_ar.objective == "Manual attack via GUI"
+            assert stored_ar.objective == ""
             assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
+            assert "objective_is_placeholder" not in stored_ar.metadata
+
+    async def test_create_attack_with_name_marks_objective_explicit(self, attack_service, mock_memory) -> None:
+        """Test that a user-supplied request.name is persisted directly as the objective."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", name="Extract the secret")
+            )
+
+            stored_ar = mock_memory.add_attack_results_to_memory.call_args[1]["attack_results"][0]
+            assert stored_ar.objective == "Extract the secret"
+            assert "objective_is_placeholder" not in stored_ar.metadata
 
 
 # ============================================================================
@@ -1046,9 +1241,53 @@ class TestUpdateAttack:
         call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
         assert call_kwargs["update_fields"]["outcome"] == "error"
 
+    async def test_update_attack_updates_objective_and_hash(self, attack_service, mock_memory) -> None:
+        """Test that updating the objective keeps its lookup hash synchronized."""
+        ar = make_attack_result(conversation_id="test-id", objective="")
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        await attack_service.update_attack_async(
+            attack_result_id="test-id",
+            request=UpdateAttackRequest(objective="Extract the system prompt"),
+        )
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert update_fields["objective"] == "Extract the system prompt"
+        assert update_fields["objective_sha256"] == to_sha256("Extract the system prompt")
+
+    async def test_update_attack_rejects_replacing_objective(self, attack_service, mock_memory) -> None:
+        """Test that an existing objective cannot be replaced."""
+        ar = make_attack_result(conversation_id="test-id", objective="Existing objective")
+        mock_memory.get_attack_results.return_value = [ar]
+
+        with pytest.raises(AttackObjectiveConflictError, match="already has an objective"):
+            await attack_service.update_attack_async(
+                attack_result_id="test-id",
+                request=UpdateAttackRequest(objective="Replacement objective"),
+            )
+
+        mock_memory.update_attack_result_by_id.assert_not_called()
+
+    async def test_update_attack_same_objective_is_idempotent(self, attack_service, mock_memory) -> None:
+        """Test that resubmitting the existing objective does not write it again."""
+        objective = "Existing objective"
+        ar = make_attack_result(conversation_id="test-id", objective=objective)
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        result = await attack_service.update_attack_async(
+            attack_result_id="test-id",
+            request=UpdateAttackRequest(objective=objective),
+        )
+
+        assert result is not None
+        assert result.objective == objective
+        mock_memory.update_attack_result_by_id.assert_not_called()
+
     async def test_update_attack_bumps_timestamp(self, attack_service, mock_memory) -> None:
         """Test that update_attack bumps the timestamp recency column and does not write metadata."""
-        old_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        old_time = datetime(2024, 1, 1, tzinfo=UTC)
         ar = make_attack_result(conversation_id="test-id", updated_at=old_time)
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_conversation_messages.return_value = []
@@ -1061,6 +1300,49 @@ class TestUpdateAttack:
         assert isinstance(update_fields["timestamp"], datetime)
         assert update_fields["timestamp"] > old_time
         assert "attack_metadata" not in update_fields
+
+    @pytest.mark.parametrize(
+        ("score_value", "expected_outcome"),
+        [("True", "success"), ("False", "failure")],
+    )
+    async def test_remove_human_score_restores_automated_outcome(
+        self,
+        attack_service,
+        mock_memory,
+        score_value: str,
+        expected_outcome: str,
+    ) -> None:
+        """Test that removing a human score restores the automated true/false result."""
+        attack = make_attack_result(conversation_id="test-id")
+        attack.automated_score = Score(
+            score_type="true_false",
+            score_value=score_value,
+            score_rationale="Automated rationale",
+        )
+        mock_memory.get_attack_results.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert update_fields["human_score_id"] is None
+        assert update_fields["outcome"] == expected_outcome
+        assert update_fields["outcome_reason"] == "Automated rationale"
+
+    async def test_remove_human_score_without_automated_score_is_undetermined(
+        self,
+        attack_service,
+        mock_memory,
+    ) -> None:
+        """Test that removing the only score makes the attack outcome undetermined."""
+        attack = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert update_fields["human_score_id"] is None
+        assert update_fields["outcome"] == "undetermined"
+        assert update_fields["outcome_reason"] is None
 
 
 # ============================================================================
@@ -1118,8 +1400,17 @@ class TestAddMessage:
     async def test_add_message_with_send_sends_via_normalizer(self, attack_service, mock_memory) -> None:
         """Test that add_message with send=True sends message via normalizer."""
         ar = make_attack_result(conversation_id="test-id")
+        response_piece = MessagePiece(
+            role="assistant",
+            original_value="Response",
+            original_value_data_type="text",
+            converted_value="Response",
+            converted_value_data_type="text",
+            conversation_id="test-id",
+            sequence=1,
+        )
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_message_pieces.side_effect = [[], [response_piece]]
         mock_memory.get_conversation_messages.return_value = []
 
         with (
@@ -1145,6 +1436,8 @@ class TestAddMessage:
 
             mock_normalizer.send_prompt_async.assert_called_once()
             assert result.attack is not None
+            update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+            assert update_fields["last_response_id"] == str(response_piece.id)
 
     async def test_add_message_with_send_raises_when_target_not_found(self, attack_service, mock_memory) -> None:
         """Test that add_message with send=True raises when target object not found."""
@@ -1260,8 +1553,10 @@ class TestAddMessage:
             with pytest.raises(RuntimeError, match="boom"):
                 await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
-    async def test_add_message_with_converter_ids_gets_converters(self, attack_service, mock_memory) -> None:
-        """Test that add_message with converter_ids gets converters from service."""
+    async def test_add_message_with_legacy_converter_ids_warns_and_preserves_behavior(
+        self, attack_service, mock_memory
+    ) -> None:
+        """Test that legacy converter IDs warn and remain an unrestricted pipeline."""
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
@@ -1271,23 +1566,26 @@ class TestAddMessage:
             patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
             patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_conv_svc,
             patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
-            patch("pyrit.backend.services.attack_service.ConverterConfiguration") as mock_config,
         ):
             mock_target_svc = MagicMock()
             mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
             mock_get_target_svc.return_value = mock_target_svc
 
-            mock_conv_svc = MagicMock()
-            mock_converter = MagicMock()
-            mock_converter.get_identifier.return_value = ComponentIdentifier(
-                class_name="TestConverter",
+            first_converter = MagicMock()
+            first_converter.get_identifier.return_value = ComponentIdentifier(
+                class_name="FirstConverter",
                 class_module="test_module",
                 params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
             )
-            mock_conv_svc.get_converter_objects_for_ids.return_value = [mock_converter]
+            second_converter = MagicMock()
+            second_converter.get_identifier.return_value = ComponentIdentifier(
+                class_name="SecondConverter",
+                class_module="test_module",
+                params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+            )
+            mock_conv_svc = MagicMock()
+            mock_conv_svc.get_converter_objects_for_ids.return_value = [first_converter, second_converter]
             mock_get_conv_svc.return_value = mock_conv_svc
-
-            mock_config.from_converters.return_value = [MagicMock()]
 
             mock_normalizer = MagicMock()
             mock_normalizer.send_prompt_async = AsyncMock()
@@ -1297,13 +1595,190 @@ class TestAddMessage:
                 pieces=[MessagePieceRequest(original_value="Hello")],
                 target_conversation_id="test-id",
                 send=True,
-                converter_ids=["conv-1"],
+                converter_ids=["first", "second"],
+                target_registry_name="test-target",
+            )
+
+            with pytest.warns(DeprecationWarning, match="AddMessageRequest.converter_ids is deprecated"):
+                await attack_service.add_message_async(attack_result_id="test-id", request=request)
+
+            configurations = mock_normalizer.send_prompt_async.call_args.kwargs["request_converter_configurations"]
+            assert [configuration.converters for configuration in configurations] == [
+                [first_converter],
+                [second_converter],
+            ]
+            assert all(configuration.indexes_to_apply is None for configuration in configurations)
+            mock_conv_svc.get_converter_objects_for_ids.assert_called_once_with(converter_ids=["first", "second"])
+
+    def test_empty_legacy_converter_ids_allow_store_only_request(self) -> None:
+        """Test that an empty legacy converter list remains a no-op when send is false."""
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="Hello")],
+            target_conversation_id="test-id",
+            send=False,
+            converter_ids=[],
+        )
+
+        assert request.converter_ids == []
+
+    def test_empty_legacy_converter_ids_warn_and_use_structured_configuration(self, attack_service) -> None:
+        """Test that an empty legacy list does not override a structured configuration."""
+        converter = MagicMock()
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="Hello")],
+            target_conversation_id="test-id",
+            converter_ids=[],
+            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["structured"])],
+        )
+
+        with patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service:
+            mock_get_converter_service.return_value.get_converter_objects_for_ids.return_value = [converter]
+
+            with pytest.warns(DeprecationWarning, match="AddMessageRequest.converter_ids is deprecated"):
+                configurations = attack_service._resolve_request_converter_configs(request=request)
+
+        assert len(configurations) == 1
+        assert configurations[0].converters == [converter]
+        mock_get_converter_service.return_value.get_converter_objects_for_ids.assert_called_once_with(
+            converter_ids=["structured"]
+        )
+
+    async def test_add_message_preserves_converter_configuration_targeting(self, attack_service, mock_memory) -> None:
+        """Test that request and response converter targeting reaches the normalizer."""
+        ar = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_conversation_messages.return_value = []
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
+            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_conv_svc,
+            patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
+        ):
+            mock_target_svc = MagicMock()
+            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
+            mock_get_target_svc.return_value = mock_target_svc
+
+            mock_conv_svc = MagicMock()
+            first_request_converter = MagicMock()
+            first_request_converter.get_identifier.return_value = ComponentIdentifier(
+                class_name="FirstRequestConverter",
+                class_module="test_module",
+                params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+            )
+            second_request_converter = MagicMock()
+            second_request_converter.get_identifier.return_value = ComponentIdentifier(
+                class_name="SecondRequestConverter",
+                class_module="test_module",
+                params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+            )
+            third_request_converter = MagicMock()
+            third_request_converter.get_identifier.return_value = ComponentIdentifier(
+                class_name="ThirdRequestConverter",
+                class_module="test_module",
+                params={"supported_input_types": ("image_path",), "supported_output_types": ("image_path",)},
+            )
+            response_converter = MagicMock()
+            response_converter.get_identifier.return_value = ComponentIdentifier(
+                class_name="ResponseConverter",
+                class_module="test_module",
+                params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+            )
+            converters_by_ids = {
+                ("request-1", "request-2"): [first_request_converter, second_request_converter],
+                ("request-3",): [third_request_converter],
+                ("response-1",): [response_converter],
+            }
+            mock_conv_svc.get_converter_objects_for_ids.side_effect = lambda *, converter_ids: converters_by_ids[
+                tuple(converter_ids)
+            ]
+            mock_get_conv_svc.return_value = mock_conv_svc
+
+            mock_normalizer = MagicMock()
+            mock_normalizer.send_prompt_async = AsyncMock()
+            mock_normalizer_cls.return_value = mock_normalizer
+
+            request = AddMessageRequest(
+                pieces=[
+                    MessagePieceRequest(original_value="Hello"),
+                    MessagePieceRequest(
+                        data_type="image_path",
+                        original_value="https://example.com/image.png",
+                    ),
+                ],
+                target_conversation_id="test-id",
+                send=True,
+                request_converter_configurations=[
+                    ConverterConfigurationRequest(
+                        converter_ids=["request-1", "request-2"],
+                        indexes_to_apply=[0],
+                        prompt_data_types_to_apply=["text"],
+                    ),
+                    ConverterConfigurationRequest(
+                        converter_ids=["request-3"],
+                        indexes_to_apply=[1],
+                        prompt_data_types_to_apply=["image_path"],
+                    ),
+                ],
+                response_converter_configurations=[
+                    ConverterConfigurationRequest(
+                        converter_ids=["response-1"],
+                        indexes_to_apply=[1],
+                        prompt_data_types_to_apply=["text"],
+                    )
+                ],
                 target_registry_name="test-target",
             )
 
             await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
-            mock_conv_svc.get_converter_objects_for_ids.assert_any_call(converter_ids=["conv-1"])
+            call_kwargs = mock_normalizer.send_prompt_async.call_args.kwargs
+            request_configs = call_kwargs["request_converter_configurations"]
+            assert request_configs[0].converters == [first_request_converter, second_request_converter]
+            assert request_configs[0].indexes_to_apply == [0]
+            assert request_configs[0].prompt_data_types_to_apply == ["text"]
+            assert request_configs[1].converters == [third_request_converter]
+            assert request_configs[1].indexes_to_apply == [1]
+            assert request_configs[1].prompt_data_types_to_apply == ["image_path"]
+            response_config = call_kwargs["response_converter_configurations"][0]
+            assert response_config.converters == [response_converter]
+            assert response_config.indexes_to_apply == [1]
+            assert response_config.prompt_data_types_to_apply == ["text"]
+
+            update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+            updated_atomic = AtomicAttackIdentifier.model_validate(update_fields["atomic_attack_identifier"])
+            updated_attack = updated_atomic.attack_technique.attack
+            assert [converter.class_name for converter in updated_attack.request_converters] == [
+                "FirstRequestConverter",
+                "SecondRequestConverter",
+                "ThirdRequestConverter",
+            ]
+            assert [converter.class_name for converter in updated_attack.response_converters] == ["ResponseConverter"]
+            assert mock_conv_svc.get_converter_objects_for_ids.call_count == 3
+
+    async def test_add_message_resolves_converters_before_writing(self, attack_service, mock_memory) -> None:
+        """Test that an unknown converter fails before message or attack writes."""
+        ar = make_attack_result(conversation_id="test-id", has_target=False)
+        mock_memory.get_attack_results.return_value = [ar]
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="Hello")],
+            target_conversation_id="test-id",
+            send=True,
+            target_registry_name="test-target",
+            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["missing"])],
+        )
+
+        with patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_service:
+            mock_get_service.return_value.get_converter_objects_for_ids.side_effect = ValueError(
+                "Converter instance 'missing' not found"
+            )
+
+            with pytest.raises(ValueError, match="Converter instance 'missing' not found"):
+                await attack_service.add_message_async(attack_result_id="test-id", request=request)
+
+        mock_memory.add_conversation_to_memory.assert_not_called()
+        mock_memory.add_message_pieces_to_memory.assert_not_called()
+        mock_memory.update_attack_result_by_id.assert_not_called()
 
     async def test_add_message_raises_when_attack_not_found_after_update(self, attack_service, mock_memory) -> None:
         """Test that add_message raises ValueError when attack disappears after update."""
@@ -1368,8 +1843,10 @@ class TestAddMessage:
         assert isinstance(update_fields["timestamp"], datetime)
         assert "attack_metadata" not in update_fields
 
-    async def test_converter_ids_propagate_even_when_preconverted(self, attack_service, mock_memory) -> None:
-        """Test that converter identifiers propagate to attack_identifier even when pieces are preconverted."""
+    async def test_preconverted_piece_does_not_disable_other_piece_converters(
+        self, attack_service, mock_memory
+    ) -> None:
+        """Test that only the client-preconverted piece is excluded from conversion."""
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
@@ -1400,23 +1877,38 @@ class TestAddMessage:
             mock_normalizer_cls.return_value = mock_normalizer
 
             request = AddMessageRequest(
-                pieces=[MessagePieceRequest(original_value="Hello", converted_value="SGVsbG8=")],
+                pieces=[
+                    MessagePieceRequest(original_value="Hello", converted_value="SGVsbG8="),
+                    MessagePieceRequest(original_value="World"),
+                ],
                 send=True,
                 target_conversation_id="test-id",
-                converter_ids=["conv-1"],
+                request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["conv-1"])],
+                response_converter_configurations=[ConverterConfigurationRequest(converter_ids=["conv-1"])],
                 target_registry_name="test-target",
             )
 
             await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
-            # Converter service IS called to resolve identifiers for the attack_identifier
-            mock_get_conv_svc.assert_called()
-            # Normalizer should still get empty converter configs since pieces are preconverted
             call_kwargs = mock_normalizer.send_prompt_async.call_args[1]
-            assert call_kwargs["request_converter_configurations"] == []
-            # atomic_attack_identifier should be updated with converter identifiers
+            request_configurations = call_kwargs["request_converter_configurations"]
+            assert len(request_configurations) == 1
+            assert request_configurations[0].indexes_to_apply == [1]
+            assert len(call_kwargs["response_converter_configurations"]) == 1
             update_call = mock_memory.update_attack_result_by_id.call_args[1]
             assert "atomic_attack_identifier" in update_call["update_fields"]
+
+    def test_preconverted_piece_omits_configuration_with_no_eligible_indexes(self, attack_service) -> None:
+        """Test that an empty filtered selector is omitted instead of becoming unrestricted."""
+        configuration = ConverterConfiguration(converters=[MagicMock()], indexes_to_apply=[0])
+
+        result = attack_service._exclude_preconverted_piece_indexes(
+            configurations=[configuration],
+            preconverted_indexes={0},
+            piece_count=2,
+        )
+
+        assert result == []
 
 
 # ============================================================================
@@ -1440,6 +1932,23 @@ class TestPagination:
         assert call_kwargs["limit"] == 21
         assert call_kwargs["after"] is None
 
+    async def test_list_attacks_empty_attack_types_match_no_filter_cursor(self, attack_service, mock_memory) -> None:
+        """An empty attack-type list has the same query and cursor fingerprint as no filter."""
+        backing = _paginated_backing(3)
+        mock_memory.get_attack_results.side_effect = _keyset_side_effect(backing)
+
+        first = await attack_service.list_attacks_async(limit=2)
+        assert first.pagination.next_cursor is not None
+        await attack_service.list_attacks_async(
+            attack_types=[],
+            limit=2,
+            cursor=first.pagination.next_cursor,
+        )
+
+        call_kwargs = mock_memory.get_attack_results.call_args.kwargs
+        assert call_kwargs["attack_classes"] is None
+        assert call_kwargs["after"].attack_result_id == backing[1].attack_result_id
+
     async def test_list_attacks_decodes_cursor_to_after(self, attack_service, mock_memory) -> None:
         """A cursor is decoded into the memory keyset anchor when its filter fingerprint matches."""
         mock_memory.get_attack_results.return_value = []
@@ -1461,10 +1970,10 @@ class TestPagination:
 
     def test_decode_attack_cursor_rejects_invalid_and_round_trips_valid(self) -> None:
         """Bad/legacy/mismatched/naive cursors decode to None; valid round-trips; non-UTC canonicalizes to UTC."""
-        fingerprint = AttackService._attack_filter_fingerprint()
+        fingerprint = _attack_filter_fingerprint()
 
         def decode(cursor, fp=fingerprint):
-            return AttackService._decode_attack_cursor(cursor=cursor, fingerprint=fp)
+            return decode_keyset_cursor(cursor=cursor, fingerprint=fp)
 
         assert decode(None) is None
         assert decode("") is None
@@ -1478,7 +1987,7 @@ class TestPagination:
         assert decode(valid, "0000000000000000") is None
         decoded = decode(valid)
         assert decoded is not None
-        assert decoded.attack_result_id == anchor.attack_result_id
+        assert decoded.identifier == anchor.attack_result_id
         assert decoded.timestamp == anchor.timestamp
 
         # A crafted cursor carrying a naive (tz-less) timestamp is rejected: service-minted anchors
@@ -1501,8 +2010,8 @@ class TestPagination:
         offset_cursor = base64.urlsafe_b64encode(json.dumps(offset_payload).encode("utf-8")).decode("ascii").rstrip("=")
         offset_decoded = decode(offset_cursor)
         assert offset_decoded is not None
-        assert offset_decoded.timestamp == datetime(2025, 12, 31, 19, 0, 0, tzinfo=timezone.utc)
-        assert offset_decoded.timestamp.tzinfo == timezone.utc
+        assert offset_decoded.timestamp == datetime(2025, 12, 31, 19, 0, 0, tzinfo=UTC)
+        assert offset_decoded.timestamp.tzinfo == UTC
 
         # A crafted cursor whose extreme UTC offset would push the timestamp past datetime's
         # representable range when normalized to UTC decodes to None instead of raising.
@@ -1600,11 +2109,12 @@ class TestPagination:
 
     def test_attack_filter_fingerprint_is_order_independent_and_filter_sensitive(self) -> None:
         """The fingerprint normalizes ordering but distinguishes different filter values."""
-        fingerprint = AttackService._attack_filter_fingerprint
+        fingerprint = _attack_filter_fingerprint
         assert fingerprint(attack_types=["a", "b"]) == fingerprint(attack_types=["b", "a"])
         assert fingerprint(labels={"op": ["red", "blue"]}) == fingerprint(labels={"op": ["blue", "red"]})
         assert fingerprint() != fingerprint(outcome="success")
         assert fingerprint(outcome="success") != fingerprint(outcome="failure")
+        assert fingerprint() != fingerprint(include_scenario_attacks=False)
         assert fingerprint(min_turns=1) != fingerprint(max_turns=1)
         # An empty-sequence label is a no-op filter in get_attack_results (effective_labels),
         # so it must fingerprint identically to no label filter — otherwise a cursor minted
@@ -1915,6 +2425,45 @@ class TestPersistBase64Pieces:
         assert request.pieces[0].original_value == ("https://myblob.blob.core.windows.net/images/photo.png?sv=2024")
         assert request.pieces[0].converted_value == request.pieces[0].original_value
 
+    async def test_media_reference_is_resolved_without_persistence(self, attack_service) -> None:
+        """Local media URLs are converted back to their decoded file paths."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="/api/media?path=%2Ftmp%2Fimage.png",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert request.pieces[0].original_value == "/tmp/image.png"
+        assert request.pieces[0].converted_value == "/tmp/image.png"
+        factory.assert_not_called()
+
+    async def test_existing_file_is_kept_without_persistence(self, attack_service, tmp_path: Path) -> None:
+        """An existing path remains the canonical original and converted value."""
+        media_path = tmp_path / "image.png"
+        media_path.write_bytes(b"image")
+        request = AddMessageRequest(
+            role="user",
+            pieces=[MessagePieceRequest(data_type="image_path", original_value=str(media_path))],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert request.pieces[0].original_value == str(media_path)
+        assert request.pieces[0].converted_value == str(media_path)
+        factory.assert_not_called()
+
     async def test_non_path_data_types_are_skipped(self, attack_service) -> None:
         """Non *_path types like reasoning, url, function_call should not be decoded."""
         request = AddMessageRequest(
@@ -1957,6 +2506,35 @@ class TestPersistBase64Pieces:
             mock_factory.assert_called_once()
             mock_serializer.save_b64_image_async.assert_called_once_with(data=long_b64)
             assert request.pieces[0].original_value == "/tmp/saved_audio.wav"
+
+    async def test_persistence_failure_does_not_partially_mutate_piece(self, attack_service) -> None:
+        """A failed save leaves both request values unchanged."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="aW1hZ2VkYXRh",
+                    mime_type="image/png",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock(side_effect=OSError("save failed"))
+
+        with (
+            patch(
+                "pyrit.backend.services.attack_service.data_serializer_factory",
+                return_value=mock_serializer,
+            ),
+            pytest.raises(OSError, match="save failed"),
+        ):
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert request.pieces[0].original_value == "aW1hZ2VkYXRh"
+        assert request.pieces[0].converted_value is None
 
 
 # ============================================================================
@@ -2033,8 +2611,8 @@ class TestGetConversations:
 
         mock_memory.get_attack_results.return_value = [ar]
 
-        t1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
-        t2 = datetime(2026, 1, 1, 9, 30, 0, tzinfo=timezone.utc)  # earlier than t1
+        t1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
+        t2 = datetime(2026, 1, 1, 9, 30, 0, tzinfo=UTC)  # earlier than t1
 
         mock_memory.get_conversation_stats.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t1),
@@ -2223,7 +2801,7 @@ class TestAddMessageTargetConversation:
             target_conversation_id="branch-1",
         )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_summary = AttackSummary(
             attack_result_id="ar-attack-1",
             conversation_id="attack-1",
@@ -2366,8 +2944,8 @@ class TestConversationSorting:
         }
         mock_memory.get_attack_results.return_value = [ar]
 
-        t_early = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
-        t_late = datetime(2026, 1, 1, 11, 0, 0, tzinfo=timezone.utc)
+        t_early = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
+        t_late = datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC)
 
         mock_memory.get_conversation_stats.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t_late),
@@ -2394,7 +2972,7 @@ class TestConversationSorting:
         }
         mock_memory.get_attack_results.return_value = [ar]
 
-        t = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
+        t = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
 
         mock_memory.get_conversation_stats.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t),
@@ -2461,8 +3039,6 @@ class TestAttackServiceAdditionalCoverage:
 
     async def test_add_message_merges_converter_identifiers_without_duplicates(self, attack_service, mock_memory):
         """Should merge new converter identifiers with existing attack identifiers by hash."""
-        from pyrit.backend.models.attacks import AttackSummary, ConversationMessagesResponse
-
         existing_converter = ComponentIdentifier(
             class_name="ExistingConverter",
             class_module="pyrit.converter",
@@ -2493,50 +3069,23 @@ class TestAttackServiceAdditionalCoverage:
             ),
         )
 
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-
         request = AddMessageRequest(
             role="user",
             pieces=[MessagePieceRequest(original_value="Hello")],
             target_conversation_id="attack-1",
-            send=False,
-            converter_ids=["c-1", "c-2"],
+            send=True,
+            target_registry_name="test-target",
+            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["c-1", "c-2"])],
         )
 
-        with (
-            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
-            patch.object(
-                attack_service,
-                "get_attack_async",
-                new=AsyncMock(
-                    return_value=AttackSummary(
-                        attack_result_id="ar-attack-1",
-                        conversation_id="attack-1",
-                        objective="test objective",
-                        message_count=0,
-                        labels={},
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
-                    )
-                ),
-            ),
-            patch.object(
-                attack_service,
-                "get_conversation_messages_async",
-                new=AsyncMock(return_value=ConversationMessagesResponse(conversation_id="attack-1", messages=[])),
-            ),
-        ):
-            mock_converter_service = MagicMock()
-            mock_converter_service.get_converter_objects_for_ids.return_value = [
-                MagicMock(get_identifier=MagicMock(return_value=duplicate_converter)),
-                MagicMock(get_identifier=MagicMock(return_value=new_converter)),
-            ]
-            mock_get_converter_service.return_value = mock_converter_service
-
-            await attack_service.add_message_async(attack_result_id="attack-1", request=request)
-
-        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
+        update_fields = await _send_message_and_get_update_fields(
+            attack_service=attack_service,
+            mock_memory=mock_memory,
+            attack_result_id="attack-1",
+            request=request,
+            attack_result=ar,
+            converter_identifiers=[duplicate_converter, new_converter],
+        )
         # Converters are now stored inside atomic_attack_identifier -> attack_technique -> attack
         atomic_id = update_fields["atomic_attack_identifier"]
         attack_id = atomic_id["children"]["attack_technique"]["children"]["attack"]
@@ -2571,49 +3120,23 @@ class TestAttackServiceAdditionalCoverage:
             children={"attack": attack_id},
         )
 
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-
         request = AddMessageRequest(
             role="user",
             pieces=[MessagePieceRequest(original_value="Hello")],
             target_conversation_id="flat-1",
-            send=False,
-            converter_ids=["c-1"],
+            send=True,
+            target_registry_name="test-target",
+            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["c-1"])],
         )
 
-        with (
-            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
-            patch.object(
-                attack_service,
-                "get_attack_async",
-                new=AsyncMock(
-                    return_value=AttackSummary(
-                        attack_result_id="ar-flat-1",
-                        conversation_id="flat-1",
-                        objective="test objective",
-                        message_count=0,
-                        labels={},
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
-                    )
-                ),
-            ),
-            patch.object(
-                attack_service,
-                "get_conversation_messages_async",
-                new=AsyncMock(return_value=ConversationMessagesResponse(conversation_id="flat-1", messages=[])),
-            ),
-        ):
-            mock_converter_service = MagicMock()
-            mock_converter_service.get_converter_objects_for_ids.return_value = [
-                MagicMock(get_identifier=MagicMock(return_value=new_converter)),
-            ]
-            mock_get_converter_service.return_value = mock_converter_service
-
-            await attack_service.add_message_async(attack_result_id="flat-1", request=request)
-
-        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
+        update_fields = await _send_message_and_get_update_fields(
+            attack_service=attack_service,
+            mock_memory=mock_memory,
+            attack_result_id="flat-1",
+            request=request,
+            attack_result=ar,
+            converter_identifiers=[new_converter],
+        )
         assert "atomic_attack_identifier" in update_fields
         assert "attack_identifier" not in update_fields
         # Flat fallback: converter should be under atomic -> attack -> children
@@ -2625,8 +3148,6 @@ class TestAttackServiceAdditionalCoverage:
 
     async def test_converter_merge_all_duplicates_does_not_rewrite_identifier(self, attack_service, mock_memory):
         """When every new converter is already present, the identifier is left untouched."""
-        from pyrit.backend.models.attacks import AttackSummary, ConversationMessagesResponse
-
         existing_converter = ComponentIdentifier(
             class_name="ExistingConverter",
             class_module="pyrit.converter",
@@ -2651,55 +3172,27 @@ class TestAttackServiceAdditionalCoverage:
             ),
         )
 
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-
         request = AddMessageRequest(
             role="user",
             pieces=[MessagePieceRequest(original_value="Hello")],
             target_conversation_id="attack-1",
-            send=False,
-            converter_ids=["c-1"],
+            send=True,
+            target_registry_name="test-target",
+            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["c-1"])],
         )
 
-        with (
-            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
-            patch.object(
-                attack_service,
-                "get_attack_async",
-                new=AsyncMock(
-                    return_value=AttackSummary(
-                        attack_result_id="ar-attack-1",
-                        conversation_id="attack-1",
-                        objective="test objective",
-                        message_count=0,
-                        labels={},
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
-                    )
-                ),
-            ),
-            patch.object(
-                attack_service,
-                "get_conversation_messages_async",
-                new=AsyncMock(return_value=ConversationMessagesResponse(conversation_id="attack-1", messages=[])),
-            ),
-        ):
-            mock_converter_service = MagicMock()
-            mock_converter_service.get_converter_objects_for_ids.return_value = [
-                MagicMock(get_identifier=MagicMock(return_value=duplicate_converter)),
-            ]
-            mock_get_converter_service.return_value = mock_converter_service
-
-            await attack_service.add_message_async(attack_result_id="attack-1", request=request)
-
-        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
+        update_fields = await _send_message_and_get_update_fields(
+            attack_service=attack_service,
+            mock_memory=mock_memory,
+            attack_result_id="attack-1",
+            request=request,
+            attack_result=ar,
+            converter_identifiers=[duplicate_converter],
+        )
         assert "atomic_attack_identifier" not in update_fields
 
     async def test_converter_merge_preserves_sibling_children_hash(self, attack_service, mock_memory):
         """Merging a converter must not disturb sibling children (objective_target keeps its hash)."""
-        from pyrit.backend.models.attacks import AttackSummary, ConversationMessagesResponse
-
         new_converter = ComponentIdentifier(
             class_name="NewConverter",
             class_module="pyrit.converter",
@@ -2712,49 +3205,23 @@ class TestAttackServiceAdditionalCoverage:
         assert objective_target is not None
         original_target_hash = objective_target.hash
 
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-
         request = AddMessageRequest(
             role="user",
             pieces=[MessagePieceRequest(original_value="Hello")],
             target_conversation_id="attack-1",
-            send=False,
-            converter_ids=["c-1"],
+            send=True,
+            target_registry_name="test-target",
+            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["c-1"])],
         )
 
-        with (
-            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
-            patch.object(
-                attack_service,
-                "get_attack_async",
-                new=AsyncMock(
-                    return_value=AttackSummary(
-                        attack_result_id="ar-attack-1",
-                        conversation_id="attack-1",
-                        objective="test objective",
-                        message_count=0,
-                        labels={},
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
-                    )
-                ),
-            ),
-            patch.object(
-                attack_service,
-                "get_conversation_messages_async",
-                new=AsyncMock(return_value=ConversationMessagesResponse(conversation_id="attack-1", messages=[])),
-            ),
-        ):
-            mock_converter_service = MagicMock()
-            mock_converter_service.get_converter_objects_for_ids.return_value = [
-                MagicMock(get_identifier=MagicMock(return_value=new_converter)),
-            ]
-            mock_get_converter_service.return_value = mock_converter_service
-
-            await attack_service.add_message_async(attack_result_id="attack-1", request=request)
-
-        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
+        update_fields = await _send_message_and_get_update_fields(
+            attack_service=attack_service,
+            mock_memory=mock_memory,
+            attack_result_id="attack-1",
+            request=request,
+            attack_result=ar,
+            converter_identifiers=[new_converter],
+        )
         rebuilt = AtomicAttackIdentifier.model_validate(update_fields["atomic_attack_identifier"])
         rebuilt_attack = rebuilt.get_child("attack_technique").get_child("attack")
         assert rebuilt_attack.get_child("objective_target").hash == original_target_hash
@@ -2931,40 +3398,22 @@ class TestAddMessageGuards:
             with pytest.raises(ValueError, match="Target mismatch"):
                 attack_service._validate_target_match(attack_identifier=attack_identifier, request=request)
 
-    async def test_rejects_mismatched_operator(self, attack_service, mock_memory) -> None:
-        """Should raise ValueError when request operator differs from attack operator."""
-        ar = make_attack_result(conversation_id="test-id")
-        ar.labels["operator"] = "alice"
-        mock_memory.get_attack_results.return_value = [ar]
 
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-            labels={"operator": "bob"},
-        )
+def test_create_attack_request_normalizes_legacy_attribution_labels() -> None:
+    labels = {"operator": "alice", "operation": "nightly", "team": "red"}
 
-        with pytest.raises(ValueError, match="Operator mismatch"):
-            await attack_service.add_message_async(attack_result_id="test-id", request=request)
+    with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
+        request = CreateAttackRequest(target_registry_name="target", labels=labels)
 
-    async def test_allows_matching_operator(self, attack_service, mock_memory) -> None:
-        """Should NOT raise when request operator matches attack operator."""
-        ar = make_attack_result(conversation_id="test-id")
-        ar.labels["operator"] = "alice"
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_messages.return_value = []
+    assert request.operator == "alice"
+    assert request.operation == "nightly"
+    assert request.labels == {"team": "red"}
+    assert labels == {"operator": "alice", "operation": "nightly", "team": "red"}
 
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-            labels={"operator": "alice"},
-        )
 
-        result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
-        assert result.attack is not None
+def test_create_attack_request_rejects_overlength_values() -> None:
+    with pytest.raises(ValueError, match="at most 128"):
+        CreateAttackRequest(target_registry_name="target", operator="x" * 129)
 
 
 class TestResolveVideoRemixMetadata:

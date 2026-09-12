@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
+import type { BackendMessage, BackendMessagePiece } from "@/types";
+import { makeAddMessageResponse } from "./_attacks";
 import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
@@ -13,7 +15,7 @@ const WIDE_IMAGE_DATA_URI =
 /** Intercept targets & attacks APIs so the chat flow can run without real keys. */
 async function mockBackendAPIs(page: Page) {
   // Accumulate messages so multi-turn tests get full history back
-  let accumulatedMessages: Record<string, unknown>[] = [];
+  let accumulatedMessages: BackendMessage[] = [];
 
   // Mock targets list – return one target already available
   await page.route(/\/api\/targets/, async (route) => {
@@ -92,11 +94,9 @@ async function mockBackendAPIs(page: Page) {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          messages: {
-            messages: [...accumulatedMessages],
-          },
-        }),
+        body: JSON.stringify(makeAddMessageResponse(
+          "e2e-attack-001", MOCK_CONVERSATION_ID, [...accumulatedMessages],
+        )),
       });
     } else if (route.request().method() === "GET") {
       await route.fulfill({
@@ -128,10 +128,10 @@ async function mockBackendAPIs(page: Page) {
   });
 }
 
-/** Navigate to config, set the mock target as active, then return to chat. */
+/** Navigate to targets, set the mock target as active, then return to chat. */
 async function activateMockTarget(page: Page) {
-  // Click Configuration button in sidebar
-  await page.getByTitle("Configuration").click();
+  // Click Targets button in sidebar
+  await page.getByTitle("Targets").click();
   await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
 
   // Set the mock target active
@@ -375,7 +375,7 @@ test.describe("Chat without target", () => {
 /** Build the mock message/add-message route handler that returns the
  *  given response pieces for assistant messages. */
 function buildModalityMock(
-  assistantPieces: Record<string, unknown>[],
+  assistantPieces: BackendMessagePiece[],
   mockConversationId = "e2e-modality-conv",
 ) {
   return async function mockAPIs(page: Page) {
@@ -403,7 +403,7 @@ function buildModalityMock(
 
     // Add message – returns user turn + assistant with given pieces.
     // Also handles GET requests for loadConversation.
-    let lastMessages: Record<string, unknown>[] = [];
+    let lastMessages: BackendMessage[] = [];
     let postSeen = false; // track POST so GET doesn't return empty during render race
     await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
       if (route.request().method() === "POST") {
@@ -445,11 +445,9 @@ function buildModalityMock(
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({
-            messages: {
-              messages: lastMessages,
-            },
-          }),
+          body: JSON.stringify(makeAddMessageResponse(
+            "e2e-modality-attack", mockConversationId, lastMessages,
+          )),
         });
       } else if (route.request().method() === "GET") {
         // Return empty before any POST so loadConversation doesn't hang,
@@ -853,7 +851,7 @@ test.describe("Target type scenarios", () => {
     });
 
     await page.goto("/");
-    await page.getByTitle("Configuration").click();
+    await page.getByTitle("Targets").click();
     await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
 
     await expect(page.locator("table").getByText("OpenAIChatTarget")).toBeVisible();
@@ -878,7 +876,7 @@ test.describe("Target type scenarios", () => {
     });
 
     await page.goto("/");
-    await page.getByTitle("Configuration").click();
+    await page.getByTitle("Targets").click();
     await expect(page.getByText("dall-e-3")).toBeVisible({ timeout: 10000 });
 
     // Activate the DALL-E target (second row)
@@ -955,5 +953,113 @@ test.describe("Conversation export", () => {
     expect(parsed.messages.length).toBeGreaterThanOrEqual(2);
     expect(content).toContain("Export me please");
     expect(content).toContain("Mock response for: Export me please");
+  });
+
+  test("downloads the displayed conversation as a self-contained HTML transcript", async ({ page }) => {
+    const { filename, content } = await triggerExport(page, "export-html-item");
+
+    expect(filename).toMatch(/^copyrit-conversation-e2e-conv-001-.*\.html$/);
+    expect(content).toContain("<h1>CoPyRIT conversation export</h1>");
+    expect(content).toContain("Export me please");
+    expect(content).toContain("Mock response for: Export me please");
+    // Print rules travel with the file so it can be saved as PDF as-is.
+    expect(content).toContain("@media print");
+  });
+});
+
+test.describe("Conversation export with media", () => {
+  const setupImageMock = buildModalityMock(
+    [
+      {
+        id: "img-export-1",
+        original_value_data_type: "text",
+        converted_value_data_type: "image_path",
+        original_value: "generated image",
+        converted_value: WIDE_IMAGE_DATA_URI,
+        converted_value_mime_type: "image/svg+xml",
+        scores: [],
+        response_error: "none",
+      },
+    ],
+    "e2e-export-media-conv",
+  );
+
+  test("embeds the image in the HTML export so the file stands alone", async ({ page }) => {
+    await setupImageMock(page);
+    await page.goto("/");
+    await activateMockTarget(page);
+
+    await page.getByRole("textbox").fill("Generate an image");
+    await page.getByRole("button", { name: /send/i }).click();
+    await expect(page.locator('img:not([alt="Co-PyRIT Logo"])')).toBeVisible({ timeout: 10000 });
+
+    const exportButton = page.getByTestId("export-conversation-btn");
+    await expect(exportButton).toBeEnabled();
+    const downloadPromise = page.waitForEvent("download");
+    await exportButton.click();
+    await page.getByTestId("export-html-item").click();
+
+    const download = await downloadPromise;
+    const filePath = await download.path();
+    expect(filePath).not.toBeNull();
+    const content = readFileSync(filePath, "utf-8");
+
+    expect(download.suggestedFilename()).toMatch(/\.html$/);
+    expect(content).toContain("<img src=\"data:image/svg+xml");
+  });
+
+  test("embeds media it has to fetch back from the media endpoint", async ({ page }) => {
+    // A 1x1 PNG, served by a stubbed /api/media route so the export exercises
+    // the fetch → blob → base64 path rather than an already-inline data URI.
+    const pngBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGIAAgAABQABDQotsgAAAABJRU5ErkJggg==";
+    const mediaPath = "/api/media?path=/dbdata/prompt-memory-entries/images/e2e.png";
+
+    await buildModalityMock(
+      [
+        {
+          id: "img-fetch-1",
+          original_value_data_type: "text",
+          converted_value_data_type: "image_path",
+          original_value: "generated image",
+          converted_value: mediaPath,
+          converted_value_url: mediaPath,
+          converted_value_mime_type: "image/png",
+          scores: [],
+          response_error: "none",
+        },
+      ],
+      "e2e-export-fetch-conv",
+    )(page);
+    await page.route("**/api/media**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "image/png" },
+        body: Buffer.from(pngBase64, "base64"),
+      });
+    });
+
+    await page.goto("/");
+    await activateMockTarget(page);
+
+    await page.getByRole("textbox").fill("Generate an image");
+    await page.getByRole("button", { name: /send/i }).click();
+    await expect(page.locator('img:not([alt="Co-PyRIT Logo"])')).toBeVisible({ timeout: 10000 });
+
+    const exportButton = page.getByTestId("export-conversation-btn");
+    await expect(exportButton).toBeEnabled();
+    const downloadPromise = page.waitForEvent("download");
+    await exportButton.click();
+    await page.getByTestId("export-html-item").click();
+
+    const download = await downloadPromise;
+    const filePath = await download.path();
+    expect(filePath).not.toBeNull();
+    const content = readFileSync(filePath, "utf-8");
+
+    expect(content).toContain(`data:image/png;base64,${pngBase64}`);
+    expect(content).toContain("Attachments: 1 of 1 embedded");
+    // The path the bytes came from must not travel with the file.
+    expect(content).not.toContain("/api/media");
   });
 });

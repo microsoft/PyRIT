@@ -21,6 +21,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    UndeterminedScoreError,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -112,7 +113,10 @@ class XPIAResult(WorkflowResult):
         """
         if self.score is None:
             return False
-        score_value = self.score.get_value()
+        try:
+            score_value = self.score.get_value()
+        except UndeterminedScoreError:
+            return False
         return score_value > 0 if isinstance(score_value, (int, float)) else False
 
     @property
@@ -123,7 +127,7 @@ class XPIAResult(WorkflowResult):
         Returns:
             XPIAStatus: The status of the attack result.
         """
-        if self.score is None:
+        if self.score is None or self.score.is_undetermined:
             return XPIAStatus.UNKNOWN
         return XPIAStatus.SUCCESS if self.success else XPIAStatus.FAILURE
 

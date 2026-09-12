@@ -19,6 +19,9 @@
 # This page covers **leaf** true/false scorers, organized fast → slow. Wrapping and
 # combining them (composite, inverter, threshold, conversation) is on
 # [Combining & stacking scorers](3_combining_scorers.ipynb).
+#
+# `ManualScorer` records a human-supplied true/false verdict for a persisted message
+# piece. The PyRIT app uses it for attack-result adjudication; it does not evaluate content.
 # %%
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -119,8 +122,8 @@ hallucinated_code.set_response_not_in_memory()
 real_code = MessagePiece(role="assistant", original_value="import requests\nimport json").to_message()
 real_code.set_response_not_in_memory()
 
-hit = (await package_scorer.score_async(message=hallucinated_code))[0]  # type: ignore
-clean = (await package_scorer.score_async(message=real_code))[0]  # type: ignore
+hit = (await package_scorer.score_message_async(message=hallucinated_code))[0]  # type: ignore
+clean = (await package_scorer.score_message_async(message=real_code))[0]  # type: ignore
 
 print(f"[package] hallucinated import -> {hit.get_value()} - {hit.score_rationale}")
 print(f"[package] real imports only  -> {clean.get_value()}")

@@ -115,19 +115,19 @@ async def test_white_noise_file_not_found():
 
 def test_white_noise_invalid_scale_zero():
     """noise_scale of 0 should raise ValueError."""
-    with pytest.raises(ValueError, match="noise_scale must be between 0"):
+    with pytest.raises(ValueError, match="noise_scale must be finite"):
         AudioWhiteNoiseConverter(noise_scale=0)
 
 
 def test_white_noise_invalid_scale_negative():
     """Negative noise_scale should raise ValueError."""
-    with pytest.raises(ValueError, match="noise_scale must be between 0"):
+    with pytest.raises(ValueError, match="noise_scale must be finite"):
         AudioWhiteNoiseConverter(noise_scale=-0.1)
 
 
 def test_white_noise_invalid_scale_above_one():
     """noise_scale > 1 should raise ValueError."""
-    with pytest.raises(ValueError, match="noise_scale must be between 0"):
+    with pytest.raises(ValueError, match="noise_scale must be finite"):
         AudioWhiteNoiseConverter(noise_scale=1.5)
 
 
@@ -170,3 +170,10 @@ async def test_white_noise_initialized_seed_is_repeatable_and_does_not_disturb_n
         for output_path in output_paths:
             if os.path.exists(output_path):
                 os.remove(output_path)
+
+
+@pytest.mark.parametrize("noise_scale", [float("nan"), float("inf"), float("-inf")])
+def test_invalid_noise_scale_non_finite(noise_scale: float) -> None:
+    """Non-finite noise scales should fail during converter construction."""
+    with pytest.raises(ValueError, match="noise_scale must be finite"):
+        AudioWhiteNoiseConverter(noise_scale=noise_scale)

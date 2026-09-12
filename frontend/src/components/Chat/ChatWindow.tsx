@@ -2,6 +2,9 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type { ChangeEvent } from 'react'
 import {
   Button,
+  Breadcrumb,
+  BreadcrumbDivider,
+  BreadcrumbItem,
   Drawer,
   Menu,
   MenuItem,
@@ -9,6 +12,7 @@ import {
   MenuPopover,
   MenuTrigger,
   mergeClasses,
+  Spinner,
   Switch,
   Text,
   Tooltip,
@@ -17,29 +21,37 @@ import {
 } from '@fluentui/react-components'
 import type { SwitchOnChangeData } from '@fluentui/react-components'
 import { AddRegular, ArrowDownloadRegular, PanelRightRegular } from '@fluentui/react-icons'
+import { Link } from 'react-router'
 import MessageList from './MessageList'
 import SystemPromptBanner from './SystemPromptBanner'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
+import ObjectiveHeader from './ObjectiveHeader'
 import type { PieceConversion } from './converterTypes'
 import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
-import { attacksApi } from '../../services/api'
+import { attacksApi, scoresApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
 import { exportConversation } from '../../utils/conversationExport'
 import type { ExportFormat } from '../../utils/conversationExport'
 import type {
+  AddMessageRequest,
+  AttackOutcome,
+  AttackSummary,
   AttackTargetResolutionStatus,
+  BackendScore,
+  CreateAttackRequest,
   Message,
   MessageAttachment,
   TargetInstance,
   TargetInfo,
 } from '../../types'
 import { isTargetResolutionBlocking, targetInfoMatchesTarget } from '../../utils/targetIdentity'
+import { scenarioRunRoutePath } from '../../utils/routeParams'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
@@ -77,13 +89,16 @@ interface ChatWindowProps {
   attackResultId: string | null
   conversationId: string | null
   activeConversationId: string | null
-  onConversationCreated: (attackResultId: string, conversationId: string) => void
+  onConversationCreated: (attackResultId: string, conversationId: string, objective?: string) => void
   onSelectConversation: (conversationId: string) => void
+  onObjectiveChange?: (objective: string) => void
+  onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
+  onAttackChange?: (attack: AttackSummary) => void
   labels?: Record<string, string>
   onLabelsChange?: (labels: Record<string, string>) => void
   onNavigate?: (view: ViewName) => void
-  /** Labels from the loaded attack (for operator locking). Null for new attacks. */
-  attackLabels?: Record<string, string> | null
+  /** Operator from the loaded attack (for operator locking). Null for new attacks. */
+  attackOperator?: string | null
   /** Target info that the current attack was started with (for cross-target guard). */
   attackTarget?: TargetInfo | null
   /** Result of resolving the persisted attack target against the current registry. */
@@ -94,6 +109,15 @@ interface ChatWindowProps {
   isLoadingAttack?: boolean
   /** Number of related (non-main) conversations in the loaded attack. */
   relatedConversationCount?: number
+  /** The loaded attack's objective (empty for new/manual attacks). */
+  objective?: string
+  /** The loaded attack's current outcome. */
+  outcome?: AttackOutcome
+  automatedScore?: BackendScore | null
+  humanScore?: BackendScore | null
+  lastResponseMessagePieceId?: string | null
+  /** Validated scenario-run provenance for attacks opened from a run dashboard. */
+  scenarioResultId?: string | null
 }
 
 export default function ChatWindow({
@@ -104,20 +128,30 @@ export default function ChatWindow({
   activeConversationId,
   onConversationCreated,
   onSelectConversation,
+  onObjectiveChange,
+  onHumanScoreChange,
+  onAttackChange,
   labels,
   onLabelsChange,
   onNavigate,
-  attackLabels,
+  attackOperator,
   attackTarget,
   targetResolutionStatus = 'idle',
   onRetryTargetResolution,
   isLoadingAttack,
   relatedConversationCount,
+  objective = '',
+  outcome,
+  automatedScore,
+  humanScore,
+  lastResponseMessagePieceId,
+  scenarioResultId,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const restoreFocusTargetAttributes = useRestoreFocusTarget()
   const restoreFocusSourceAttributes = useRestoreFocusSource()
   const [messages, setMessages] = useState<Message[]>([])
+  const [pendingObjective, setPendingObjective] = useState('')
   // Track sending state per conversation so parallel conversations can send independently
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
   /** True while an async message fetch is in-flight */
@@ -126,6 +160,8 @@ export default function ChatWindow({
   const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null)
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const isExportingRef = useRef(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   // Conversation-wide preference for rendering message text as Markdown.
@@ -223,10 +259,9 @@ export default function ChatWindow({
     && isTargetResolutionBlocking(targetResolutionStatus),
   )
   const currentOperator = labels?.operator
-  const attackOperator = attackLabels?.operator
   // Existing attacks are operator-locked when their operator differs from the current one.
   const isOperatorLocked = Boolean(
-    attackResultId && attackLabels && attackOperator && currentOperator && attackOperator !== currentOperator,
+    attackResultId && attackOperator && currentOperator && attackOperator !== currentOperator,
   )
   // They are cross-target locked when the selected target's canonical hash differs from the persisted target.
   const isCrossTargetLocked = Boolean(
@@ -249,6 +284,7 @@ export default function ChatWindow({
       setMessages([])
       setLoadedConversationId(null)
       setSystemPrompt('')
+      setPendingObjective('')
     }
   }
 
@@ -413,11 +449,15 @@ export default function ChatWindow({
       let currentConversationId = conversationId
       let currentActiveConversationId = activeConversationId
       if (!currentAttackResultId) {
-        const createResponse = await attacksApi.createAttack({
+        const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
-          labels: labels,
+          name: pendingObjective || undefined,
+          // TODO(PyRIT 1.4): Pass only dedicated attribution after legacy label aliases are removed.
+          // The create-attack API normalizes these aliases through _AttackAttributionInput.
+          labels,
           system_prompt: supportsSystemPrompt ? systemPrompt.trim() || undefined : undefined,
-        })
+        }
+        const createResponse = await attacksApi.createAttack(createRequest)
         currentAttackResultId = createResponse.attack_result_id
         currentConversationId = createResponse.conversation_id
         currentActiveConversationId = currentConversationId
@@ -431,7 +471,7 @@ export default function ChatWindow({
           pendingUserMessagesRef.current.delete('__pending__')
           pendingUserMessagesRef.current.set(currentConversationId!, pendingMsgs)
         }
-        onConversationCreated(currentAttackResultId, currentConversationId)
+        onConversationCreated(currentAttackResultId, currentConversationId, pendingObjective || undefined)
         // Update the viewed-conversation ref so the success/error guards
         // below recognise this as the active conversation.
         viewedConvRef.current = currentConversationId!
@@ -450,15 +490,16 @@ export default function ChatWindow({
 
       // Send message to target
       const converterIds = allConverterIds.length > 0 ? allConverterIds : undefined
-      const response = await attacksApi.addMessage(currentAttackResultId!, {
+      const addMessageRequest: AddMessageRequest = {
         role: 'user',
         pieces,
         send: true,
         target_registry_name: activeTarget.target_registry_name,
         target_conversation_id: effectiveConvId!,
-        labels: labels ?? undefined,
         converter_ids: converterIds,
-      })
+      }
+      const response = await attacksApi.addMessage(currentAttackResultId!, addMessageRequest)
+      onAttackChange?.(response.attack)
 
       // Clear converter state after successful send
       setPieceConversions({})
@@ -641,7 +682,7 @@ export default function ChatWindow({
     try {
       const createResponse = await attacksApi.createAttack({
         target_registry_name: activeTarget.target_registry_name,
-        labels: labels,
+        labels,
         source_conversation_id: activeConversationId,
         cutoff_index: messageIndex,
       })
@@ -675,6 +716,65 @@ export default function ChatWindow({
     isMutationLocked,
   ])
 
+  const handleHumanScoreUpdate = useCallback(async (value: boolean, rationale: string): Promise<void> => {
+    if (
+      !attackResultId
+      || !lastResponseMessagePieceId
+      || !(objective || pendingObjective).trim()
+      || isMutationLocked
+    ) {
+      return
+    }
+
+    const score = await scoresApi.createManualScore({
+      attack_result_id: attackResultId,
+      message_id: lastResponseMessagePieceId,
+      value,
+      rationale,
+      update_attack: true,
+    })
+    onHumanScoreChange?.(score, value ? 'success' : 'failure')
+    if (activeConversationId) {
+      await loadConversation(attackResultId, activeConversationId)
+    }
+  }, [
+    activeConversationId,
+    attackResultId,
+    isMutationLocked,
+    lastResponseMessagePieceId,
+    loadConversation,
+    objective,
+    onHumanScoreChange,
+    pendingObjective,
+  ])
+
+  const handleHumanScoreRemove = useCallback(async (): Promise<void> => {
+    if (!attackResultId || !humanScore || isMutationLocked) return
+
+    const attack = await attacksApi.removeHumanScore(attackResultId)
+    onHumanScoreChange?.(null, attack.outcome ?? 'undetermined')
+    if (activeConversationId) {
+      await loadConversation(attackResultId, activeConversationId)
+    }
+  }, [
+    activeConversationId,
+    attackResultId,
+    humanScore,
+    isMutationLocked,
+    loadConversation,
+    onHumanScoreChange,
+  ])
+
+  const handleAddObjective = useCallback(async (newObjective: string): Promise<void> => {
+    if (!attackResultId) {
+      setPendingObjective(newObjective)
+      return
+    }
+
+    const updatedAttack = await attacksApi.updateAttack(attackResultId, { objective: newObjective })
+    onObjectiveChange?.(updatedAttack.objective)
+  }, [attackResultId, onObjectiveChange])
+
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
 
   // "Continue with your target" — clone the current conversation into a new attack
@@ -692,7 +792,7 @@ export default function ChatWindow({
       // Let the backend clone the conversation with new labels
       const createResponse = await attacksApi.createAttack({
         target_registry_name: activeTarget.target_registry_name,
-        labels: labels,
+        labels,
         source_conversation_id: activeConversationId,
         cutoff_index: lastIndex,
       })
@@ -720,8 +820,22 @@ export default function ChatWindow({
     !isLoadingMessages &&
     !awaitingConversationLoad
 
-  const handleExport = (format: ExportFormat) => {
-    exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
+  const handleExport = async (format: ExportFormat) => {
+    // A ref, not the state flag: two clicks in the same tick would both read
+    // the pre-render value and start duplicate exports.
+    if (isExportingRef.current) {
+      return
+    }
+    isExportingRef.current = true
+    setIsExporting(true)
+    try {
+      await exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
+    } catch (err) {
+      console.error('Failed to export conversation:', err)
+    } finally {
+      isExportingRef.current = false
+      setIsExporting(false)
+    }
   }
 
   return (
@@ -739,6 +853,25 @@ export default function ChatWindow({
         />
       )}
       <div className={styles.chatArea} data-testid="chat-area">
+        {scenarioResultId && (
+          <div className={styles.breadcrumbBar}>
+            <Breadcrumb aria-label="Attack provenance" size="small">
+              <BreadcrumbItem>
+                <Text size={200}>Scanner History</Text>
+              </BreadcrumbItem>
+              <BreadcrumbDivider />
+              <BreadcrumbItem>
+                <Link
+                  className={styles.breadcrumbLink}
+                  to={scenarioRunRoutePath(scenarioResultId)}
+                  aria-label={`Return to scenario run ${scenarioResultId}`}
+                >
+                  Scenario run {scenarioResultId.slice(0, 8)}
+                </Link>
+              </BreadcrumbItem>
+            </Breadcrumb>
+          </div>
+        )}
         <div className={styles.ribbon}>
           <div className={styles.conversationInfo}>
             {activeTarget ? (
@@ -767,7 +900,7 @@ export default function ChatWindow({
                   <Button
                     appearance="subtle"
                     className={styles.ribbonAction}
-                    icon={<ArrowDownloadRegular />}
+                    icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
                     disabled={!canExportConversation}
                     aria-label="Export conversation"
                     data-testid="export-conversation-btn"
@@ -776,11 +909,18 @@ export default function ChatWindow({
               </MenuTrigger>
               <MenuPopover>
                 <MenuList>
-                  <MenuItem onClick={() => handleExport('markdown')} data-testid="export-markdown-item">
+                  <MenuItem
+                    onClick={() => handleExport('markdown')}
+                    disabled={isExporting}
+                    data-testid="export-markdown-item"
+                  >
                     Export as Markdown (.md)
                   </MenuItem>
-                  <MenuItem onClick={() => handleExport('json')} data-testid="export-json-item">
+                  <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
                     Export as JSON (.json)
+                  </MenuItem>
+                  <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
+                    Export as HTML (.html)
                   </MenuItem>
                 </MenuList>
               </MenuPopover>
@@ -814,6 +954,33 @@ export default function ChatWindow({
             </Tooltip>
           </div>
         </div>
+        <ObjectiveHeader
+          key={`${attackResultId ?? 'new'}-${objective}-${pendingObjective}`}
+          objective={objective || pendingObjective}
+          outcome={outcome}
+          automatedScore={automatedScore}
+          humanScore={humanScore}
+          canUpdateOutcome={
+            Boolean(attackResultId)
+            && Boolean(lastResponseMessagePieceId)
+            && !isMutationLocked
+          }
+          canRemoveHumanScore={
+            Boolean(attackResultId)
+            && Boolean(humanScore)
+            && !isMutationLocked
+          }
+          onUpdateHumanScore={handleHumanScoreUpdate}
+          onRemoveHumanScore={handleHumanScoreRemove}
+          canAdd={
+            Boolean(activeTarget)
+            && !isLoadingAttack
+            && !isLoadingMessages
+            && !awaitingConversationLoad
+            && !isMutationLocked
+          }
+          onAdd={handleAddObjective}
+        />
         {systemMessage && <SystemPromptBanner content={systemMessage.content} />}
         <MessageList
           messages={messages}
@@ -852,7 +1019,7 @@ export default function ChatWindow({
           onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           noTargetSelected={!activeTarget}
-          onConfigureTarget={() => onNavigate?.('config')}
+          onConfigureTarget={() => onNavigate?.('targets')}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}

@@ -547,7 +547,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             objective=context.params.objective,
             atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             last_response=response.get_piece(),
-            last_score=score,
+            automated_score=score,
             executed_turns=context.iteration,
             outcome=outcome,
             outcome_reason=(

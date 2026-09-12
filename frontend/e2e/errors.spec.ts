@@ -1,4 +1,6 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
+import type { BackendMessage } from "@/types";
+import { makeAddMessageResponse } from "./_attacks";
 import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
@@ -9,44 +11,40 @@ const MOCK_CONV_ID = "err-conv-001";
 
 /** Standard mock for a successful first-message round-trip (create + send). */
 function buildSuccessMessageMock(userText: string) {
-  return {
-    messages: {
-      messages: [
+  return makeAddMessageResponse("err-ar-001", MOCK_CONV_ID, [
+    {
+      turn_number: 1,
+      role: "user",
+      created_at: new Date().toISOString(),
+      message_pieces: [
         {
-          turn_number: 1,
-          role: "user",
-          created_at: new Date().toISOString(),
-          message_pieces: [
-            {
-              id: "p-u",
-              original_value_data_type: "text",
-              converted_value_data_type: "text",
-              original_value: userText,
-              converted_value: userText,
-              scores: [],
-              response_error: "none",
-            },
-          ],
-        },
-        {
-          turn_number: 1,
-          role: "assistant",
-          created_at: new Date().toISOString(),
-          message_pieces: [
-            {
-              id: "p-a",
-              original_value_data_type: "text",
-              converted_value_data_type: "text",
-              original_value: `Reply to: ${userText}`,
-              converted_value: `Reply to: ${userText}`,
-              scores: [],
-              response_error: "none",
-            },
-          ],
+          id: "p-u",
+          original_value_data_type: "text",
+          converted_value_data_type: "text",
+          original_value: userText,
+          converted_value: userText,
+          scores: [],
+          response_error: "none",
         },
       ],
     },
-  };
+    {
+      turn_number: 1,
+      role: "assistant",
+      created_at: new Date().toISOString(),
+      message_pieces: [
+        {
+          id: "p-a",
+          original_value_data_type: "text",
+          converted_value_data_type: "text",
+          original_value: `Reply to: ${userText}`,
+          converted_value: `Reply to: ${userText}`,
+          scores: [],
+          response_error: "none",
+        },
+      ],
+    },
+  ]);
 }
 
 /**
@@ -109,7 +107,7 @@ async function mockAllAPIs(
 
   // Messages (GET = conversation load, POST = send)
   // Accumulate sent messages so GET returns them
-  const sentMessages: Record<string, unknown>[] = [];
+  const sentMessages: BackendMessage[] = [];
   await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
@@ -166,9 +164,9 @@ async function mockAllAPIs(
   });
 }
 
-/** Navigate to config, set mock target active, return to chat. */
+/** Navigate to targets, set mock target active, return to chat. */
 async function activateMockTarget(page: Page) {
-  await page.getByTitle("Configuration").click();
+  await page.getByTitle("Targets").click();
   await expect(page.getByText("Target Configuration")).toBeVisible({
     timeout: 10000,
   });

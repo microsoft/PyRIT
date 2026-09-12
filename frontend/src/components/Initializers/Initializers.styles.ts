@@ -1,27 +1,17 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
-import {
-  MINIMUM_TOUCH_TARGET_SIZE,
-  TOUCH_INPUT_QUERY,
-  mobileTouchTargetHeight,
-} from '@/styles/touchTargets'
+import { mobileTouchTargetHeight } from '@/styles/touchTargets'
 
 export const useInitializersStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',
-    height: '100%',
+    flex: 1,
     width: '100%',
     minWidth: 0,
+    minHeight: 0,
     maxWidth: '100%',
     gap: tokens.spacingVerticalL,
-    padding: tokens.spacingVerticalXXL,
-    overflowX: 'hidden',
-    overflowY: 'auto',
-    backgroundColor: tokens.colorNeutralBackground2,
-    '@media (max-width: 600px)': {
-      padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
-    },
   },
   header: {
     display: 'flex',
@@ -29,11 +19,6 @@ export const useInitializersStyles = makeStyles({
     justifyContent: 'space-between',
     flexWrap: 'wrap',
     gap: tokens.spacingVerticalM,
-  },
-  headerText: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXS,
   },
   headerActions: {
     display: 'flex',
@@ -50,30 +35,10 @@ export const useInitializersStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalXXS,
   },
-  addInitializerRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: tokens.spacingHorizontalM,
-    flexWrap: 'wrap',
-  },
-  addInitializerSelect: {
-    minWidth: '220px',
-    ...mobileTouchTargetHeight,
-    '& > select': {
-      [TOUCH_INPUT_QUERY]: {
-        minHeight: MINIMUM_TOUCH_TARGET_SIZE,
-      },
-    },
-  },
   touchTarget: {
     ...mobileTouchTargetHeight,
   },
-  baselineList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalM,
-  },
-  baselineGroup: {
+  configuredGroup: {
     display: 'flex',
     flexDirection: 'column',
     border: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -81,7 +46,7 @@ export const useInitializersStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     overflow: 'hidden',
   },
-  baselineGroupItem: {
+  configuredGroupItem: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalM,
@@ -98,7 +63,7 @@ export const useInitializersStyles = makeStyles({
     maxHeight: '60vh',
     overflowY: 'auto',
   },
-  baselineCard: {
+  availableCard: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalM,
@@ -106,13 +71,6 @@ export const useInitializersStyles = makeStyles({
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusLarge,
     backgroundColor: tokens.colorNeutralBackground1,
-  },
-  baselineHeader: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: tokens.spacingHorizontalM,
-    flexWrap: 'wrap',
   },
   titleGroup: {
     display: 'flex',

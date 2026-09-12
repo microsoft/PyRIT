@@ -4,7 +4,7 @@
 import json
 from abc import abstractmethod
 
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import Message, MessagePiece
 from pyrit.output.base import PrinterBase
 
 
@@ -12,8 +12,8 @@ class ConversationPrinterBase(PrinterBase):
     """
     Abstract base class for printing conversation message histories.
 
-    Subclasses implement data-fetching methods (``_get_scores_async``,
-    ``_display_image_async``) and rendering via ``render_async``.
+    Data access goes through an injected ``ConversationSource``; subclasses
+    provide only rendering via ``render_async`` (and image display, if any).
     """
 
     _REASONING_RENDER_WARNING = "⚠ WARNING: Reasoning summary failed to render; conversation is intact."
@@ -105,18 +105,6 @@ class ConversationPrinterBase(PrinterBase):
             parts.append(item["text"])
 
         return "\n".join(parts)
-
-    @abstractmethod
-    async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
-        """
-        Fetch scores for given prompt piece IDs.
-
-        Args:
-            prompt_ids (list[str]): The message piece IDs to fetch scores for.
-
-        Returns:
-            list[Score]: The scores associated with the given piece IDs.
-        """
 
     async def _display_image_async(self, piece: MessagePiece) -> None:
         """

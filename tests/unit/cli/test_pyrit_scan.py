@@ -7,6 +7,7 @@ Unit tests for the pyrit_scan CLI module (thin REST client).
 
 import logging
 from argparse import Namespace
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -187,6 +188,14 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["list-scenarios", "--server-url", "http://remote:9000"])
         assert args.server_url == "http://remote:9000"
 
+    def test_list_with_auth_mode(self):
+        args = pyrit_scan.parse_args(["list-scenarios", "--auth-mode", "device_code"])
+        assert args.auth_mode == "device_code"
+
+    def test_list_rejects_invalid_auth_mode(self):
+        with pytest.raises(SystemExit):
+            pyrit_scan.parse_args(["list-scenarios", "--auth-mode", "interactive"])
+
     def test_global_flag_before_verb(self):
         args = pyrit_scan.parse_args(["--server-url", "http://remote:9000", "list-scenarios"])
         assert args.command == "list-scenarios"
@@ -321,7 +330,7 @@ class TestExtractScenarioArgs:
 
 def _make_scenario_result():
     """Build a minimal but valid ``ScenarioResult`` for the run-results happy path."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from pyrit.models import (
         AttackOutcome,
@@ -336,7 +345,7 @@ def _make_scenario_result():
         outcome=AttackOutcome.SUCCESS,
         executed_turns=1,
         execution_time_ms=10,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
     )
     return make_scenario_result(
         scenario_name="test_scenario",
@@ -352,7 +361,7 @@ def _make_scenario_result():
 
 def _mock_api_client():
     """Create a mock PyRITApiClient with default response behaviors (typed wire-data)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from pyrit.models import ScenarioRunState, TargetCapabilities
     from pyrit.models.catalog import (
@@ -361,7 +370,7 @@ def _mock_api_client():
         TargetInstance,
     )
 
-    now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2025, 1, 1, tzinfo=UTC)
 
     client = AsyncMock()
     client.health_check_async.return_value = True
@@ -433,6 +442,21 @@ class TestMain:
 
         assert result == 0
         mock_client.list_scenarios_async.assert_awaited_once()
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_passes_auth_mode_to_client(self, mock_client_class, mock_probe):
+        mock_client = _mock_api_client()
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["list-scenarios", "--auth-mode", "azure_cli"])
+
+        assert result == 0
+        assert mock_client_class.call_args.kwargs["auth_mode"] == "azure_cli"
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -598,12 +622,12 @@ class TestMain:
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_failed_scenario(self, mock_client_class, mock_probe):
         """Test main when scenario run fails."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import ScenarioRunSummary
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         mock_client = _mock_api_client()
         mock_client.get_scenario_run_async.return_value = ScenarioRunSummary(
             scenario_result_id="test-id",
@@ -627,6 +651,16 @@ class TestMain:
 # ---------------------------------------------------------------------------
 # Internal helper coverage
 # ---------------------------------------------------------------------------
+
+
+def test_resolve_auth_mode_rejects_unsupported_programmatic_value() -> None:
+    parsed_args = Namespace(config_file=None, auth_mode="invalid")
+
+    with (
+        patch("pyrit.cli._config_reader.read_server_settings", return_value=MagicMock(auth_mode="auto")),
+        pytest.raises(ValueError, match="Unsupported authentication mode"),
+    ):
+        pyrit_scan._resolve_auth_mode(parsed_args=parsed_args)
 
 
 class TestStopServerOnPort:
@@ -1235,6 +1269,31 @@ class TestMainExtraPaths:
         return_value=True,
     )
     @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_start_scenario_read_timeout_reports_type_and_hint(self, mock_client_class, _mock_probe, capsys):
+        """A ReadTimeout stringifies to '', so the type and a hint have to carry the message."""
+        import httpx
+
+        mock_client = _mock_api_client()
+        mock_client.start_scenario_run_async.side_effect = httpx.ReadTimeout("")
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "--request-timeout" in captured.out
+        # The server keeps initializing after the client gives up, so the outcome is unknown
+        # and must not be reported as a definite failure to start.
+        assert "unknown whether the run started" in captured.out
+        assert "could not be started" not in captured.out
+        assert "scenario-history" in captured.out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_run_results_failure_is_hard_error(self, mock_client_class, _mock_probe, capsys):
         mock_client = _mock_api_client()
         mock_client.get_scenario_run_results_async.side_effect = RuntimeError("nope")
@@ -1249,6 +1308,38 @@ class TestMainExtraPaths:
         assert "nope" in captured.out
         # The summary printer should still be used as a fallback for context.
         assert "test_scenario" in captured.out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_run_results_read_timeout_points_at_scenario_results(self, mock_client_class, _mock_probe, capsys):
+        """Results are fetched with the request timeout, unlike polling, so they can time out."""
+        import httpx
+
+        mock_client = _mock_api_client()
+        mock_client.get_scenario_run_results_async.side_effect = httpx.ReadTimeout("")
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "scenario-results" in captured.out
+        assert "--request-timeout" in captured.out
+
+    def test_print_cli_exception_surfaces_empty_read_timeout(self, capsys):
+        """A bare ReadTimeout stringifies to '', so the helper has to carry the message."""
+        import httpx
+
+        pyrit_scan._print_cli_exception(exc=httpx.ReadTimeout(""))
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "did not respond in time" in captured.out
+        # Only pyrit_scan verbs reach the helper with a timeout, and they all take the flag.
+        assert "--request-timeout" in captured.out
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -1507,7 +1598,7 @@ class TestScenarioParamFlow:
 
     @staticmethod
     def _build_mock_client(supported_params=None, status="COMPLETED"):
-        from datetime import datetime, timezone
+        from datetime import datetime
         from unittest.mock import AsyncMock
 
         from pyrit.models import ScenarioRunState
@@ -1516,7 +1607,7 @@ class TestScenarioParamFlow:
             ScenarioRunSummary,
         )
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         typed_params: list[Parameter] = []
         for p in supported_params or []:
             if isinstance(p, Parameter):
@@ -1673,13 +1764,13 @@ class TestPollStreamsRetryWarnings:
     """The poll loop should stream retry warnings as attack results land."""
 
     async def test_poll_prints_retry_warnings_once(self, capsys):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import AttackRetrySummary, ScenarioRunSummary
         from pyrit.models.retry_event import RetryEvent
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         retry = RetryEvent(
             attempt_number=3,
             exception_type="RateLimitError",
@@ -1718,9 +1809,7 @@ class TestPollStreamsRetryWarnings:
         )
 
         with patch("asyncio.sleep", new=AsyncMock(return_value=None)):
-            final = await pyrit_scan._poll_until_terminal_async(
-                client=client, scenario_result_id="sr-1", total_techniques=1
-            )
+            final = await pyrit_scan._poll_until_terminal_async(client=client, scenario_result_id="sr-1")
 
         assert final.status == ScenarioRunState.COMPLETED
         out = capsys.readouterr().out

@@ -98,7 +98,7 @@ async def test_insecure_code_scorer_real_response_handler_accepts_category_snaps
     assert scores[0].get_value() == pytest.approx(0.5)
 
 
-async def test_score_async_unsupported_data_type_returns_zero(mock_chat_target, patch_central_database):
+async def test_score_async_unsupported_data_type_returns_empty(mock_chat_target, patch_central_database):
     scorer = InsecureCodeScorer.from_harm_categories(chat_target=mock_chat_target)
 
     request = MessagePiece(
@@ -108,12 +108,8 @@ async def test_score_async_unsupported_data_type_returns_zero(mock_chat_target, 
         converted_value_data_type="image_path",
     ).to_message()
 
-    # Unified FloatScaleScorer fallback: returns a single Score(0.0) when all pieces are filtered
-    # out (mirrors TrueFalseScorer's no-pieces fallback).
     scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
-    assert len(scores) == 1
-    assert scores[0].score_type == "float_scale"
-    assert scores[0].get_value() == 0.0
+    assert scores == []
 
 
 def test_insecure_code_scorer_no_chat_target_raises():
