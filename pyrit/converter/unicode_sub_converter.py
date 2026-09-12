@@ -54,18 +54,10 @@ class UnicodeSubstitutionConverter(Converter):
             ConverterResult: The result containing the converted output and its type.
 
         Raises:
-            ValueError: If the input type is not supported or a substitution falls outside the Unicode range.
+            ValueError: If the input type is not supported.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        output_chars: list[str] = []
-        for char in prompt:
-            code_point = self.startValue + ord(char)
-            if code_point > 0x10FFFF:
-                raise ValueError(
-                    f"Unicode substitution for character {char!r} exceeds the maximum code point U+10FFFF"
-                )
-            output_chars.append(chr(code_point))
-
-        return ConverterResult(output_text="".join(output_chars), output_type="text")
+        ret_text = "".join(chr(self.startValue + ord(ch)) for ch in prompt)
+        return ConverterResult(output_text=ret_text, output_type="text")
