@@ -82,13 +82,19 @@ class WordLevelConverter(Converter):
         """
         Provide a way for subclasses to override the default behavior of joining words.
 
+        Words are rejoined with the same separator they were split on, so a custom
+        ``word_split_separator`` survives the round trip. A ``None`` separator splits on
+        arbitrary whitespace, which has no single representation to restore, so those
+        words are joined with a space.
+
         Args:
             words (list[str]): List of words to join.
 
         Returns:
             str: The joined string.
         """
-        return " ".join(words)
+        separator = " " if self._word_split_separator is None else self._word_split_separator
+        return separator.join(words)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """

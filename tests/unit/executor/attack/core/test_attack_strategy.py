@@ -8,11 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-try:
-    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
-except ImportError:  # pragma: no cover - exercised only on 3.10
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
-
 from pyrit.exceptions.retry_collector import RetryCollector, get_retry_collector
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters

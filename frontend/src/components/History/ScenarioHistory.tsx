@@ -224,7 +224,7 @@ export default function ScenarioHistory({
   const displayLoading = loading || filtersPending
 
   return (
-    <main className={styles.root}>
+    <div className={styles.root}>
       <header className={styles.header}>
         <div className={styles.headerRow}>
           {showTitle && <Text as="h1" size={500} weight="semibold">Scanner History</Text>}
@@ -359,7 +359,7 @@ export default function ScenarioHistory({
           </Button>
         </div>
       )}
-    </main>
+    </div>
   )
 }
 

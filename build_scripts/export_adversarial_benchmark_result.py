@@ -5,15 +5,12 @@
 
 import argparse
 import asyncio
-import contextlib
 import csv
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from pyrit.cli._output import print_attacks_table
-from pyrit.cli._results import build_attacks_table_payload
 from pyrit.memory import CentralMemory
 from pyrit.models import ScenarioResult
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
@@ -46,16 +43,37 @@ async def _write_overview_async(*, result: ScenarioResult, output_dir: Path) -> 
     await printer.write_async(result)
 
 
-def _write_attacks(*, result: ScenarioResult, output_dir: Path) -> None:
+def _attack_rows(*, result: ScenarioResult) -> list[dict[str, Any]]:
+    """Build machine-readable per-attack rows from the embedded attack results."""
+    rows: list[dict[str, Any]] = []
+    for atomic_attack_name, attacks in result.attack_results.items():
+        for attack in attacks:
+            score = attack.last_score
+            score_value = None
+            if score is not None:
+                score_value = score.score_value if score.score_value is not None else score.status.value
+            rows.append(
+                {
+                    "attack_result_id": attack.attack_result_id,
+                    "atomic_attack_name": atomic_attack_name,
+                    "objective": attack.objective,
+                    "outcome": attack.outcome.value,
+                    "executed_turns": attack.executed_turns,
+                    "score_value": score_value,
+                }
+            )
+    return rows
+
+
+async def _write_attacks_async(*, result: ScenarioResult, output_dir: Path) -> None:
     """Write machine-readable and console-style partial attack tables."""
-    payload = build_attacks_table_payload(
-        result=result,
-        scenario_result_id=str(result.id),
-    )
-    (output_dir / "attacks.json").write_text(payload.model_dump_json(indent=2), encoding="utf-8")
-    with open(output_dir / "attacks.txt", "w", encoding="utf-8") as output:
-        with contextlib.redirect_stdout(output):
-            print_attacks_table(payload=payload)
+    rows = _attack_rows(result=result)
+    document = {"scenario_result_id": str(result.id), "rows": rows, "total": len(rows)}
+    (output_dir / "attacks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+
+    sink = FileSink(path=output_dir / "attacks.txt")
+    printer = PrettyScenarioResultMemoryPrinter(sink=sink, enable_colors=False)
+    await printer.write_async(result, view="attacks")
 
 
 def _build_technique_metrics(*, result: ScenarioResult) -> list[dict[str, Any]]:
@@ -143,7 +161,7 @@ async def _export_async(*, scenario_result_id: str, output_dir: Path) -> None:
     result = await _load_result_async(scenario_result_id=scenario_result_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     await _write_overview_async(result=result, output_dir=output_dir)
-    await asyncio.to_thread(_write_attacks, result=result, output_dir=output_dir)
+    await _write_attacks_async(result=result, output_dir=output_dir)
     await asyncio.to_thread(_write_technique_metrics, result=result, output_dir=output_dir)
 
 

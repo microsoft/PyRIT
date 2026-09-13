@@ -87,7 +87,7 @@ def validate_input(self, data: dict) -> None:  # Should be private
 - **EVERY** function MUST declare its return type
 - Use `None` for functions that don't return a value
 
-### Modern Type Syntax (Python 3.10+)
+### Modern Type Syntax
 - Use built-in generics and union syntax:
   - `list[str]` not `List[str]`
   - `dict[str, Any]` not `Dict[str, Any]`
@@ -210,17 +210,17 @@ Within the same package, import from the specific file to avoid circular imports
 
 ### Typing Backports (`typing_extensions`)
 
-For typing features that don't exist on every supported Python (`Self`,
-`override`, `TypeAlias`, `Unpack`, `NotRequired`, etc.), import from
-``typing_extensions`` rather than ``typing``. `typing_extensions` is already a
-transitive dependency (pulled in by ``pydantic``) and works across all supported
-Python versions, so this avoids per-version branching and ``# type: ignore`` noise.
+Import typing features from ``typing`` when they exist on every supported Python
+version. For newer features, import from ``typing_extensions``. It is already a
+transitive dependency (pulled in by ``pydantic``), so this avoids per-version
+branching and ``# type: ignore`` noise.
 
 ```python
-# CORRECT — works on 3.10+
-from typing_extensions import Self, override
+# CORRECT — works on every supported Python version
+from typing import Self
+from typing_extensions import override
 
-# INCORRECT — `Self` is 3.11+, `override` is 3.12+, breaks on older runtimes
+# INCORRECT — `override` is 3.12+ and breaks on Python 3.11
 from typing import Self, override
 ```
 

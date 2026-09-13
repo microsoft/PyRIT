@@ -13,7 +13,7 @@ from contextlib import closing
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import ARRAY, DateTime, Integer, String, create_engine, inspect, text
+from sqlalchemy import ARRAY, DateTime, Integer, String, create_engine, event, inspect, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
@@ -728,6 +728,24 @@ def test_get_conversation_stats_returns_empty_for_no_ids(sqlite_instance):
     """Test that get_conversation_stats returns empty dict for empty input."""
     result = sqlite_instance.get_conversation_stats(conversation_ids=[])
     assert result == {}
+
+
+def test_get_conversation_stats_uses_indexed_latest_message_lookup(sqlite_instance):
+    statements: list[str] = []
+
+    def capture_statement(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(sqlite_instance.engine, "before_cursor_execute", capture_statement)
+    try:
+        sqlite_instance.get_conversation_stats(conversation_ids=["conversation"])
+    finally:
+        event.remove(sqlite_instance.engine, "before_cursor_execute", capture_statement)
+
+    sql = "\n".join(statements).upper()
+    assert 'LEFT JOIN "PROMPTMEMORYENTRIES" LATEST' in sql
+    assert "ORDER BY P2.SEQUENCE DESC, P2.ID DESC" in sql
+    assert "ROW_NUMBER" not in sql
 
 
 def test_get_conversation_stats_returns_empty_for_unknown_ids(sqlite_instance):

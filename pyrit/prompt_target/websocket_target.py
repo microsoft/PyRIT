@@ -178,7 +178,7 @@ class WebsocketTarget(PromptTarget):
                 self._receive_messages_async(conversation_id),
                 timeout=self._response_timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise TimeoutError(
                 f"Timed out waiting for a WebSocket response after {self._response_timeout_seconds} seconds."
             ) from None
@@ -340,7 +340,7 @@ class WebsocketTarget(PromptTarget):
                 restore_callback(websocket, conversation_history),
                 timeout=self._response_timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise TimeoutError(
                 f"Timed out restoring WebSocket conversation history after {self._response_timeout_seconds} seconds."
             ) from None
@@ -355,7 +355,7 @@ class WebsocketTarget(PromptTarget):
                     self._receive_message_async(websocket=websocket),
                     timeout=self._response_timeout_seconds,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 raise TimeoutError(
                     "Timed out waiting for an initial WebSocket message after "
                     f"{self._response_timeout_seconds} seconds."

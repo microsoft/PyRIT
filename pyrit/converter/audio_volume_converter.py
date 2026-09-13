@@ -3,6 +3,7 @@
 
 import io
 import logging
+import math
 from typing import Any, Literal
 
 import numpy as np
@@ -46,13 +47,13 @@ class AudioVolumeConverter(Converter):
             output_format (str): The format of the audio file, defaults to "wav".
             volume_factor (float): The factor by which to scale the volume.
                 Values > 1.0 increase volume, values < 1.0 decrease volume.
-                Must be greater than 0. Defaults to 1.5.
+                Must be finite and greater than 0. Defaults to 1.5.
 
         Raises:
-            ValueError: If volume_factor is not positive.
+            ValueError: If volume_factor is non-finite or not positive.
         """
-        if volume_factor <= 0:
-            raise ValueError("volume_factor must be greater than 0.")
+        if not math.isfinite(volume_factor) or volume_factor <= 0:
+            raise ValueError("volume_factor must be finite and greater than 0.")
         self._output_format = output_format
         self._volume_factor = volume_factor
 

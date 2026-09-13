@@ -10,7 +10,12 @@ import pytest
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.garak import WebInjection, WebInjectionTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.core.scenario_context import ScenarioContext
+from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
+    PackageHallucinationTechnique,
+    WebInjection,
+    WebInjectionTechnique,
+)
 from pyrit.score import (
     MarkdownInjectionScorer,
     TrueFalseCompositeScorer,
@@ -102,6 +107,24 @@ class TestWebInjectionTechniqueExpansion:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestWebInjectionAtomicAttacks:
+    def test_seed_group_build_rejects_foreign_technique(self, dataset_values):
+        scenario = WebInjection()
+        scenario._scenario_techniques = [PackageHallucinationTechnique.Rust]
+
+        with pytest.raises(TypeError, match="Unexpected web injection technique: PackageHallucinationTechnique"):
+            scenario._build_synthesized_seed_groups(dataset_values=dataset_values)
+
+    async def test_atomic_attack_build_rejects_foreign_technique(self, mock_objective_target):
+        scenario = WebInjection()
+        context = ScenarioContext(
+            objective_target=mock_objective_target,
+            scenario_techniques=[PackageHallucinationTechnique.Rust],
+            dataset_config=scenario._default_dataset_config,
+        )
+
+        with pytest.raises(TypeError, match="Unexpected web injection technique: PackageHallucinationTechnique"):
+            await scenario._build_atomic_attacks_async(context=context)
+
     async def test_atomic_attacks_one_per_technique_plus_baseline(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
         with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):

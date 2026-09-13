@@ -41,8 +41,7 @@ from pyrit.registry.resolution import (
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from types import ModuleType
-
-    from typing_extensions import Self
+    from typing import Self
 
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.models.parameter import ComponentType, Parameter

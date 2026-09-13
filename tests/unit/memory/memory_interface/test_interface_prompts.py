@@ -4,7 +4,7 @@
 
 import uuid
 from collections.abc import MutableSequence, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -68,6 +68,36 @@ def test_add_message_pieces_to_memory(
 
     sqlite_instance.add_message_to_memory(request=message)
     assert len(sqlite_instance.get_message_pieces()) == num_conversations
+
+
+def test_add_message_pieces_preserves_same_sequence_order(sqlite_instance: MemoryInterface):
+    conversation_id = str(uuid4())
+    timestamp = datetime.now(tz=UTC)
+    pieces = [
+        MessagePiece(
+            id="00000000-0000-4000-8000-0000000000ff",
+            role="user",
+            original_value="first",
+            conversation_id=conversation_id,
+            sequence=0,
+            timestamp=timestamp,
+        ),
+        MessagePiece(
+            id="00000000-0000-4000-8000-000000000001",
+            role="user",
+            original_value="second",
+            conversation_id=conversation_id,
+            sequence=0,
+            timestamp=timestamp,
+        ),
+    ]
+
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
+
+    persisted_pieces = sqlite_instance.get_message_pieces(conversation_id=conversation_id)
+    assert [piece.original_value for piece in persisted_pieces] == ["first", "second"]
+    assert persisted_pieces[0].timestamp < persisted_pieces[1].timestamp
+    assert pieces[0].timestamp == pieces[1].timestamp
 
 
 def test_add_message_pieces_persists_converter_identifier_graph(sqlite_instance: MemoryInterface):
@@ -1039,12 +1069,12 @@ def test_get_message_pieces_sent_after(sqlite_instance: MemoryInterface):
         ),
     ]
 
-    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
-    entries[1].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
+    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=UTC)
+    entries[1].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=UTC)
 
     sqlite_instance._insert_entries(entries=entries)
 
-    retrieved_entries = sqlite_instance.get_message_pieces(sent_after=datetime(2024, 1, 1, tzinfo=timezone.utc))
+    retrieved_entries = sqlite_instance.get_message_pieces(sent_after=datetime(2024, 1, 1, tzinfo=UTC))
 
     assert len(retrieved_entries) == 1
     assert "Hello 3" in retrieved_entries[0].original_value
@@ -1075,12 +1105,12 @@ def test_get_message_pieces_sent_before(sqlite_instance: MemoryInterface):
         ),
     ]
 
-    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
-    entries[1].timestamp = datetime(2021, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
+    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=UTC)
+    entries[1].timestamp = datetime(2021, 12, 25, 15, 30, 0, tzinfo=UTC)
 
     sqlite_instance._insert_entries(entries=entries)
 
-    retrieved_entries = sqlite_instance.get_message_pieces(sent_before=datetime(2024, 1, 1, tzinfo=timezone.utc))
+    retrieved_entries = sqlite_instance.get_message_pieces(sent_before=datetime(2024, 1, 1, tzinfo=UTC))
 
     assert len(retrieved_entries) == 2
     assert_original_value_in_list("Hello 1", retrieved_entries)

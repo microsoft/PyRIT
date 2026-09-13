@@ -12,6 +12,7 @@ import {
 } from '@fluentui/react-components'
 import type { SelectTabData, SelectTabEvent } from '@fluentui/react-components'
 import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
+import { useSearchParams } from 'react-router'
 
 import { configurationApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -30,8 +31,21 @@ interface StatusMessage {
 
 type ConfigurationTab = 'configuration' | 'environment' | 'initializers' | 'custom-initializers'
 
+function isConfigurationTab(value: unknown): value is ConfigurationTab {
+  return value === 'configuration'
+    || value === 'environment'
+    || value === 'initializers'
+    || value === 'custom-initializers'
+}
+
+function configurationTabFromSearchParams(searchParams: URLSearchParams): ConfigurationTab {
+  const tab = searchParams.get('tab')
+  return isConfigurationTab(tab) ? tab : 'configuration'
+}
+
 export default function Configuration() {
   const styles = useConfigurationStyles()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [content, setContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
   const [source, setSource] = useState('')
@@ -40,7 +54,7 @@ export default function Configuration() {
   const [saving, setSaving] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
-  const [selectedTab, setSelectedTab] = useState<ConfigurationTab>('configuration')
+  const selectedTab = configurationTabFromSearchParams(searchParams)
 
   useEffect(() => {
     let cancelled = false
@@ -100,18 +114,21 @@ export default function Configuration() {
   const hasUnsavedChanges = content !== savedContent
 
   const handleTabSelect = (_: SelectTabEvent, data: SelectTabData): void => {
-    if (
-      data.value === 'configuration'
-      || data.value === 'environment'
-      || data.value === 'initializers'
-      || data.value === 'custom-initializers'
-    ) {
-      setSelectedTab(data.value)
+    if (!isConfigurationTab(data.value) || data.value === selectedTab) {
+      return
     }
+
+    const nextSearchParams = new URLSearchParams(searchParams)
+    if (data.value === 'configuration') {
+      nextSearchParams.delete('tab')
+    } else {
+      nextSearchParams.set('tab', data.value)
+    }
+    setSearchParams(nextSearchParams)
   }
 
   return (
-    <main className={styles.root}>
+    <div className={styles.root}>
       <div className={styles.header}>
         <Text as="h1" size={600} weight="semibold">Configuration</Text>
       </div>
@@ -182,6 +199,6 @@ export default function Configuration() {
           </Field>
         </EditorWorkspace>
       )}
-    </main>
+    </div>
   )
 }

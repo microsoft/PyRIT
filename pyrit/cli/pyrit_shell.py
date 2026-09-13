@@ -662,13 +662,12 @@ class PyRITShell(cmd.Cmd):
         import shlex
 
         from pyrit.cli._cli_args import ScenarioResultView, build_scenario_results_parser
-        from pyrit.cli._output import print_attacks_table, print_conversations, print_scenario_result_async
+        from pyrit.cli._output import print_conversations_async, print_scenario_result_async
         from pyrit.cli._results import (
             apply_view_limit_policy,
-            build_attacks_table_payload,
-            build_conversations_payload_async,
             resolve_view,
         )
+        from pyrit.output import output_scenario_attacks_async
 
         try:
             tokens = shlex.split(arg)
@@ -705,19 +704,19 @@ class PyRITShell(cmd.Cmd):
             return
 
         if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
-            attacks_payload = build_attacks_table_payload(
-                result=result,
-                scenario_result_id=parsed.scenario_result_id,
-                attack_result_ids=parsed.attack_result_ids,
-                limit=limit,
+            self._run_async(
+                output_scenario_attacks_async(
+                    result,
+                    attack_result_ids=parsed.attack_result_ids,
+                    limit=limit,
+                )
             )
-            print_attacks_table(payload=attacks_payload)
             if view is ScenarioResultView.ATTACKS:
                 return
 
         try:
-            conversations_payload = self._run_async(
-                build_conversations_payload_async(
+            self._run_async(
+                print_conversations_async(
                     result=result,
                     client=self._api_client,
                     scenario_result_id=parsed.scenario_result_id,
@@ -728,7 +727,6 @@ class PyRITShell(cmd.Cmd):
         except Exception as exc:
             _print_shell_exception(exc=exc)
             return
-        print_conversations(payload=conversations_payload)
 
     def do_print_scenario(self, arg: str) -> None:
         """

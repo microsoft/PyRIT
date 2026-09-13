@@ -30,6 +30,19 @@ class CustomSplitWordLevelConverter(WordLevelConverter):
         return word.upper()
 
 
+class SeparatorWordLevelConverter(WordLevelConverter):
+    """Exposes word_split_separator, mirroring converters like EmojiConverter."""
+
+    def __init__(self, *, word_split_separator=" ", word_selection_strategy=None):
+        super().__init__(
+            word_selection_strategy=word_selection_strategy,
+            word_split_separator=word_split_separator,
+        )
+
+    async def convert_word_async(self, word: str) -> str:
+        return word.upper()
+
+
 class TestWordLevelConverter:
     async def test_convert_async_all_mode(self):
         converter = SimpleWordLevelConverter()
@@ -120,3 +133,30 @@ class TestWordLevelConverter:
         assert isinstance(converter._word_selection_strategy, AllWordsSelectionStrategy)
         result = await converter.convert_async(prompt="test prompt")
         assert result.output_text == "TEST PROMPT"
+
+
+class TestWordLevelConverterSeparator:
+    @pytest.mark.parametrize("separator", [",", "|", "-", "::"])
+    async def test_custom_separator_is_preserved(self, separator):
+        converter = SeparatorWordLevelConverter(word_split_separator=separator)
+        prompt = separator.join(["alpha", "beta", "gamma"])
+        result = await converter.convert_async(prompt=prompt)
+        assert result.output_text == separator.join(["ALPHA", "BETA", "GAMMA"])
+
+    async def test_default_space_separator_unchanged(self):
+        converter = SeparatorWordLevelConverter()
+        result = await converter.convert_async(prompt="alpha beta gamma")
+        assert result.output_text == "ALPHA BETA GAMMA"
+
+    async def test_none_separator_joins_with_space(self):
+        converter = SeparatorWordLevelConverter(word_split_separator=None)
+        result = await converter.convert_async(prompt="alpha\tbeta\ngamma")
+        assert result.output_text == "ALPHA BETA GAMMA"
+
+    async def test_custom_separator_preserved_with_partial_selection(self):
+        converter = SeparatorWordLevelConverter(
+            word_split_separator=",",
+            word_selection_strategy=WordIndexSelectionStrategy(indices=[0, 2]),
+        )
+        result = await converter.convert_async(prompt="alpha,beta,gamma")
+        assert result.output_text == "ALPHA,beta,GAMMA"
