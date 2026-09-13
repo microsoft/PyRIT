@@ -100,6 +100,7 @@ class HarmCategory(StrEnum):
             {
                 "ableism": [cls.REPRESENTATIONAL, cls.HATE_SPEECH],
                 "bias": [cls.REPRESENTATIONAL, cls.HATE_SPEECH],
+                "fairness_bias": [cls.REPRESENTATIONAL],
                 "bullying": [cls.HARASSMENT],
                 "chemistry": [cls.CBRN],
                 "controlled/regulated substances": [cls.DRUG_USE],

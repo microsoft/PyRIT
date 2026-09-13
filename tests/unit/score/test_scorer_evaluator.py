@@ -958,6 +958,25 @@ class TestSelectEvaluationScore:
     def _score(*, category: list[str] | None) -> Score:
         return Score(score_type="float_scale", score_value="0.5", score_category=category)
 
+    def test_accepts_fairness_bias_score_for_representational_evaluation(self) -> None:
+        score = self._score(category=["fairness_bias"])
+        assert (
+            ScorerEvaluator._select_evaluation_score(
+                scores=[score],
+                harm_category="REPRESENTATIONAL",
+            )
+            is score
+        )
+
+    def test_accepts_sexual_score_for_sexual_content_evaluation(self) -> None:
+        score = self._score(category=["sexual"])
+        assert (
+            ScorerEvaluator._select_evaluation_score(
+                scores=[score],
+                harm_category="SEXUAL_CONTENT",
+            )
+            is score
+        )
     @pytest.mark.parametrize("category", list(AzureContentFilterScorer._CATEGORY_EVAL_FILES))
     @pytest.mark.parametrize("multiple_scores", [False, True])
     def test_azure_categories_match_registered_evaluation(self, category: TextCategory, multiple_scores: bool) -> None:

@@ -237,6 +237,7 @@ class ScorerEvaluator(abc.ABC):
         # Run evaluation
         metrics = await self.evaluate_dataset_async(
             labeled_dataset=combined_dataset,
+            harm_category=dataset_files.harm_category,
             num_scorer_trials=num_scorer_trials,
             max_concurrency=max_concurrency,
         )
@@ -352,6 +353,7 @@ class ScorerEvaluator(abc.ABC):
     async def evaluate_dataset_async(
         self,
         labeled_dataset: HumanLabeledDataset,
+        harm_category: str | None = None,
         num_scorer_trials: int = 1,
         max_concurrency: int = 10,
     ) -> ScorerMetrics:
@@ -364,6 +366,7 @@ class ScorerEvaluator(abc.ABC):
 
         Args:
             labeled_dataset (HumanLabeledDataset): The HumanLabeledDataset to evaluate the scorer against.
+            harm_category (str | None): The configured harm category for the evaluation.
             num_scorer_trials (int): The number of trials to run the scorer on all responses.
             max_concurrency (int): Maximum number of concurrent scoring requests. Defaults to 10.
 
@@ -386,16 +389,17 @@ class ScorerEvaluator(abc.ABC):
         # Transpose human scores so each row is a complete set of scores across all responses
         all_human_scores = np.array(human_scores_list).T
 
-        harm_category = None
+        dataset_harm_category = None
         if labeled_dataset.metrics_type == MetricsType.HARM and labeled_dataset.entries:
             first_entry = labeled_dataset.entries[0]
             if isinstance(first_entry, HarmHumanLabeledEntry):
-                harm_category = first_entry.harm_category
-            if harm_category is None:
+                dataset_harm_category = first_entry.harm_category
+            if dataset_harm_category is None:
                 raise ValueError(
                     "harm_category must be set in HarmHumanLabeledEntry for HARM datasets. "
                     "Ensure all entries have a valid harm_category."
                 )
+        evaluation_harm_category = harm_category or dataset_harm_category
 
         # Run scoring trials and measure timing
         all_model_scores_list = []
@@ -414,7 +418,10 @@ class ScorerEvaluator(abc.ABC):
             total_scored_items += len(score_groups)
             score_values: list[bool | float] = []
             for index, scores in enumerate(score_groups):
-                score = self._select_evaluation_score(scores=scores, harm_category=harm_category)
+                score = self._select_evaluation_score(
+                    scores=scores,
+                    harm_category=evaluation_harm_category,
+                )
                 if score is None:
                     determined_responses[index] = False
                     score_values.append(False if self.expected_metrics_type == MetricsType.OBJECTIVE else 0.0)
