@@ -6,8 +6,9 @@ import logging
 import os
 from pathlib import Path
 
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.models import Message, MessagePiece
 from pyrit.output.conversation.base import ConversationPrinterBase
+from pyrit.output.conversation.source import ConversationSource, MemoryConversationSource
 from pyrit.output.score.markdown import MarkdownScorePrinter
 from pyrit.output.sink import Sink
 
@@ -25,6 +26,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
     def __init__(
         self,
         *,
+        source: ConversationSource,
         sink: Sink | None = None,
         score_printer: MarkdownScorePrinter | None = None,
         blur_images: bool = False,
@@ -35,6 +37,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         Initialize the markdown conversation printer.
 
         Args:
+            source (ConversationSource): Data source used to fetch inline scores.
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             score_printer (MarkdownScorePrinter | None): Score printer for inline score rendering.
                 Defaults to a new MarkdownScorePrinter with matching sink.
@@ -52,6 +55,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
                 directory using the original basename plus ``_blurred.png``.
         """
         super().__init__(sink=sink)
+        self._source = source
         self._score_printer = score_printer or MarkdownScorePrinter(sink=sink)
         self._blur_images = blur_images
         self._blur_radius = blur_radius
@@ -430,7 +434,7 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         """
         lines: list[str] = []
         for piece in pieces:
-            scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
+            scores = await self._source.get_scores_async(prompt_ids=[str(piece.id)])
             if scores:
                 lines.append("\n##### Scores\n")
                 lines.extend(self._score_printer._format_score(score, indent="") for score in scores)
@@ -469,15 +473,13 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
                 Defaults to None (sibling of the original).
         """
         super().__init__(
+            source=MemoryConversationSource(),
             sink=sink,
             score_printer=score_printer,
             blur_images=blur_images,
             blur_radius=blur_radius,
             blurred_dir=blurred_dir,
         )
-        from pyrit.memory import CentralMemory
-
-        self._memory = CentralMemory.get_memory_instance()
 
     async def render_async(
         self,
@@ -500,12 +502,3 @@ class MarkdownConversationMemoryPrinter(MarkdownConversationPrinter):
         return await super().render_async(
             messages, include_scores=include_scores, include_reasoning_summaries=include_reasoning_summaries
         )
-
-    async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
-        """
-        Fetch scores from CentralMemory.
-
-        Returns:
-            list[Score]: The scores.
-        """
-        return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))

@@ -160,6 +160,7 @@ class MockNodeFactory:
                 get_value=MagicMock(return_value=config.objective_score_value),
                 is_undetermined=False,
                 score_metadata=None,
+                scored_expectation=None,
             )
         else:
             node.objective_score = None
@@ -1570,7 +1571,7 @@ class TestEndToEndExecution:
             conversation_id="test_conv_id",
             objective="Test objective",
             last_response=None,
-            last_score=helpers.create_score(0.5),
+            automated_score=helpers.create_score(0.5),
             executed_turns=1,
             execution_time_ms=100,
             outcome=AttackOutcome.FAILURE,
@@ -1615,7 +1616,7 @@ class TestEndToEndExecution:
             conversation_id="success_conv_id",
             objective="Test objective",
             last_response=None,
-            last_score=helpers.create_score(0.9),
+            automated_score=helpers.create_score(0.9),
             executed_turns=1,
             execution_time_ms=100,
             outcome=AttackOutcome.SUCCESS,
@@ -2881,12 +2882,14 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
                 spec=Score,
                 get_value=MagicMock(return_value=0.0),
                 score_metadata=None,
+                scored_expectation=None,
             )
         elif b.score is not None:
             node.objective_score = MagicMock(
                 spec=Score,
                 get_value=MagicMock(return_value=b.score),
                 score_metadata=None,
+                scored_expectation=None,
             )
 
     node = MagicMock()

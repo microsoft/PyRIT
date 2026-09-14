@@ -6,8 +6,6 @@ import { AuthProvider } from './auth/AuthProvider'
 import { ThemeProvider } from './hooks/useTheme'
 import './styles/global.css'
 
-document.title = 'Co-PyRIT'
-
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>

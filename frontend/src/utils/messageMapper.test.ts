@@ -1030,6 +1030,56 @@ describe("messageMapper", () => {
       expect(result.reasoningSummaries).toEqual(["The model thought about this."]);
     });
 
+    it("should preserve scores attached to a reasoning piece", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "reasoning-piece",
+            original_value_data_type: "reasoning",
+            converted_value_data_type: "reasoning",
+            converted_value: JSON.stringify({
+              type: "reasoning",
+              summary: [{ type: "summary_text", text: "A concise summary." }],
+            }),
+            scores: [
+              {
+                id: "reasoning-score",
+                message_piece_id: "reasoning-piece",
+                scorer_type: "ReasoningScorer",
+                score_type: "true_false",
+                score_value: "True",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.reasoningSummaries).toEqual(["A concise summary."]);
+      expect(result.displayPieces).toEqual([
+        {
+          type: "text",
+          pieceId: "reasoning-piece",
+          pieceIndex: 0,
+          content: "",
+          scores: [
+            expect.objectContaining({
+              ...msg.message_pieces[0].scores[0],
+              pieceIndex: 0,
+              pieceType: "reasoning",
+              sourceLabel: "Piece 1 · reasoning",
+            }),
+          ],
+        },
+      ]);
+    });
+
     it("should handle multiple reasoning summaries", () => {
       const msg: BackendMessage = {
         turn_number: 1,

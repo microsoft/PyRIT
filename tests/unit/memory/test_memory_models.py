@@ -3,7 +3,7 @@
 
 import uuid
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, get_origin
 from unittest.mock import MagicMock
 
@@ -143,15 +143,15 @@ def test_utcdatetime_attaches_utc_to_naive_datetime():
     naive = datetime(2024, 1, 1, 12, 0, 0, tzinfo=None)  # noqa: DTZ001
     result = UTCDateTime().process_result_value(naive, dialect=MagicMock())
     assert result is not None
-    assert result.tzinfo == timezone.utc
+    assert result.tzinfo == UTC
     assert result.year == 2024
 
 
 def test_utcdatetime_leaves_aware_datetime_unchanged():
-    aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     result = UTCDateTime().process_result_value(aware, dialect=MagicMock())
     assert result == aware
-    assert result.tzinfo == timezone.utc
+    assert result.tzinfo == UTC
 
 
 def test_utcdatetime_passes_through_none():
@@ -461,7 +461,7 @@ class TestScoreEntry:
         assert entry.id == score.id
         assert entry.score_value == "0.9"
         assert entry.score_type == "float_scale"
-        assert entry.objective == "test objective"
+        assert entry.scored_expectation == {"schema_version": 1, "objective": "test objective", "conditions": []}
 
     def test_roundtrip_get_score(self):
         score = _make_score()
@@ -683,6 +683,16 @@ class TestAttackResultEntry:
         assert entry.outcome == "success"
         assert entry.outcome_reason == "jailbreak achieved"
 
+    def test_init_stores_automated_and_human_scores_separately(self):
+        automated_score = Score(id=uuid.uuid4(), score_value="False", score_type="true_false")
+        human_score = Score(id=uuid.uuid4(), score_value="True", score_type="true_false")
+        result = _make_attack_result(automated_score=automated_score, human_score=human_score)
+
+        entry = AttackResultEntry(entry=result)
+
+        assert entry.automated_score_id == automated_score.id
+        assert entry.human_score_id == human_score.id
+
     def test_init_with_pruned_conversations(self):
         refs = {
             ConversationReference(
@@ -770,7 +780,7 @@ class TestScenarioResultEntry:
             "scenario_run_state": "COMPLETED",
             "labels": {"env": "test"},
             "number_tries": 1,
-            "completion_time": datetime.now(tz=timezone.utc),
+            "completion_time": datetime.now(tz=UTC),
         }
         defaults.update(overrides)
         return make_scenario_result(**defaults)

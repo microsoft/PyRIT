@@ -791,7 +791,9 @@ class MessageScorer(Scorer):
 
         if scoring_message is None:
             scores = self._build_fallback_score(message=message, objective=objective)
-            self._finalize_message_scores(message=message, scores=scores, anchor=anchor)
+            self._finalize_message_scores(
+                message=message, scores=scores, anchor=anchor, expectation=effective_expectation
+            )
             return scores
 
         self._validate_scoring_message(message=scoring_message, objective=objective)
@@ -839,7 +841,9 @@ class MessageScorer(Scorer):
         if not scores and scoring_message.message_pieces and not self._get_supported_pieces(scoring_message):
             scores = self._build_fallback_score(message=message, objective=objective)
 
-        self._finalize_message_scores(message=scoring_message, scores=scores, anchor=anchor)
+        self._finalize_message_scores(
+            message=scoring_message, scores=scores, anchor=anchor, expectation=effective_expectation
+        )
 
         return scores
 
@@ -859,8 +863,9 @@ class MessageScorer(Scorer):
         message: Message,
         scores: list[Score],
         anchor: Scorable | None,
+        expectation: ScoringExpectation | None,
     ) -> None:
-        """Apply legacy and canonical evidence anchors to completed message scores."""
+        """Apply evidence anchors and record the expectation on completed message scores."""
         persisted_piece_ids = self._get_persisted_piece_ids(message=message) if anchor is None else None
         self._drop_ephemeral_score_links(
             message=message,
@@ -873,6 +878,7 @@ class MessageScorer(Scorer):
             anchor=anchor,
             persisted_piece_ids=persisted_piece_ids,
         )
+        self._stamp_scored_expectation(scores=scores, expectation=expectation)
 
     async def _score_prepared_message_async(
         self,

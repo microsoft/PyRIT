@@ -290,7 +290,7 @@ class TestGenerateSimulatedConversationAsync:
     ):
         """Test that the function returns a list of SeedPrompts."""
         conversation_id = str(uuid.uuid4())
-        mock_score = MagicMock(spec=Score)
+        mock_score = MagicMock(spec=Score, scored_expectation=None)
 
         with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
             mock_attack = MagicMock()
@@ -306,7 +306,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
                     executed_turns=3,
-                    last_score=mock_score,
+                    automated_score=mock_score,
                 )
             )
             mock_attack_class.return_value = mock_attack

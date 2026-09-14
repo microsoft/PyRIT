@@ -194,9 +194,7 @@ async def test_write_async_harm_no_metrics(mock_find, mock_eval_id_cls, capsys):
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
-async def test_write_async_renders_composite_scorer_with_target_and_filtered_params(
-    mock_find, mock_eval_id_cls, capsys
-):
+async def test_write_async_renders_compact_projected_component_tree(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
     mock_find.return_value = _make_objective_metrics()
@@ -204,27 +202,44 @@ async def test_write_async_renders_composite_scorer_with_target_and_filtered_par
     target_id = ComponentIdentifier(
         class_name="OpenAIChatTarget",
         class_module="pyrit.prompt_target",
-        params={"model_name": "gpt-4", "temperature": "0.0", "extra": "hidden"},
+        params={
+            "endpoint": "https://example.com",
+            "model_name": "gpt-4",
+            "temperature": "0.0",
+            "top_p": 0.9,
+            "extra": "hidden",
+        },
     )
     sub1 = _make_scorer_identifier(class_name="SubScorer1")
     sub2 = _make_scorer_identifier(class_name="SubScorer2")
     identifier = _make_scorer_identifier(
         class_name="CompositeScorer",
-        params={"scorer_type": "likert", "score_aggregator": "mean", "hidden_param": "ignore"},
+        params={
+            "scorer_type": "likert",
+            "score_aggregator": "mean",
+            "system_prompt": "verbose " * 100 + "tail-marker",
+        },
         children={"prompt_target": target_id, "sub_scorers": [sub1, sub2]},
     )
 
     await printer.write_async(scorer_identifier=identifier)
     output = capsys.readouterr().out
 
-    assert "Composite of 2 scorer(s)" in output
-    assert "SubScorer1" in output
-    assert "SubScorer2" in output
+    assert "▸ sub_scorers (2 components)" in output
+    assert "          • Component 1: SubScorer1\n" in output
+    assert "          • Component 2: SubScorer2\n" in output
     assert "gpt-4" in output
-    assert "scorer_type" in output
-    assert "score_aggregator" in output
-    # Non-display params and non-display target params are filtered out.
-    assert "hidden_param" not in output
+    assert (
+        "      • Scorer Type: CompositeScorer\n"
+        "        Configuration:\n"
+        "          score_aggregator=mean\n"
+        "          scorer_type=likert\n"
+        "          system_prompt=<811 chars>\n"
+    ) in output
+    assert "top_p=0.9" in output
+    assert "system_prompt=<" in output
+    assert "tail-marker" not in output
+    assert "example.com" not in output
     assert "hidden" not in output
 
 

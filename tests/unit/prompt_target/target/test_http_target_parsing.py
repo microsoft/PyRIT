@@ -41,8 +41,8 @@ def mock_http_response() -> MagicMock:
 
 def test_parse_json_response_no_match(mock_http_response):
     parse_json_response = get_http_target_json_response_callback_function(key="nonexistant_key")
-    result = parse_json_response(mock_http_response)
-    assert result == ""
+    with pytest.raises(ValueError, match="nonexistant_key"):
+        parse_json_response(mock_http_response)
 
 
 def test_parse_json_response_match(mock_http_response, mock_callback_function):
@@ -132,3 +132,27 @@ def test_parse_json_response_negative_array_index():
     parse_json_response = get_http_target_json_response_callback_function(key="data[0].items[-1]")
     result = parse_json_response(mock_response)
     assert result == "c"
+
+
+def test_parse_json_response_missing_key_raises():
+    mock_response = MagicMock()
+    mock_response.content = b'{"mock_key": "value1"}'
+    parse_json_response = get_http_target_json_response_callback_function(key="nonexistant_key")
+    with pytest.raises(ValueError, match="nonexistant_key"):
+        parse_json_response(mock_response)
+
+
+def test_parse_json_response_missing_nested_key_raises():
+    mock_response = MagicMock()
+    mock_response.content = b'{"data": [{"items": ["a", "b", "c"]}]}'
+    parse_json_response = get_http_target_json_response_callback_function(key="data[0].missing")
+    with pytest.raises(ValueError, match="missing"):
+        parse_json_response(mock_response)
+
+
+def test_parse_json_response_out_of_range_index_raises():
+    mock_response = MagicMock()
+    mock_response.content = b'{"data": [{"items": ["a", "b", "c"]}]}'
+    parse_json_response = get_http_target_json_response_callback_function(key="data[5]")
+    with pytest.raises(ValueError, match=r"data\[5\]"):
+        parse_json_response(mock_response)

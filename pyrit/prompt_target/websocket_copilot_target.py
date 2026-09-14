@@ -547,7 +547,7 @@ class WebSocketCopilotTarget(PromptTarget):
                             websocket.recv(),
                             timeout=self._response_timeout_seconds,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         raise TimeoutError(
                             f"Timed out waiting for Copilot response after {self._response_timeout_seconds} seconds."
                         ) from None

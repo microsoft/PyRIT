@@ -3,6 +3,7 @@
 
 import io
 import logging
+import math
 from typing import Any, Literal
 
 import numpy as np
@@ -43,19 +44,19 @@ class AudioEchoConverter(Converter):
 
         Args:
             output_format (str): The format of the audio file, defaults to "wav".
-            delay (float): The echo delay in seconds. Must be greater than 0. Defaults to 0.3.
+            delay (float): The echo delay in seconds. Must be finite and greater than 0. Defaults to 0.3.
             decay (float): The decay factor for the echo (0.0 to 1.0).
                 A value of 0.0 means no echo, 1.0 means the echo is as loud as
-                the original. Must be between 0 and 1 (exclusive of both).
+                the original. Must be finite and between 0 and 1 (exclusive of both).
                 Defaults to 0.5.
 
         Raises:
-            ValueError: If delay is not positive or decay is not in (0, 1).
+            ValueError: If delay is not finite and positive, or decay is not finite and in (0, 1).
         """
-        if delay <= 0:
-            raise ValueError("delay must be greater than 0.")
-        if decay <= 0 or decay >= 1:
-            raise ValueError("decay must be between 0 and 1 (exclusive).")
+        if not math.isfinite(delay) or delay <= 0:
+            raise ValueError("delay must be a finite number greater than 0.")
+        if not math.isfinite(decay) or decay <= 0 or decay >= 1:
+            raise ValueError("decay must be a finite number between 0 and 1 (exclusive).")
         self._output_format = output_format
         self._delay = delay
         self._decay = decay

@@ -956,7 +956,9 @@ describe('LabelsBar', () => {
     function renderWithOperations(onChange: jest.Mock, operations: string[] = OPERATIONS) {
       mockedLabelsApi.getLabels.mockResolvedValue({
         source: 'attacks',
-        labels: { operation: operations, operator: ['alice'] },
+        operators: ['alice'],
+        operations,
+        labels: {},
       })
       render(
         <TestWrapper>

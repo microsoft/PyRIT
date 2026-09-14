@@ -15,6 +15,7 @@ import type {
   CustomInitializerListResponse,
   RegisterInitializerRequest,
   CreateAttackRequest,
+  LabelOptionsResponse,
   CreateAttackResponse,
   AttackSummary,
   AttackListResponse,
@@ -40,6 +41,9 @@ import type {
   EnvironmentFileListResponse,
   UpdateConfigurationFileRequest,
   AuthAccess,
+  BackendScore,
+  ManualScoreRequest,
+  UpdateAttackRequest,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -285,6 +289,18 @@ export const attacksApi = {
     return response.data
   },
 
+  updateAttack: async (attackResultId: string, request: UpdateAttackRequest): Promise<AttackSummary> => {
+    const response = await apiClient.patch(`/attacks/${encodeURIComponent(attackResultId)}`, request)
+    return response.data
+  },
+
+  removeHumanScore: async (attackResultId: string): Promise<AttackSummary> => {
+    const response = await apiClient.delete(
+      `/attacks/${encodeURIComponent(attackResultId)}/human-score`
+    )
+    return response.data
+  },
+
   getMessages: async (attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
@@ -339,6 +355,8 @@ export const attacksApi = {
     has_converters?: boolean
     include_scenario_attacks?: boolean
     outcome?: string
+    operator?: string[]
+    operation?: string[]
     label?: string[]
     min_turns?: number
     max_turns?: number
@@ -363,11 +381,28 @@ export const attacksApi = {
   },
 }
 
+export const scoresApi = {
+  createManualScore: async (request: ManualScoreRequest): Promise<BackendScore> => {
+    const response = await apiClient.post('/scores/manual', request)
+    return response.data
+  },
+}
+
 export const labelsApi = {
   getLabels: async (
     source: 'attacks' | 'scenarios' = 'attacks',
-  ): Promise<{ source: string; labels: Record<string, string[]> }> => {
-    const response = await apiClient.get('/labels', { params: { source } })
+    filters?: {
+      operator?: string[]
+      operation?: string[]
+      label?: string[]
+    },
+  ): Promise<LabelOptionsResponse> => {
+    const response = await apiClient.get('/labels', {
+      params: { source, ...filters },
+      paramsSerializer: {
+        indexes: null, // serialize arrays as ?key=val1&key=val2
+      },
+    })
     return response.data
   },
 }
