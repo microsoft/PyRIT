@@ -82,6 +82,116 @@
   pointer-events: none;
 }
 
+/* Ecosystem section: logos float behind the text as full-bleed watermarks. */
+/* Scope via :has() so paper thumbnail cards (no .ecosystem-logo) are unaffected. */
+.myst-card:has(img.ecosystem-logo) {
+  overflow: hidden !important;
+  min-height: 220px;
+}
+
+.myst-card:has(img.ecosystem-logo) > .myst-card-body {
+  position: relative;
+  min-height: 220px;
+  overflow: hidden;
+  display: flex !important;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.myst-card > .myst-card-body > img.ecosystem-logo {
+  position: absolute !important;
+  top: 40% !important;
+  left: 60% !important;
+  transform: translate(-50%, -50%) !important;
+  width: 130% !important;
+  height: 130% !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  opacity: 0.15 !important;
+  z-index: 0;
+  pointer-events: none;
+  object-fit: contain;
+  object-position: center;
+}
+
+/* Larger watermark for logos that read well at oversize scale (e.g. MLCommons wordmark). */
+/* Anchors to the left edge so the start of long wordmarks (e.g. "MLC") stays visible. */
+.myst-card > .myst-card-body > img.ecosystem-logo-xl {
+  width: 160% !important;
+  height: 160% !important;
+  left: 0 !important;
+  top: 50% !important;
+  transform: translate(0, -50%) !important;
+}
+
+.myst-card:has(img.ecosystem-logo) > .myst-card-body > :not(img) {
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+/* White-on-transparent logos (0DIN) need inverting on a light card surface */
+.myst-card .ecosystem-logo-mono-light {
+  filter: invert(1);
+}
+
+/* Dark/gray monochrome logos (MLCommons) get inverted in dark mode so they stay visible */
+html.dark .myst-card .ecosystem-logo-mono-dark {
+  filter: invert(1);
+}
+
+/* In dark mode, mono-light logos are already white — leave them alone */
+html.dark .myst-card .ecosystem-logo-mono-light {
+  filter: none;
+}
+
+/* Boost watermark opacity slightly in dark mode for legibility */
+html.dark .myst-card > .myst-card-body > img.ecosystem-logo {
+  opacity: 0.22 !important;
+}
+
+/* AIRT paper cards: thumbnail of first page + brief citation */
+.ecosystem-paper-thumb {
+  width: 100%;
+  height: auto;
+  max-height: 180px;
+  object-fit: cover;
+  object-position: top center;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 4px;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+/* Non-paper AIRT resources use the same card rhythm without cropping their artwork. */
+.ecosystem-resource-thumb {
+  width: 100%;
+  height: 180px;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 4px;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+/* Landing-page walkthroughs retain lightweight poster images until played. */
+.landing-demo-video {
+  display: block;
+  width: 100%;
+  margin: 1rem 0;
+  background: #0b0b0b;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.landing-demo-video > div {
+  padding-bottom: 56.25% !important;
+}
+
 /* --- Roakey sprite animations ----------------------------------------------
    Each sprite is a fixed-size window onto a horizontal frame strip. With
    `object-fit: none` the strip renders at 1:1 and the box clips it to a single

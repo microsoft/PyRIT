@@ -76,3 +76,35 @@ async def test_ascii_smuggler_encode_printable_boundaries_do_not_raise() -> None
     result = await converter.convert_async(prompt=" ~", input_type="text")
     assert isinstance(result, ConverterResult)
     assert result.output_type == "text"
+
+
+async def test_ascii_smuggler_decode_reports_hidden_tags_for_fully_hidden_message_async(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # With unicode_tags=False, every character of the encoded output is itself a hidden tag, so
+    # decoded and input lengths are equal even though the whole message was hidden. Comparing
+    # lengths (the old implementation) misreported this exact case as nothing hidden.
+    encoder = AsciiSmugglerConverter(action="encode", unicode_tags=False)
+    encoded = await encoder.convert_async(prompt="Hello", input_type="text")
+
+    decoder = AsciiSmugglerConverter(action="decode")
+    with caplog.at_level("INFO"):
+        decoded = await decoder.convert_async(prompt=encoded.output_text, input_type="text")
+
+    assert decoded.output_text == "Hello"
+    assert "Hidden Unicode Tags discovered." in caplog.text
+    assert "No hidden Unicode Tag characters discovered." not in caplog.text
+
+
+async def test_ascii_smuggler_decode_reports_no_hidden_tags_for_plain_text_async(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Plain text has no characters in the Unicode Tags range, so nothing is extracted and no
+    # tag is ever seen.
+    decoder = AsciiSmugglerConverter(action="decode")
+    with caplog.at_level("INFO"):
+        decoded = await decoder.convert_async(prompt="just plain text", input_type="text")
+
+    assert decoded.output_text == ""
+    assert "No hidden Unicode Tag characters discovered." in caplog.text
+    assert "Hidden Unicode Tags discovered." not in caplog.text

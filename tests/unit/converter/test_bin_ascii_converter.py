@@ -168,3 +168,56 @@ class TestBinAsciiConverterErrorHandling:
         """Test that invalid encoding function at initialization raises ValueError."""
         with pytest.raises(ValueError, match="Invalid encoding_func"):
             BinAsciiConverter(encoding_func="invalid")  # type: ignore[arg-type]
+
+
+class TestBinAsciiConverterSeparator:
+    """An all-words join restores the separator the words were split on."""
+
+    @pytest.mark.parametrize("separator", [",", "|", "::", "é"])
+    async def test_hex_custom_separator_round_trips(self, separator: str) -> None:
+        converter = BinAsciiConverter(encoding_func="hex", word_split_separator=separator)
+        prompt = separator.join(["alpha", "beta", "gamma"])
+
+        result = await converter.convert_async(prompt=prompt, input_type="text")
+
+        assert binascii.unhexlify(result.output_text).decode("utf-8") == prompt
+
+    @pytest.mark.parametrize("separator", [",", "|", "::", "==", "é"])
+    async def test_quoted_printable_custom_separator_round_trips(self, separator: str) -> None:
+        converter = BinAsciiConverter(encoding_func="quoted-printable", word_split_separator=separator)
+        prompt = separator.join(["alpha", "beta", "gamma"])
+
+        result = await converter.convert_async(prompt=prompt, input_type="text")
+
+        assert binascii.a2b_qp(result.output_text).decode("utf-8") == prompt
+
+    async def test_hex_custom_separator_is_not_replaced_by_space(self) -> None:
+        """A comma and a space used to encode identically, so the comma was unrecoverable."""
+        comma = BinAsciiConverter(encoding_func="hex", word_split_separator=",")
+        space = BinAsciiConverter(encoding_func="hex")
+
+        comma_result = await comma.convert_async(prompt="alpha,beta", input_type="text")
+        space_result = await space.convert_async(prompt="alpha beta", input_type="text")
+
+        assert comma_result.output_text != space_result.output_text
+
+    @pytest.mark.parametrize(
+        ("encoding_func", "expected"),
+        [("hex", "616C7068612062657461"), ("quoted-printable", "alpha=20beta")],
+    )
+    async def test_default_separator_output_unchanged(self, encoding_func: str, expected: str) -> None:
+        converter = BinAsciiConverter(encoding_func=encoding_func)
+
+        result = await converter.convert_async(prompt="alpha beta", input_type="text")
+
+        assert result.output_text == expected
+
+    @pytest.mark.parametrize("encoding_func", ["hex", "quoted-printable"])
+    async def test_none_separator_joins_with_encoded_space(self, encoding_func: str) -> None:
+        with_none = BinAsciiConverter(encoding_func=encoding_func, word_split_separator=None)
+        with_space = BinAsciiConverter(encoding_func=encoding_func)
+
+        none_result = await with_none.convert_async(prompt="alpha beta", input_type="text")
+        space_result = await with_space.convert_async(prompt="alpha beta", input_type="text")
+
+        assert none_result.output_text == space_result.output_text
