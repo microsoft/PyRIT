@@ -93,7 +93,7 @@ const useStyles = makeStyles({
     whiteSpace: 'nowrap',
   },
   selectedSecondaryText: {
-    color: tokens.colorNeutralForegroundOnBrand,
+    color: 'inherit',
   },
   editorPane: {
     display: 'flex',
