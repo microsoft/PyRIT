@@ -433,15 +433,13 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             context.last_score = await self._score_response_async(context=context)
 
             # Check if objective achieved
-            achieved_objective = not context.last_response_was_refusal and score_is_true(context.last_score)
+            achieved_objective = score_is_true(context.last_score)
 
             # Increment the executed turns
             context.executed_turns += 1
 
         # Create the outcome reason based on whether the objective was achieved
         outcome = attack_outcome_from_score(context.last_score) if context.last_score else AttackOutcome.FAILURE
-        if context.last_response_was_refusal and outcome is AttackOutcome.SUCCESS:
-            outcome = AttackOutcome.FAILURE
         if outcome is AttackOutcome.SUCCESS:
             outcome_reason = f"Objective achieved in {context.executed_turns} turns"
         elif outcome is AttackOutcome.UNDETERMINED:

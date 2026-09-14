@@ -1712,7 +1712,7 @@ class TestAttackExecution:
         assert result.outcome_reason is not None
         assert "Max turns (2) reached" in result.outcome_reason
 
-    async def test_refusal_at_backtrack_limit_cannot_become_success(
+    async def test_refusal_at_backtrack_limit_with_true_objective_score_succeeds(
         self,
         mock_objective_target: MagicMock,
         mock_adversarial_chat: MagicMock,
@@ -1750,8 +1750,8 @@ class TestAttackExecution:
         ):
             result = await attack._perform_async(context=basic_context)
 
-        assert result.outcome == AttackOutcome.FAILURE
-        assert result.outcome_reason == "Max turns (1) reached without achieving objective"
+        assert result.outcome == AttackOutcome.SUCCESS
+        assert result.outcome_reason == "Objective achieved in 1 turns"
         assert result.last_score == success_objective_score
         assert basic_context.last_response_was_refusal is True
         assert basic_context.last_accepted_response is None
