@@ -76,6 +76,7 @@ class SamplingStrategy(Protocol):
         temperature: float,
         allow_non_ascii: bool,
         non_ascii_tokens: torch.Tensor,
+        torch_generator: torch.Generator | None = None,
     ) -> torch.Tensor:
         """
         Sample ``batch_size`` candidate suffix token sequences.
@@ -101,6 +102,9 @@ class SamplingStrategy(Protocol):
             non_ascii_tokens (torch.Tensor): Token ids to exclude when
                 ``allow_non_ascii`` is False, shape ``(num_disallowed,)``
                 and integer dtype.
+            torch_generator (torch.Generator | None): Optional random number
+                generator for deterministic sampling. When provided, all
+                random tensor operations should use this generator.
 
         Returns:
             torch.Tensor: Candidate suffix token sequences with shape
