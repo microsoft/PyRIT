@@ -1017,6 +1017,33 @@ async def test_judgment_observation_rejects_changed_expectation_async(
     assert len(sqlite_instance._query_entries(ScoreEntry)) == 1
 
 
+@pytest.mark.parametrize("message_backed", [False, True])
+async def test_stored_evidence_can_be_rescored_with_new_expectation_async(
+    *, sqlite_instance: MemoryInterface, message_backed: bool
+) -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.send_prompt_async = AsyncMock(side_effect=[_response(_VALID_RESPONSE), _response(_VALID_RESPONSE)])
+    scorer = _scorer(target=target)
+    scorable: Scorable = ContentScorable(value="candidate response")
+    if message_backed:
+        piece = MessagePiece(role="assistant", original_value="candidate response", conversation_id=str(uuid.uuid4()))
+        sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+        scorable = MessageScorable(message_piece_ids=(piece.id,))
+    original_expectation = ScoringExpectation(objective="Original expectation")
+    original = (await scorer.score_async(scorable=scorable, expectation=original_expectation))[0]
+    observation = sqlite_instance.get_observations(observation_ids=original.observation_ids)[0]
+    new_expectation = ScoringExpectation(objective="Changed expectation")
+
+    rescored = (await scorer.score_async(scorable=observation.scorable, expectation=new_expectation))[0]
+
+    assert target.send_prompt_async.call_count == 2
+    assert rescored.scored_expectation == new_expectation
+    assert rescored.scorable == original.scorable
+    assert rescored.observation_ids != original.observation_ids
+    assert sqlite_instance.get_observations(observation_ids=original.observation_ids) == [observation]
+    assert sqlite_instance.get_scores(score_ids=[original.id])[0].scored_expectation == original_expectation
+
+
 async def test_generic_replay_delegates_compatibility_to_the_matcher_async(
     sqlite_instance: MemoryInterface,
 ) -> None:

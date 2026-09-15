@@ -135,6 +135,14 @@ print(df.to_string(index=False))
 # the target need not be a language model. Media, tool-call observations, and coverage are deferred
 # until their evidence can be snapshotted before judgment.
 #
+# Replaying a judgment is different from evaluating a stored run against a new expectation.
+# A retained target judgment answers the original expectation; changing that expectation
+# requires a new judgment, not just parsing the old response. Use
+# `score_async(scorable=stored_scorable, expectation=new_expectation)` to evaluate the same
+# stored attack evidence again. This does not rerun the attack, but a target-backed scorer
+# calls its scoring target again. The exact-expectation restriction applies to judgment
+# observations, not to the general `Scorer` contract.
+#
 # Replay is an explicit contract for each concrete class, not an inherited promise.
 # A custom scorer declares `_judgment_replay_identifier()` and shares pure judgment logic
 # between live scoring and `_score_judgment_observation()` (for example, in `_convert_score()`).
@@ -144,9 +152,11 @@ print(df.to_string(index=False))
 # can still capture observations, but replay raises `NonReplayableObservationError`.
 #
 # Deleting a score through `memory.get_session()` and ORM `session.delete()` removes its
-# observation only after the final score reference is gone. Cleanup and the score deletion
-# share one transaction; shared observations remain available. Bulk SQL deletes do not use
-# this ORM cleanup path.
+# observation only after the final score reference is gone. Removing an ORM observation link
+# also triggers this cleanup, including when a collection is cleared before its score is deleted.
+# Cleanup uses persisted links and removed relationship history, not just cached collections.
+# Cleanup and the reference removal share one transaction; shared observations remain available.
+# Bulk SQL deletes do not use this ORM cleanup path.
 #
 # Scoring APIs return `list[Score]`. An empty list means that the scorer does not apply to the
 # evidence, such as a message with no supported role or data type. A non-empty list contains

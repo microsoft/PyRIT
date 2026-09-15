@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.memory.memory_models import ObservationEntry, ObservationMessagePieceEntry, ScoreEntry, ScoreObservationEntry
-from pyrit.memory.memory_session import _begin_sqlite_write, _lock_observations
+from pyrit.memory.memory_session import MemorySession, _begin_sqlite_write, _lock_observations
 from pyrit.models import (
     Acquisition,
     ComponentIdentifier,
@@ -353,8 +353,9 @@ def test_failed_score_write_preserves_duplicate_anchor(
 
 
 @pytest.mark.parametrize("foreign_keys", [False, True])
+@pytest.mark.parametrize("clear_links", [False, True])
 def test_orm_score_delete_cleans_last_observation_and_releases_prompt(
-    *, file_memory: SQLiteMemory, foreign_keys: bool
+    *, file_memory: SQLiteMemory, foreign_keys: bool, clear_links: bool
 ) -> None:
     score, observation, piece = _score_and_observation(file_memory)
     file_memory.add_scores_to_memory(scores=[score], observations=[observation])
@@ -362,7 +363,11 @@ def test_orm_score_delete_cleans_last_observation_and_releases_prompt(
         if foreign_keys:
             session.connection().exec_driver_sql("PRAGMA foreign_keys=ON")
             assert session.connection().exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
-        session.delete(session.get(ScoreEntry, score.id))
+        entry = session.get(ScoreEntry, score.id)
+        assert entry is not None
+        if clear_links:
+            entry.observation_links.clear()
+        session.delete(entry)
         session.commit()
     assert file_memory.get_observations(observation_ids=[observation.id]) == []
     assert file_memory._query_entries(ObservationMessagePieceEntry) == []
@@ -371,11 +376,18 @@ def test_orm_score_delete_cleans_last_observation_and_releases_prompt(
     assert file_memory.get_message_pieces(prompt_ids=[piece.id]) == []
 
 
-def test_orm_score_delete_rollback_restores_observation_protection(file_memory: SQLiteMemory) -> None:
+@pytest.mark.parametrize("clear_links", [False, True])
+def test_orm_score_delete_rollback_restores_observation_protection(
+    *, file_memory: SQLiteMemory, clear_links: bool
+) -> None:
     score, observation, piece = _score_and_observation(file_memory)
     file_memory.add_scores_to_memory(scores=[score], observations=[observation])
     with file_memory.get_session() as session:
-        session.delete(session.get(ScoreEntry, score.id))
+        entry = session.get(ScoreEntry, score.id)
+        assert entry is not None
+        if clear_links:
+            entry.observation_links.clear()
+        session.delete(entry)
         session.flush()
         assert session.get(ObservationEntry, observation.id) is None
         session.rollback()
@@ -387,12 +399,19 @@ def test_orm_score_delete_rollback_restores_observation_protection(file_memory: 
 
 
 @pytest.mark.parametrize("delete_together", [False, True])
-def test_orm_shared_observation_survives_until_final_score(*, file_memory: SQLiteMemory, delete_together: bool) -> None:
+@pytest.mark.parametrize("clear_links", [False, True])
+def test_orm_shared_observation_survives_until_final_score(
+    *, file_memory: SQLiteMemory, delete_together: bool, clear_links: bool
+) -> None:
     score, observation, piece = _score_and_observation(file_memory)
     replay = score.model_copy(update={"id": uuid.uuid4()})
     file_memory.add_scores_to_memory(scores=[score, replay], observations=[observation])
     with file_memory.get_session() as session:
-        session.delete(session.get(ScoreEntry, score.id))
+        entry = session.get(ScoreEntry, score.id)
+        assert entry is not None
+        if clear_links:
+            entry.observation_links.clear()
+        session.delete(entry)
         if delete_together:
             session.delete(session.get(ScoreEntry, replay.id))
         session.commit()
@@ -405,6 +424,119 @@ def test_orm_shared_observation_survives_until_final_score(*, file_memory: SQLit
             session.commit()
     assert file_memory.get_observations(observation_ids=[observation.id]) == []
     assert file_memory._query_entries(ObservationMessagePieceEntry) == []
+
+
+@pytest.mark.parametrize("remove_directly", [False, True])
+def test_orm_link_removal_cleans_observation_before_score_deletion(
+    *, file_memory: SQLiteMemory, remove_directly: bool
+) -> None:
+    score, observation, piece = _score_and_observation(file_memory)
+    file_memory.add_scores_to_memory(scores=[score], observations=[observation])
+    with file_memory.get_session() as session:
+        entry = session.get(ScoreEntry, score.id)
+        assert entry is not None
+        if remove_directly:
+            session.delete(entry.observation_links[0])
+        else:
+            entry.observation_links.clear()
+        session.flush()
+        assert session.get(ObservationEntry, observation.id) is None
+        session.expire(entry, ["observation_links"])
+        session.delete(entry)
+        session.commit()
+    assert file_memory._query_entries(ScoreObservationEntry) == []
+    file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
+    assert file_memory.get_message_pieces(prompt_ids=[piece.id]) == []
+
+
+@pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("rollback", [False, True])
+@pytest.mark.parametrize("foreign_keys", [False, True])
+def test_orm_score_delete_finds_links_missing_from_cached_collection(
+    *, file_memory: SQLiteMemory, shared: bool, rollback: bool, foreign_keys: bool
+) -> None:
+    score, observation, _ = _score_and_observation(file_memory)
+    other_score, other_observation, piece = _score_and_observation(file_memory)
+    file_memory.add_scores_to_memory(scores=[score, other_score], observations=[observation, other_observation])
+    with file_memory.get_session() as session:
+        if foreign_keys:
+            session.connection().exec_driver_sql("PRAGMA foreign_keys=ON")
+        entry = session.get(ScoreEntry, score.id)
+        assert entry is not None
+        assert [link.observation_id for link in entry.observation_links] == [observation.id]
+        with file_memory.get_session() as writer:
+            writer.add(ScoreObservationEntry(score_id=score.id, position=1, observation_id=other_observation.id))
+            if not shared:
+                writer.delete(writer.get(ScoreEntry, other_score.id))
+            writer.commit()
+        assert [link.observation_id for link in entry.observation_links] == [observation.id]
+        session.delete(entry)
+        session.flush()
+        if rollback:
+            session.rollback()
+        else:
+            session.commit()
+    retained = shared or rollback
+    assert file_memory.get_observations(observation_ids=[other_observation.id]) == (
+        [other_observation] if retained else []
+    )
+    if rollback:
+        assert file_memory.get_scores(score_ids=[score.id])[0].observation_ids == [observation.id, other_observation.id]
+    else:
+        assert all(link.score_id != score.id for link in file_memory._query_entries(ScoreObservationEntry))
+    if retained:
+        with pytest.raises(SQLAlchemyError, match="immutable observation evidence"):
+            file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
+    else:
+        file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
+        assert file_memory.get_message_pieces(prompt_ids=[piece.id]) == []
+
+
+def test_orm_clearing_stale_links_cleans_the_persisted_observation(file_memory: SQLiteMemory) -> None:
+    score, observation, _ = _score_and_observation(file_memory)
+    shared_score = score.model_copy(update={"id": uuid.uuid4()})
+    other_score, other_observation, piece = _score_and_observation(file_memory)
+    file_memory.add_scores_to_memory(
+        scores=[score, shared_score, other_score], observations=[observation, other_observation]
+    )
+    with file_memory.get_session() as session:
+        entry = session.get(ScoreEntry, score.id)
+        assert entry is not None
+        assert entry.observation_links[0].observation_id == observation.id
+        with file_memory.get_session() as writer:
+            updated = writer.get(ScoreEntry, score.id)
+            assert updated is not None
+            updated.observation_links[0].observation_id = other_observation.id
+            writer.delete(writer.get(ScoreEntry, other_score.id))
+            writer.commit()
+        entry.observation_links.clear()
+        session.flush()
+        assert session.get(ObservationEntry, other_observation.id) is None
+        session.delete(entry)
+        session.commit()
+    assert file_memory.get_observations(observation_ids=[observation.id]) == [observation]
+    file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
+    assert file_memory.get_message_pieces(prompt_ids=[piece.id]) == []
+
+
+def test_orm_moving_link_before_score_deletion_preserves_observation(file_memory: SQLiteMemory) -> None:
+    score, observation, _ = _score_and_observation(file_memory)
+    other_score = score.model_copy(update={"id": uuid.uuid4(), "observation_ids": []})
+    file_memory.add_scores_to_memory(scores=[score, other_score], observations=[observation])
+    with file_memory.get_session() as session:
+        entry = session.get(ScoreEntry, score.id)
+        other = session.get(ScoreEntry, other_score.id)
+        assert entry is not None and other is not None
+        link = entry.observation_links.pop()
+        other.observation_links.append(link)
+        session.delete(entry)
+        session.commit()
+    assert file_memory.get_observations(observation_ids=[observation.id]) == [observation]
+    assert file_memory.get_scores(score_ids=[other_score.id])[0].observation_ids == [observation.id]
+    with file_memory.get_session() as session:
+        session.delete(session.get(ScoreEntry, other_score.id))
+        session.commit()
+    assert file_memory.get_observations(observation_ids=[observation.id]) == []
 
 
 def test_concurrent_orm_score_deletions_clean_final_observation(file_memory: SQLiteMemory) -> None:
@@ -480,6 +612,25 @@ def test_concurrent_insert_and_final_delete_do_not_orphan_score(
     expected = [observation] if insert_first else []
     assert file_memory.get_observations(observation_ids=[observation.id]) == expected
     assert len(file_memory._query_entries(ScoreEntry)) == int(insert_first)
+
+
+@pytest.mark.parametrize("dialect", ["sqlite", "mssql"])
+def test_removed_score_link_lookup_batches_and_uses_persisted_ids(dialect: str) -> None:
+    session = MagicMock(spec=MemorySession)
+    session._MAX_BIND_VARS = 1
+    session.get_bind.return_value.dialect.name = dialect
+    score_ids = [uuid.uuid4() for _ in range(2)]
+    persisted_ids = [uuid.uuid4() for _ in range(2)]
+    session.scalars.side_effect = [[observation_id] for observation_id in persisted_ids]
+
+    candidates = MemorySession._get_persisted_score_observation_ids(session, score_ids)
+
+    assert candidates == set(persisted_ids)
+    assert session.scalars.call_count == 2
+    for call, score_id in zip(session.scalars.call_args_list, score_ids, strict=True):
+        compiled = call.args[0].compile(dialect=mssql.dialect(), compile_kwargs={"render_postcompile": True})
+        assert list(compiled.params.values()) == [score_id]
+        assert ("WITH (UPDLOCK, HOLDLOCK)" in str(compiled)) == (dialect == "mssql")
 
 
 def test_sql_server_observation_reference_changes_use_exclusive_range_locks() -> None:

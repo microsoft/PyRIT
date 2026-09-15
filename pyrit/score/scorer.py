@@ -494,6 +494,11 @@ class Scorer(Identifiable, abc.ABC):
         """
         Judge managed evidence again without calling its original source.
 
+        Target-backed judgment observations require the original expectation.
+        To evaluate stored attack evidence against a new expectation, use
+        ``score_async`` with that evidence's scorable. This can call the scoring
+        target again, but does not rerun the attack.
+
         Args:
             observation (Observation): The stored evidence to judge.
             expectation (ScoringExpectation | None): What to look for. Defaults to None.
