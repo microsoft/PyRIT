@@ -58,6 +58,16 @@ class BinAsciiConverter(WordLevelConverter):
 
         self._encoding_func = encoding_func
 
+        # Encode the separator once, so an all-words join restores the separator the words were split
+        # on instead of always inserting an encoded space. A space still encodes to "20" or "=20".
+        separator = " " if word_split_separator is None else word_split_separator
+        if encoding_func == "hex":
+            self._encoded_separator = separator.encode("utf-8").hex().upper()
+        elif encoding_func == "quoted-printable":
+            self._encoded_separator = binascii.b2a_qp(separator.encode("utf-8")).decode("ascii")
+        else:
+            self._encoded_separator = ""
+
     def _build_identifier(self) -> ComponentIdentifier:
         """
         Build identifier with BinAscii converter parameters.
@@ -125,11 +135,8 @@ class BinAsciiConverter(WordLevelConverter):
         all_words_selected = isinstance(self._word_selection_strategy, AllWordsSelectionStrategy)
 
         if all_words_selected:
-            if self._encoding_func == "hex":
-                return "20".join(words)  # 20 is the hex representation of space
-            if self._encoding_func == "quoted-printable":
-                # Quoted-printable uses =20 for space
-                return "=20".join(words)
+            if self._encoding_func in ("hex", "quoted-printable"):
+                return self._encoded_separator.join(words)
             if self._encoding_func == "UUencode":
                 # UUencode: join with encoded space
                 return "".join(words)  # UUencode handles spaces within encoding

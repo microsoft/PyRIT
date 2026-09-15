@@ -5,7 +5,7 @@
 Persist scorer observations and their ordered score links.
 
 Revision ID: 2c4e6a8b0d1f
-Revises: a4c6e8f0b2d1
+Revises: 2f8c4d6a9b1e
 Create Date: 2026-09-02 14:20:00.000000
 """
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "2c4e6a8b0d1f"
-down_revision: str | None = "a4c6e8f0b2d1"
+down_revision: str | None = "2f8c4d6a9b1e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

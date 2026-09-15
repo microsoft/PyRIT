@@ -471,13 +471,28 @@ class TestAttackResultToSummary:
     async def test_last_score_is_marked_as_objective(self) -> None:
         """The summary identifies ``last_score`` as the canonical objective score."""
         ar = _make_attack_result()
-        ar.last_score = _make_score()
+        ar.automated_score = _make_score()
 
         summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
+        assert summary.automated_score is not None
         assert summary.last_score is not None
         assert summary.last_score.is_objective_score is True
         assert summary.model_dump()["last_score"]["is_objective_score"] is True
+
+    async def test_human_score_takes_last_score_precedence(self) -> None:
+        """Both attack scores are objective scores while the human score takes precedence."""
+        ar = _make_attack_result()
+        ar.automated_score = _make_score()
+        ar.human_score = _make_score()
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.automated_score is not None
+        assert summary.automated_score.is_objective_score is True
+        assert summary.human_score is not None
+        assert summary.human_score.is_objective_score is True
+        assert summary.last_score is summary.human_score
 
     async def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
         """When metadata['created_at'] is absent but ar.timestamp is set, use ar.timestamp."""

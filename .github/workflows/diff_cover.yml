@@ -49,6 +49,8 @@ jobs:
         run: uv sync --extra all
 
       - name: Run unit tests with coverage (fail under 78%)
+        env:
+          COVERAGE_CORE: sysmon
         run: make unit-test-cov-xml
 
       - name: Code Coverage Report

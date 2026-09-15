@@ -11,29 +11,11 @@ import {
   TableHeaderCell,
   TableRow,
 } from '@fluentui/react-components'
-import {
-  OpenRegular,
-  CheckmarkCircleRegular,
-  DismissCircleRegular,
-  QuestionCircleRegular,
-  ErrorCircleRegular,
-} from '@fluentui/react-icons'
+import { OpenRegular } from '@fluentui/react-icons'
+
+import OutcomeBadge from '@/components/OutcomeBadge'
 import type { AttackSummary } from '../../types'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
-
-const OUTCOME_ICONS: Record<string, React.ReactElement> = {
-  success: <CheckmarkCircleRegular style={{ color: tokens.colorPaletteGreenForeground1 }} />,
-  failure: <DismissCircleRegular style={{ color: tokens.colorPaletteRedForeground1 }} />,
-  error: <ErrorCircleRegular style={{ color: tokens.colorPaletteRedForeground1 }} />,
-  undetermined: <QuestionCircleRegular style={{ color: tokens.colorNeutralForeground3 }} />,
-}
-
-const OUTCOME_COLORS: Record<string, 'success' | 'danger' | 'informative' | 'warning'> = {
-  success: 'success',
-  failure: 'danger',
-  error: 'warning',
-  undetermined: 'informative',
-}
 
 interface AttackTableProps {
   attacks: AttackSummary[]
@@ -80,14 +62,7 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
             data-testid={`attack-row-${attack.attack_result_id}`}
           >
             <TableCell>
-              <Badge
-                appearance="filled"
-                color={OUTCOME_COLORS[attack.outcome ?? 'undetermined'] ?? 'informative'}
-                icon={OUTCOME_ICONS[attack.outcome ?? 'undetermined']}
-                data-testid={`outcome-badge-${attack.attack_result_id}`}
-              >
-                {attack.outcome ?? 'undetermined'}
-              </Badge>
+              <OutcomeBadge outcome={attack.outcome} testId={`outcome-badge-${attack.attack_result_id}`} />
             </TableCell>
             <TableCell>
               <Text size={200} weight="semibold" truncate>{attack.attack_type}</Text>

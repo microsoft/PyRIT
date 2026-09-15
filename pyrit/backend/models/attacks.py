@@ -48,7 +48,7 @@ class ScoreView(Score):
 
     is_objective_score: bool = Field(
         default=False,
-        description="Whether this is the score referenced by AttackResult.last_score.",
+        description="Whether this is the effective objective score referenced by AttackResult.last_score.",
     )
 
     @computed_field  # type: ignore[prop-decorator]
@@ -212,20 +212,27 @@ class AttackSummary(AttackResult):
     API view of a ``pyrit.models.AttackResult``.
 
     Inherits every canonical attack-result field (including ``last_response``,
-    ``last_score`` and ``retry_events``) and adds presentation data: computed
+    score fields, and ``retry_events``) and adds presentation data: computed
     projections of the strategy identifier plus mapper-populated conversation
-    stats. ``last_response`` / ``last_score`` are narrowed to their view types so
+    stats. ``last_response`` and score fields are narrowed to their view types so
     their presentation fields serialize.
     """
 
     last_response: MessagePieceView | None = None
-    last_score: ScoreView | None = None
+    automated_score: ScoreView | None = None
+    human_score: ScoreView | None = None
 
     # Mapper-populated presentation fields (need external stats / metadata).
     message_count: int = Field(default=0, description="Total number of messages in the attack")
     last_message_preview: str | None = Field(default=None, description="Preview of the last message")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Attack creation timestamp")
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Last update timestamp")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def last_score(self) -> ScoreView | None:
+        """The human score when present, otherwise the automated score."""
+        return self.human_score or self.automated_score
 
     @field_serializer("related_conversations")
     def _serialize_related_conversations(
@@ -436,9 +443,29 @@ class CreateAttackResponse(BaseModel):
 
 
 class UpdateAttackRequest(BaseModel):
-    """Request to update an attack's outcome."""
+    """Request to update mutable attack fields."""
 
-    outcome: Literal["undetermined", "success", "failure", "error"] = Field(..., description="Updated attack outcome")
+    outcome: Literal["undetermined", "success", "failure", "error"] | None = Field(
+        default=None,
+        description="Updated attack outcome",
+    )
+    objective: str | None = Field(default=None, description="Shared objective for all conversations in the attack")
+
+    @model_validator(mode="after")
+    def _validate_update(self) -> "UpdateAttackRequest":
+        """
+        Validate that the request contains a supported update.
+
+        Returns:
+            UpdateAttackRequest: The validated request.
+        """
+        if self.outcome is None and self.objective is None:
+            raise ValueError("At least one mutable attack field must be supplied")
+        if self.objective is not None:
+            self.objective = self.objective.strip()
+            if not self.objective:
+                raise ValueError("objective must not be empty")
+        return self
 
 
 # ============================================================================

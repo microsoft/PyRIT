@@ -306,7 +306,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
                     executed_turns=3,
-                    last_score=mock_score,
+                    automated_score=mock_score,
                 )
             )
             mock_attack_class.return_value = mock_attack
