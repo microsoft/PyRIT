@@ -94,6 +94,12 @@ class FileSink(Sink):
             self._write_unlocked_sync(data)
 
     def _write_unlocked_sync(self, data: str) -> None:
+        """
+        Write data to the file without acquiring the lock.
+
+        Args:
+            data (str): The text to write.
+        """
         with open(self._path, self._mode, encoding="utf-8") as f:
             f.write(data)
 
