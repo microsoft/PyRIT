@@ -34,7 +34,28 @@ To deploy an isolated instance for an external team, see [Deploy a New Instance]
 
 ## Views
 
-CoPyRIT has three main views, accessible from the left sidebar: **Chat**, **Attack History**, and **Target Configuration**. A dark/light theme toggle is available at the bottom of the sidebar.
+CoPyRIT has three main views, accessible from the left sidebar: **Chat**, **Attack History**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
+
+### Themes
+
+Choose **System**, **Light**, or **Dark**, or select a preset with its own palette
+and workspace background:
+
+| Preset | Appearance |
+| --- | --- |
+| Raccoon | Warm gray with broad raccoon-tail stripes |
+| Jimothy | Mist and sage with a newly drawn, round-bodied Seattle raccoon |
+| Pirate | Navy and gold with a compass and nautical chart |
+| Seattle Rain | Dark storm gray with rain and puddle ripples |
+| Evergreen | Forest green with layered fir silhouettes |
+| Blueprint | Deep blue with a subtle technical drawing grid |
+| Night Sky | Indigo with sparse stars and constellation lines |
+
+Theme choices are saved in your browser and do not change your conversations
+or configuration. System follows your operating system's light/dark setting;
+the named presets keep their own palettes. High-contrast mode takes precedence
+and hides decorative backgrounds, restoring your chosen preset when it ends.
+Select System, Light, or Dark to return to an undecorated workspace.
 
 ### Chat View
 

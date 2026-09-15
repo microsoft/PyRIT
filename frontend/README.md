@@ -2,6 +2,17 @@
 
 Modern TypeScript + React frontend for PyRIT, built with Fluent UI.
 
+## Appearance
+
+The **Theme** menu at the bottom of the sidebar offers System, Light, Dark,
+Raccoon, Jimothy, Pirate, Seattle Rain, Evergreen, Blueprint, and Night Sky.
+Each named preset combines a fixed palette with a decorative workspace
+background. Content panels remain solid for readability.
+
+Your choice is saved in this browser. System follows the operating system's
+light/dark preference. High-contrast mode overrides every palette and hides
+decorations without forgetting the selected preset.
+
 ## Development
 
 ```bash
@@ -114,3 +125,50 @@ E2E tests use `dev.py` to automatically start both frontend and backend servers.
 
 The frontend proxies API requests to `http://localhost:8000` in development.
 Configure this in `vite.config.ts` if needed.
+
+## Adding a theme preset
+
+The catalog in `src/themes/themePresets.ts` is the source of truth for preset
+IDs, labels, palettes, backgrounds, menu entries, and stored-value validation.
+
+1. Draw a new, self-contained SVG in `public/backgrounds/`. Use a transparent
+   background and keep prominent artwork away from the upper-left reading area.
+   Do not embed scripts, external resources, fonts, or raster images.
+2. Add one entry to `THEME_PRESETS`, using a unique, stable ID. For example:
+
+   ```ts
+   'my-background': {
+     label: 'My Background',
+     resolved: 'light',
+     theme: webLightTheme,
+     background: {
+       imageUrl: '/backgrounds/my-background.svg',
+       opacity: 0.08,
+     },
+   },
+   ```
+
+3. For a coordinated palette, follow a nearby preset's `createPaletteTheme`
+   definition instead of changing colors in individual components. Keep
+   `resolved` consistent with the palette's light/dark base.
+4. Document how the artwork was made and keep the palette accessibility tests
+   passing. They check text/button contrast, including the strongest possible
+   artwork at the configured opacity.
+
+No hook, menu switch, or page-specific background needs to be added for a new
+preset. Existing page canvases share one decorative layer; controls, dialogs,
+cards, tables, and message bubbles continue using opaque Fluent UI tokens.
+An unknown or removed stored preset returns to System.
+
+### Background artwork provenance
+
+All seven SVGs in `public/backgrounds/` were newly drawn from scratch for this
+change with Copilot assistance and are provided under this repository's MIT
+license. No artist's illustration, photograph, or stock wallpaper was copied,
+traced, vectorized, or used as image-generation input.
+
+The Jimothy drawing uses the real Seattle raccoon's distinctive compact,
+rounded appearance. [Know Your Meme](https://knowyourmeme.com/memes/jimothy-the-raccoon)
+and [Wikipedia](https://en.wikipedia.org/wiki/Jimothy_(Raccoon)) were consulted
+for factual descriptions only. Their displayed artwork and photographs were
+not reused. The existing CoPyRIT logo is unchanged.
