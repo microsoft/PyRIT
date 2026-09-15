@@ -275,10 +275,18 @@ class TestOutcomeDerivation:
                 [AttackOutcome.ERROR, AttackOutcome.ERROR],
                 AttackOutcome.ERROR,
             ),
+            # No child attack refuted the objective, so the envelope must not
+            # claim one did. See attack_outcome_from_score: an undetermined
+            # score is neither achievement nor refutation.
             (
                 SequenceCompletionPolicy.EXHAUSTIVE,
                 [AttackOutcome.UNDETERMINED, AttackOutcome.UNDETERMINED],
-                AttackOutcome.FAILURE,
+                AttackOutcome.UNDETERMINED,
+            ),
+            (
+                SequenceCompletionPolicy.EXHAUSTIVE,
+                [AttackOutcome.UNDETERMINED, AttackOutcome.ERROR],
+                AttackOutcome.UNDETERMINED,
             ),
             (
                 SequenceCompletionPolicy.EXHAUSTIVE,
@@ -295,8 +303,19 @@ class TestOutcomeDerivation:
                 [AttackOutcome.UNDETERMINED, AttackOutcome.FAILURE],
                 AttackOutcome.FAILURE,
             ),
+            (
+                SequenceCompletionPolicy.FIRST_SUCCESS,
+                [AttackOutcome.UNDETERMINED, AttackOutcome.UNDETERMINED],
+                AttackOutcome.UNDETERMINED,
+            ),
+            (
+                SequenceCompletionPolicy.FIRST_DECISIVE,
+                [AttackOutcome.UNDETERMINED, AttackOutcome.UNDETERMINED],
+                AttackOutcome.UNDETERMINED,
+            ),
             # STRICT_ALL: SUCCESS only if every executed child_attack succeeded, ERROR if any errored,
-            # else FAILURE. Short-circuits on the first non-SUCCESS.
+            # FAILURE if any refuted the objective, else UNDETERMINED. Short-circuits on the first
+            # non-SUCCESS.
             (
                 SequenceCompletionPolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.SUCCESS],
@@ -315,7 +334,7 @@ class TestOutcomeDerivation:
             (
                 SequenceCompletionPolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.UNDETERMINED],
-                AttackOutcome.FAILURE,
+                AttackOutcome.UNDETERMINED,
             ),
             (
                 SequenceCompletionPolicy.STRICT_ALL,

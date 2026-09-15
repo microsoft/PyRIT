@@ -56,23 +56,26 @@ class SequenceCompletionPolicy(str, Enum):
 
     FIRST_SUCCESS = "first_success"
     """Stop on the first ``AttackOutcome.SUCCESS``; continue past ERROR and FAILURE.
-    Outcome: SUCCESS if any child attack succeeded, ERROR if every child attack errored, else FAILURE.
+    Outcome: SUCCESS if any child attack succeeded, ERROR if every child attack errored,
+    FAILURE if any child attack refuted the objective, else UNDETERMINED.
     Resilient adaptive default — keep trying other strategies past transient errors."""
 
     FIRST_DECISIVE = "first_decisive"
     """Stop on the first ``AttackOutcome.SUCCESS`` or ``AttackOutcome.ERROR``;
     continue past FAILURE. Outcome: SUCCESS if any child attack succeeded, ERROR if every
-    child attack errored, else FAILURE. Use when ERRORs should short-circuit the sequence."""
+    child attack errored, FAILURE if any child attack refuted the objective, else
+    UNDETERMINED. Use when ERRORs should short-circuit the sequence."""
 
     STRICT_ALL = "strict_all"
     """Stop on the first non-SUCCESS. Outcome: SUCCESS only if every child attack succeeded,
-    ERROR if any child attack errored, else FAILURE. Pipeline semantics — each child attack is
-    required."""
+    ERROR if any child attack errored, FAILURE if any child attack refuted the objective, else
+    UNDETERMINED. Pipeline semantics — each child attack is required."""
 
     EXHAUSTIVE = "exhaustive"
     """Run every child attack regardless of intermediate outcomes. Outcome: SUCCESS if any
-    child attack succeeded, ERROR if every child attack errored, else FAILURE. Use for evaluation
-    sweeps where you want to try everything."""
+    child attack succeeded, ERROR if every child attack errored, FAILURE if any child attack
+    refuted the objective, else UNDETERMINED. Use for evaluation sweeps where you want to try
+    everything."""
 
     LAST_RESULT = "last_result"
     """Run every child attack; inherit the last child attack's outcome verbatim. Use for chained
@@ -346,6 +349,10 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         return False
 
     def _compute_outcome(self, *, results: list[AttackResult]) -> AttackOutcome:
+        # FAILURE is a claim that a child attack refuted the objective, so it is
+        # only reached when one of them did. A sequence in which nothing reached
+        # a verdict ends UNDETERMINED, per attack_outcome_from_score: an
+        # undetermined score is neither achievement nor refutation.
         if self._completion_policy is SequenceCompletionPolicy.LAST_RESULT:
             return results[-1].outcome
         if self._completion_policy is SequenceCompletionPolicy.STRICT_ALL:
@@ -353,10 +360,14 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 return AttackOutcome.SUCCESS
             if any(r.outcome is AttackOutcome.ERROR for r in results):
                 return AttackOutcome.ERROR
-            return AttackOutcome.FAILURE
+            if any(r.outcome is AttackOutcome.FAILURE for r in results):
+                return AttackOutcome.FAILURE
+            return AttackOutcome.UNDETERMINED
         # FIRST_SUCCESS, FIRST_DECISIVE, EXHAUSTIVE all share any-success semantics.
         if any(r.outcome is AttackOutcome.SUCCESS for r in results):
             return AttackOutcome.SUCCESS
         if all(r.outcome is AttackOutcome.ERROR for r in results):
             return AttackOutcome.ERROR
-        return AttackOutcome.FAILURE
+        if any(r.outcome is AttackOutcome.FAILURE for r in results):
+            return AttackOutcome.FAILURE
+        return AttackOutcome.UNDETERMINED
