@@ -2785,9 +2785,7 @@ class TestUpdateMainConversation:
         assert "branch-1" not in pruned
 
     @pytest.mark.parametrize("conversation_type", ["preparation", "adversarial"])
-    async def test_rejects_promoting_diagnostic_conversation(
-        self, attack_service, mock_memory, conversation_type
-    ):
+    async def test_rejects_promoting_diagnostic_conversation(self, attack_service, mock_memory, conversation_type):
         """Diagnostic conversations cannot replace the evaluated main conversation."""
         from pyrit.models import ConversationReference, ConversationType
 
