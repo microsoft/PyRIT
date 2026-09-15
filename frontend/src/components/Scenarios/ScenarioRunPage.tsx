@@ -38,6 +38,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router'
 
 import AttackAttemptDetails from '@/components/AttackResults/AttackAttemptDetails'
 import ObjectiveScorerDetails from '@/components/AttackResults/ObjectiveScorerDetails'
+import OutcomeSummaryBar from '@/components/AttackResults/OutcomeSummaryBar'
 import {
   formatDuration,
   formatTimestamp,
@@ -455,6 +456,18 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
           <span className={styles.liveStatus} aria-live="polite">
             {isTerminalRunState(run.status) ? `Run ${formatRunState(run.status)}` : ''}
           </span>
+        </section>
+
+        <section className={styles.section} aria-labelledby="outcome-breakdown-heading">
+          <div className={styles.sectionHeading}>
+            <Text as="h2" id="outcome-breakdown-heading" size={500} weight="semibold">
+              Outcome breakdown
+            </Text>
+            <Text className={styles.sectionHint}>
+              Distribution of attack outcomes across executions recorded so far.
+            </Text>
+          </div>
+          <OutcomeSummaryBar testId="run-outcome-summary" results={state.results} />
         </section>
 
         <section className={styles.section} aria-labelledby="atomic-groups-heading">
