@@ -257,6 +257,7 @@ export interface ConverterCatalogEntry {
   parameters: Parameter[]
   is_llm_based: boolean
   description?: string | null
+  unsupported_required_params?: string[]
 }
 
 export interface ConverterCatalogResponse {
