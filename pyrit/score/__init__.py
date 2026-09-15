@@ -83,6 +83,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.manual_scorer import ManualScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
+    from pyrit.score.true_false.regex.agent_threat_rules_scorer import AgentThreatRulesScorer
     from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
     from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
     from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
@@ -144,6 +145,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ContentClassifierCategory": "pyrit.score.true_false.self_ask_category_scorer",
     "ContentClassifierPaths": "pyrit.score.true_false.self_ask_category_scorer",
     "ConversationScorer": "pyrit.score.conversation_scorer",
+    "AgentThreatRulesScorer": "pyrit.score.true_false.regex.agent_threat_rules_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
     "DecodingScorer": "pyrit.score.true_false.decoding_scorer",
     "FentanylKeywordScorer": "pyrit.score.true_false.regex.fentanyl_keyword_scorer",

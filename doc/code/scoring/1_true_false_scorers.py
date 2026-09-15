@@ -39,6 +39,26 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 # domain-specific detector; PyRIT includes keyword scorers built this way
 # (`MethKeywordScorer`, `FentanylKeywordScorer`, `NerveAgentKeywordScorer`,
 # `AnthraxKeywordScorer`) and `CredentialLeakScorer` for leaked secrets.
+#
+# `AgentThreatRulesScorer` is a subclass whose patterns come from outside PyRIT: it loads a
+# precompiled digest published by the Agent Threat Rules (ATR) project, an open detection-rule
+# standard for AI agent attacks such as prompt injection, tool poisoning and context
+# exfiltration. The digest is fetched from a pinned commit and cached, so the scorer adds no
+# dependency and the ruleset does not move underneath a release. ATR rules are written against
+# specific agent surfaces, and a scorer sees text with no surface label, so only the digest's
+# declared default fields load unless you pass `fields` yourself. Note that ATR's published
+# precision figures come from corpora its rules were partly mined from, so treat this as a fast
+# local pre-filter rather than a calibrated detector.
+#
+# ```python
+# from pyrit.score import AgentThreatRulesScorer
+#
+# atr_scorer = AgentThreatRulesScorer()                      # pinned ATR commit, default fields
+# atr_scorer = AgentThreatRulesScorer(ref="main")            # track ATR's default branch instead
+# atr_scorer = AgentThreatRulesScorer(fields=["tool_response"])  # score tool output specifically
+# ```
+#
+# The example above is not executed here because it reaches the network on first use.
 # %%
 from pyrit.score import MethKeywordScorer, RegexScorer
 
