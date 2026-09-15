@@ -150,6 +150,30 @@ class TestGenerateSimulatedConversationAsync:
                 num_turns=-1,
             )
 
+    async def test_passes_system_prompt_prefix_to_simulated_attack(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        adversarial_system_prompt_path: Path,
+    ):
+        prefix = "Static guidance"
+        with patch(
+            "pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack",
+            side_effect=RuntimeError("stop after construction"),
+        ) as mock_attack_class:
+            with pytest.raises(RuntimeError, match="stop after construction"):
+                await generate_simulated_conversation_async(
+                    objective="Test objective",
+                    adversarial_chat=mock_adversarial_chat,
+                    objective_scorer=mock_objective_scorer,
+                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt_prefix=prefix,
+                )
+
+        adversarial_config = mock_attack_class.call_args.kwargs["attack_adversarial_config"]
+        assert adversarial_config.system_prompt.value
+        assert adversarial_config.system_prompt_prefix == prefix
+
     async def test_uses_adversarial_chat_as_simulated_target(
         self,
         mock_adversarial_chat: MagicMock,
