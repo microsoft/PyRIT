@@ -78,6 +78,11 @@ class WordLevelConverter(Converter):
     def validate_input(self, prompt: str) -> None:
         """Validate the input before processing (can be overridden by subclasses)."""
 
+    # Deprecation helper: remove in 1.4.0 with BinaryConverter's override.
+    def _validate_before_conversion(self, prompt: str) -> None:
+        """Delegate automatic validation to the existing subclass hook."""
+        self.validate_input(prompt=prompt)
+
     def join_words(self, words: list[str]) -> str:
         """
         Provide a way for subclasses to override the default behavior of joining words.
@@ -117,7 +122,8 @@ class WordLevelConverter(Converter):
         if input_type != "text":
             raise ValueError(f"Input type {input_type} not supported")
 
-        self.validate_input(prompt=prompt)
+        # Deprecation helper: restore self.validate_input(prompt=prompt) in 1.4.0.
+        self._validate_before_conversion(prompt=prompt)
 
         words = prompt.split() if self._word_split_separator is None else prompt.split(self._word_split_separator)
 

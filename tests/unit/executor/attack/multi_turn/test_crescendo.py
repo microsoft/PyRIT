@@ -1712,6 +1712,51 @@ class TestAttackExecution:
         assert result.outcome_reason is not None
         assert "Max turns (2) reached" in result.outcome_reason
 
+    async def test_refusal_at_backtrack_limit_with_true_objective_score_succeeds(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: CrescendoAttackContext,
+        sample_response: Message,
+        success_objective_score: Score,
+        refusal_score: Score,
+        adversarial_response: str,
+    ) -> None:
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            prompt_normalizer=mock_prompt_normalizer,
+            max_turns=1,
+            max_backtracks=0,
+        )
+        mock_prompt_normalizer.send_prompt_async.side_effect = [
+            create_prompt_response(text=adversarial_response),
+            sample_response,
+        ]
+
+        with (
+            patch.object(
+                attack,
+                "_check_refusal_async",
+                new_callable=AsyncMock,
+                return_value=refusal_score,
+            ),
+            patch(
+                "pyrit.score.MessageScorer.score_response_async",
+                new_callable=AsyncMock,
+                return_value={"objective_scores": [success_objective_score], "auxiliary_scores": []},
+            ) as score_response,
+        ):
+            result = await attack._perform_async(context=basic_context)
+
+        assert result.outcome == AttackOutcome.SUCCESS
+        assert result.outcome_reason == "Objective achieved in 1 turns"
+        assert result.last_score == success_objective_score
+        assert basic_context.last_response_was_refusal is True
+        assert basic_context.last_accepted_response is None
+        score_response.assert_awaited_once()
+
     async def test_perform_attack_with_backtracking(
         self,
         mock_objective_target: MagicMock,
