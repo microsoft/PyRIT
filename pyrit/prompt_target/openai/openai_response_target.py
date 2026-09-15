@@ -516,8 +516,8 @@ class OpenAIResponseTarget(OpenAITarget):
 
         return Message(message_pieces=extracted_response_pieces)
 
-    @limit_requests_per_minute
     @pyrit_target_retry
+    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send prompt, handle agentic tool calls (function_call), return all messages.
