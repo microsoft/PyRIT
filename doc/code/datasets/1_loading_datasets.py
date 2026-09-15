@@ -68,7 +68,9 @@
 # (`garak_pypi_packages`, `garak_npm_packages`, `garak_crates_packages`,
 # `garak_rubygems_packages`, `garak_dart_packages`, `garak_perl_packages`,
 # `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
-# `garak_tm_system_prompts`), an audio jailbreak set
+# `garak_tm_system_prompts`), API-key probe corpora (`garak_api_key_services`,
+# `garak_api_key_templates`, `garak_api_key_partial_keys`, `garak_api_key_safe_placeholders`),
+# an audio jailbreak set
 # (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 
 # %%
