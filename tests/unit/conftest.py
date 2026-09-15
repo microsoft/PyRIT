@@ -2,15 +2,17 @@
 # Licensed under the MIT license.
 
 import os
+import sqlite3
 import tempfile
 from collections.abc import Generator
+from contextlib import closing, contextmanager
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import Engine, create_engine
 
-from pyrit.memory.central_memory import CentralMemory
-from pyrit.memory.sqlite_memory import SQLiteMemory
+from pyrit.common.singleton import Singleton
+from pyrit.memory import CentralMemory, SQLiteMemory, migration
 
 # This limits retries and speeds up execution
 os.environ["CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS"] = "5"
@@ -19,29 +21,60 @@ os.environ["RETRY_WAIT_MIN_SECONDS"] = "0"
 os.environ["RETRY_WAIT_MAX_SECONDS"] = "1"
 
 
+@contextmanager
+def _sqlite_connection(engine: Engine) -> Generator[sqlite3.Connection, None, None]:
+    with closing(engine.raw_connection()) as raw_connection:
+        connection = raw_connection.driver_connection
+        assert isinstance(connection, sqlite3.Connection)
+        yield connection
+
+
+@pytest.fixture(scope="session")
+def sqlite_template() -> Generator[sqlite3.Connection, None, None]:
+    """Migrate and validate a private, read-only template once per pytest worker."""
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        migration.run_schema_migrations(engine=engine)
+        migration.check_schema_migrations(engine=engine)
+        with _sqlite_connection(engine) as connection:
+            connection.execute("PRAGMA query_only = ON")
+            yield connection
+    finally:
+        engine.dispose()
+
+
+@contextmanager
+def _use_sqlite_memory(sqlite_memory: SQLiteMemory) -> Generator[None, None, None]:
+    previous_instance = Singleton._instances.get(SQLiteMemory)
+    Singleton._instances[SQLiteMemory] = sqlite_memory
+    try:
+        with patch.object(CentralMemory, "_memory_instance", None):
+            CentralMemory.set_memory_instance(sqlite_memory)
+            yield
+    finally:
+        if previous_instance is None:
+            Singleton._instances.pop(SQLiteMemory, None)
+        else:
+            Singleton._instances[SQLiteMemory] = previous_instance
+
+
 @pytest.fixture
-def sqlite_instance() -> Generator[SQLiteMemory, None, None]:
-    # Create an in-memory SQLite engine
-    sqlite_memory = SQLiteMemory(db_path=":memory:")
-    temp_dir = tempfile.TemporaryDirectory()
-    sqlite_memory.results_path = temp_dir.name
-
-    sqlite_memory.disable_embedding()
-
-    # Reset the database to ensure a clean state
-    sqlite_memory.reset_database()
-    inspector = inspect(sqlite_memory.engine)
-
-    # Verify that tables are created as expected
-    assert "PromptMemoryEntries" in inspector.get_table_names(), "PromptMemoryEntries table not created."
-    assert "EmbeddingData" in inspector.get_table_names(), "EmbeddingData table not created."
-    assert "ScoreEntries" in inspector.get_table_names(), "ScoreEntries table not created."
-    assert "SeedPromptEntries" in inspector.get_table_names(), "SeedPromptEntries table not created."
-
-    CentralMemory.set_memory_instance(sqlite_memory)
-    yield sqlite_memory
-    temp_dir.cleanup()
-    sqlite_memory.dispose_engine()
+def sqlite_instance(sqlite_template: sqlite3.Connection) -> Generator[SQLiteMemory, None, None]:
+    """Give each test its own database, result directory, and scoped memory instance."""
+    with tempfile.TemporaryDirectory() as results_path:
+        sqlite_memory = SQLiteMemory.__new__(SQLiteMemory)
+        try:
+            # Fixture teardown owns cleanup; process-exit hooks would retain every test's instance.
+            with patch.object(sqlite_memory, "cleanup"):
+                sqlite_memory.__init__(db_path=":memory:", skip_schema_migration=True)
+            sqlite_memory.results_path = results_path
+            sqlite_memory.disable_embedding()
+            with _sqlite_connection(sqlite_memory.engine) as connection:
+                sqlite_template.backup(connection)
+            with _use_sqlite_memory(sqlite_memory):
+                yield sqlite_memory
+        finally:
+            sqlite_memory.dispose_engine()
 
 
 @pytest.fixture()
