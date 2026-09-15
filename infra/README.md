@@ -72,7 +72,7 @@ flowchart TB
   app -.->|"Traces after agent setup"| appInsights
 ```
 
-The base topology is public ACA-managed HTTPS ingress plus VNet-integrated fixed NAT egress. `enableFrontDoor=true` adds Front Door Premium as the preferred managed HTTPS URL. By default, the ACA origin remains concurrently public and can bypass Front Door. `enableFrontDoorPrivateLink=true` instead connects Premium Front Door to the ACA environment through Private Link; setting `disableContainerAppsPublicAccess=true` then removes the direct public ACA path. Bicep rejects public-access shutdown unless both Front Door and its Private Link origin are enabled. The team ADO workflow uses this isolated-origin mode; community examples leave all three Front Door settings disabled. Front Door mode requires `allowedCidr` to be empty because ACA sees Front Door rather than the original client. Front Door changes inbound routing only: outbound connections from ACA continue to use the NAT Gateway's static IPv4.
+The base topology is public ACA-managed HTTPS ingress plus VNet-integrated fixed NAT egress. `enableFrontDoor=true` adds Front Door Premium as the preferred managed HTTPS URL. By default, the ACA origin remains concurrently public and can bypass Front Door. `enableFrontDoorPrivateLink=true` instead connects Premium Front Door to the ACA environment through Private Link; setting `disableContainerAppsPublicAccess=true` then removes the direct public ACA path. Bicep rejects public-access shutdown unless both Front Door and its Private Link origin are enabled. The team ADO infrastructure stage uses this isolated-origin mode; code-only runs preserve the existing access mode. Community examples leave all three Front Door settings disabled. Front Door mode requires `allowedCidr` to be empty because ACA sees Front Door rather than the original client. Front Door changes inbound routing only: outbound connections from ACA continue to use the NAT Gateway's static IPv4.
 
 ## Development Workflow
 
@@ -403,18 +403,39 @@ az deployment group show -g <rg> -n <deployment-name> \
 
 > This section documents the repository maintainers' internal pipeline. It depends on Microsoft team-owned ADO service connections, environments, and variable groups. It is not required or expected for community deployments; use direct Bicep or `deploy_instance.py` instead.
 
-`gui-deploy.yml` is an **update-only** workflow for the pre-created test-v2 and prod-v2 stacks:
+`gui-deploy.yml` is an **update-only** workflow for the pre-created test-v2 and prod-v2 stacks. Both parameters default to `false`:
+
+| `deployInfra` | `deployToProd` | Workflow |
+| --- | --- | --- |
+| `false` | `false` | Build, deploy code to test |
+| `true` | `false` | Build, deploy test infrastructure with the current image, deploy code to test |
+| `false` | `true` | Build, deploy code to test, production approval, deploy the same image to production |
+| `true` | `true` | Build, test infrastructure, test code, production approval, production infrastructure, production code |
+
+Qualifying merges to `main` automatically deploy **code only to test**. Production remains opt-in: manually queue a commit merged to `main` with `deployToProd=true`. Approval rejects on timeout and the requester cannot self-approve. An infrastructure failure blocks the corresponding code stage; a code failure never invokes infrastructure rollback.
+
+#### Code-only deployment
+
+`infra/pipelines/deploy_code.py` updates only the existing `pyrit-gui` container image. It validates the subscription, registry digest, environment, and single-container/single-revision topology before writing. Application configuration, identity, networking, NAT, and Front Door are not redeployed.
+
+The script verifies the exact new revision and its existing access mode: direct ACA `/api/health` when public access is enabled, or Front Door `/api/health` when public access is disabled. It reports the mode explicitly and never falls back from a failed private path to public access. A public-mode success is **not** certification of Private Link readiness. The data-plane check has a five-minute budget after revision readiness.
+
+Code deployment does not downgrade or create a database; application startup still follows the image's normal migration behavior. Failures are reported without automatic image or database rollback because migrations may make the previous image incompatible. The previous image digest is logged for an explicit recovery decision.
+
+#### Optional infrastructure deployment
+
+Set `deployInfra=true` when changing Bicep-managed configuration or networking. Each infrastructure stage runs **before** the new code, using the image already deployed to that environment, not the Build output. Infrastructure rollback therefore cannot install a newly built application that has not passed code verification.
+
+`infra/pipelines/deploy_public_nat.sh` retains the existing infrastructure safeguards:
 
 1. Build the source image and push a commit-SHA tag to ACR.
-2. Capture the exact pushed digest and pass it across stages.
+2. Capture the exact pushed digest for the code stages; infrastructure retains the currently deployed digest.
 3. Require the existing app, environment, VNet, subnet, NAT, and reserved PIP; validate their IDs, prefixes, tags, SKU, allocation, and attachments.
 4. Run a full ARM `what-if` through a fail-closed validator; reject malformed results, deletions, cross-resource-group writes, protected-network deltas other than the documented read-only NAT/PIP normalization, and core network, app, or Log Analytics workspace creates. The expected PIP protection lock may be created.
 5. Preserve policy-managed PIP tags and deploy with Front Door Private Link, ACA public access disabled, and PIP protection enabled.
 6. Validate the AFD origin targets the expected ACA environment, approve only active requests with the deterministic message, and require the ACA-side connection to report `Approved`. AFD can continue to display `Pending` after approval, so successful AFD health is the data-plane readiness signal.
-7. Allow up to 30 minutes for Front Door propagation, then verify ACA public access is disabled, the digest-pinned revision and Front Door `/api/health` are healthy, direct ACA access is unavailable, and the PIP resource ID/address is unchanged.
+7. Allow up to 30 minutes for Front Door propagation, then verify ACA public access is disabled, the retained-image revision and Front Door `/api/health` are healthy, direct ACA access is unavailable, and the PIP resource ID/address is unchanged.
 8. If cutover validation fails, redeploy the prior public AFD origin and re-enable ACA public access; otherwise print the Front Door URL and static egress IPv4.
-
-Qualifying merges to `main` automatically deploy test. Production deployment is independent of PyRIT package releases: manually queue a commit merged to `main` with `deployToProd=true`. The workflow deploys test first, then requires a timeout-rejecting manual approval whose requester cannot self-approve.
 
 `copyrit-gui-common` supplies the shared image settings:
 
@@ -441,7 +462,7 @@ Both `copyrit-gui-test` and `copyrit-gui-prod` supply:
 | `keyVaultResourceId`, `envSecretName` | Existing runtime configuration secret |
 | `acrResourceId`, `enableOtel` | Registry resource ID and observability setting |
 
-The container image is not a library variable. The Build stage publishes the exact pushed digest as `immutableImage`, and both deployment stages consume that output. Do not add the legacy `image`, `resourceGroup`, `appName`, or `enablePrivateEndpoint` variables; the current workflow does not consume them.
+The container image is not a library variable. The Build stage publishes the exact pushed digest as `immutableImage`, and both code stages consume that output. Infrastructure stages discover the existing image directly from ACA. Code-only runs consume only `deploymentResourceGroup`, `deploymentAppName`, and `acrResourceId` from each environment group; changes to the other configuration values require `deployInfra=true`. Do not add the legacy `image`, `resourceGroup`, `appName`, or `enablePrivateEndpoint` variables; the current workflow does not consume them.
 
 Pipeline definition 139 reads `gui-deploy.yml` from the GitHub commit being queued. Treat YAML and variable-group contract changes as one release: do not remove old keys before the commit that consumes the replacement keys reaches the target branch. Otherwise ADO leaves unresolved `$(name)` text in Bash, where it is interpreted as command substitution.
 
@@ -451,7 +472,7 @@ The resource group, registry, image-pull authorization, managed identity, Key Va
 
 The internal workflow is update-only for networking: its app name and prefixes must resolve to the existing app/environment/VNet/subnet/NAT/PIP. It records the current PIP resource ID and address before preview, requires protected resources to remain unchanged except Azure read-only normalization, and verifies the same PIP/address after deployment.
 
-The workflow also creates a `CanNotDelete` lock scoped to the reserved PIP. Its validated Front Door origin uses Private Link to the ACA environment, and the ACA public endpoint is disabled after deployment.
+The optional infrastructure stage also creates a `CanNotDelete` lock scoped to the reserved PIP. Its validated Front Door origin uses Private Link to the ACA environment, and the ACA public endpoint is disabled after a successful infrastructure deployment. Code-only runs preserve the existing configuration, including an existing public-access fallback.
 
 ## Post-Deployment
 
@@ -604,7 +625,7 @@ Supported Azure integrations, including OpenAI, Content Safety, and Speech, can 
 
 ## Notes
 
-- **Network topology**: Public ACA-managed HTTPS ingress with optional `allowedCidr` plus VNet-integrated fixed NAT egress is the base topology. Front Door Premium is an optional inbound layer. Private Link plus disabled ACA public access makes Front Door the only public application path. The team ADO workflow enables this isolated-origin mode. `allowedCidr` must be empty when Front Door is enabled; Bicep rejects the combination.
+- **Network topology**: Public ACA-managed HTTPS ingress with optional `allowedCidr` plus VNet-integrated fixed NAT egress is the base topology. Front Door Premium is an optional inbound layer. Private Link plus disabled ACA public access makes Front Door the only public application path. The team ADO infrastructure stage enables this isolated-origin mode; default code-only runs preserve existing networking. `allowedCidr` must be empty when Front Door is enabled; Bicep rejects the combination.
 - **Ingress vs. egress**: Front Door affects inbound requests only. The reserved NAT public IP remains the source for ACA-originated outbound connections.
 - **NAT routing**: NAT Gateway supplies the outbound source IP only while the subnet's effective default route remains `Internet`. A UDR or propagated BGP `0.0.0.0/0` route to a firewall or gateway takes precedence; in that topology, allow-list the egress device's public IP instead.
 - **Network outputs**: `egressPublicIpAddress`, `natGatewayId`, `acaInfrastructureSubnetId`, and `vnetName` describe the created network.

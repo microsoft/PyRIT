@@ -15,7 +15,6 @@ required_variables=(
   PYRIT_AGENT_TEMP_DIRECTORY
   PYRIT_DEPLOYMENT_RESOURCE_GROUP
   PYRIT_APP_NAME
-  PYRIT_CONTAINER_IMAGE
   PYRIT_VNET_ADDRESS_PREFIX
   PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX
   PYRIT_MANAGED_IDENTITY_RESOURCE_ID
@@ -195,7 +194,7 @@ normalized_expected_pip_id=$(lowercase "$expected_pip_id")
 existing_app=$(az containerapp show \
   --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
   --name "$PYRIT_APP_NAME" \
-  --query '{id:id,environmentId:properties.managedEnvironmentId,tags:tags}' -o json 2>/dev/null || true)
+  --query '{id:id,environmentId:properties.managedEnvironmentId,tags:tags,containers:properties.template.containers[].{name:name,image:image}}' -o json 2>/dev/null || true)
 existing_environment=$(az containerapp env show \
   --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
   --name "$PYRIT_APP_NAME-env" \
@@ -259,23 +258,30 @@ if [[ "$deployment_tags" == *'<'* || "$deployment_tags" == "null" \
   exit 1
 fi
 
-if [[ ! "$PYRIT_CONTAINER_IMAGE" =~ ^([^/]+)/(.+)@(sha256:[0-9a-fA-F]{64})$ ]]; then
-  echo "##vso[task.logissue type=error]Built image must be an immutable registry digest"
+if [[ "$(jq '.containers | length' <<< "$existing_app")" != "1" \
+  || "$(jq -r '.containers[0].name' <<< "$existing_app")" != "pyrit-gui" ]]; then
+  echo "##vso[task.logissue type=error]Infrastructure deployment requires the existing pyrit-gui container"
+  exit 1
+fi
+current_image=$(jq -r '.containers[0].image // empty' <<< "$existing_app")
+if [[ ! "$current_image" =~ ^([^/]+)/(.+)@(sha256:[0-9a-fA-F]{64})$ ]]; then
+  echo "##vso[task.logissue type=error]Current image must be an immutable registry digest"
   exit 1
 fi
 registry_server=${BASH_REMATCH[1]}
 repository=${BASH_REMATCH[2]}
 digest=${BASH_REMATCH[3]}
 if [[ "$registry_server" != "$acr_name.azurecr.io" ]]; then
-  echo "##vso[task.logissue type=error]Built image registry does not match ACR resource ID"
+  echo "##vso[task.logissue type=error]Current image registry does not match ACR resource ID"
   exit 1
 fi
 repository_pattern='^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$'
 if [[ ! "$repository" =~ $repository_pattern ]]; then
-  echo "##vso[task.logissue type=error]Built image repository is invalid"
+  echo "##vso[task.logissue type=error]Current image repository is invalid"
   exit 1
 fi
 immutable_image="$registry_server/$repository@$digest"
+echo "Infrastructure-only deployment; retaining current image: $immutable_image"
 private_link_request_message="Azure Front Door private access to $PYRIT_APP_NAME"
 
 parameters=(

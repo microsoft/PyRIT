@@ -1,9 +1,7 @@
 # CI/CD pipeline for the CoPyRIT GUI.
 #
-# Every deployment uses the single topology defined by infra/main.bicep:
-# public ACA-managed HTTPS ingress plus VNet-integrated fixed NAT egress.
-# Environment variable groups also provide adminGroupObjectId for configuration
-# authorization and optional pyritConfigFileUri for blob-backed configuration.
+# Code-only test deployment is the default. Infrastructure reconciliation is
+# explicit and runs with the current image before deploying new code.
 
 trigger:
   branches:
@@ -19,6 +17,10 @@ trigger:
 pr: none
 
 parameters:
+  - name: deployInfra
+    displayName: 'Deploy Infrastructure'
+    type: boolean
+    default: false
   - name: deployToProd
     displayName: 'Deploy to production'
     type: boolean
@@ -123,9 +125,19 @@ stages:
                 immutable_image="$PYRIT_ACR_LOGIN_SERVER/$PYRIT_IMAGE_NAME@$digest"
                 echo "##vso[task.setvariable variable=immutableImage;isOutput=true]$immutable_image"
 
+  - ${{ if eq(parameters.deployInfra, true) }}:
+      - template: infra/pipelines/deploy-infra.yml
+        parameters:
+          stageName: DeployTestInfra
+          dependsOn: Build
+          slot: test
+
   - stage: DeployTest
-    displayName: 'Deploy to Test'
-    dependsOn: Build
+    displayName: 'Deploy code to Test'
+    dependsOn:
+      - Build
+      - ${{ if eq(parameters.deployInfra, true) }}:
+          - DeployTestInfra
     variables:
       - group: copyrit-gui-common
       - group: copyrit-gui-test
@@ -135,7 +147,7 @@ stages:
       vmImage: 'ubuntu-latest'
     jobs:
       - deployment: DeployToTest
-        displayName: 'Deploy test environment'
+        displayName: 'Deploy test application'
         timeoutInMinutes: 120
         environment: 'copyrit-test'
         strategy:
@@ -146,35 +158,18 @@ stages:
                   fetchDepth: 1
 
                 - task: AzureCLI@2
-                  displayName: 'Preview, deploy, and verify test'
+                  displayName: 'Deploy and verify test code without changing networking'
                   env:
                     PYRIT_SLOT: test
-                    PYRIT_BUILD_ID: $(Build.BuildId)
-                    PYRIT_SOURCE_DIRECTORY: $(Build.SourcesDirectory)
-                    PYRIT_AGENT_TEMP_DIRECTORY: $(Agent.TempDirectory)
                     PYRIT_DEPLOYMENT_RESOURCE_GROUP: $(deploymentResourceGroup)
                     PYRIT_APP_NAME: $(deploymentAppName)
                     PYRIT_CONTAINER_IMAGE: $(immutableImage)
-                    PYRIT_VNET_ADDRESS_PREFIX: $(deploymentVnetAddressPrefix)
-                    PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX: $(deploymentInfrastructureSubnetAddressPrefix)
-                    PYRIT_ALLOWED_CLIENT_CIDR: $(deploymentAllowedClientCidr)
-                    PYRIT_MANAGED_IDENTITY_RESOURCE_ID: $(managedIdentityResourceId)
-                    PYRIT_ENTRA_TENANT_ID: $(entraTenantId)
-                    PYRIT_ENTRA_CLIENT_ID: $(entraClientId)
-                    PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
-                    PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)
-                    PYRIT_CONFIG_FILE_URI: $(pyritConfigFileUri)
-                    PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)
-                    PYRIT_SQL_DATABASE_NAME: $(sqlDatabaseName)
-                    PYRIT_KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)
                     PYRIT_ACR_RESOURCE_ID: $(acrResourceId)
-                    PYRIT_ENABLE_OTEL: $(enableOtel)
-                    PYRIT_ENV_SECRET_NAME: $(envSecretName)
                   inputs:
                     azureSubscription: '$(azureServiceConnection)'
                     scriptType: 'bash'
-                    scriptLocation: 'scriptPath'
-                    scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: python3 "$(Build.SourcesDirectory)/infra/pipelines/deploy_code.py"
 
   - stage: ApproveProd
     displayName: 'Approve Production Deployment'
@@ -213,16 +208,28 @@ stages:
               allowApproversToApproveTheirOwnRuns: false
               instructions: |
                 Confirm test is healthy, Entra and backend group authorization work,
-                the static test egress IP is allow-listed, and production variables
-                describe the same public ACA plus fixed NAT topology.
+                and the static test egress IP is allow-listed.
+                Infrastructure deployment requested: ${{ parameters.deployInfra }}.
+                Code-only deployment preserves the existing public/private access mode.
+                If infrastructure is requested, approve the production Private Link
+                cutover and configuration changes before the new code is deployed.
               onTimeout: reject
 
+  - ${{ if eq(parameters.deployInfra, true) }}:
+      - template: infra/pipelines/deploy-infra.yml
+        parameters:
+          stageName: DeployProdInfra
+          dependsOn: ApproveProd
+          slot: prod
+
   - stage: DeployProd
-    displayName: 'Deploy to Production'
+    displayName: 'Deploy code to Production'
     dependsOn:
       - ApproveProd
       - Build
-    condition: succeeded('ApproveProd')
+      - ${{ if eq(parameters.deployInfra, true) }}:
+          - DeployProdInfra
+    condition: and(succeeded(), succeeded('ApproveProd'))
     variables:
       - group: copyrit-gui-common
       - group: copyrit-gui-prod
@@ -232,7 +239,7 @@ stages:
       vmImage: 'ubuntu-latest'
     jobs:
       - deployment: DeployToProd
-        displayName: 'Deploy production environment'
+        displayName: 'Deploy production application'
         timeoutInMinutes: 120
         environment: 'copyrit-prod'
         strategy:
@@ -243,32 +250,15 @@ stages:
                   fetchDepth: 1
 
                 - task: AzureCLI@2
-                  displayName: 'Preview, deploy, and verify production'
+                  displayName: 'Deploy and verify production code without changing networking'
                   env:
                     PYRIT_SLOT: prod
-                    PYRIT_BUILD_ID: $(Build.BuildId)
-                    PYRIT_SOURCE_DIRECTORY: $(Build.SourcesDirectory)
-                    PYRIT_AGENT_TEMP_DIRECTORY: $(Agent.TempDirectory)
                     PYRIT_DEPLOYMENT_RESOURCE_GROUP: $(deploymentResourceGroup)
                     PYRIT_APP_NAME: $(deploymentAppName)
                     PYRIT_CONTAINER_IMAGE: $(immutableImage)
-                    PYRIT_VNET_ADDRESS_PREFIX: $(deploymentVnetAddressPrefix)
-                    PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX: $(deploymentInfrastructureSubnetAddressPrefix)
-                    PYRIT_ALLOWED_CLIENT_CIDR: $(deploymentAllowedClientCidr)
-                    PYRIT_MANAGED_IDENTITY_RESOURCE_ID: $(managedIdentityResourceId)
-                    PYRIT_ENTRA_TENANT_ID: $(entraTenantId)
-                    PYRIT_ENTRA_CLIENT_ID: $(entraClientId)
-                    PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
-                    PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)
-                    PYRIT_CONFIG_FILE_URI: $(pyritConfigFileUri)
-                    PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)
-                    PYRIT_SQL_DATABASE_NAME: $(sqlDatabaseName)
-                    PYRIT_KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)
                     PYRIT_ACR_RESOURCE_ID: $(acrResourceId)
-                    PYRIT_ENABLE_OTEL: $(enableOtel)
-                    PYRIT_ENV_SECRET_NAME: $(envSecretName)
                   inputs:
                     azureSubscription: '$(azureServiceConnection)'
                     scriptType: 'bash'
-                    scriptLocation: 'scriptPath'
-                    scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: python3 "$(Build.SourcesDirectory)/infra/pipelines/deploy_code.py"

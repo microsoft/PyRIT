@@ -1,0 +1,60 @@
+parameters:
+  - name: stageName
+    type: string
+  - name: dependsOn
+    type: string
+  - name: slot
+    type: string
+    values:
+      - test
+      - prod
+
+stages:
+  - stage: ${{ parameters.stageName }}
+    displayName: 'Deploy ${{ parameters.slot }} infrastructure'
+    dependsOn: ${{ parameters.dependsOn }}
+    variables:
+      - group: copyrit-gui-common
+      - group: copyrit-gui-${{ parameters.slot }}
+    pool:
+      vmImage: 'ubuntu-latest'
+    jobs:
+      - deployment: DeployInfrastructure
+        displayName: 'Preview, deploy, and verify infrastructure with the current image'
+        timeoutInMinutes: 120
+        environment: 'copyrit-${{ parameters.slot }}'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  fetchDepth: 1
+                - task: AzureCLI@2
+                  displayName: 'Preview, deploy, and verify ${{ parameters.slot }} infrastructure'
+                  env:
+                    PYRIT_SLOT: ${{ parameters.slot }}
+                    PYRIT_BUILD_ID: $(Build.BuildId)
+                    PYRIT_SOURCE_DIRECTORY: $(Build.SourcesDirectory)
+                    PYRIT_AGENT_TEMP_DIRECTORY: $(Agent.TempDirectory)
+                    PYRIT_DEPLOYMENT_RESOURCE_GROUP: $(deploymentResourceGroup)
+                    PYRIT_APP_NAME: $(deploymentAppName)
+                    PYRIT_VNET_ADDRESS_PREFIX: $(deploymentVnetAddressPrefix)
+                    PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX: $(deploymentInfrastructureSubnetAddressPrefix)
+                    PYRIT_ALLOWED_CLIENT_CIDR: $(deploymentAllowedClientCidr)
+                    PYRIT_MANAGED_IDENTITY_RESOURCE_ID: $(managedIdentityResourceId)
+                    PYRIT_ENTRA_TENANT_ID: $(entraTenantId)
+                    PYRIT_ENTRA_CLIENT_ID: $(entraClientId)
+                    PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
+                    PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)
+                    PYRIT_CONFIG_FILE_URI: $(pyritConfigFileUri)
+                    PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)
+                    PYRIT_SQL_DATABASE_NAME: $(sqlDatabaseName)
+                    PYRIT_KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)
+                    PYRIT_ACR_RESOURCE_ID: $(acrResourceId)
+                    PYRIT_ENABLE_OTEL: $(enableOtel)
+                    PYRIT_ENV_SECRET_NAME: $(envSecretName)
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'scriptPath'
+                    scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'

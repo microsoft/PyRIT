@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
-"""Guard the single-topology Azure DevOps deployment contract."""
+"""Guard the independent application and infrastructure deployment contract."""
 
 import json
 import os
@@ -12,9 +12,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PIPELINE = REPO_ROOT / "gui-deploy.yml"
 DEPLOY_SCRIPT = REPO_ROOT / "infra" / "pipelines" / "deploy_public_nat.sh"
+INFRA_TEMPLATE = REPO_ROOT / "infra" / "pipelines" / "deploy-infra.yml"
 WHAT_IF_VALIDATOR = REPO_ROOT / "infra" / "pipelines" / "validate_what_if.py"
 EXAMPLE_PARAMETERS = REPO_ROOT / "infra" / "parameters.example.json"
 DEMO_PARAMETERS = REPO_ROOT / "infra" / "parameters.demo.json"
@@ -50,6 +53,7 @@ class TestPipelineGuardrails(unittest.TestCase):
     def setUpClass(cls):
         cls.pipeline = PIPELINE.read_text(encoding="utf-8")
         cls.deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+        cls.infra_template = INFRA_TEMPLATE.read_text(encoding="utf-8")
 
     def test_pipeline_has_one_test_and_prod_workflow(self):
         assert "deploymentTarget" not in self.pipeline
@@ -60,7 +64,39 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert "stage: DeployProd" in self.pipeline
         assert "DeployReplacement" not in self.pipeline
         assert self.pipeline.count("timeoutInMinutes: 120") == 2
-        assert self.pipeline.count("scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'") == 2
+        assert (
+            self.pipeline.count('inlineScript: python3 "$(Build.SourcesDirectory)/infra/pipelines/deploy_code.py"') == 2
+        )
+        assert "deploy_public_nat.sh" not in self.pipeline
+        assert "scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'" in self.infra_template
+
+    def test_infrastructure_is_explicit_and_runs_before_code(self) -> None:
+        pipeline = yaml.safe_load(self.pipeline)
+        parameters = {parameter["name"]: parameter for parameter in pipeline["parameters"]}
+        assert parameters["deployInfra"]["default"] is False
+        assert parameters["deployToProd"]["default"] is False
+        stages = pipeline["stages"]
+        conditional = "${{ if eq(parameters.deployInfra, true) }}"
+        infrastructure = [stage[conditional][0] for stage in stages if conditional in stage]
+        assert [stage["parameters"] for stage in infrastructure] == [
+            {"stageName": "DeployTestInfra", "dependsOn": "Build", "slot": "test"},
+            {"stageName": "DeployProdInfra", "dependsOn": "ApproveProd", "slot": "prod"},
+        ]
+        assert all(stage["template"] == "infra/pipelines/deploy-infra.yml" for stage in infrastructure)
+        code_stages = {stage["stage"]: stage for stage in stages if stage.get("stage") in {"DeployTest", "DeployProd"}}
+        assert code_stages["DeployTest"]["dependsOn"] == ["Build", {conditional: ["DeployTestInfra"]}]
+        assert code_stages["DeployProd"]["dependsOn"] == [
+            "ApproveProd",
+            "Build",
+            {conditional: ["DeployProdInfra"]},
+        ]
+        template = yaml.safe_load(self.infra_template)["stages"][0]
+        assert template["dependsOn"] == "${{ parameters.dependsOn }}"
+        assert "condition" not in template  # Infrastructure must not run after a skipped approval.
+        assert "PYRIT_CONTAINER_IMAGE" not in self.infra_template
+        assert "current_image=$(jq" in self.deploy_script
+        assert "retaining current image" in self.deploy_script
+        assert "PYRIT_CONTAINER_IMAGE" not in self.deploy_script
 
     def test_production_remains_opt_in_and_independently_approved(self):
         assert "job: ValidateProdConfiguration" in self.pipeline
@@ -79,7 +115,7 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert '"$BUILD_SOURCEBRANCH" != refs/heads/main' in self.pipeline
         assert "eq(variables['Build.SourceBranch'], 'refs/heads/main')" in self.pipeline
         assert "refs/heads/releases/" not in self.pipeline
-        assert "condition: succeeded('ApproveProd')" in self.pipeline
+        assert "condition: and(succeeded(), succeeded('ApproveProd'))" in self.pipeline
 
     def test_deploy_resolves_digest_and_previews_before_apply(self):
         assert "name: BuildImage" in self.pipeline
@@ -103,9 +139,9 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert '"disableContainerAppsPublicAccess=true"' in self.deploy_script
 
     def test_pipeline_passes_values_via_environment(self):
-        deploy_yaml = self.pipeline[self.pipeline.index("stage: DeployTest") :]
+        deploy_yaml = self.infra_template
         assert "PYRIT_DEPLOYMENT_RESOURCE_GROUP: $(deploymentResourceGroup)" in deploy_yaml
-        assert "PYRIT_CONTAINER_IMAGE: $(immutableImage)" in deploy_yaml
+        assert "PYRIT_CONTAINER_IMAGE: $(immutableImage)" in self.pipeline
         assert "PYRIT_ALLOWED_CLIENT_CIDR: $(deploymentAllowedClientCidr)" in deploy_yaml
         assert "PYRIT_MANAGED_IDENTITY_RESOURCE_ID: $(managedIdentityResourceId)" in deploy_yaml
         assert "PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)" in deploy_yaml
