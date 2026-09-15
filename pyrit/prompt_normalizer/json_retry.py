@@ -25,6 +25,7 @@ async def send_json_with_retry_async(
     message: Message,
     conversation_id: str,
     parse: Callable[[Message], T],
+    on_response: Callable[[Message], None] | None = None,
 ) -> T:
     """
     Send a message expecting a JSON response, retrying each attempt on a clean conversation history.
@@ -49,6 +50,8 @@ async def send_json_with_retry_async(
         parse (Callable[[Message], T]): Turns the response into the parsed result. Must raise
             ``InvalidJsonException`` on a bad parse to trigger a retry. Other exceptions
             (e.g. blocked/empty) propagate without retrying.
+        on_response (Callable[[Message], None] | None): Optional observer called for each
+            persisted response before parsing. Defaults to None.
 
     Returns:
         T: The parsed result.
@@ -73,6 +76,8 @@ async def send_json_with_retry_async(
         response = await normalizer.send_prompt_async(message=message, conversation_id=conversation_id, target=target)
         if not response:
             raise ValueError(f"No response received for conversation ID: {conversation_id}")
+        if on_response:
+            on_response(response)
         return parse(response)
 
     result: T = await _attempt_async()

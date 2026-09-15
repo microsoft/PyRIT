@@ -161,6 +161,7 @@ class MockNodeFactory:
                 is_undetermined=False,
                 score_metadata=None,
                 scored_expectation=None,
+                observation_ids=[],
             )
         else:
             node.objective_score = None
@@ -2883,6 +2884,7 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
                 get_value=MagicMock(return_value=0.0),
                 score_metadata=None,
                 scored_expectation=None,
+                observation_ids=[],
             )
         elif b.score is not None:
             node.objective_score = MagicMock(
@@ -2890,6 +2892,7 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
                 get_value=MagicMock(return_value=b.score),
                 score_metadata=None,
                 scored_expectation=None,
+                observation_ids=[],
             )
 
     node = MagicMock()
