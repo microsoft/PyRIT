@@ -91,6 +91,10 @@ project:
         - file: scanner/benchmark.ipynb
         - file: scanner/foundry.ipynb
         - file: scanner/garak.ipynb
+    - file: dashboard/0_dashboard.md
+      children:
+        - file: dashboard/1_scorer_quality.ipynb
+        - file: dashboard/2_benchmark_leaderboard.ipynb
     - file: code/framework.md
       children:
         - file: code/datasets/0_dataset.md

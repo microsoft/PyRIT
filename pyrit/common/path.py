@@ -76,6 +76,10 @@ SCORER_EVALS_REFUSAL_SCORER_PATH = pathlib.Path(SCORER_EVALS_PATH, "refusal_scor
 SCORER_EVALS_TRUE_FALSE_PATH = pathlib.Path(SCORER_EVALS_PATH, "true_false").resolve()
 SCORER_EVALS_LIKERT_PATH = pathlib.Path(SCORER_EVALS_PATH, "likert").resolve()
 
+# Path to the committed adversarial benchmark technique-metrics registry, upserted by
+# build_scripts/export_adversarial_benchmark_result.py and read by the metrics dashboard.
+BENCHMARK_RESULTS_PATH = pathlib.Path(DATASETS_PATH, "benchmark_results").resolve()
+
 
 # Dictionary of default PyRIT paths used primarily for rendering jinja templates
 PATHS_DICT = {
