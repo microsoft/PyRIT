@@ -37,21 +37,30 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.common.path import SCORER_SEED_PROMPT_PATH
+from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig, TreeOfAttacksWithPruningAttack
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
     ObjectiveTargetEvaluationIdentifier,
+    ScenarioIdentifier,
+    ScenarioResult,
+    ScenarioRunState,
+    Score,
+    ScorerEvaluationIdentifier,
     SeedObjective,
+    TargetIdentifier,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core import BaselineAttackPolicy
+from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark, _build_benchmark_technique
@@ -146,7 +155,9 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
 async def _build_atomic_attacks(bench: AdversarialBenchmark) -> list:
     """Drive the post-``initialize_async`` build path: resolve seeds, snapshot the
     context, then build atomic attacks — the same sequence ``initialize_async`` runs."""
-    seed_groups_by_dataset = await bench._resolve_seed_groups_by_dataset_async()
+    seed_groups_by_dataset = await bench._resolve_seed_groups_by_dataset_async(
+        apply_sampling=bench._scenario_result_id is None
+    )
     context = bench._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
     return await bench._build_atomic_attacks_async(context=context)
 
@@ -159,13 +170,18 @@ async def _build_atomic_attacks(bench: AdversarialBenchmark) -> list:
 class TestAdversarialBenchmarkMetadata:
     """Tests for class-level metadata that doesn't depend on any runtime state."""
 
-    def test_version_is_4(self):
-        """VERSION 4 identifies runs using the evidence-backed default technique set."""
-        assert AdversarialBenchmark.VERSION == 4
+    def test_version_is_5(self):
+        """VERSION 5 identifies runs using task-achievement objective scoring."""
+        assert AdversarialBenchmark.VERSION == 5
 
     def test_baseline_attack_policy_is_forbidden(self):
         """A baseline contributes no signal to a model-comparison benchmark, so it is forbidden."""
         assert AdversarialBenchmark.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Forbidden
+
+    def test_task_achieved_rubric_is_used(self):
+        expected = SCORER_SEED_PROMPT_PATH / "true_false_question" / "task_achieved_refined.yaml"
+
+        assert AdversarialBenchmark._get_additional_scoring_questions() == [expected]
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +212,30 @@ class TestAdversarialBenchmarkSupportedParameters:
         params = {p.name: p for p in AdversarialBenchmark.supported_parameters()}
         description = params["adversarial_targets"].description
         assert "--adversarial-targets" in description
+
+    def test_declares_use_cached_false_by_default(self):
+        params = {p.name: p for p in AdversarialBenchmark.supported_parameters()}
+        use_cached = params["use_cached"]
+
+        assert use_cached.param_type is bool
+        assert use_cached.default is None
+        assert "Defaults to false" in use_cached.description
+
+    @pytest.mark.parametrize(("raw_value", "expected"), [("true", True), ("False", False)])
+    def test_use_cached_parameter_coerces_cli_boolean(self, raw_value: str, expected: bool) -> None:
+        params = {p.name: p for p in AdversarialBenchmark.supported_parameters()}
+
+        assert params["use_cached"].coerce_value(raw_value) is expected
+
+    @pytest.mark.parametrize(
+        "parameter_name",
+        ["tap_tree_width", "tap_tree_depth", "tap_branching_factor", "tap_batch_size"],
+    )
+    def test_declares_optional_tap_override(self, parameter_name: str) -> None:
+        params = {p.name: p for p in AdversarialBenchmark.supported_parameters()}
+
+        assert params[parameter_name].param_type is int
+        assert params[parameter_name].default is None
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +401,15 @@ class TestAdversarialBenchmarkInit:
 
         objective_target = MagicMock(spec=PromptTarget)
         objective_target.configuration.capabilities.output_modalities = [{"text"}]
+        objective_target.get_identifier.return_value = TargetIdentifier(
+            class_name="MockObjectiveTarget",
+            class_module="tests.unit.scenario.benchmark.test_adversarial",
+        )
         adversarial_target = TargetRegistry.get_registry_singleton().instances.get("adversarial_chat")
+        adversarial_target.get_identifier.return_value = TargetIdentifier(
+            class_name="MockAdversarialTarget",
+            class_module="tests.unit.scenario.benchmark.test_adversarial",
+        )
         scoring_config = AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer))
 
         with caplog.at_level(logging.WARNING):
@@ -373,6 +421,72 @@ class TestAdversarialBenchmarkInit:
 
         assert isinstance(technique.attack, TreeOfAttacksWithPruningAttack)
         assert any("incompatible" in record.message for record in caplog.records)
+        atomic_attack = MagicMock()
+        atomic_attack.attack_technique = technique
+        expected_scorer_hash = ScorerEvaluationIdentifier(technique.attack._objective_scorer.get_identifier()).eval_hash
+        assert AdversarialBenchmark._get_attack_scorer_eval_hash(atomic_attack=atomic_attack) == expected_scorer_hash
+
+    def test_tap_factory_override_applies_search_parameters_and_changes_identity(self) -> None:
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench.params = {
+            "tap_tree_width": 2,
+            "tap_tree_depth": 3,
+            "tap_branching_factor": 2,
+            "tap_batch_size": 2,
+        }
+        override = bench._get_tap_factory_override()
+        assert override is not None
+        registered_factory = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()["tap"]
+        assert override["tap"].description == registered_factory.description
+        assert override["tap"].attack_class is registered_factory.attack_class
+        assert override["tap"].technique_tags == registered_factory.technique_tags
+
+        objective_target = MagicMock(spec=PromptTarget)
+        objective_target.configuration.capabilities.output_modalities = [{"text"}]
+        objective_target.get_identifier.return_value = TargetIdentifier(
+            class_name="MockObjectiveTarget",
+            class_module="tests.unit.scenario.benchmark.test_adversarial",
+        )
+        adversarial_target = TargetRegistry.get_registry_singleton().instances.get("adversarial_chat")
+        adversarial_target.get_identifier.return_value = TargetIdentifier(
+            class_name="MockAdversarialTarget",
+            class_module="tests.unit.scenario.benchmark.test_adversarial",
+        )
+        scoring_config = AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer))
+
+        default_technique = (
+            AttackTechniqueRegistry.get_registry_singleton()
+            .get_factories_or_raise()["tap"]
+            .create(
+                objective_target=objective_target,
+                attack_scoring_config=scoring_config,
+                adversarial_chat=adversarial_target,
+            )
+        )
+        quick_technique = override["tap"].create(
+            objective_target=objective_target,
+            attack_scoring_config=scoring_config,
+            adversarial_chat=adversarial_target,
+        )
+
+        configuration = quick_technique.attack._configuration
+        assert configuration.tree_width == 2
+        assert configuration.tree_depth == 3
+        assert configuration.branching_factor == 2
+        assert configuration.batch_size == 2
+        default_identity = AtomicAttackEvaluationIdentifier(
+            AtomicAttackIdentifier.build(technique_identifier=default_technique.get_identifier())
+        )
+        quick_identity = AtomicAttackEvaluationIdentifier(
+            AtomicAttackIdentifier.build(technique_identifier=quick_technique.get_identifier())
+        )
+        assert quick_identity.eval_hash != default_identity.eval_hash
+
+    def test_tap_factory_override_is_absent_when_parameters_are_unset(self) -> None:
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench.params = {}
+
+        assert bench._get_tap_factory_override() is None
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +623,7 @@ class TestGetAtomicAttacksCrossProduct:
         # Dataset config: one dataset with one real seed group (AtomicAttack hashes objectives).
         seed_group = AttackSeedGroup(seeds=[SeedObjective(value="benchmark_objective_1")])
         bench._dataset_config = MagicMock()
+        bench._dataset_config.max_dataset_size = None
         bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 
         return bench
@@ -603,6 +718,7 @@ def _make_attack_result_with_attribution(*, outcome: AttackOutcome, parent_colle
     """Like ``_make_attack_result_with_outcome`` but with attribution_data for parent-collection filtering."""
     ar = MagicMock()
     ar.outcome = outcome
+    ar.objective = "skip_cached_objective"
     ar.attribution_data = {"parent_collection": parent_collection}
     return ar
 
@@ -777,37 +893,31 @@ class TestCollectCachedCompletionPairs:
         assert cached == set()
         analytics_mock.assert_not_called()
 
-    def test_analytics_lookup_exception_is_swallowed_per_hash(self):
-        """A failing analytics lookup for one hash must not block the others — that hash is not cached."""
+    def test_analytics_lookup_exception_is_not_silently_treated_as_cache_miss(self):
         bench = self._make_bench()
         candidates = [
             self._make_candidate(technique_eval_hash="hash_a", atomic_attack_name="attack_a"),
             self._make_candidate(technique_eval_hash="hash_b", atomic_attack_name="attack_b"),
         ]
 
-        def fake_analytics(_memory, *, technique_eval_hash, objective_target_eval_hash):
-            if technique_eval_hash == "hash_a":
-                raise RuntimeError("analytics blew up")
-            return [_make_attack_result_with_attribution(outcome=AttackOutcome.SUCCESS, parent_collection="attack_b")]
+        with (
+            self._patch_identifier(),
+            patch(self._ANALYTICS_PATH, side_effect=RuntimeError("analytics blew up")),
+            pytest.raises(RuntimeError, match="analytics blew up"),
+        ):
+            bench._collect_cached_completion_pairs(atomic_attacks=candidates)
 
-        with self._patch_identifier(), patch(self._ANALYTICS_PATH, side_effect=fake_analytics):
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
-
-        # hash_a was the failed lookup → not cached (will retry). hash_b succeeded → cached by name.
-        assert cached == {"attack_b"}
-
-    def test_identifier_construction_failure_falls_back_to_empty(self):
-        """If ``ObjectiveTargetEvaluationIdentifier`` raises, cache becomes a no-op rather than blocking."""
+    def test_identifier_construction_failure_is_not_silently_treated_as_cache_miss(self):
         bench = self._make_bench()
         candidates = [self._make_candidate(technique_eval_hash="hash_a")]
 
         with (
             patch(self._IDENTIFIER_PATH, side_effect=RuntimeError("bad identifier")),
             patch(self._ANALYTICS_PATH) as analytics_mock,
+            pytest.raises(RuntimeError, match="bad identifier"),
         ):
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            bench._collect_cached_completion_pairs(atomic_attacks=candidates)
 
-        assert cached == set()
         analytics_mock.assert_not_called()
 
 
@@ -843,6 +953,7 @@ class TestSkipCachedFilter:
 
         seed_group = AttackSeedGroup(seeds=[SeedObjective(value="skip_cached_objective")])
         bench._dataset_config = MagicMock()
+        bench._dataset_config.max_dataset_size = None
         bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 
         return bench
@@ -851,6 +962,41 @@ class TestSkipCachedFilter:
         identifier_instance = MagicMock()
         identifier_instance.eval_hash = eval_hash
         return patch(self._IDENTIFIER_PATH, return_value=identifier_instance)
+
+    async def test_use_cached_sampling_is_stable_across_fresh_runs(self):
+        bench = self._make_bench(use_cached=True)
+        bench._dataset_config.max_dataset_size = 1
+        group_a = AttackSeedGroup(seeds=[SeedObjective(value="objective a")])
+        group_b = AttackSeedGroup(seeds=[SeedObjective(value="objective b")])
+
+        with patch.object(
+            Scenario,
+            "_resolve_seed_groups_by_dataset_async",
+            new=AsyncMock(side_effect=[{"dataset": [group_a, group_b]}, {"dataset": [group_b, group_a]}]),
+        ) as resolve_groups:
+            first = await bench._resolve_seed_groups_by_dataset_async()
+            second = await bench._resolve_seed_groups_by_dataset_async()
+
+        assert first == second
+        assert sum(len(groups) for groups in first.values()) == 1
+        assert [call.kwargs for call in resolve_groups.call_args_list] == [
+            {"apply_sampling": False},
+            {"apply_sampling": False},
+        ]
+
+    async def test_use_cached_false_preserves_default_sampling(self):
+        bench = self._make_bench(use_cached=False)
+        expected = {"dataset": [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]}
+
+        with patch.object(
+            Scenario,
+            "_resolve_seed_groups_by_dataset_async",
+            new=AsyncMock(return_value=expected),
+        ) as resolve_groups:
+            actual = await bench._resolve_seed_groups_by_dataset_async()
+
+        assert actual == expected
+        resolve_groups.assert_awaited_once_with(apply_sampling=True)
 
     async def test_use_cached_false_returns_all_candidates_without_analytics_call(self):
         bench = self._make_bench(use_cached=False)
@@ -861,85 +1007,125 @@ class TestSkipCachedFilter:
         assert len(result) == 1
         analytics_mock.assert_not_called()
 
+    async def test_runtime_use_cached_true_overrides_constructor_false(self):
+        bench = self._make_bench(use_cached=False)
+        bench.params["use_cached"] = True
+        cached_attack = _make_attack_result_with_attribution(
+            outcome=AttackOutcome.SUCCESS,
+            parent_collection="red_teaming__adv_a_harmbench",
+        )
+
+        with patch.object(
+            bench,
+            "_collect_reusable_cached_results",
+            return_value={"red_teaming__adv_a_harmbench": [cached_attack]},
+        ) as collect_reusable:
+            result = await _build_atomic_attacks(bench)
+
+        collect_reusable.assert_called_once()
+        assert result[0].seed_groups == []
+
+    async def test_runtime_use_cached_false_overrides_constructor_true(self):
+        bench = self._make_bench(use_cached=True)
+        bench.params["use_cached"] = False
+
+        with patch.object(bench, "_collect_reusable_cached_results") as collect_reusable:
+            result = await _build_atomic_attacks(bench)
+
+        collect_reusable.assert_not_called()
+        assert len(result[0].seed_groups) == 1
+
     async def test_use_cached_true_filters_matching_candidates(self):
-        bench = self._make_bench(use_cached=True)
-
-        with (
-            self._patch_identifier(),
-            patch(
-                "pyrit.scenario.core.atomic_attack.AtomicAttack.technique_eval_hash",
-                new_callable=lambda: property(lambda self: "cached_hash"),
-            ),
-            patch(
-                self._ANALYTICS_PATH,
-                return_value=[
-                    _make_attack_result_with_attribution(
-                        outcome=AttackOutcome.SUCCESS,
-                        parent_collection="red_teaming__adv_a_harmbench",
-                    )
-                ],
-            ),
-        ):
-            result = await _build_atomic_attacks(bench)
-
-        assert result == []
-
-    async def test_use_cached_true_keeps_unmatched_candidates(self):
-        bench = self._make_bench(use_cached=True)
-
-        with (
-            self._patch_identifier(),
-            patch(self._ANALYTICS_PATH, return_value=[]),
-        ):
-            result = await _build_atomic_attacks(bench)
-
-        assert len(result) == 1
-
-    async def test_use_cached_true_populates_precomputed_maps_for_skipped(self):
-        """Full pipeline: cache hit → _precomputed_cached_results/display_groups populated for skipped slot."""
         bench = self._make_bench(use_cached=True)
         cached_attack = _make_attack_result_with_attribution(
             outcome=AttackOutcome.SUCCESS,
             parent_collection="red_teaming__adv_a_harmbench",
         )
 
-        with (
-            self._patch_identifier(),
-            patch(
-                "pyrit.scenario.core.atomic_attack.AtomicAttack.technique_eval_hash",
-                new_callable=lambda: property(lambda self: "cached_hash"),
-            ),
-            patch(self._ANALYTICS_PATH, return_value=[cached_attack]),
+        with patch.object(
+            bench,
+            "_collect_reusable_cached_results",
+            return_value={"red_teaming__adv_a_harmbench": [cached_attack]},
         ):
             result = await _build_atomic_attacks(bench)
 
-        assert result == []
-        assert bench._precomputed_cached_results == {"red_teaming__adv_a_harmbench": [cached_attack]}
-        assert bench._precomputed_cached_display_groups == {"red_teaming__adv_a_harmbench": "adv_a"}
+        assert len(result) == 1
+        assert result[0].seed_groups == []
 
-    async def test_use_cached_true_filters_results_by_parent_collection(self):
-        """Cached rows whose parent_collection doesn't match the skipped slot are dropped."""
+    async def test_use_cached_true_keeps_unmatched_candidates(self):
+        bench = self._make_bench(use_cached=True)
+
+        with patch.object(
+            bench,
+            "_collect_reusable_cached_results",
+            return_value={},
+        ):
+            result = await _build_atomic_attacks(bench)
+
+        assert len(result) == 1
+
+    async def test_use_cached_true_stages_results_for_persistence(self):
+        """Full pipeline: a cache hit stages its prior result for persistence."""
+        bench = self._make_bench(use_cached=True)
+        cached_attack = _make_attack_result_with_attribution(
+            outcome=AttackOutcome.SUCCESS,
+            parent_collection="red_teaming__adv_a_harmbench",
+        )
+
+        with patch.object(
+            bench,
+            "_collect_reusable_cached_results",
+            return_value={"red_teaming__adv_a_harmbench": [cached_attack]},
+        ):
+            result = await _build_atomic_attacks(bench)
+
+        assert len(result) == 1
+        assert result[0].seed_groups == []
+        assert bench._precomputed_cached_results == {"red_teaming__adv_a_harmbench": [cached_attack]}
+
+    async def test_use_cached_true_stages_only_exact_reusable_results(self):
+        """The exact-match selector controls which prior rows are staged."""
         bench = self._make_bench(use_cached=True)
         matching = _make_attack_result_with_attribution(
             outcome=AttackOutcome.SUCCESS,
             parent_collection="red_teaming__adv_a_harmbench",
         )
-        wrong_parent = _make_attack_result_with_attribution(
-            outcome=AttackOutcome.SUCCESS,
-            parent_collection="red_teaming__adv_a_xstest",
-        )
 
-        with (
-            self._patch_identifier(),
-            patch(
-                "pyrit.scenario.core.atomic_attack.AtomicAttack.technique_eval_hash",
-                new_callable=lambda: property(lambda self: "cached_hash"),
-            ),
-            patch(self._ANALYTICS_PATH, return_value=[matching, wrong_parent]),
+        with patch.object(
+            bench,
+            "_collect_reusable_cached_results",
+            return_value={"red_teaming__adv_a_harmbench": [matching]},
         ):
             await _build_atomic_attacks(bench)
 
         assert bench._precomputed_cached_results == {"red_teaming__adv_a_harmbench": [matching]}
+
+    async def test_cache_pruning_preserves_complete_sampled_objective_metadata(self):
+        bench = self._make_bench(use_cached=True)
+        bench._dataset_config.max_dataset_size = 1
+        cached_attack = _make_attack_result_with_attribution(
+            outcome=AttackOutcome.SUCCESS,
+            parent_collection="red_teaming__adv_a_harmbench",
+        )
+
+        with patch.object(
+            bench,
+            "_collect_reusable_cached_results",
+            return_value={"red_teaming__adv_a_harmbench": [cached_attack]},
+        ):
+            await _build_atomic_attacks(bench)
+
+        assert bench._build_initial_scenario_metadata()["objective_hashes"] == [to_sha256("skip_cached_objective")]
+
+    async def test_resume_uses_scenario_results_instead_of_cross_run_cache(self):
+        bench = self._make_bench(use_cached=True)
+        bench._scenario_result_id = str(uuid.uuid4())
+
+        with patch.object(bench, "_collect_reusable_cached_results") as collect_reusable:
+            atomic_attacks = await _build_atomic_attacks(bench)
+
+        collect_reusable.assert_not_called()
+        assert len(atomic_attacks[0].seed_groups) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1204,11 +1390,10 @@ class TestCollectCachedCompletionPairsWithRealMemory:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestRunAsyncCacheInjection:
-    """Tests that prior results for use_cached-skipped attacks are injected into ScenarioResult."""
+class TestRunAsyncCachePersistence:
+    """Tests that cache persistence happens before normal scenario execution."""
 
-    async def test_precomputed_results_injected_into_attack_results(self):
-        """Slots from prior runs appear in attack_results alongside freshly-executed results."""
+    async def test_precomputed_results_are_persisted_before_base_run(self):
         bench = AdversarialBenchmark(
             objective_scorer=MagicMock(spec=TrueFalseScorer),
             use_cached=True,
@@ -1218,51 +1403,44 @@ class TestRunAsyncCacheInjection:
         result_y = MagicMock(spec=AttackResult)
         result_z = MagicMock(spec=AttackResult)
 
-        # Simulate what _build_atomic_attacks_async populated for the two skipped attacks
+        # Simulate what _build_atomic_attacks_async populated for two cached attacks.
         bench._precomputed_cached_results = {
             "technique_a__adv_target_harmbench": [result_x],
             "technique_b__adv_target_harmbench": [result_y],
         }
-        bench._precomputed_cached_display_groups = {
-            "technique_a__adv_target_harmbench": "adv_target",
-            "technique_b__adv_target_harmbench": "adv_target",
-        }
 
-        # Base run_async produced only the non-skipped attack's result
         base_scenario_result = MagicMock()
         base_scenario_result.attack_results = {"technique_c__adv_target_harmbench": [result_z]}
         base_scenario_result.display_group_map = {}
 
-        with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
+        with (
+            patch.object(bench, "_persist_precomputed_cached_results") as persist_cached,
+            patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)),
+        ):
             result = await bench.run_async()
 
-        assert set(result.attack_results.keys()) == {
-            "technique_a__adv_target_harmbench",
-            "technique_b__adv_target_harmbench",
-            "technique_c__adv_target_harmbench",
-        }
-        assert result.attack_results["technique_a__adv_target_harmbench"] == [result_x]
-        assert result.attack_results["technique_b__adv_target_harmbench"] == [result_y]
-        assert result.attack_results["technique_c__adv_target_harmbench"] == [result_z]
+        persist_cached.assert_called_once_with()
+        assert result is base_scenario_result
 
-    async def test_display_group_map_updated_for_cached_attacks(self):
-        """Skipped attacks have their display group injected so get_display_groups aggregates correctly."""
+    async def test_base_result_is_returned_after_cache_persistence(self):
         bench = AdversarialBenchmark(
             objective_scorer=MagicMock(spec=TrueFalseScorer),
             use_cached=True,
         )
 
         bench._precomputed_cached_results = {"technique_a__adv_target_harmbench": [MagicMock(spec=AttackResult)]}
-        bench._precomputed_cached_display_groups = {"technique_a__adv_target_harmbench": "adv_target"}
 
         base_scenario_result = MagicMock()
         base_scenario_result.attack_results = {}
         base_scenario_result.display_group_map = {}
 
-        with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
+        with (
+            patch.object(bench, "_persist_precomputed_cached_results"),
+            patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)),
+        ):
             result = await bench.run_async()
 
-        assert result.display_group_map["technique_a__adv_target_harmbench"] == "adv_target"
+        assert result is base_scenario_result
 
     async def test_no_injection_when_no_cached_attacks(self):
         """When all attacks were executed freshly, attack_results is returned unchanged."""
@@ -1280,3 +1458,324 @@ class TestRunAsyncCacheInjection:
             result = await bench.run_async()
 
         assert set(result.attack_results.keys()) == {"technique_c__adv_target_harmbench"}
+
+
+def _make_scorer_identifier(*, question: str) -> ComponentIdentifier:
+    return ComponentIdentifier(
+        class_name="SelfAskTrueFalseScorer",
+        class_module="pyrit.score.true_false.self_ask_true_false_scorer",
+        params={"question": question},
+    )
+
+
+def _make_cache_candidate(
+    *,
+    scorer_identifier: ComponentIdentifier,
+    objectives: list[str],
+    atomic_attack_name: str = "attack_a",
+) -> MagicMock:
+    strategy_identifier = ComponentIdentifier(
+        class_name="PromptSendingAttack",
+        class_module="pyrit.executor.attack.single_turn.prompt_sending",
+        children={"objective_scorer": scorer_identifier},
+    )
+    technique_identifier = ComponentIdentifier(
+        class_name="AttackTechnique",
+        class_module="pyrit.scenario.core.attack_technique",
+        children={"attack": strategy_identifier},
+    )
+    candidate = MagicMock()
+    candidate.atomic_attack_name = atomic_attack_name
+    candidate.technique_eval_hash = "technique-hash"
+    candidate.objectives = objectives
+    candidate.seed_groups = [object() for _ in objectives]
+    candidate.attack_technique.get_identifier.return_value = technique_identifier
+    return candidate
+
+
+def _make_exact_cached_result(
+    *,
+    objective: str,
+    scorer_identifier: ComponentIdentifier,
+    parent_id: str,
+    outcome: AttackOutcome = AttackOutcome.SUCCESS,
+    attack_result_id: str | None = None,
+) -> AttackResult:
+    score = Score(
+        score_value="true",
+        score_value_description="",
+        score_type="true_false",
+        score_category=None,
+        score_metadata={},
+        score_rationale="",
+        scorer_class_identifier=scorer_identifier,
+        message_piece_id=uuid.uuid4(),
+        objective=objective,
+    )
+    return AttackResult(
+        attack_result_id=attack_result_id or str(uuid.uuid4()),
+        conversation_id=str(uuid.uuid4()),
+        objective=objective,
+        automated_score=score,
+        outcome=outcome,
+        attribution_parent_id=parent_id,
+        attribution_data={"parent_collection": "attack_a", "parent_eval_hash": "technique-hash"},
+        labels={"source": "prior"},
+    )
+
+
+def _make_compatible_parent(*, parent_id: str, version: int = AdversarialBenchmark.VERSION) -> MagicMock:
+    parent = MagicMock()
+    parent.id = uuid.UUID(parent_id)
+    parent.scenario_name = "AdversarialBenchmark"
+    parent.scenario_version = version
+    parent.scenario_identifier.class_module = "pyrit.scenario.scenarios.benchmark.adversarial"
+    return parent
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestReusableCachedResults:
+    def _make_bench_with_candidates(
+        self,
+        *,
+        candidate: MagicMock,
+        cached_results: list[AttackResult],
+        parent_version: int = AdversarialBenchmark.VERSION,
+        parent_module: str = "pyrit.scenario.scenarios.benchmark.adversarial",
+    ) -> AdversarialBenchmark:
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench._memory = MagicMock(spec=MemoryInterface)
+        parent_id = cached_results[0].attribution_parent_id if cached_results else str(uuid.uuid4())
+        parent = _make_compatible_parent(parent_id=parent_id, version=parent_version)
+        parent.scenario_identifier.class_module = parent_module
+        bench._memory.get_scenario_results.return_value = [parent]
+
+        def collect_candidates(*, atomic_attacks):
+            assert atomic_attacks == [candidate]
+            bench._cached_results_by_name = {candidate.atomic_attack_name: cached_results}
+            return {candidate.atomic_attack_name}
+
+        bench._collect_cached_completion_pairs = MagicMock(side_effect=collect_candidates)
+        return bench
+
+    def test_reuses_only_matching_objective_from_partial_slot(self):
+        scorer = _make_scorer_identifier(question="achieved")
+        parent_id = str(uuid.uuid4())
+        candidate = _make_cache_candidate(scorer_identifier=scorer, objectives=["objective one", "objective two"])
+        cached = _make_exact_cached_result(
+            objective="objective one",
+            scorer_identifier=scorer,
+            parent_id=parent_id,
+        )
+        bench = self._make_bench_with_candidates(candidate=candidate, cached_results=[cached])
+
+        reusable = bench._collect_reusable_cached_results(atomic_attacks=[candidate])
+
+        assert reusable == {"attack_a": [cached]}
+
+    def test_does_not_reuse_objective_absent_from_current_dataset(self):
+        scorer = _make_scorer_identifier(question="achieved")
+        parent_id = str(uuid.uuid4())
+        candidate = _make_cache_candidate(scorer_identifier=scorer, objectives=["current objective"])
+        cached = _make_exact_cached_result(
+            objective="removed objective",
+            scorer_identifier=scorer,
+            parent_id=parent_id,
+        )
+        bench = self._make_bench_with_candidates(candidate=candidate, cached_results=[cached])
+
+        reusable = bench._collect_reusable_cached_results(atomic_attacks=[candidate])
+
+        assert reusable == {}
+
+    def test_does_not_reuse_result_from_different_scorer(self):
+        current_scorer = _make_scorer_identifier(question="current rubric")
+        prior_scorer = _make_scorer_identifier(question="old rubric")
+        parent_id = str(uuid.uuid4())
+        candidate = _make_cache_candidate(scorer_identifier=current_scorer, objectives=["objective"])
+        cached = _make_exact_cached_result(
+            objective="objective",
+            scorer_identifier=prior_scorer,
+            parent_id=parent_id,
+        )
+        bench = self._make_bench_with_candidates(candidate=candidate, cached_results=[cached])
+
+        reusable = bench._collect_reusable_cached_results(atomic_attacks=[candidate])
+
+        assert reusable == {}
+
+    def test_does_not_reuse_result_from_different_benchmark_version(self):
+        scorer = _make_scorer_identifier(question="achieved")
+        parent_id = str(uuid.uuid4())
+        candidate = _make_cache_candidate(scorer_identifier=scorer, objectives=["objective"])
+        cached = _make_exact_cached_result(
+            objective="objective",
+            scorer_identifier=scorer,
+            parent_id=parent_id,
+        )
+        bench = self._make_bench_with_candidates(
+            candidate=candidate,
+            cached_results=[cached],
+            parent_version=AdversarialBenchmark.VERSION - 1,
+        )
+
+        reusable = bench._collect_reusable_cached_results(atomic_attacks=[candidate])
+
+        assert reusable == {}
+
+    def test_does_not_reuse_result_from_different_scenario_module(self):
+        scorer = _make_scorer_identifier(question="achieved")
+        parent_id = str(uuid.uuid4())
+        candidate = _make_cache_candidate(scorer_identifier=scorer, objectives=["objective"])
+        cached = _make_exact_cached_result(
+            objective="objective",
+            scorer_identifier=scorer,
+            parent_id=parent_id,
+        )
+        bench = self._make_bench_with_candidates(
+            candidate=candidate,
+            cached_results=[cached],
+            parent_module="pyrit.scenario.scenarios.other",
+        )
+
+        reusable = bench._collect_reusable_cached_results(atomic_attacks=[candidate])
+
+        assert reusable == {}
+
+    def test_does_not_reuse_error_or_undetermined_result(self):
+        scorer = _make_scorer_identifier(question="achieved")
+        parent_id = str(uuid.uuid4())
+        candidate = _make_cache_candidate(scorer_identifier=scorer, objectives=["objective"])
+        cached_results = [
+            _make_exact_cached_result(
+                objective="objective",
+                scorer_identifier=scorer,
+                parent_id=parent_id,
+                outcome=outcome,
+            )
+            for outcome in (AttackOutcome.ERROR, AttackOutcome.UNDETERMINED)
+        ]
+        bench = self._make_bench_with_candidates(candidate=candidate, cached_results=cached_results)
+
+        reusable = bench._collect_reusable_cached_results(atomic_attacks=[candidate])
+
+        assert reusable == {}
+
+    def test_selects_newest_matching_result_per_objective(self):
+        scorer = _make_scorer_identifier(question="achieved")
+        parent_id = str(uuid.uuid4())
+        candidate = _make_cache_candidate(scorer_identifier=scorer, objectives=["objective"])
+        newest = _make_exact_cached_result(
+            objective="objective",
+            scorer_identifier=scorer,
+            parent_id=parent_id,
+        )
+        older = _make_exact_cached_result(
+            objective="objective",
+            scorer_identifier=scorer,
+            parent_id=parent_id,
+            outcome=AttackOutcome.FAILURE,
+        )
+        bench = self._make_bench_with_candidates(candidate=candidate, cached_results=[newest, older])
+
+        reusable = bench._collect_reusable_cached_results(atomic_attacks=[candidate])
+
+        assert reusable == {"attack_a": [newest]}
+
+    def test_apply_cache_drops_only_reused_objective(self):
+        scorer = _make_scorer_identifier(question="achieved")
+        parent_id = str(uuid.uuid4())
+        candidate = _make_cache_candidate(scorer_identifier=scorer, objectives=["cached", "uncached"])
+        cached = _make_exact_cached_result(
+            objective="cached",
+            scorer_identifier=scorer,
+            parent_id=parent_id,
+        )
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench._collect_reusable_cached_results = MagicMock(return_value={"attack_a": [cached]})
+
+        bench._apply_reusable_cached_results(atomic_attacks=[candidate])
+
+        candidate.drop_seed_groups_with_hashes.assert_called_once_with(hashes={to_sha256("cached")})
+        assert bench._precomputed_cached_results == {"attack_a": [cached]}
+
+    def test_persisted_cache_copy_is_attributed_to_current_run(self):
+        scorer = _make_scorer_identifier(question="achieved")
+        source_parent_id = str(uuid.uuid4())
+        current_parent_id = str(uuid.uuid4())
+        source_result_id = str(uuid.uuid4())
+        cached = _make_exact_cached_result(
+            objective="objective",
+            scorer_identifier=scorer,
+            parent_id=source_parent_id,
+            attack_result_id=source_result_id,
+        )
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench._memory = MagicMock(spec=MemoryInterface)
+        bench._scenario_result_id = current_parent_id
+        bench._memory_labels = {"pipeline_build_id": "42"}
+        bench._precomputed_cached_results = {"attack_a": [cached]}
+
+        bench._persist_precomputed_cached_results()
+
+        persisted = bench._memory.add_attack_results_to_memory.call_args.kwargs["attack_results"]
+        assert len(persisted) == 1
+        cached_copy = persisted[0]
+        assert cached_copy.attack_result_id != source_result_id
+        assert cached_copy.conversation_id == cached.conversation_id
+        assert cached_copy.attribution_parent_id == current_parent_id
+        assert cached_copy.attribution_data == {
+            "parent_collection": "attack_a",
+            "parent_eval_hash": "technique-hash",
+        }
+        assert cached_copy.labels == {"source": "prior", "pipeline_build_id": "42"}
+        assert cached_copy.metadata["cached_from_attack_result_id"] == source_result_id
+        assert cached.attribution_parent_id == source_parent_id
+        assert bench._precomputed_cached_results == {}
+
+    async def test_all_cached_scenario_completes_from_persisted_copy(self, sqlite_instance):
+        scenario_identifier = ScenarioIdentifier(
+            class_name="AdversarialBenchmark",
+            class_module="pyrit.scenario.scenarios.benchmark.adversarial",
+            version=AdversarialBenchmark.VERSION,
+            objective_target=TargetIdentifier(
+                class_name="MockObjectiveTarget",
+                class_module="tests.unit.scenario.benchmark.test_adversarial",
+            ),
+        )
+        source_scenario = ScenarioResult(scenario_identifier=scenario_identifier, attack_results={})
+        current_scenario = ScenarioResult(scenario_identifier=scenario_identifier, attack_results={})
+        sqlite_instance.add_scenario_results_to_memory(scenario_results=[source_scenario, current_scenario])
+        source_result = AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective="objective",
+            outcome=AttackOutcome.SUCCESS,
+            attribution_parent_id=str(source_scenario.id),
+            attribution_data={"parent_collection": "attack_a", "parent_eval_hash": "technique-hash"},
+            labels={"source": "prior"},
+        )
+        sqlite_instance.add_attack_results_to_memory(attack_results=[source_result])
+
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench._memory = sqlite_instance
+        bench._scenario_result_id = str(current_scenario.id)
+        bench._memory_labels = {"pipeline_build_id": "42"}
+        bench._precomputed_cached_results = {"attack_a": [source_result]}
+        candidate = MagicMock(spec=AtomicAttack)
+        candidate.atomic_attack_name = "attack_a"
+        candidate.technique_eval_hash = "technique-hash"
+        candidate.seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]
+        candidate.drop_seed_groups_with_hashes.side_effect = lambda *, hashes: setattr(candidate, "seed_groups", [])
+        bench._atomic_attacks = [candidate]
+
+        result = await bench.run_async()
+
+        source_reloaded = sqlite_instance.get_scenario_results(scenario_result_ids=[str(source_scenario.id)])[0]
+        current_reloaded = sqlite_instance.get_scenario_results(scenario_result_ids=[str(current_scenario.id)])[0]
+        assert source_reloaded.attack_results["attack_a"][0].attack_result_id == source_result.attack_result_id
+        cached_copy = current_reloaded.attack_results["attack_a"][0]
+        assert cached_copy.attack_result_id != source_result.attack_result_id
+        assert cached_copy.conversation_id == source_result.conversation_id
+        assert cached_copy.labels == {"source": "prior", "pipeline_build_id": "42"}
+        assert result.scenario_run_state is ScenarioRunState.COMPLETED
+        candidate.run_async.assert_not_called()

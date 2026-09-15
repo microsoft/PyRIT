@@ -1748,6 +1748,23 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             first_message=None,
         )
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the TAP identifier with its behavioral search configuration.
+
+        Returns:
+            ComponentIdentifier: The TAP identifier.
+        """
+        return self._create_identifier(
+            params={
+                "tree_width": self._configuration.tree_width,
+                "tree_depth": self._configuration.tree_depth,
+                "branching_factor": self._configuration.branching_factor,
+                "on_topic_checking_enabled": self._configuration.on_topic_checking_enabled,
+                "desired_response_prefix": self._configuration.desired_response_prefix,
+            }
+        )
+
     def _validate_context(self, *, context: TAPAttackContext) -> None:
         """
         Validate the context before execution.
