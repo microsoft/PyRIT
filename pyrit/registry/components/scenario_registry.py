@@ -18,7 +18,12 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from pyrit.models import ScenarioRunSizeEstimate, ScenarioTechniqueSummary, class_name_to_snake_case
+from pyrit.models import (
+    ScenarioDatasetSizeLimit,
+    ScenarioRunSizeEstimate,
+    ScenarioTechniqueSummary,
+    class_name_to_snake_case,
+)
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -65,6 +70,9 @@ class ScenarioMetadata(RegistryMetadata):
 
     # Default dataset names used by this scenario.
     default_datasets: tuple[str, ...] = field(kw_only=True)
+
+    # Structured default and override semantics for the dataset-size control.
+    dataset_size_limit: ScenarioDatasetSizeLimit = field(kw_only=True, default_factory=ScenarioDatasetSizeLimit)
 
     # Scenario-declared custom parameters.
     supported_parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
@@ -193,7 +201,12 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             )
             for aggregate in technique_class.get_aggregate_techniques()
         )
-        default_datasets = tuple(instance._default_dataset_config.dataset_names)
+        default_dataset_config = instance._default_dataset_config
+        default_datasets = tuple(default_dataset_config.dataset_names)
+        dataset_size_limit = self._build_dataset_size_limit(
+            default_dataset_config=default_dataset_config,
+            override_scope=instance.get_dataset_size_limit_override_scope(),
+        )
 
         return ScenarioMetadata(
             class_name=cls.__name__,
@@ -209,10 +222,45 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             aggregate_techniques=aggregate_techniques,
             aggregate_technique_expansions=aggregate_technique_expansions,
             default_datasets=default_datasets,
+            dataset_size_limit=dataset_size_limit,
             supported_parameters=supported_parameters,
             baseline_policy=instance.BASELINE_ATTACK_POLICY.value,
             include_baseline_by_default=instance.BASELINE_ATTACK_POLICY.value == "enabled",
         )
+
+    @staticmethod
+    def _build_dataset_size_limit(
+        *,
+        default_dataset_config: Any,
+        override_scope: Literal["per_dataset", "combined", "unsupported"],
+    ) -> ScenarioDatasetSizeLimit:
+        """
+        Normalize a scenario dataset configuration into form-level limit semantics.
+
+        Returns:
+            ScenarioDatasetSizeLimit: The structured default and override scopes.
+        """
+        dataset_names = tuple(default_dataset_config.dataset_names)
+        caps_by_dataset = default_dataset_config.size_caps_by_dataset()
+        configured_caps = [caps for caps in caps_by_dataset.values() if caps]
+        if not configured_caps:
+            return ScenarioDatasetSizeLimit(default_scope="none", override_scope=override_scope)
+
+        expected_source_count = max(1, len(set(dataset_names)))
+        if all(len(caps) == 1 for caps in configured_caps) and len(configured_caps) == expected_source_count:
+            cap_signatures = {(caps[0][1], caps[0][2]) for caps in configured_caps}
+            if len(cap_signatures) == 1:
+                count, configured_on = next(iter(cap_signatures))
+                default_scope: Literal["per_dataset", "combined"] = (
+                    "per_dataset" if configured_on == "dataset" else "combined"
+                )
+                return ScenarioDatasetSizeLimit(
+                    default_scope=default_scope,
+                    default_count=count,
+                    override_scope=override_scope,
+                )
+
+        return ScenarioDatasetSizeLimit(default_scope="heterogeneous", override_scope=override_scope)
 
     async def create_and_estimate_async(
         self,
