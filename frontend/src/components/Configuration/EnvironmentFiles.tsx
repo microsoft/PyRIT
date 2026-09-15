@@ -16,7 +16,15 @@ interface StatusMessage {
   text: string
 }
 
-export default function EnvironmentFiles() {
+interface EnvironmentFilesProps {
+  onUnsavedChangesChange: (hasUnsavedChanges: boolean) => void
+  onRequestDiscardChanges: (discardChanges: () => void) => void
+}
+
+export default function EnvironmentFiles({
+  onUnsavedChangesChange,
+  onRequestDiscardChanges,
+}: EnvironmentFilesProps) {
   const styles = useConfigurationStyles()
   const [files, setFiles] = useState<EnvironmentFileContent[]>([])
   const [savedContents, setSavedContents] = useState<Record<string, string>>({})
@@ -96,9 +104,28 @@ export default function EnvironmentFiles() {
 
   const selectedFile = files.find((file) => file.id === selectedId) ?? null
   const selectedFileIsLoaded = selectedFile ? loadedIds.has(selectedFile.id) : false
-  const hasUnsavedChanges = selectedFile && selectedFileIsLoaded
+  const selectedFileHasUnsavedChanges = selectedFile && selectedFileIsLoaded
     ? selectedFile.content !== savedContents[selectedFile.id]
     : false
+  const hasUnsavedChanges = files.some((file) =>
+    loadedIds.has(file.id) && file.content !== savedContents[file.id],
+  )
+
+  useEffect(() => {
+    onUnsavedChangesChange(hasUnsavedChanges)
+  }, [hasUnsavedChanges, onUnsavedChangesChange])
+
+  const handleReload = (): void => {
+    const reload = (): void => {
+      setReloadCount((count: number) => count + 1)
+    }
+
+    if (hasUnsavedChanges) {
+      onRequestDiscardChanges(reload)
+      return
+    }
+    reload()
+  }
 
   const handleContentChange = (content: string): void => {
     if (!selectedId) return
@@ -169,7 +196,7 @@ export default function EnvironmentFiles() {
               className={styles.action}
               icon={<ArrowSyncRegular />}
               disabled={saving || loadingContent}
-              onClick={() => setReloadCount((count) => count + 1)}
+              onClick={handleReload}
             >
               Reload
             </Button>
@@ -177,7 +204,7 @@ export default function EnvironmentFiles() {
               appearance="primary"
               className={styles.action}
               icon={<SaveRegular />}
-              disabled={saving || loadingContent || selectedFile?.read_only || !hasUnsavedChanges}
+              disabled={saving || loadingContent || selectedFile?.read_only || !selectedFileHasUnsavedChanges}
               onClick={() => void handleSave()}
             >
               {saving ? 'Saving...' : 'Save'}
@@ -195,7 +222,7 @@ export default function EnvironmentFiles() {
             <Field
               className={styles.editorField}
               label={selectedFile.path}
-              hint={hasUnsavedChanges ? 'Unsaved changes' : 'No unsaved changes'}
+              hint={selectedFileHasUnsavedChanges ? 'Unsaved changes' : 'No unsaved changes'}
             >
               <DotenvEditor
                 value={selectedFile.content}

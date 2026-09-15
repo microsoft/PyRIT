@@ -1,12 +1,43 @@
-import { render, screen } from '@testing-library/react'
+import { useState } from 'react'
+
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { Button, FluentProvider, Tab, TabList, webLightTheme } from '@fluentui/react-components'
+
+import { mockJsdomLayout } from '@/test-utils/mockJsdomLayout'
 
 import ConfirmDialog from './ConfirmDialog'
+
+mockJsdomLayout()
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
 )
+
+function DialogWithTabs() {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <>
+      <TabList defaultSelectedValue="configuration">
+        <Tab value="configuration">Configuration</Tab>
+        <Tab value="environment">Environment</Tab>
+      </TabList>
+      <textarea aria-label="Draft" />
+      <Button onClick={() => setOpen(true)}>Open dialog</Button>
+      <ConfirmDialog
+        open={open}
+        title="Discard draft?"
+        onConfirm={() => setOpen(false)}
+        onCancel={() => setOpen(false)}
+      >
+        The draft will be lost.
+        <span hidden><button type="button">Hidden action</button></span>
+        <button type="button" disabled>Unavailable action</button>
+      </ConfirmDialog>
+    </>
+  )
+}
 
 describe('ConfirmDialog', () => {
   const defaultProps = {
@@ -83,5 +114,21 @@ describe('ConfirmDialog', () => {
 
     expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Keep' })).toBeInTheDocument()
+  })
+
+  it('should focus the cancel action each time a dialog opens alongside tabs', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><DialogWithTabs /></TestWrapper>)
+
+    await user.type(screen.getByRole('textbox', { name: 'Draft' }), 'Unsaved draft')
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await user.click(screen.getByRole('button', { name: 'Open dialog' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus())
+
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(await screen.findByRole('textbox', { name: 'Draft' })).toHaveValue('Unsaved draft')
+    }
   })
 })

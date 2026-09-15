@@ -85,6 +85,13 @@ npm run test:e2e:headed   # Run with visible browser windows (requires display)
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
 
+For Jest suites that exercise Fluent UI dialog focus, call `mockJsdomLayout()`
+from `src/test-utils/mockJsdomLayout.ts` at suite scope. It supplies the minimal
+layout signals JSDOM lacks and restores them after each test. Hidden and detached
+elements remain excluded. Await role queries after dialog transitions, including
+when returning to background controls. This is not a layout engine; use Playwright
+for assertions about element dimensions or positioning.
+
 ### E2E Test Modes
 
 E2E flow tests run in two modes controlled by Playwright projects and an environment variable:
