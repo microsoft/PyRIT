@@ -12,23 +12,29 @@ Converters can be:
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
+import asyncio
 import base64
 import mimetypes
 import uuid
+from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
+
+import aiofiles
+import aiofiles.os
 
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.models.converters import (
-    ConverterCatalogEntry,
     ConverterCatalogResponse,
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
     ConverterPreviewResponse,
+    ConverterTypeEntry,
+    ConverterTypeResponse,
     CreateConverterRequest,
-    CreateConverterResponse,
     PreviewStep,
 )
 from pyrit.backend.services.media_persistence import persist_media_value_async
@@ -38,6 +44,10 @@ from pyrit.registry.components import ConverterRegistry
 
 if TYPE_CHECKING:
     from pyrit.converter import ConverterResult
+
+
+_OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
+_DEFAULT_UPLOAD_EXTENSION = ".bin"
 
 
 class ConverterService:
@@ -51,6 +61,8 @@ class ConverterService:
     def __init__(self) -> None:
         """Initialize the converter service."""
         self._registry = ConverterRegistry.get_registry_singleton()
+        self._upload_directory = TemporaryDirectory(prefix="pyrit-registry-uploads-")
+        self._upload_path = Path(self._upload_directory.name).resolve()
 
     def _build_instance_from_object(self, *, converter_id: str, converter_obj: Any) -> ConverterInstance:
         """
@@ -61,11 +73,29 @@ class ConverterService:
         Returns:
             ConverterInstance with metadata derived from the object's identifier.
         """
-        return converter_object_to_instance(converter_id, converter_obj)
+        metadata = self._registry.get_registered_class_metadata(converter_obj.__class__.__name__)
+        description = metadata.class_description or None if metadata else None
+        return converter_object_to_instance(
+            converter_id=converter_id,
+            converter_obj=converter_obj,
+            is_llm_based=metadata.is_llm_based if metadata else False,
+            description=description,
+        )
 
     # ========================================================================
     # Public API Methods
     # ========================================================================
+
+    async def close_async(self) -> None:
+        """Remove this backend's temporary inputs after requests have stopped."""
+        owned_names = [
+            entry.name
+            for entry in self._registry.instances.get_all_instances()
+            if any(path.is_relative_to(self._upload_path) for path in self._get_owned_artifact_paths(entry.metadata))
+        ]
+        await asyncio.to_thread(self._upload_directory.cleanup)
+        for name in owned_names:
+            self._registry.instances.unregister(name)
 
     async def list_converters_async(self) -> ConverterInstanceListResponse:
         """
@@ -80,7 +110,7 @@ class ConverterService:
         ]
         return ConverterInstanceListResponse(items=items)
 
-    async def list_converter_catalog_async(self) -> ConverterCatalogResponse:
+    async def list_converter_types_async(self) -> ConverterTypeResponse:
         """
         List all available converter types from the converter class registry.
 
@@ -89,20 +119,42 @@ class ConverterService:
         frontend), not this service.
 
         Returns:
-            ConverterCatalogResponse containing all available converter classes.
+            ConverterTypeResponse containing all available converter classes.
         """
-        items: list[ConverterCatalogEntry] = [
-            ConverterCatalogEntry(
+        items: list[ConverterTypeEntry] = [
+            ConverterTypeEntry(
                 converter_type=metadata.class_name,
                 supported_input_types=list(metadata.supported_input_types),
                 supported_output_types=list(metadata.supported_output_types),
-                parameters=[p for p in metadata.parameters if p.is_string_coercible],
+                parameters=[p for p in metadata.parameters if p.is_string_coercible or p.reference is not None],
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )
             for metadata in self._registry.get_all_registered_class_metadata()
         ]
 
+        return ConverterTypeResponse(items=items)
+
+    async def list_converter_catalog_async(self) -> ConverterCatalogResponse:
+        """
+        Return the legacy projection used by the current chat UI.
+
+        LEGACY COMPATIBILITY: ``catalog`` is the pre-registry name for ``types``, and
+        the whole concept goes away -- there is no ``ConverterCatalog`` class and
+        nothing new should use this. It differs from ``list_converter_types_async`` in
+        exactly one way: it drops registry-reference parameters, which the un-migrated
+        chat UI cannot render. Delete this method, the ``/catalog`` route, and the
+        ``ConverterCatalog*`` aliases together when the chat-migration layer of this
+        stack switches to ``/converters/types``.
+
+        Returns:
+            ConverterCatalogResponse: The scalar-only legacy projection.
+        """
+        types_response = await self.list_converter_types_async()
+        items = [
+            entry.model_copy(update={"parameters": [p for p in entry.parameters if p.is_string_coercible]})
+            for entry in types_response.items
+        ]
         return ConverterCatalogResponse(items=items)
 
     async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
@@ -126,7 +178,22 @@ class ConverterService:
         """
         return self._registry.instances.get(converter_id)
 
-    async def create_converter_async(self, *, request: CreateConverterRequest) -> CreateConverterResponse:
+    async def delete_converter_async(self, *, converter_id: str) -> bool:
+        """
+        Delete a converter instance by registry name.
+
+        Returns:
+            bool: True when an instance was removed, otherwise False.
+        """
+        entry = self._registry.instances.get_entry(converter_id)
+        if entry is None:
+            return False
+
+        owned_paths = self._get_owned_artifact_paths(entry.metadata)
+        await self._remove_owned_artifacts_async(paths=owned_paths)
+        return self._registry.instances.unregister(converter_id) is not None
+
+    async def create_converter_async(self, *, request: CreateConverterRequest) -> ConverterInstance:
         """
         Create a new converter instance from API request.
 
@@ -137,26 +204,36 @@ class ConverterService:
             request: The create converter request with type and params.
 
         Returns:
-            CreateConverterResponse with the new converter's details.
+            ConverterInstance with the new converter's details.
 
         Raises:
-            ValueError: If the converter type is not found.
+            ValueError: If the converter type is not found or the registry name is
+                unavailable.
         """
-        converter_id = str(uuid.uuid4())
-
-        # Persist data-URI params to disk (frontend concern), then delegate
-        # construction (incl. param coercion and reference resolution) to the
-        # converter registry.
         if request.type not in self._registry:
             raise ValueError(f"Converter type '{request.type}' not found")
-        params = await self._persist_data_uri_params_async(converter_type=request.type, params=request.params)
-        converter_obj = self._registry.create_instance(request.type, **params)
-        self._registry.instances.register(converter_obj, name=converter_id)
-
-        return CreateConverterResponse(
-            converter_id=converter_id,
+        # LEGACY COMPATIBILITY: The current chat UI omits the name. Remove this
+        # generated fallback when that UI sends an explicit registry name.
+        converter_id = request.name or f"compat_{uuid.uuid4().hex}"
+        self._registry.instances.validate_name_available(converter_id)
+        params, owned_paths = await self._persist_data_uri_params_async(
             converter_type=request.type,
-            display_name=request.display_name,
+            params=request.params,
+        )
+        try:
+            converter_obj = self._registry.create_named_instance(
+                name=converter_id,
+                type_name=request.type,
+                params=params,
+                registry_metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
+            )
+        except (Exception, asyncio.CancelledError):
+            await self._remove_owned_artifacts_async(paths=owned_paths)
+            raise
+
+        return self._build_instance_from_object(
+            converter_id=converter_id,
+            converter_obj=converter_obj,
         )
 
     async def preview_conversion_async(self, *, request: ConverterPreviewRequest) -> ConverterPreviewResponse:
@@ -223,15 +300,19 @@ class ConverterService:
         *,
         converter_type: str,
         params: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], list[Path]]:
         """
-        Persist data-URI parameter values to disk.
+        Persist uploaded ``Path`` parameter values to managed local storage.
 
         The frontend file picker sends file contents as data URIs
-        (e.g. ``data:image/png;base64,...``). Constructor parameters typed as
-        ``Path`` or ``str`` params whose names suggest a file path receive the
-        decoded file persisted to the results store, with the value replaced
-        by the resulting file path.
+        (e.g. ``data:image/png;base64,...``). A constructor parameter typed as ``Path``
+        is therefore an *upload*: the decoded file is written to a local working
+        directory this service owns, and the client never names a server path. Every
+        ``Path`` parameter is handled the same way, so a converter opts in simply by
+        declaring the type; there is no per-converter or per-parameter table.
+
+        Inputs remain local until converter deletion or backend shutdown, even with
+        Azure-backed memory. Converter outputs still use the configured result storage.
 
         The set of constructor parameters (and their types) is sourced from the
         registry's derived ``Parameter`` metadata rather than re-introspecting the
@@ -242,45 +323,94 @@ class ConverterService:
             params (dict[str, Any]): The raw constructor params from the request.
 
         Returns:
-            dict[str, Any]: Params dict with data-URI values replaced by file paths.
+            tuple[dict[str, Any], list[Path]]: Updated parameters and the explicit
+                set of request-created files owned by the future registry entry.
+
+        Raises:
+            ValueError: If a ``Path`` value is not a valid data URI.
         """
         metadata = self._registry.get_registered_class_metadata(converter_type)
         param_types = {p.name: p.param_type for p in metadata.parameters} if metadata else {}
 
         result = dict(params)
-        for name, value in result.items():
-            if not isinstance(value, str) or not value.startswith("data:"):
-                continue
-            if name not in param_types:
-                continue
+        owned_paths: list[Path] = []
+        try:
+            for name, value in result.items():
+                if param_types.get(name) is not Path:
+                    continue
+                if value is None:
+                    continue
+                if not isinstance(value, str) or not value.startswith("data:"):
+                    raise ValueError(f"Path parameter '{name}' must be uploaded as a data URI")
 
-            # Parse data URI: data:[<mediatype>][;base64],<data>
-            header, _, payload = value.partition(",")
-            if not payload:
-                continue
-
-            # Derive extension from the MIME type in the header
-            mime_type = header.split(":")[1].split(";")[0] if ":" in header else ""
-            ext = mimetypes.guess_extension(mime_type, strict=False) if mime_type else None
-            if not ext:
-                ext = ".bin"
-
-            serializer = data_serializer_factory(
-                category="prompt-memory-entries",
-                data_type="binary_path",
-                extension=ext,
-            )
-            await serializer.save_data_async(data=base64.b64decode(payload))
-            file_path = str(serializer.value)
-
-            # The registry already unwraps Optional, so ``param_type`` is ``Path``
-            # for a ``Path | None`` constructor parameter.
-            if param_types[name] is Path:
-                result[name] = Path(file_path)
-            else:
+                content, extension = self._decode_data_uri(parameter_name=name, data_uri=value)
+                file_path = self._upload_path / f"{uuid.uuid4().hex}{extension}"
+                async with aiofiles.open(file_path, "xb") as file:
+                    owned_paths.append(file_path)
+                    await file.write(content)
                 result[name] = file_path
+        except (Exception, asyncio.CancelledError):
+            await self._remove_owned_artifacts_async(paths=owned_paths)
+            raise
 
-        return result
+        return result, owned_paths
+
+    @staticmethod
+    def _decode_data_uri(*, parameter_name: str, data_uri: str) -> tuple[bytes, str]:
+        """
+        Decode one base64 data URI into raw content and the extension to store it under.
+
+        Uploaded content is stored verbatim, whatever its type. PyRIT operators are
+        trusted and every file type is a legitimate payload: uploading an HTML file so
+        an attack can push it to a blob target is a valid operation. The only thing the
+        server decides here is the file *name*, which is generated, so a declared MIME
+        type can never influence where the upload lands. Restrictions on rendering
+        untrusted content belong to the media route that serves it back, not to storage.
+
+        Returns:
+            tuple[bytes, str]: The decoded content and its file extension.
+
+        Raises:
+            ValueError: If the value is not a base64 data URI or its payload is not
+                valid base64.
+        """
+        header, separator, payload = data_uri.partition(",")
+        media_type, _, encoding = header.removeprefix("data:").partition(";")
+        if not separator or not payload or not header.startswith("data:") or encoding.lower() != "base64":
+            raise ValueError(f"Path parameter '{parameter_name}' must be a base64 data URI")
+
+        try:
+            content = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"Path parameter '{parameter_name}' contains invalid base64 data") from exc
+
+        media_type = media_type.strip().lower()
+        extension = mimetypes.guess_extension(media_type) if media_type else None
+        return content, extension or _DEFAULT_UPLOAD_EXTENSION
+
+    @staticmethod
+    def _get_owned_artifact_paths(metadata: dict[str, Any]) -> list[Path]:
+        """
+        Read explicit artifact ownership from registry-entry metadata.
+
+        Returns:
+            list[Path]: Paths explicitly owned by the registry entry.
+        """
+        raw_paths = metadata.get(_OWNED_ARTIFACT_PATHS_KEY, [])
+        if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
+            raise ValueError("Registry entry has invalid owned artifact metadata")
+        return [Path(path) for path in raw_paths]
+
+    async def _remove_owned_artifacts_async(self, *, paths: list[Path]) -> None:
+        """Remove explicitly owned files, limited to the managed upload directory."""
+        for path in paths:
+            resolved_path = await asyncio.to_thread(path.resolve)
+            try:
+                resolved_path.relative_to(self._upload_path)
+            except ValueError as exc:
+                raise ValueError(f"Owned artifact path is outside the managed upload directory: {path}") from exc
+            with suppress(FileNotFoundError):
+                await aiofiles.os.remove(resolved_path)
 
     def _gather_converters(self, *, converter_ids: list[str]) -> list[tuple[str, str, Any]]:
         """

@@ -703,7 +703,7 @@ class TargetInitializer(PyRITInitializer):
 
         target = config.target_class(**kwargs)
         registry = TargetRegistry.get_registry_singleton()
-        registry.instances.register(target, name=config.registry_name)
+        registry.instances.register(target, name=config.registry_name, replace=True)
         if config.tags:
             registry.instances.add_tags(name=config.registry_name, tags=list(config.tags))
         if config.default_objective_target:
@@ -743,12 +743,14 @@ class TargetInitializer(PyRITInitializer):
                     primary,
                     name="adversarial_chat_primary",
                     tags=[TargetInitializerTags.DEFAULT],
+                    replace=True,
                 )
 
         registry.instances.register(
             canonical_target,
             name="adversarial_chat",
             tags=[TargetInitializerTags.DEFAULT],
+            replace=True,
         )
 
     def _auto_group_targets(self) -> None:
