@@ -83,6 +83,9 @@ export const useScenarioRunPageStyles = makeStyles({
   touchTarget: {
     ...mobileTouchTarget,
   },
+  cancelButton: {
+    minHeight: MINIMUM_TOUCH_TARGET_SIZE,
+  },
   wideButton: {
     [NARROW_VIEWPORT_QUERY]: {
       flexGrow: 1,
