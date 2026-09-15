@@ -170,12 +170,10 @@ export function conversationToMarkdown(
 }
 
 /**
- * Serialize the in-state conversation to pretty-printed JSON. The envelope
- * records the conversation id, the export timestamp, and the messages. Loading
- * placeholders are dropped, and each attachment loses its non-serializable
- * `File` handle and its source URL — that URL is a signed storage link or a
- * path on this machine, neither of which belongs in a shared file. Everything
- * else, including the rest of the attachment metadata, is preserved as-is.
+ * Serialize the in-state conversation to pretty-printed JSON. Loading
+ * placeholders are dropped, and attachments lose non-serializable `File`
+ * handles, recovery-only source values, signed storage links, and local paths.
+ * Everything else, including attachment metadata, is preserved as-is.
  */
 export function conversationToJson(
   messages: Message[],
@@ -309,15 +307,15 @@ function withoutLoadingPlaceholders(messages: Message[]): Message[] {
 function messageForExport(message: Message): Message {
   const next: Message = { ...message }
   if (message.attachments) {
-    next.attachments = message.attachments.map(attachmentWithoutFile)
+    next.attachments = message.attachments.map(attachmentForExport)
   }
   if (message.originalAttachments) {
-    next.originalAttachments = message.originalAttachments.map(attachmentWithoutFile)
+    next.originalAttachments = message.originalAttachments.map(attachmentForExport)
   }
   if (message.displayPieces) {
     next.displayPieces = message.displayPieces.map((piece) =>
       piece.type === 'media' && piece.attachment
-        ? { ...piece, attachment: attachmentWithoutFile(piece.attachment) }
+        ? { ...piece, attachment: attachmentForExport(piece.attachment) }
         : piece,
     )
   }
@@ -326,14 +324,15 @@ function messageForExport(message: Message): Message {
 
 /**
  * Strip an attachment down to what is safe to write into a shared file: the
- * `File` handle can't be serialized, and the source URL is a short-lived signed
- * storage link or an absolute path on the operator's machine, so neither
- * belongs in a document that gets mailed around. Inline `data:` values stay —
- * there the URL is the payload, not a pointer to it.
+ * `File` handle and recovery-only source metadata can't be serialized, and the
+ * source URL is a short-lived signed storage link or an absolute path on the
+ * operator's machine. Inline `data:` values stay because the URL is the payload.
  */
-function attachmentWithoutFile(attachment: MessageAttachment): MessageAttachment {
+function attachmentForExport(attachment: MessageAttachment): MessageAttachment {
   const next = { ...attachment }
   delete next.file
+  delete next.sourceValue
+  delete next.sourceDataType
   if (!next.url.startsWith('data:')) {
     next.url = ''
   }
