@@ -11,7 +11,7 @@ without any database or service dependencies.
 import os
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -56,7 +56,7 @@ def _make_attack_result(
     outcome: AttackOutcome = AttackOutcome.UNDETERMINED,
 ) -> AttackResult:
     """Create an AttackResult for mapper tests."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     effective_target_identifier = None
     if has_target:
@@ -381,7 +381,7 @@ class TestAttackResultToSummary:
 
     async def test_converters_extracted_from_identifier(self) -> None:
         """Test that converter class names are extracted into converters list."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ar = AttackResult(
             conversation_id="attack-conv",
             objective="test",
@@ -471,17 +471,32 @@ class TestAttackResultToSummary:
     async def test_last_score_is_marked_as_objective(self) -> None:
         """The summary identifies ``last_score`` as the canonical objective score."""
         ar = _make_attack_result()
-        ar.last_score = _make_score()
+        ar.automated_score = _make_score()
 
         summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
+        assert summary.automated_score is not None
         assert summary.last_score is not None
         assert summary.last_score.is_objective_score is True
         assert summary.model_dump()["last_score"]["is_objective_score"] is True
 
+    async def test_human_score_takes_last_score_precedence(self) -> None:
+        """Both attack scores are objective scores while the human score takes precedence."""
+        ar = _make_attack_result()
+        ar.automated_score = _make_score()
+        ar.human_score = _make_score()
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.automated_score is not None
+        assert summary.automated_score.is_objective_score is True
+        assert summary.human_score is not None
+        assert summary.human_score.is_objective_score is True
+        assert summary.last_score is summary.human_score
+
     async def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
         """When metadata['created_at'] is absent but ar.timestamp is set, use ar.timestamp."""
-        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        persisted_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
         ar = AttackResult(
             conversation_id="attack-1",
             objective="test",
@@ -495,8 +510,8 @@ class TestAttackResultToSummary:
 
     async def test_created_at_metadata_still_wins_over_ar_timestamp(self) -> None:
         """When both metadata['created_at'] and ar.timestamp are set, metadata wins (backward compat)."""
-        metadata_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        metadata_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
         ar = AttackResult(
             conversation_id="attack-1",
             objective="test",
@@ -510,8 +525,8 @@ class TestAttackResultToSummary:
 
     async def test_updated_at_uses_ar_timestamp_ignoring_metadata_updated_at(self) -> None:
         """``updated_at`` is the persisted ``ar.timestamp``; a stale ``metadata['updated_at']`` is ignored."""
-        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
-        stale = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=UTC)
+        stale = datetime(2020, 1, 1, 0, 0, 0, tzinfo=UTC)
         ar = AttackResult(
             conversation_id="attack-1",
             objective="test",
@@ -533,9 +548,9 @@ class TestAttackResultToSummary:
         )
         ar.timestamp = None  # type: ignore[assignment]
 
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert before <= summary.created_at <= after
 
@@ -543,7 +558,7 @@ class TestAttackResultToSummary:
         """Test that retry events on an AttackResult are inherited by the AttackSummary."""
         from pyrit.models.retry_event import RetryEvent
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ar = _make_attack_result()
         ar.retry_events = [
             RetryEvent(
@@ -692,7 +707,7 @@ class TestPyritMessagesToDto:
 
         result = await pyrit_messages_to_dto_async([msg])
 
-        # Python 3.10 returns "audio/wav", 3.11+ returns "audio/x-wav"
+        # The MIME database varies by platform.
         assert result[0].message_pieces[0].original_value_mime_type in ("audio/wav", "audio/x-wav")
         assert result[0].message_pieces[0].converted_value_mime_type == "audio/mpeg"
 

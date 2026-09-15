@@ -5,7 +5,7 @@
 Health check endpoints.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 
@@ -27,6 +27,6 @@ async def health_check_async() -> dict[str, str]:
     """
     return {
         "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "service": "pyrit-backend",
     }

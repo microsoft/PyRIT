@@ -7,6 +7,9 @@ description: |
 authors:
   - Yelim Ahn
   - Jaejin Lee
+groups:
+  - Graduate School of Data Science, Seoul National University
+  - Department of Computer Science, Seoul National University
 source: https://arxiv.org/abs/2508.01306
 parameters:
   - masked_prompt

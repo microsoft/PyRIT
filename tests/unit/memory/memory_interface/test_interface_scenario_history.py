@@ -5,7 +5,7 @@
 
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -88,7 +88,7 @@ def _make_scenario(
 
 
 def test_history_pages_descending_equal_timestamps_by_id(sqlite_instance: MemoryInterface) -> None:
-    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     scenarios = [
         _make_scenario(
             result_id=uuid.UUID(int=value),
@@ -123,7 +123,7 @@ def test_history_pages_descending_equal_timestamps_by_id(sqlite_instance: Memory
 def test_history_creation_order_is_stable_when_scenario_entry_is_rebuilt(
     sqlite_instance: MemoryInterface,
 ) -> None:
-    first_created_at = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    first_created_at = datetime(2026, 8, 7, tzinfo=UTC)
     first = _make_scenario(
         result_id=uuid.UUID(int=1),
         timestamp=first_created_at,
@@ -165,7 +165,7 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
     sqlite_instance: MemoryInterface,
     monkeypatch,
 ) -> None:
-    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     included = _make_scenario(
         result_id=uuid.UUID(int=10),
         timestamp=timestamp,
@@ -267,7 +267,7 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
 
 def test_history_aggregate_uses_latest_attempt_outcome(sqlite_instance: MemoryInterface) -> None:
     """History uses the same latest-attempt semantics as scenario run details."""
-    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     scenario = _make_scenario(
         result_id=uuid.UUID(int=18),
         timestamp=timestamp,
@@ -324,7 +324,7 @@ def test_history_aggregates_ignore_unplanned_units_and_remap_hash_seeds(
     sqlite_instance: MemoryInterface,
 ) -> None:
     """Plan-aware aggregation folds hash-attributed attempts into their planned unit."""
-    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     planned = make_scenario_result(
         id=uuid.UUID(int=20),
         scenario_name="PlannedScenario",
@@ -415,7 +415,7 @@ def test_history_aggregates_keep_explicitly_attributed_seed_groups_separate(
     sqlite_instance: MemoryInterface,
 ) -> None:
     """An attempt carrying an unplanned seed group ID is never remapped onto a planned unit."""
-    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     scenario = make_scenario_result(
         id=uuid.UUID(int=40),
         scenario_name="AttributedScenario",
@@ -474,7 +474,7 @@ def test_history_aggregates_keep_explicitly_attributed_seed_groups_separate(
 
 def test_history_aggregates_tolerate_malformed_plan_shapes(sqlite_instance: MemoryInterface) -> None:
     """Malformed plan collections fall back to legacy aggregation instead of breaking history."""
-    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     scenario = make_scenario_result(
         id=uuid.UUID(int=50),
         scenario_name="MalformedPlanScenario",
@@ -526,7 +526,7 @@ def test_history_aggregates_fill_zero_for_runs_without_attempts(sqlite_instance:
 
 
 def test_unique_scenario_labels_are_grouped_for_filter_options(sqlite_instance: MemoryInterface) -> None:
-    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     scenarios = [
         _make_scenario(
             result_id=uuid.UUID(int=index),

@@ -432,7 +432,7 @@ async def test_receive_events_soft_finishes_after_audio_done(target):
         yield _scripted_event("response.output_audio.delta", delta=base64.b64encode(b"audio").decode("ascii"))
         yield _scripted_event("response.output_audio_transcript.delta", delta="partial")
         yield _scripted_event("response.output_audio.done")
-        raise asyncio.TimeoutError
+        raise TimeoutError
 
     mock_connection.__aiter__.side_effect = _events
 
@@ -549,7 +549,7 @@ async def test_receive_events_ignores_late_events_from_soft_finished_response(ta
             delta=base64.b64encode(b"first").decode("ascii"),
         )
         yield _scripted_event("response.audio.done", response_id="response-1")
-        raise asyncio.TimeoutError
+        raise TimeoutError
 
     async def _second_response_events() -> AsyncIterator[Any]:
         yield _scripted_event(
@@ -631,12 +631,12 @@ async def test_receive_events_timeout_before_audio_done_raises(target):
     target._existing_conversation[conversation_id] = mock_connection
 
     async def _events():
-        raise asyncio.TimeoutError
+        raise TimeoutError
         yield  # pragma: no cover
 
     mock_connection.__aiter__.side_effect = _events
 
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(TimeoutError):
         await target.receive_events_async(conversation_id)
 
 

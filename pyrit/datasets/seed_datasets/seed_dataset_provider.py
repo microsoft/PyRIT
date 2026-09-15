@@ -222,8 +222,12 @@ class SeedDatasetProvider(ABC):
             filter_vals = getattr(criterion, field.name)
             meta_vals = getattr(metadata, field.name)
 
-            if filter_vals is None or meta_vals is None:
+            if filter_vals is None:
                 continue
+
+            # A requested axis cannot match metadata that does not declare it.
+            if meta_vals is None:
+                return False
 
             if strict_match:
                 if filter_vals - meta_vals:

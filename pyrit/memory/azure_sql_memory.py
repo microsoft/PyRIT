@@ -6,7 +6,7 @@ import struct
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy import (
@@ -194,9 +194,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         if self._auth_token_expiry is None:
             raise RuntimeError("Auth token expiry not initialized; call _create_auth_token() first")
-        if datetime.now(timezone.utc) >= datetime.fromtimestamp(
-            float(self._auth_token_expiry), tz=timezone.utc
-        ) - timedelta(minutes=5):
+        if datetime.now(UTC) >= datetime.fromtimestamp(float(self._auth_token_expiry), tz=UTC) - timedelta(minutes=5):
             logger.info("Refreshing Microsoft Entra ID access token...")
             self._create_auth_token()
 

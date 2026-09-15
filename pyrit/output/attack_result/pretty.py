@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from colorama import Back, Fore, Style
@@ -233,7 +233,7 @@ class PrettyAttackResultPrinter(_PrettyPrinterMixin, AttackResultPrinterBase):
         Returns:
             str: The rendered footer text.
         """
-        timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
         lines: list[str] = []
         lines.append("\n")
         lines.append(self._format_colored("─" * self._width, Style.DIM, Fore.WHITE))

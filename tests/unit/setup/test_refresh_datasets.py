@@ -5,7 +5,7 @@
 Unit tests for the RefreshDatasets initializer.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -146,7 +146,7 @@ class TestRefreshDatasetsStaleness:
     """Staleness threshold behavior against a real SQLite memory."""
 
     async def _seed(self, memory: MemoryInterface, *, dataset_name: str, days_old: int) -> None:
-        date_added = datetime.now(tz=timezone.utc) - timedelta(days=days_old)
+        date_added = datetime.now(tz=UTC) - timedelta(days=days_old)
         seed = SeedPrompt(value=f"v-{dataset_name}", dataset_name=dataset_name, data_type="text", date_added=date_added)
         await memory.add_seeds_to_memory_async(seeds=[seed], added_by="seeding")
 
@@ -166,7 +166,7 @@ class TestRefreshDatasetsStaleness:
         assert initializer._is_stale(memory=sqlite_instance, dataset_name="old", days=30) is True
 
     async def test_cutoff_is_inclusive(self, sqlite_instance: MemoryInterface) -> None:
-        fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
         at_cutoff = fixed_now - timedelta(days=30)
         just_newer = at_cutoff + timedelta(microseconds=1)
 

@@ -11,8 +11,8 @@ import pytest
 from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
-    _generate_next_message_async,
     SimulatedConversationResult,
+    _generate_next_message_async,
     generate_simulated_conversation_async,
 )
 from pyrit.models import (
@@ -309,7 +309,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     outcome=AttackOutcome.SUCCESS,
                     executed_turns=3,
-                    last_score=mock_score,
+                    automated_score=mock_score,
                 )
             )
             mock_attack_class.return_value = mock_attack
