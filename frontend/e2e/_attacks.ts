@@ -1,10 +1,10 @@
-import type { AddMessageResponse, BackendMessage, TargetResponseOutcome } from "@/types";
+import type { AddMessageResponse, BackendMessage, TargetResponseStatus } from "@/types";
 
 export function makeAddMessageResponse(
   attackResultId: string,
   conversationId: string,
   messages: BackendMessage[],
-  targetResponseOutcome: TargetResponseOutcome | null = null,
+  targetResponseStatus: TargetResponseStatus | null = null,
 ): AddMessageResponse {
   return {
     attack: {
@@ -23,7 +23,7 @@ export function makeAddMessageResponse(
     messages: {
       conversation_id: conversationId,
       messages,
-      target_response_outcome: targetResponseOutcome,
+      target_response_status: targetResponseStatus,
     },
   };
 }

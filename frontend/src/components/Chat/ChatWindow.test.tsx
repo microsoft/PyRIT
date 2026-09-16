@@ -12,7 +12,7 @@ import {
   TargetCapabilities,
   TargetInfo,
   TargetInstance,
-  TargetResponseOutcome,
+  TargetResponseStatus,
 } from "../../types";
 import { attacksApi, convertersApi, scoresApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
@@ -113,7 +113,7 @@ const mockTarget: TargetInstance = makeTarget({
 function makeTextResponse(text: string) {
   return {
     messages: {
-      target_response_outcome: {
+      target_response_status: {
         response_error: "none",
         request_turn_number: 0,
         response_turn_number: 1,
@@ -143,7 +143,7 @@ function makeTextResponse(text: string) {
 function makeImageResponse() {
   return {
     messages: {
-      target_response_outcome: {
+      target_response_status: {
         response_error: "none",
         request_turn_number: 0,
         response_turn_number: 1,
@@ -174,7 +174,7 @@ function makeImageResponse() {
 function makeAudioResponse() {
   return {
     messages: {
-      target_response_outcome: {
+      target_response_status: {
         response_error: "none",
         request_turn_number: 0,
         response_turn_number: 1,
@@ -205,7 +205,7 @@ function makeAudioResponse() {
 function makeVideoResponse() {
   return {
     messages: {
-      target_response_outcome: {
+      target_response_status: {
         response_error: "none",
         request_turn_number: 0,
         response_turn_number: 1,
@@ -236,7 +236,7 @@ function makeVideoResponse() {
 function makeMultiModalResponse() {
   return {
     messages: {
-      target_response_outcome: {
+      target_response_status: {
         response_error: "none",
         request_turn_number: 0,
         response_turn_number: 1,
@@ -278,10 +278,10 @@ function makeErrorResponse(
   description: string,
   failedRequestTurnNumber = 0,
   hasConverters = false
-): { messages: { target_response_outcome: TargetResponseOutcome; messages: BackendMessage[] } } {
+): { messages: { target_response_status: TargetResponseStatus; messages: BackendMessage[] } } {
   return {
     messages: {
-      target_response_outcome: {
+      target_response_status: {
         response_error: errorType,
         request_turn_number: failedRequestTurnNumber,
         response_turn_number: failedRequestTurnNumber + 1,
@@ -1852,7 +1852,7 @@ describe("ChatWindow Integration", () => {
           ...earlierFailure.messages.messages,
           ...latestFailure.messages.messages,
         ],
-        target_response_outcome: latestFailure.messages.target_response_outcome,
+        target_response_status: latestFailure.messages.target_response_status,
       };
       const props = {
         ...defaultProps,
@@ -1895,7 +1895,7 @@ describe("ChatWindow Integration", () => {
       mockedAttacksApi.getMessages.mockResolvedValue({
         conversation_id: "conv-error-free",
         messages: safePrefix,
-        target_response_outcome: prefixLength
+        target_response_status: prefixLength
           ? { response_error: "none", request_turn_number: 0, response_turn_number: 1 }
           : null,
       });
@@ -2072,7 +2072,7 @@ describe("ChatWindow Integration", () => {
     const failed = makeErrorResponse("processing", "Processing failed", 2);
     mockedAttacksApi.getMessages.mockResolvedValue({
       messages: [...blocked.messages.messages, ...failed.messages.messages],
-      target_response_outcome: failed.messages.target_response_outcome,
+      target_response_status: failed.messages.target_response_status,
     });
     mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
     mockedAttacksApi.createConversation.mockResolvedValue({
@@ -2315,7 +2315,7 @@ describe("ChatWindow Integration", () => {
     const staleLoadResponse = {
       conversation_id: "conv-processing-load-race",
       messages: [],
-      target_response_outcome: null,
+      target_response_status: null,
     };
     let resolveLoad: ((value: typeof staleLoadResponse) => void) | undefined;
     let resolveSend: (value: typeof processingResponse) => void = () => {};
@@ -2595,14 +2595,14 @@ describe("ChatWindow Integration", () => {
   });
 
   it.each<PromptResponseError | null>(["none", "blocked", "empty", "unknown", null])(
-    "should clear live recovery when a refresh reports outcome %s",
+    "should clear live recovery when a refresh reports response status %s",
     async (latestError) => {
       const user = userEvent.setup();
       const failedResponse = makeErrorResponse("processing", "The target could not process this message.", 2);
       const latestResponse = makeErrorResponse(latestError ?? "none", "", 4).messages;
       mockedAttacksApi.getConversations.mockResolvedValue({
-        main_conversation_id: "conv-outcome-refresh",
-        conversations: [{ conversation_id: "conv-outcome-refresh", message_count: 2 }],
+        main_conversation_id: "conv-status-refresh",
+        conversations: [{ conversation_id: "conv-status-refresh", message_count: 2 }],
       });
       mockedAttacksApi.getMessages.mockResolvedValueOnce({ messages: [] } as never);
       mockedAttacksApi.addMessage.mockResolvedValue(failedResponse as never);
@@ -2615,9 +2615,9 @@ describe("ChatWindow Integration", () => {
         <TestWrapper>
           <ChatWindow
             {...defaultProps}
-            attackResultId="ar-outcome-refresh"
-            conversationId="conv-outcome-refresh"
-            activeConversationId="conv-outcome-refresh"
+            attackResultId="ar-status-refresh"
+            conversationId="conv-status-refresh"
+            activeConversationId="conv-status-refresh"
             relatedConversationCount={1}
           />
         </TestWrapper>
@@ -2629,7 +2629,7 @@ describe("ChatWindow Integration", () => {
       expect(await screen.findByRole("button", { name: /edit in clean conversation/i })).toBeEnabled();
 
       mockedAttacksApi.getMessages.mockResolvedValue({
-        conversation_id: "conv-outcome-refresh",
+        conversation_id: "conv-status-refresh",
         messages: [
           ...failedResponse.messages.messages,
           ...latestResponse.messages.map((message) => (
@@ -2638,10 +2638,10 @@ describe("ChatWindow Integration", () => {
               : message
           )),
         ],
-        target_response_outcome: latestError === null ? null : latestResponse.target_response_outcome,
+        target_response_status: latestError === null ? null : latestResponse.target_response_status,
       });
       await user.click(
-        await screen.findByRole("button", { name: "Select conversation conv-outcome-refresh" })
+        await screen.findByRole("button", { name: "Select conversation conv-status-refresh" })
       );
 
       await waitFor(() => {
@@ -2665,7 +2665,7 @@ describe("ChatWindow Integration", () => {
       const failedResponse = makeErrorResponse("processing", "The target could not process this message.", 2);
       const newerResponse = makeErrorResponse("processing", "A later response failed.", requestTurn).messages;
       newerResponse.messages[1].turn_number = responseTurn;
-      newerResponse.target_response_outcome.response_turn_number = responseTurn;
+      newerResponse.target_response_status.response_turn_number = responseTurn;
       mockedAttacksApi.getConversations.mockResolvedValue({
         main_conversation_id: "conv-newer-failure",
         conversations: [{ conversation_id: "conv-newer-failure", message_count: 2 }],
@@ -2706,7 +2706,7 @@ describe("ChatWindow Integration", () => {
             requestTurn !== 2 || message.role === "assistant"
           )),
         ],
-        target_response_outcome: newerResponse.target_response_outcome,
+        target_response_status: newerResponse.target_response_status,
       });
       await user.click(
         await screen.findByRole("button", { name: "Select conversation conv-newer-failure" })
@@ -2810,7 +2810,7 @@ describe("ChatWindow Integration", () => {
         ...makeErrorResponse("processing", "Earlier target failure", 0).messages.messages,
         ...failedResponse.messages.messages,
       ],
-      target_response_outcome: failedResponse.messages.target_response_outcome,
+      target_response_status: failedResponse.messages.target_response_status,
     });
     await user.click(
       await screen.findByRole("button", { name: "Select conversation conv-matching-failure" })
@@ -2825,7 +2825,7 @@ describe("ChatWindow Integration", () => {
     mockedAttacksApi.getMessages.mockResolvedValue({
       conversation_id: "conv-matching-recovery",
       messages: [],
-      target_response_outcome: null,
+      target_response_status: null,
     });
     rendered.rerender(
       <TestWrapper><ChatWindow {...props} activeConversationId="conv-matching-recovery" /></TestWrapper>
@@ -2914,7 +2914,7 @@ describe("ChatWindow Integration", () => {
     mockedAttacksApi.getMessages.mockResolvedValue({
       conversation_id: "conv-persisted-processing",
       messages: persistedMessages,
-      target_response_outcome: {
+      target_response_status: {
         response_error: "processing",
         request_turn_number: 2,
         response_turn_number: 3,
@@ -3097,7 +3097,7 @@ describe("ChatWindow Integration", () => {
         laterUser,
         laterAssistant,
       ],
-      target_response_outcome: {
+      target_response_status: {
         response_error: "none",
         request_turn_number: 2,
         response_turn_number: 3,
@@ -3160,7 +3160,7 @@ describe("ChatWindow Integration", () => {
     mockedAttacksApi.getMessages.mockResolvedValue({
       conversation_id: "conv-simulated-processing",
       messages: simulatedMessages,
-      target_response_outcome: null,
+      target_response_status: null,
     } as never);
     mockedMapper.backendMessagesToFrontend.mockReturnValue([
       {

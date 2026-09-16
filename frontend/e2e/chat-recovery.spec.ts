@@ -187,7 +187,7 @@ test.describe("Chat processing recovery @seeded", () => {
       }
       localTarget.setProcessingFailure(true);
       const first = await sendFromComposer(page, "First failed draft");
-      expect(first.messages.target_response_outcome?.response_error).toBe("processing");
+      expect(first.messages.target_response_status?.response_error).toBe("processing");
       const attackId = first.attack.attack_result_id;
       const sourceId = first.attack.conversation_id;
       const later = await request.post(`/api/attacks/${attackId}/messages`, {
@@ -201,7 +201,7 @@ test.describe("Chat processing recovery @seeded", () => {
       });
       expect(later.status()).toBe(200);
       const laterResponse: AddMessageResponse = await later.json();
-      expect(laterResponse.messages.target_response_outcome?.response_error).toBe("processing");
+      expect(laterResponse.messages.target_response_status?.response_error).toBe("processing");
       await page.reload();
       const recover = page.getByRole("button", { name: "Edit in clean conversation", exact: true });
       await expect(recover).toBeEnabled();
@@ -230,19 +230,19 @@ test.describe("Chat processing recovery @seeded", () => {
       const history: ConversationMessagesResponse = await historyResponse.json();
       expect(history.messages).toHaveLength(keepSafePrefix ? 2 : 0);
       if (keepSafePrefix) {
-        expect(history.target_response_outcome).toEqual({
+        expect(history.target_response_status).toEqual({
           response_error: "none",
           request_turn_number: 0,
           response_turn_number: 1,
         });
       } else {
-        expect(history.target_response_outcome).toBeNull();
+        expect(history.target_response_status).toBeNull();
       }
       expect(localTarget.requestBodies).toHaveLength(keepSafePrefix ? 3 : 2);
 
       localTarget.setProcessingFailure(false);
       const sent = await sendFromComposer(page);
-      expect(sent.messages.target_response_outcome?.response_error).toBe("none");
+      expect(sent.messages.target_response_status?.response_error).toBe("none");
       const targetContext = localTarget.requestBodies[localTarget.requestBodies.length - 1];
       expect(targetContext).toContain("Latest failed draft");
       expect(targetContext).not.toContain("First failed draft");
@@ -340,7 +340,7 @@ test.describe("Chat processing recovery @seeded", () => {
       page.waitForRequest(isMessagePost),
       sendFromComposer(page),
     ]);
-    expect(first.messages.target_response_outcome?.response_error).toBe("processing");
+    expect(first.messages.target_response_status?.response_error).toBe("processing");
     const originalConverterIds = originalRequest.postDataJSON().converter_ids;
     expect(originalConverterIds).toHaveLength(1);
     const attackId = first.attack.attack_result_id;
@@ -373,7 +373,7 @@ test.describe("Chat processing recovery @seeded", () => {
         })(),
       ]);
       expect(resentRequest.postDataJSON().converter_ids).toEqual(originalConverterIds);
-      expect(sent.messages.target_response_outcome?.response_error).toBe("none");
+      expect(sent.messages.target_response_status?.response_error).toBe("none");
       const initialConverters = first.messages.messages[0].message_pieces[0].converter_identifiers;
       expect(initialConverters).toHaveLength(1);
       expect(sent.messages.messages[0].message_pieces[0].converter_identifiers).toEqual(initialConverters);

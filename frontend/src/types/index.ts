@@ -425,7 +425,7 @@ export interface BackendMessage {
   created_at: string
 }
 
-export interface TargetResponseOutcome {
+export interface TargetResponseStatus {
   response_error: PromptResponseError
   request_turn_number: number
   response_turn_number: number
@@ -434,7 +434,7 @@ export interface TargetResponseOutcome {
 export interface ConversationMessagesResponse {
   conversation_id: string
   messages: BackendMessage[]
-  target_response_outcome: TargetResponseOutcome | null
+  target_response_status: TargetResponseStatus | null
 }
 
 export interface MessagePieceRequest {

@@ -806,10 +806,10 @@ class TestGetConversationMessages:
         assert result is not None
         assert result.conversation_id == "test-id"
         assert result.messages == []
-        assert result.target_response_outcome is None
+        assert result.target_response_status is None
 
     @pytest.mark.parametrize("response_error", ["none", "processing", "blocked"])
-    async def test_get_conversation_messages_returns_latest_target_outcome(
+    async def test_get_conversation_messages_returns_latest_target_status_async(
         self,
         attack_service,
         mock_memory,
@@ -828,10 +828,10 @@ class TestGetConversationMessages:
         )
 
         assert result is not None
-        assert result.target_response_outcome is not None
-        assert result.target_response_outcome.response_error == response_error
-        assert result.target_response_outcome.request_turn_number == 2
-        assert result.target_response_outcome.response_turn_number == 3
+        assert result.target_response_status is not None
+        assert result.target_response_status.response_error == response_error
+        assert result.target_response_status.request_turn_number == 2
+        assert result.target_response_status.response_turn_number == 3
 
     async def test_get_conversation_messages_ignores_stale_processing_error(self, attack_service, mock_memory) -> None:
         """Test that a later successful response supersedes an earlier processing failure."""
@@ -849,10 +849,10 @@ class TestGetConversationMessages:
         )
 
         assert result is not None
-        assert result.target_response_outcome is not None
-        assert result.target_response_outcome.response_error == "none"
-        assert result.target_response_outcome.request_turn_number == 2
-        assert result.target_response_outcome.response_turn_number == 3
+        assert result.target_response_status is not None
+        assert result.target_response_status.response_error == "none"
+        assert result.target_response_status.request_turn_number == 2
+        assert result.target_response_status.response_turn_number == 3
 
     @pytest.mark.parametrize("latest_role", ["user", "simulated_assistant"])
     async def test_get_conversation_messages_ignores_non_target_latest_message(
@@ -874,7 +874,7 @@ class TestGetConversationMessages:
         )
 
         assert result is not None
-        assert result.target_response_outcome is None
+        assert result.target_response_status is None
 
     async def test_get_conversation_messages_marks_attack_objective_score(self, attack_service, mock_memory) -> None:
         """The message mapper receives the attack's canonical objective score ID."""
@@ -1621,10 +1621,10 @@ class TestAddMessage:
             error_views = [piece for piece in returned_pieces if piece.response_error == "processing"]
             assert len(error_views) == 1
             assert "APIConnectionError" in error_views[0].converted_value
-            assert result.messages.target_response_outcome is not None
-            assert result.messages.target_response_outcome.response_error == "processing"
-            assert result.messages.target_response_outcome.request_turn_number == 0
-            assert result.messages.target_response_outcome.response_turn_number == 1
+            assert result.messages.target_response_status is not None
+            assert result.messages.target_response_status.response_error == "processing"
+            assert result.messages.target_response_status.request_turn_number == 0
+            assert result.messages.target_response_status.response_turn_number == 1
 
     async def test_add_message_reraises_when_send_fails_without_stored_error_piece(
         self, attack_service, mock_memory

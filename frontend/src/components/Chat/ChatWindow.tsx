@@ -128,21 +128,21 @@ function getPersistedProcessingRecovery(
   conversationId: string,
   response: ConversationMessagesResponse,
 ): RecoverableSendDraft | undefined {
-  const outcome = response.target_response_outcome
-  if (outcome?.response_error !== RETRYABLE_TARGET_RESPONSE_ERROR) {
+  const responseStatus = response.target_response_status
+  if (responseStatus?.response_error !== RETRYABLE_TARGET_RESPONSE_ERROR) {
     return undefined
   }
 
   const failedRequest = response.messages.find(
     (message) => (
       message.role === 'user'
-      && message.turn_number === outcome.request_turn_number
+      && message.turn_number === responseStatus.request_turn_number
     ),
   )
   const errorMessageIndex = response.messages.findIndex(
     (message) => (
       message.role === 'assistant'
-      && message.turn_number === outcome.response_turn_number
+      && message.turn_number === responseStatus.response_turn_number
     ),
   )
   if (!failedRequest || errorMessageIndex < 0) {
@@ -152,9 +152,9 @@ function getPersistedProcessingRecovery(
   const originalDraft = backendMessageToOriginalDraft(failedRequest)
   return {
     conversationId,
-    failedRequestTurnNumber: outcome.request_turn_number,
-    failedResponseTurnNumber: outcome.response_turn_number,
-    historyCutoffIndex: getRecoveryHistoryCutoff(response.messages, outcome.request_turn_number),
+    failedRequestTurnNumber: responseStatus.request_turn_number,
+    failedResponseTurnNumber: responseStatus.response_turn_number,
+    historyCutoffIndex: getRecoveryHistoryCutoff(response.messages, responseStatus.request_turn_number),
     errorMessageIndex,
     originalValue: originalDraft.content,
     attachments: (originalDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
@@ -716,33 +716,33 @@ export default function ChatWindow({
       const response = await attacksApi.addMessage(currentAttackResultId, addMessageRequest)
       onAttackChange?.(response.attack)
 
-      const targetResponseOutcome = response.messages.target_response_outcome
-      const status: ChatSendOutcome['status'] = targetResponseOutcome?.response_error === RETRYABLE_TARGET_RESPONSE_ERROR
+      const targetResponseStatus = response.messages.target_response_status
+      const status: ChatSendOutcome['status'] = targetResponseStatus?.response_error === RETRYABLE_TARGET_RESPONSE_ERROR
         ? 'retryable_failure'
-        : targetResponseOutcome?.response_error && targetResponseOutcome.response_error !== 'none'
+        : targetResponseStatus?.response_error && targetResponseStatus.response_error !== 'none'
           ? 'non_retryable_failure'
           : 'sent'
       const backendMessages = backendMessagesToFrontend(response.messages.messages)
 
-      if (targetResponseOutcome?.response_error === RETRYABLE_TARGET_RESPONSE_ERROR) {
+      if (targetResponseStatus?.response_error === RETRYABLE_TARGET_RESPONSE_ERROR) {
         const errorMessageIndex = response.messages.messages.findIndex(
           (message) => (
             message.role === 'assistant'
-            && message.turn_number === targetResponseOutcome.response_turn_number
+            && message.turn_number === targetResponseStatus.response_turn_number
           ),
         )
         if (errorMessageIndex < 0) {
-          throw new Error('Target response outcome did not match an assistant message.')
+          throw new Error('Target response status did not match an assistant message.')
         }
         setRecoverableSends((currentRecoveries) => ({
           ...currentRecoveries,
           [effectiveConvId]: {
             conversationId: effectiveConvId,
-            failedRequestTurnNumber: targetResponseOutcome.request_turn_number,
-            failedResponseTurnNumber: targetResponseOutcome.response_turn_number,
+            failedRequestTurnNumber: targetResponseStatus.request_turn_number,
+            failedResponseTurnNumber: targetResponseStatus.response_turn_number,
             historyCutoffIndex: getRecoveryHistoryCutoff(
               response.messages.messages,
-              targetResponseOutcome.request_turn_number,
+              targetResponseStatus.request_turn_number,
             ),
             errorMessageIndex,
             originalValue,

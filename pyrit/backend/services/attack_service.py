@@ -46,7 +46,7 @@ from pyrit.backend.models.attacks import (
     MessagePieceRequest,
     MessageView,
     PrependedMessageRequest,
-    TargetResponseOutcome,
+    TargetResponseStatus,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
@@ -82,8 +82,8 @@ from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 logger = logging.getLogger(__name__)
 
 
-def _get_target_response_outcome(messages: list[MessageView]) -> TargetResponseOutcome | None:
-    """Return outcome metadata when the conversation ends with a real target response."""
+def _get_latest_target_response_status(messages: list[MessageView]) -> TargetResponseStatus | None:
+    """Return error metadata when the conversation ends with a real target response."""
     latest_response = messages[-1] if messages else None
     if not latest_response or latest_response.role != "assistant":
         return None
@@ -96,7 +96,7 @@ def _get_target_response_outcome(messages: list[MessageView]) -> TargetResponseO
         (piece.response_error for piece in latest_response.message_pieces if piece.response_error != "none"),
         "none",
     )
-    return TargetResponseOutcome(
+    return TargetResponseStatus(
         response_error=response_error,
         request_turn_number=request.turn_number,
         response_turn_number=latest_response.turn_number,
@@ -365,7 +365,7 @@ class AttackService:
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
             messages=backend_messages,
-            target_response_outcome=_get_target_response_outcome(backend_messages),
+            target_response_status=_get_latest_target_response_status(backend_messages),
         )
 
     async def create_attack_async(self, *, request: CreateAttackRequest) -> CreateAttackResponse:

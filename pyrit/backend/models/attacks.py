@@ -300,12 +300,12 @@ class AttackSummary(AttackResult):
 # ============================================================================
 
 
-class TargetResponseOutcome(BaseModel):
-    """Outcome metadata for the latest real target response."""
+class TargetResponseStatus(BaseModel):
+    """Error status and turn identifiers for the latest real target response."""
 
     response_error: PromptResponseError = Field(
         ...,
-        description="Error category reported by the latest target response, or 'none' when it succeeded",
+        description="Error category recorded for the latest target response, or 'none' if no piece reports an error",
     )
     request_turn_number: int = Field(..., description="Turn number of the user request sent to the target")
     response_turn_number: int = Field(..., description="Turn number of the target's assistant response")
@@ -316,10 +316,10 @@ class ConversationMessagesResponse(BaseModel):
 
     conversation_id: str = Field(..., description="Conversation identifier")
     messages: list[MessageView] = Field(default_factory=list, description="All messages in order")
-    target_response_outcome: TargetResponseOutcome | None = Field(
+    target_response_status: TargetResponseStatus | None = Field(
         default=None,
         description=(
-            "Outcome of the latest real assistant response and its associated user request. "
+            "Error status of the latest real assistant response and its associated user request. "
             "None when the conversation does not end with a target response."
         ),
     )
@@ -647,8 +647,9 @@ class AddMessageResponse(BaseModel):
     Response after adding a message.
 
     Returns the attack metadata and all messages. If send=True was used, the new
-    assistant response will be in the messages list. Check response_error
-    on the assistant's message pieces if the target returned an error.
+    assistant response will be in the messages list. Check messages.target_response_status
+    for its error category and associated user turn. HTTP success does not imply
+    error-free target processing.
     """
 
     attack: AttackSummary = Field(..., description="Updated attack metadata")

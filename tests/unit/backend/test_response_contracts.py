@@ -21,7 +21,7 @@ from pyrit.backend.models.attacks import (
     MessagePieceView,
     MessageView,
     ScoreView,
-    TargetResponseOutcome,
+    TargetResponseStatus,
 )
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -157,13 +157,13 @@ class TestMessageViewContract:
 
 
 class TestConversationMessagesResponseContract:
-    """JSON contract for target response outcome metadata."""
+    """JSON contract for target response status metadata."""
 
-    def test_dump_has_target_response_outcome(self) -> None:
-        """Test that target outcome and turn linkage are serialized for clients."""
+    def test_dump_has_target_response_status(self) -> None:
+        """Test that target response status and turn linkage are serialized for clients."""
         response = ConversationMessagesResponse(
             conversation_id="conv-1",
-            target_response_outcome=TargetResponseOutcome(
+            target_response_status=TargetResponseStatus(
                 response_error="processing",
                 request_turn_number=2,
                 response_turn_number=3,
@@ -172,17 +172,17 @@ class TestConversationMessagesResponseContract:
 
         dumped = response.model_dump(mode="json")
 
-        assert dumped["target_response_outcome"] == {
+        assert dumped["target_response_status"] == {
             "response_error": "processing",
             "request_turn_number": 2,
             "response_turn_number": 3,
         }
 
-    def test_dump_has_null_outcome_without_target_response(self) -> None:
+    def test_dump_has_null_status_without_target_response(self) -> None:
         """Test that conversations without a target response explicitly serialize null."""
         response = ConversationMessagesResponse(conversation_id="conv-1")
 
-        assert response.model_dump(mode="json")["target_response_outcome"] is None
+        assert response.model_dump(mode="json")["target_response_status"] is None
 
 
 class TestAttackSummaryContract:
