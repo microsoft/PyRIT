@@ -8,7 +8,7 @@ import asyncio
 import base64
 import hashlib
 import tempfile
-import time
+import uuid
 import wave
 from mimetypes import guess_type
 from pathlib import Path
@@ -344,14 +344,13 @@ class DataTypeSerializer(abc.ABC):
         if not self.data_sub_directory:
             raise RuntimeError("Data sub directory not set")
 
-        ticks = int(time.time() * 1_000_000)
         if self._memory.results_path:
             results_path = str(self._memory.results_path)
         else:
             from pyrit.common.path import DB_DATA_PATH
 
             results_path = str(DB_DATA_PATH)
-        file_name = file_name if file_name else str(ticks)
+        file_name = file_name if file_name else str(uuid.uuid4())
         file_suffix = Path(file_name).suffix
         if file_suffix.casefold() == f".{self.file_extension}".casefold():
             file_name = file_name[: -len(file_suffix)]
