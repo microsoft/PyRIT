@@ -32,7 +32,7 @@ class ImageOverlayConverter(Converter):
     def __init__(
         self,
         *,
-        base_image: Path,
+        base_image: Path | str,
         position: tuple[int, int] = (0, 0),
         overlay_size: tuple[int, int] | None = None,
         opacity: float = 1.0,
@@ -41,7 +41,7 @@ class ImageOverlayConverter(Converter):
         Initialize the converter with base image and placement parameters.
 
         Args:
-            base_image (Path): File path of the base image onto which overlays will be placed.
+            base_image (Path | str): Local file path or Azure Blob URL of the base image.
             position (tuple[int, int]): (x, y) pixel coordinates on the base image where
                 the top-left corner of the overlay will be placed. Defaults to (0, 0).
             overlay_size (tuple[int, int] | None): Optional (width, height) to resize the

@@ -6,6 +6,7 @@ Tests for the merged ``ConverterRegistry`` (buildable catalog + instance contain
 and its introspection helpers.
 """
 
+from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -114,6 +115,21 @@ def registry():
 # ---------------------------------------------------------------------------
 # Instance container (reached via the ``instances`` property)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("converter_type", "parameter_name"),
+    [("AddImageVideoConverter", "video_path"), ("ImageOverlayConverter", "base_image")],
+)
+@pytest.mark.parametrize(
+    "source",
+    [Path("input.png"), "input.png", "https://account.blob.core.windows.net/container/input.png"],
+)
+def test_registry_preserves_path_or_str_inputs(
+    registry: ConverterRegistry, converter_type: str, parameter_name: str, source: Path | str
+) -> None:
+    instance = registry.create_instance(converter_type, **{parameter_name: source})
+    assert instance.get_identifier().params[parameter_name] == str(source)
 
 
 class TestConverterRegistrySingleton:

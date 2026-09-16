@@ -186,7 +186,7 @@ class TestListConverterCatalog:
 
         video_entry = next(item for item in result.items if item.converter_type == "AddImageVideoConverter")
         video_path_param = next(parameter for parameter in video_entry.parameters if parameter.name == "video_path")
-        assert video_path_param.type_name == "str"
+        assert video_path_param.type_name == "Path | str"
         assert all(parameter.name != "output_path" for parameter in video_entry.parameters)
 
     async def test_types_include_registry_reference_params(self) -> None:
@@ -231,7 +231,6 @@ class TestListConverterCatalog:
             ("AddImageTextConverter", "font_name"),
             ("AddTextImageConverter", "font_name"),
             ("ColloquialWordswapConverter", "wordswap_path"),
-            ("ImageOverlayConverter", "base_image"),
             ("ImagePromptStyleConverter", "filter_path"),
             ("PDFConverter", "existing_pdf"),
             ("TransparencyAttackConverter", "benign_image_path"),
@@ -245,6 +244,20 @@ class TestListConverterCatalog:
         entry = next(item for item in result.items if item.converter_type == converter_type)
         parameter = next(item for item in entry.parameters if item.name == parameter_name)
         assert parameter.is_path is True
+
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter_name"),
+        [("AddImageVideoConverter", "video_path"), ("ImageOverlayConverter", "base_image")],
+    )
+    async def test_types_include_path_or_str_parameters(self, converter_type: str, parameter_name: str) -> None:
+        service = ConverterService()
+
+        result = await service.list_converter_types_async()
+
+        entry = next(item for item in result.items if item.converter_type == converter_type)
+        parameter = next(item for item in entry.parameters if item.name == parameter_name)
+        assert parameter.type_name == "Path | str"
+        assert parameter.is_path_or_str is True
 
 
 class TestGetConverter:
@@ -452,6 +465,80 @@ class TestDeleteConverter:
 class TestPersistDataUriParams:
     """Tests for ConverterService._persist_data_uri_params_async (registry-metadata driven)."""
 
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter_name", "mime_type", "extension"),
+        [
+            ("AddImageVideoConverter", "video_path", "video/mp4", ".mp4"),
+            ("ImageOverlayConverter", "base_image", "image/png", ".png"),
+        ],
+    )
+    async def test_create_with_path_or_str_upload(
+        self,
+        upload_service: ConverterService,
+        converter_type: str,
+        parameter_name: str,
+        mime_type: str,
+        extension: str,
+    ) -> None:
+        content = b"uploaded content"
+        response = await upload_service.create_converter_async(
+            request=CreateConverterRequest(
+                name="uploaded",
+                type=converter_type,
+                params={parameter_name: _make_data_uri(mime_type=mime_type, content=content)},
+            )
+        )
+
+        entry = upload_service._registry.instances.get_entry(response.converter_id)
+        assert entry is not None
+        path = Path(entry.instance.get_identifier().params[parameter_name])
+        assert path.parent == upload_service._upload_path
+        assert path.suffix == extension
+        assert path.read_bytes() == content
+        assert entry.metadata["owned_artifact_paths"] == [str(path)]
+        assert await upload_service.delete_converter_async(converter_id=response.converter_id)
+        assert not path.exists()
+
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter_name", "extension"),
+        [("AddImageVideoConverter", "video_path", "mp4"), ("ImageOverlayConverter", "base_image", "png")],
+    )
+    async def test_create_with_path_or_str_url(
+        self, upload_service: ConverterService, converter_type: str, parameter_name: str, extension: str
+    ) -> None:
+        url = f"https://account.blob.core.windows.net/container/input.{extension}"
+        response = await upload_service.create_converter_async(
+            request=CreateConverterRequest(name="remote", type=converter_type, params={parameter_name: url})
+        )
+
+        entry = upload_service._registry.instances.get_entry(response.converter_id)
+        assert entry is not None
+        assert entry.instance.get_identifier().params[parameter_name] == url
+        assert entry.metadata["owned_artifact_paths"] == []
+        assert list(upload_service._upload_path.iterdir()) == []
+        assert await upload_service.delete_converter_async(converter_id=response.converter_id)
+
+    @pytest.mark.parametrize("value", [r"C:\server\input.mp4", "input.mp4", "https://example.org/input.mp4", 123])
+    async def test_path_or_str_rest_rejects_non_upload_non_blob_values(
+        self, upload_service: ConverterService, value: object
+    ) -> None:
+        with pytest.raises(ValueError, match="data URI or supplied as an Azure Blob URL"):
+            await upload_service.create_converter_async(
+                request=CreateConverterRequest(
+                    name="invalid", type="AddImageVideoConverter", params={"video_path": value}
+                )
+            )
+        assert upload_service._registry.instances.get_entry("invalid") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_plain_string_does_not_enable_upload_handling(self, upload_service: ConverterService) -> None:
+        value = _make_data_uri(mime_type="text/plain", content=b"literal suffix")
+        result, owned_paths = await upload_service._persist_data_uri_params_async(
+            converter_type="SuffixAppendConverter", params={"suffix": value}
+        )
+        assert result == {"suffix": value}
+        assert owned_paths == []
+
     async def test_persist_data_uri_materializes_path_in_managed_local_directory(
         self, upload_service: ConverterService
     ) -> None:
@@ -485,7 +572,6 @@ class TestPersistDataUriParams:
         result, owned_paths = await service._persist_data_uri_params_async(
             converter_type="ColloquialWordswapConverter", params=params
         )
-        assert result["wordswap_path"] == owned_paths[0]
         assert result["wordswap_path"] == owned_paths[0]
         assert owned_paths[0].read_bytes() == b"hello"
 

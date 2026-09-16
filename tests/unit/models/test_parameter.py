@@ -5,7 +5,7 @@
 
 from enum import Enum
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Union
 
 import pytest
 from pydantic import ValidationError
@@ -178,6 +178,54 @@ class TestParameterSerialization:
         parameter = Parameter(name="input_path", description="d", param_type=Path | None)
 
         assert parameter.is_path is True
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [Path | str, str | Path, Path | str | None, str | Path | None, Union[str, Path]],  # noqa: UP007
+)
+def test_path_or_str_contract_round_trip(annotation: object) -> None:
+    parameter = Parameter(name="source", description="d", param_type=annotation)
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+    url = "https://account.blob.core.windows.net/container/input.png?versionid=123"
+    path = Path("input.png")
+
+    for candidate in (parameter, restored):
+        candidate.validate()
+        assert candidate.is_path is False
+        assert candidate.is_path_or_str is True
+        assert candidate.is_string_coercible is True
+        assert candidate.type_name == "Path | str"
+        assert candidate.is_list is False
+        assert candidate.coerce_value(url) == url
+        assert candidate.coerce_value(path) is path
+        assert candidate.coerce_value("input.png") == "input.png"
+        with pytest.raises(ValueError, match="expects a Path or str"):
+            candidate.coerce_value(123)
+
+
+@pytest.mark.parametrize("annotation", [str, Path, Path | int, str | int, Path | str | int, list[Path | str]])
+def test_path_or_str_does_not_match_other_types(annotation: object) -> None:
+    parameter = Parameter(name="source", description="d", param_type=annotation)
+    assert parameter.is_path_or_str is False
+
+
+def test_optional_path_or_str_accepts_none() -> None:
+    parameter = Parameter(name="source", description="d", param_type=Path | str | None)
+    assert parameter.coerce_value(None) is None
+
+
+def test_list_path_or_str_contract_round_trip() -> None:
+    parameter = Parameter(name="sources", description="d", param_type=list[Path | str])
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+    values = [Path("input.png"), "https://account.blob.core.windows.net/container/input.png"]
+
+    for candidate in (parameter, restored):
+        candidate.validate()
+        assert candidate.type_name == "list[Path | str]"
+        assert candidate.is_list is True
+        assert candidate.is_string_coercible is False
+        assert candidate.coerce_value(values) == values
 
 
 class TestIsScalarParamType:
