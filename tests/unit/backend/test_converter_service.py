@@ -178,6 +178,17 @@ class TestListConverterCatalog:
         caesar_param = next(p for p in caesar_entry.parameters if p.name == "caesar_offset")
         assert caesar_param.type_name == "int"
 
+    async def test_catalog_exposes_video_input_without_output_path(self) -> None:
+        """The video converter accepts a local path or URL but no caller-controlled destination."""
+        service = ConverterService()
+
+        result = await service.list_converter_catalog_async()
+
+        video_entry = next(item for item in result.items if item.converter_type == "AddImageVideoConverter")
+        video_path_param = next(parameter for parameter in video_entry.parameters if parameter.name == "video_path")
+        assert video_path_param.type_name == "str"
+        assert all(parameter.name != "output_path" for parameter in video_entry.parameters)
+
     async def test_types_include_registry_reference_params(self) -> None:
         """Type entries surface target references for registry-backed selection."""
         service = ConverterService()
@@ -212,17 +223,6 @@ class TestListConverterCatalog:
         path_param = next(param for param in transparency_entry.parameters if param.name == "benign_image_path")
         assert path_param.required is True
         assert path_param.type_name == "Path"
-
-    async def test_every_advertised_file_input_is_a_path_parameter(self) -> None:
-        """Converter file inputs are declared as ``Path`` so REST treats them as uploads."""
-        service = ConverterService()
-
-        result = await service.list_converter_types_async()
-
-        video_entry = next(item for item in result.items if item.converter_type == "AddImageVideoConverter")
-        video_param = next(param for param in video_entry.parameters if param.name == "video_path")
-        assert video_param.param_type is Path
-
 
 class TestGetConverter:
     """Tests for ConverterService.get_converter method."""
@@ -693,6 +693,31 @@ class TestPreviewConversion:
         assert result.converted_value == "encoded_value"
         assert len(result.steps) == 1
         assert result.steps[0].converter_id == "conv-1"
+
+    @pytest.mark.parametrize(
+        ("value", "resolved_value"),
+        [
+            ("https://example.test/image.png", "https://example.test/image.png"),
+            ("/api/media?path=%2Ftmp%2Fimage.png", "/tmp/image.png"),
+        ],
+    )
+    async def test_preview_conversion_resolves_reference_without_persistence(
+        self, value: str, resolved_value: str
+    ) -> None:
+        """Remote and local media references bypass serializer persistence."""
+        service = ConverterService()
+        request = ConverterPreviewRequest(
+            original_value=value,
+            original_value_data_type="image_path",
+            converter_ids=[],
+        )
+
+        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as factory:
+            result = await service.preview_conversion_async(request=request)
+
+        assert result.original_value == value
+        assert result.converted_value == resolved_value
+        factory.assert_not_called()
 
     async def test_preview_conversion_chains_multiple_converters(self) -> None:
         """Test that preview chains multiple converters."""

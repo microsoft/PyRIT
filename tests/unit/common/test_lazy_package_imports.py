@@ -77,6 +77,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "pyrit.converter.audio_echo_converter",
     ),
     (
+        "pyrit.converter",
+        "PinyinConverter",
+        "pyrit.converter.pinyin_converter",
+        "pypinyin",
+    ),
+    (
         "pyrit.datasets",
         "SeedDatasetProvider",
         "pyrit.datasets.seed_datasets.seed_dataset_provider",

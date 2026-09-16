@@ -133,6 +133,7 @@ class HarmCategory(StrEnum):
                 "racism": [cls.REPRESENTATIONAL, cls.HATE_SPEECH],
                 "religious discrimination": [cls.REPRESENTATIONAL, cls.HATE_SPEECH],
                 "sexism": [cls.REPRESENTATIONAL, cls.HATE_SPEECH],
+                "selfharm": [cls.SELF_HARM],  # Azure Content Safety's SelfHarm category.
                 "sexual": [cls.SEXUAL_CONTENT],
                 "sexual content": [cls.SEXUAL_CONTENT],
                 "sexual violence": [cls.SEXUAL_CONTENT, cls.VIOLENT_CONTENT],

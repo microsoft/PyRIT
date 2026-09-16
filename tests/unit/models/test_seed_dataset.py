@@ -63,6 +63,29 @@ def test_seed_dataset_with_metadata():
     assert ds.authors == ["author1"]
 
 
+@pytest.mark.parametrize("metadata_key", ["harm_categories", "authors", "groups"])
+@pytest.mark.parametrize(
+    ("defaults", "seed_value", "expected"),
+    [
+        (None, "", []),
+        ([], "", []),
+        (["dataset"], "", ["dataset"]),
+        (None, [""], [""]),
+        (["dataset"], [""], ["dataset", ""]),
+        ([""], "", [""]),
+        ([""], [""], [""]),
+        (["dataset", ""], ["", "seed", "dataset"], ["dataset", "", "seed"]),
+    ],
+)
+def test_seed_dataset_list_metadata_empty_strings(
+    *, metadata_key: str, defaults: list[str] | None, seed_value: str | list[str], expected: list[str]
+) -> None:
+    ds = SeedDataset.model_validate({metadata_key: defaults, "seeds": [{"value": "hello", metadata_key: seed_value}]})
+
+    assert getattr(ds.seeds[0], metadata_key) == expected
+    assert getattr(ds, metadata_key) == defaults
+
+
 def test_seed_dataset_objective_seeds():
     ds = SeedDataset(seeds=[{"value": "objective text", "seed_type": "objective"}])
     assert len(ds.seeds) == 1

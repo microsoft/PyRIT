@@ -1,9 +1,9 @@
 import type { ReactElement } from 'react'
 
-import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { FluentProvider, useFocusFinders, webLightTheme } from '@fluentui/react-components'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, useLocation, useNavigate } from 'react-router'
+import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 'react-router'
 
 import { configurationApi, initializersApi } from '@/services/api'
 
@@ -28,11 +28,23 @@ jest.mock('@/services/api', () => ({
 
 const mockedConfigurationApi = jest.mocked(configurationApi)
 const mockedInitializersApi = jest.mocked(initializersApi)
+const originalRequest = globalThis.Request
 
-// Fluent UI dialogs can render slowly in JSDOM under full test load.
-jest.setTimeout(60_000)
+class RouterTestRequest {
+  readonly url: string
+  readonly method: string
+  readonly signal: AbortSignal
+
+  constructor(input: string | URL, init?: { method?: string, signal?: AbortSignal | null }) {
+    this.url = String(input)
+    this.method = init?.method ?? 'GET'
+    this.signal = init?.signal ?? new AbortController().signal
+  }
+}
 
 function RouterProbe(): ReactElement {
+  // Keep Fluent focus management mounted across routes, like the app shell.
+  useFocusFinders()
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -40,24 +52,66 @@ function RouterProbe(): ReactElement {
     <>
       <output aria-label="Current URL">{location.pathname}{location.search}</output>
       <button type="button" onClick={() => void navigate(-1)}>Go back</button>
+      <button type="button" onClick={() => void navigate('/scanner')}>Go to scanner</button>
     </>
   )
 }
 
-function renderPage(initialPath = '/config'): void {
+function renderPage(
+  initialPath = '/config',
+  previousEntries: string[] = [],
+): ReturnType<typeof createMemoryRouter> {
+  const router = createMemoryRouter([
+    {
+      path: '/config',
+      element: (
+        <>
+          <main>
+            <Configuration />
+          </main>
+          <RouterProbe />
+        </>
+      ),
+    },
+    {
+      path: '*',
+      element: (
+        <>
+          <h1>Other page</h1>
+          <RouterProbe />
+        </>
+      ),
+    },
+  ], {
+    initialEntries: [...previousEntries, initialPath],
+    initialIndex: previousEntries.length,
+  })
+
   render(
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={[initialPath]}>
-        <main>
-          <Configuration />
-        </main>
-        <RouterProbe />
-      </MemoryRouter>
+      <RouterProvider router={router} />
     </FluentProvider>,
   )
+  return router
 }
 
 describe('Configuration', () => {
+  beforeAll(() => {
+    Object.defineProperty(globalThis, 'Request', {
+      configurable: true,
+      writable: true,
+      value: RouterTestRequest,
+    })
+  })
+
+  afterAll(() => {
+    Object.defineProperty(globalThis, 'Request', {
+      configurable: true,
+      writable: true,
+      value: originalRequest,
+    })
+  })
+
   beforeEach(() => {
     jest.clearAllMocks()
     mockedConfigurationApi.getContent.mockResolvedValue({
@@ -228,20 +282,10 @@ describe('Configuration', () => {
       { selector: 'label' },
     )).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Add initializer' }))
-    const dialog = await screen.findByRole(
-      'dialog',
-      { name: 'Add custom initializer' },
-      { timeout: 15_000 },
-    )
-    const nameInput = await within(dialog).findByRole(
-      'textbox',
-      { name: /Initializer name/ },
-      { timeout: 15_000 },
-    )
+    const dialog = await screen.findByRole('dialog', { name: 'Add custom initializer' })
+    const nameInput = within(dialog).getByRole('textbox', { name: /Initializer name/ })
     await user.type(nameInput, 'new_custom')
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Python source' }), {
-      target: { value: 'class NewCustom: pass' },
-    })
+    await user.type(within(dialog).getByRole('textbox', { name: 'Python source' }), 'class NewCustom: pass')
     await user.click(within(dialog).getByRole('button', { name: 'Add' }))
 
     await waitFor(() => {
@@ -250,6 +294,36 @@ describe('Configuration', () => {
         script_content: 'class NewCustom: pass',
       })
     })
+  })
+
+  it('should keep the add initializer dialog accessible after modal housekeeping', async () => {
+    jest.useFakeTimers()
+    try {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      renderPage()
+
+      await user.click(screen.getByRole('tab', { name: 'Custom Initializers' }))
+      expect(await screen.findByText(
+        'C:/Users/test/.pyrit/custom_initializers/custom_target.py',
+        { selector: 'label' },
+      )).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+
+      // Tabster defers its modal aria-hidden update by 250 ms.
+      await act(async () => {
+        jest.advanceTimersByTime(250)
+      })
+
+      const dialog = screen.getByRole('dialog', { name: 'Add custom initializer' })
+      expect(within(dialog).getByRole('textbox', { name: /Initializer name/ })).toHaveFocus()
+      expect(within(dialog).getByRole('button', { name: 'Add' })).toBeDisabled()
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog', { name: 'Add custom initializer' })).not.toBeInTheDocument()
+    } finally {
+      cleanup()
+      jest.runOnlyPendingTimers()
+      jest.useRealTimers()
+    }
   })
 
   it('should show configured initializers without a runtime apply action', async () => {
@@ -294,6 +368,115 @@ describe('Configuration', () => {
 
     expect(screen.getByRole('tab', { name: 'PyRIT Configuration', selected: true })).toBeInTheDocument()
     expect(await screen.findByLabelText('Configuration YAML')).toBeInTheDocument()
+  })
+
+  it('should keep configuration edits when tab navigation is cancelled and discard them when confirmed', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    const editor = await screen.findByLabelText('Configuration YAML')
+    await user.clear(editor)
+    await user.type(editor, 'operator: unsaved\n')
+    await user.click(screen.getByRole('tab', { name: 'Environment & Secrets' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(/^\/config$/)
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByLabelText('Configuration YAML')).toHaveValue('operator: unsaved\n')
+
+    await user.click(await screen.findByRole('tab', { name: 'Environment & Secrets' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
+    expect(await screen.findByLabelText('Environment file contents')).toBeInTheDocument()
+
+    await user.click(await screen.findByRole('tab', { name: 'PyRIT Configuration' }))
+    expect(await screen.findByLabelText('Configuration YAML')).toHaveValue('operator: alice\n')
+  })
+
+  it('should guard environment edits when changing configuration tabs', async () => {
+    const user = userEvent.setup()
+    renderPage('/config?tab=environment')
+
+    const editor = await screen.findByLabelText('Environment file contents')
+    await user.clear(editor)
+    await user.type(editor, 'API_KEY=unsaved\n')
+    await user.click(screen.getByRole('tab', { name: 'Initializers' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByLabelText('Environment file contents')).toHaveValue('API_KEY=unsaved\n')
+
+    await user.click(await screen.findByRole('tab', { name: 'Initializers' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
+    expect(await screen.findByTestId('configured-initializer-row-0')).toBeInTheDocument()
+  })
+
+  it('should guard application navigation and browser history', async () => {
+    const user = userEvent.setup()
+    renderPage('/config', ['/'])
+
+    const editor = await screen.findByLabelText('Configuration YAML')
+    await user.type(editor, '# unsaved')
+    await user.click(screen.getByRole('button', { name: 'Go to scanner' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(/^\/config$/)
+
+    await user.click(await screen.findByRole('button', { name: 'Go back' }))
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
+    expect(await screen.findByRole('heading', { name: 'Other page' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Current URL')).toHaveTextContent(/^\/$/)
+  })
+
+  it('should request browser confirmation before unloading unsaved changes', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    const editor = await screen.findByLabelText('Configuration YAML')
+    await user.type(editor, '# unsaved')
+    const event = new Event('beforeunload', { cancelable: true })
+
+    expect(window.dispatchEvent(event)).toBe(false)
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('should guard reloading unsaved configuration content', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    const editor = await screen.findByLabelText('Configuration YAML')
+    await user.type(editor, '# unsaved')
+    await user.click(screen.getByRole('button', { name: 'Reload' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByLabelText('Configuration YAML')).toHaveValue('operator: alice\n# unsaved')
+    expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(1)
+
+    await user.click(await screen.findByRole('button', { name: 'Reload' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
+    await waitFor(() => expect(mockedConfigurationApi.getContent).toHaveBeenCalledTimes(2))
+    expect(await screen.findByLabelText('Configuration YAML')).toHaveValue('operator: alice\n')
+  })
+
+  it('should guard reloading an unsaved environment file', async () => {
+    const user = userEvent.setup()
+    renderPage('/config?tab=environment')
+
+    const editor = await screen.findByLabelText('Environment file contents')
+    await user.type(editor, '# unsaved')
+    await user.click(screen.getByRole('button', { name: 'Reload' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByLabelText('Environment file contents')).toHaveValue('API_KEY=value\n# unsaved')
+    expect(mockedConfigurationApi.listEnvironmentFiles).toHaveBeenCalledTimes(1)
+
+    await user.click(await screen.findByRole('button', { name: 'Reload' }))
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
+    await waitFor(() => expect(mockedConfigurationApi.listEnvironmentFiles).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByLabelText('Environment file contents')).toHaveValue('API_KEY=value\n'))
   })
 
 })

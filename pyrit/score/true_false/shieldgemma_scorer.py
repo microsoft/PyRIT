@@ -7,9 +7,9 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, SeedPrompt
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Observation, Score, ScoringExpectation, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
 from pyrit.score.response_handler import CallableResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -26,6 +26,8 @@ from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from pyrit.score.observation import _ObservationEvidence
 
 _SHIELDGEMMA_DATA_PATH = SCORER_SEED_PROMPT_PATH / "shieldgemma"
 _DEFAULT_PROMPT_ONLY_PATH = _SHIELDGEMMA_DATA_PATH / "shieldgemma_prompt.yaml"
@@ -137,6 +139,7 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
     """
 
     SCORE_CATEGORY: ClassVar[str] = "shieldgemma"
+    RESPONSE_PARSER_FINGERPRINT: ClassVar[str] = "shieldgemma-response-v1"
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
@@ -224,6 +227,7 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
             message_role=self._message_role,
             prompt_template=self._prompt_template,
         )
+        parser_scope = str(message_piece.original_prompt_id or message_piece.id)
         unvalidated_score = await _run_llm_scoring_async(
             chat_target=self._prompt_target,
             system_prompt=None,
@@ -231,15 +235,17 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
                 parser=partial(
                     parse_shieldgemma_response,
                     guideline_name=self._guideline.name,
-                    scope=str(message_piece.id),
-                )
+                    scope=parser_scope,
+                ),
+                parser_fingerprint=self.RESPONSE_PARSER_FINGERPRINT,
             ),
             value=request_prompt.value,
             data_type="text",
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             category=self.SCORE_CATEGORY,
-            objective=objective,
+            observation_metadata={"shieldgemma_scope": parser_scope},
         )
         return [
             unvalidated_score.to_score(
@@ -247,6 +253,48 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
                 score_type="true_false",
             )
         ]
+
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared ShieldGemma parsing and verdict-metadata contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained ShieldGemma judgment evidence.
+
+        Returns:
+            list[Score]: The replayed ShieldGemma score.
+        """
+        scope = observation.metadata.get("shieldgemma_scope", str(observation.payload.scored_piece_id))
+        response_handler = CallableResponseHandler(
+            parser=partial(
+                parse_shieldgemma_response,
+                guideline_name=self._guideline.name,
+                scope=scope,
+            ),
+            parser_fingerprint=self.RESPONSE_PARSER_FINGERPRINT,
+        )
+        unvalidated = _parse_judgment_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=response_handler,
+            scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
+            expectation=expectation,
+            category=self.SCORE_CATEGORY,
+        )
+        score = unvalidated.to_score(
+            score_value=unvalidated.raw_score_value.lower(),
+            score_type="true_false",
+        )
+        score.score_metadata = self._verdict_metadata(score)
+        return [score]
 
     async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         """
@@ -271,12 +319,15 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
             return scores
 
         aggregate = scores[0]
-        prefix = _metadata_prefix(guideline_name=self._guideline.name)
-        aggregate.score_metadata = {
-            **(aggregate.score_metadata or {}),
-            f"{prefix}_verdict": _VIOLATION_TOKEN if aggregate.get_value() else _COMPLIANT_TOKEN,
-        }
+        aggregate.score_metadata = self._verdict_metadata(aggregate)
         return scores
+
+    def _verdict_metadata(self, score: Score) -> dict[str, Any]:
+        prefix = _metadata_prefix(guideline_name=self._guideline.name)
+        return {
+            **(score.score_metadata or {}),
+            f"{prefix}_verdict": _VIOLATION_TOKEN if score.get_value() else _COMPLIANT_TOKEN,
+        }
 
 
 def _resolve_prompt_template(

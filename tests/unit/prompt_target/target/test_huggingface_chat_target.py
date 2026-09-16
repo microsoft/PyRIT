@@ -27,6 +27,31 @@ def is_torch_installed():
         return False
 
 
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+async def test_send_cancellation_does_not_cancel_shared_model_load(patch_central_database):
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    load_started = asyncio.Event()
+    load_release = asyncio.Event()
+
+    async def load_model_async() -> None:
+        load_started.set()
+        await load_release.wait()
+
+    shared_load = asyncio.ensure_future(load_model_async())
+    target.load_model_and_tokenizer_task = shared_load
+    wait_task = asyncio.ensure_future(target._wait_for_model_and_tokenizer_async())
+    await load_started.wait()
+
+    wait_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await wait_task
+
+    assert not shared_load.cancelled()
+    load_release.set()
+    await shared_load
+    await target._wait_for_model_and_tokenizer_async()
+
+
 # Fixture to mock get_required_value
 @pytest.fixture(autouse=True)
 def mock_get_required_value(request):
