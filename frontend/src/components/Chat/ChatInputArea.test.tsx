@@ -218,6 +218,33 @@ describe("ChatInputArea", () => {
     expect(sendButton).toBeEnabled();
   });
 
+  it("should allow draft edits while sending is disabled", async () => {
+    const user = userEvent.setup();
+    const onSend = jest.fn().mockResolvedValue(sentOutcome);
+    const rendered = render(
+      <TestWrapper>
+        <ChatInputArea {...defaultProps} onSend={onSend} sendDisabled />
+      </TestWrapper>
+    );
+    const input = screen.getByRole("textbox");
+    await user.type(input, "Draft while history loads");
+    expect(input).toBeEnabled();
+    expect(getSendButton()).toBeDisabled();
+    await user.keyboard("{Enter}");
+    await user.click(getSendButton());
+    expect(onSend).not.toHaveBeenCalled();
+    expect(input).toHaveValue("Draft while history loads");
+
+    rendered.rerender(
+      <TestWrapper>
+        <ChatInputArea {...defaultProps} onSend={onSend} sendDisabled={false} />
+      </TestWrapper>
+    );
+    await user.click(getSendButton());
+    expect(onSend).toHaveBeenCalledWith("Draft while history loads", undefined, []);
+    expect(input).toHaveValue("");
+  });
+
   it("should clear input after a successful send", async () => {
     const user = userEvent.setup();
     const onSend = jest.fn().mockResolvedValue(sentOutcome);

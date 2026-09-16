@@ -47,6 +47,7 @@ import type {
   AttackOutcome,
   AttackSummary,
   AttackTargetResolutionStatus,
+  BackendMessage,
   BackendScore,
   ChatSendOutcome,
   ConversationMessagesResponse,
@@ -72,6 +73,7 @@ interface RecoverableSendDraft {
   conversationId: string
   failedRequestTurnNumber: number
   failedResponseTurnNumber: number
+  historyCutoffIndex: number
   errorMessageIndex: number
   originalValue: string
   attachments: MessageAttachment[]
@@ -86,17 +88,40 @@ interface ConversationLoadRequest {
 }
 
 function getRecoveryDescription(draft: RecoverableSendDraft): string {
+  const historyNotice = draft.historyCutoffIndex < draft.failedRequestTurnNumber - 1
+    ? ' History from the first failed prompt onward will be left out.'
+    : ''
+  const recoveryMessage = `${CLEAN_CONVERSATION_MESSAGE}${historyNotice}`
   if (draft.source === 'live') {
-    return `${CLEAN_CONVERSATION_MESSAGE} Your prompt, attachments, and converter choices are preserved for editing.`
+    return `${recoveryMessage} Your prompt, attachments, and converter choices are preserved for editing.`
   }
 
   const restored = 'Your prompt and attachments were restored from conversation history.'
 
   if (draft.missingConverterSelections) {
-    return `${CLEAN_CONVERSATION_MESSAGE} ${restored} Converter choices could not be restored, so review them before sending.`
+    return `${recoveryMessage} ${restored} Converter choices could not be restored, so review them before sending.`
   }
 
-  return `${CLEAN_CONVERSATION_MESSAGE} ${restored} Review them before sending.`
+  return `${recoveryMessage} ${restored} Review them before sending.`
+}
+
+function getRecoveryHistoryCutoff(messages: BackendMessage[], failedRequestTurnNumber: number): number {
+  let precedingUserTurnNumber: number | undefined
+  for (const message of messages) {
+    if (message.turn_number >= failedRequestTurnNumber) {
+      break
+    }
+    if (message.role === 'user') {
+      precedingUserTurnNumber = message.turn_number
+    }
+    for (const piece of message.message_pieces) {
+      if (piece.response_error === RETRYABLE_TARGET_RESPONSE_ERROR) {
+        // Later replies can depend on the failed turn, so retain only its preceding history.
+        return (precedingUserTurnNumber ?? message.turn_number) - 1
+      }
+    }
+  }
+  return failedRequestTurnNumber - 1
 }
 
 function getPersistedProcessingRecovery(
@@ -129,6 +154,7 @@ function getPersistedProcessingRecovery(
     conversationId,
     failedRequestTurnNumber: outcome.request_turn_number,
     failedResponseTurnNumber: outcome.response_turn_number,
+    historyCutoffIndex: getRecoveryHistoryCutoff(response.messages, outcome.request_turn_number),
     errorMessageIndex,
     originalValue: originalDraft.content,
     attachments: (originalDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
@@ -449,6 +475,7 @@ export default function ChatWindow({
               [convId]: {
                 ...currentRecovery,
                 errorMessageIndex: persistedRecovery.errorMessageIndex,
+                historyCutoffIndex: persistedRecovery.historyCutoffIndex,
               },
             }
           }
@@ -537,6 +564,8 @@ export default function ChatWindow({
     if (
       !activeTarget
       || isLoadingAttack
+      || isLoadingMessages
+      || awaitingConversationLoad
       || isMutationLocked
     ) {
       return { status: 'retryable_failure', clearDraft: false }
@@ -711,6 +740,10 @@ export default function ChatWindow({
             conversationId: effectiveConvId,
             failedRequestTurnNumber: targetResponseOutcome.request_turn_number,
             failedResponseTurnNumber: targetResponseOutcome.response_turn_number,
+            historyCutoffIndex: getRecoveryHistoryCutoff(
+              response.messages.messages,
+              targetResponseOutcome.request_turn_number,
+            ),
             errorMessageIndex,
             originalValue,
             attachments: attachments.map((attachment) => ({ ...attachment })),
@@ -738,11 +771,11 @@ export default function ChatWindow({
     } catch (err) {
       const viewedConversationId = viewedConvRef.current
       const isViewingFailedConversation = viewedConversationId === sendConvId
-        || viewedConversationId === (activeConversationId ?? conversationId)
-        || (viewedConversationId == null && sendConvId !== '__pending__')
+        || (viewedConversationId == null && sendConvId === '__pending__')
 
       // Only show error in UI if user is still on this conversation
       if (isViewingFailedConversation) {
+        const hasMatchingTranscript = loadedConversationIdRef.current === sendConvId
         // Mark the viewed conversation as loaded so first-send failures do not
         // get stuck behind the "Loading conversation..." placeholder.
         if (viewedConversationId) {
@@ -771,10 +804,12 @@ export default function ChatWindow({
           },
         }
         setMessages(prev => {
-          if (prev.length > 0 && prev[prev.length - 1].isLoading) {
-            return [...prev.slice(0, -1), errorMessage]
+          // A pending navigation load may still leave a different conversation in state.
+          const failedMessages = hasMatchingTranscript ? prev : [...messages, userMessage]
+          if (failedMessages.length > 0 && failedMessages[failedMessages.length - 1].isLoading) {
+            return [...failedMessages.slice(0, -1), errorMessage]
           }
-          return [...prev, errorMessage]
+          return [...failedMessages, errorMessage]
         })
 
       }
@@ -840,13 +875,24 @@ export default function ChatWindow({
 
   const restoreRecoverableDraft = useCallback((): void => {
     if (!recoverableSend) { return }
+    const restoredMediaInputs: Record<string, string> = {}
+    for (const [pieceType, conversion] of Object.entries(recoverableSend.conversions)) {
+      if (pieceType !== 'text') {
+        restoredMediaInputs[pieceType] = conversion.originalValue
+      }
+    }
+    // Keep preserved converters valid while the restored Files are read asynchronously.
+    handleAttachmentsChange(
+      [...new Set(recoverableSend.attachments.map((attachment: MessageAttachment) => attachment.type))],
+      restoredMediaInputs,
+    )
     setPieceConversions(recoverableSend.conversions)
     inputBoxRef.current?.restoreDraft(
       recoverableSend.originalValue,
       recoverableSend.attachments,
     )
     inputBoxRef.current?.focus()
-  }, [recoverableSend])
+  }, [handleAttachmentsChange, recoverableSend])
 
   const handleRecoverProcessingError = useCallback(async (): Promise<void> => {
     if (
@@ -861,7 +907,7 @@ export default function ChatWindow({
     const supportsMultiTurn = Boolean(
       activeTarget && activeTarget.capabilities?.supports_multi_turn !== false,
     )
-    const cutoffIndex = recoverableSend.failedRequestTurnNumber - 1
+    const cutoffIndex = recoverableSend.historyCutoffIndex
     const recoveryRequest: CreateConversationRequest = supportsMultiTurn && cutoffIndex >= 0
       ? {
           source_conversation_id: recoverableSend.conversationId,
@@ -1339,6 +1385,7 @@ export default function ChatWindow({
         <ChatInputArea
           ref={inputBoxRef}
           onSend={handleSend}
+          sendDisabled={isLoadingMessages || awaitingConversationLoad}
           conversionRevisionKey={conversionRevisionKey}
           showSystemPrompt={!attackResultId}
           supportsSystemPrompt={supportsSystemPrompt}

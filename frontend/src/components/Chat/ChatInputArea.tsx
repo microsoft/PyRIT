@@ -419,6 +419,7 @@ interface ChatInputAreaProps {
   ) => Promise<ChatSendOutcome>
   conversionRevisionKey?: string
   disabled?: boolean
+  sendDisabled?: boolean
   activeTarget?: TargetInstance | null
   singleTurnLimitReached?: boolean
   onNewConversation: () => void
@@ -453,7 +454,7 @@ interface ChatInputAreaProps {
   onSystemPromptChange?: (value: string) => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, conversionRevisionKey = '', disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onClearAllConversions = () => {}, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, conversionRevisionKey = '', disabled = false, sendDisabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onClearAllConversions = () => {}, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -556,6 +557,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     if (
       (input || attachments.length > 0)
       && !disabled
+      && !sendDisabled
       && !hasUnsupportedModalities
     ) {
       const submittedInput = inputRef.current
@@ -829,7 +831,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                   appearance="primary"
                   icon={<SendRegular />}
                   onClick={() => { void handleSend() }}
-                  disabled={disabled || (!input && attachments.length === 0) || hasUnsupportedModalities}
+                  disabled={disabled || sendDisabled || (!input && attachments.length === 0) || hasUnsupportedModalities}
                   aria-label="Send message"
                   data-testid="send-message-btn"
                 />
