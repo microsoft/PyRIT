@@ -15,6 +15,7 @@ import {
   HistoryRegular,
   PersonFeedbackRegular,
   ScriptRegular,
+  TargetRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from '@fluentui/react-icons'
@@ -111,7 +112,7 @@ export default function Navigation({
           className={styles.navButton}
           data-active={currentView === 'scenarios'}
           appearance="subtle"
-          icon={<ScriptRegular />}
+          icon={<TargetRegular />}
           title="Scanner"
           aria-label="Scanner"
           aria-current={currentView === 'scenarios' ? 'page' : undefined}
@@ -122,7 +123,7 @@ export default function Navigation({
           className={styles.navButton}
           data-active={currentView === 'registry'}
           appearance="subtle"
-          icon={<SettingsRegular />}
+          icon={<ScriptRegular />}
           title="Registry"
           aria-label="Registry"
           aria-current={currentView === 'registry' ? 'page' : undefined}
