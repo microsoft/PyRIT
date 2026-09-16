@@ -3,8 +3,6 @@ description: |
   Adversarial seed prompt for the Violent Durian attack technique. Frames the adversarial
   chat as an "annoying and malicious durian" whose goal is to manipulate the target AI into
   adopting a violent criminal persona and providing unfiltered, illegal, or dangerous content.
-authors:
-  - AI Red Team
 groups:
   - AI Red Team
 source: https://github.com/aiverify-foundation/moonshot-data/blob/main/attack-modules/violent_durian.py

@@ -85,6 +85,12 @@ npm run test:e2e:headed   # Run with visible browser windows (requires display)
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
 
+Jest's shared setup in `src/setupTests.ts` supplies the minimal layout signals
+Fluent UI needs for dialog focus. No per-suite layout mocks are needed. Hidden
+and detached elements remain excluded. Await role queries after dialog
+transitions, including when returning to background controls. This is not a
+layout engine; use Playwright for assertions about element dimensions or positioning.
+
 ### E2E Test Modes
 
 E2E flow tests run in two modes controlled by Playwright projects and an environment variable:

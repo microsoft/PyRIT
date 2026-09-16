@@ -234,7 +234,10 @@ async def attack_result_to_summary_async(
     data.update(
         objective=_normalize_summary_objective(ar),
         last_response=await _summary_last_response_async(ar.last_response),
-        last_score=ScoreView.from_domain(ar.last_score, is_objective_score=True) if ar.last_score else None,
+        automated_score=(
+            ScoreView.from_domain(ar.automated_score, is_objective_score=True) if ar.automated_score else None
+        ),
+        human_score=ScoreView.from_domain(ar.human_score, is_objective_score=True) if ar.human_score else None,
         labels=labels,
         message_count=stats.message_count,
         last_message_preview=format_last_message_preview(

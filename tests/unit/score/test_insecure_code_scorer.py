@@ -38,14 +38,19 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
         objective=None,
     )
 
+    run_llm_scoring = AsyncMock(return_value=unvalidated_score)
     # Patch _memory.add_scores_to_memory to prevent sqlite errors and check for call
     with patch.object(scorer._memory, "add_scores_to_memory", new=MagicMock()) as mock_add_scores:
         with patch(
             "pyrit.score.float_scale.insecure_code_scorer._run_llm_scoring_async",
-            new=AsyncMock(return_value=unvalidated_score),
+            new=run_llm_scoring,
         ):
             # Create a message piece object
-            message = MessagePiece(role="user", original_value="sample code").to_message()
+            message = MessagePiece(
+                role="user",
+                original_value="original code",
+                converted_value="converted code",
+            ).to_message()
 
             # Call the score_async method
             scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
@@ -55,6 +60,7 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
             assert isinstance(scores[0], Score)
             assert scores[0].score_value == "0.8"
             mock_add_scores.assert_called_once_with(scores=[scores[0]])
+            assert run_llm_scoring.call_args.kwargs["value"] == "converted code"
 
 
 async def test_insecure_code_scorer_invalid_json(mock_chat_target):

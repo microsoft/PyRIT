@@ -162,7 +162,7 @@ class TestAttackSummaryContract:
         data = {name: getattr(ar, name) for name in AttackResult.model_fields}
         data.update(
             last_response=None,
-            last_score=None,
+            automated_score=None,
             labels={"env": "prod"},
             message_count=2,
             last_message_preview="hi",

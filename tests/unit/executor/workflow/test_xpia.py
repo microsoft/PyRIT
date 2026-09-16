@@ -38,7 +38,12 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
 
 def _mock_score(*, value: object, is_undetermined: bool = False) -> MagicMock:
     """Create a Score mock with the model fields used during Pydantic validation."""
-    score = MagicMock(spec=Score, scored_expectation=None, is_undetermined=is_undetermined)
+    score = MagicMock(
+        spec=Score,
+        scored_expectation=None,
+        observation_ids=[],
+        is_undetermined=is_undetermined,
+    )
     score.get_value.return_value = value
     return score
 

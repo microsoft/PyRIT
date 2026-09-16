@@ -294,6 +294,8 @@ export type AttackTargetResolutionStatus =
   | 'error'
   | 'legacy'
 
+export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
+
 export interface AttackSummary {
   attack_result_id: string
   conversation_id: string
@@ -302,12 +304,21 @@ export interface AttackSummary {
   objective: string
   target?: TargetInfo | null
   converters: string[]
-  outcome?: 'undetermined' | 'success' | 'failure' | 'error' | null
+  outcome?: AttackOutcome | null
+  automated_score?: BackendScore | null
+  human_score?: BackendScore | null
+  last_score?: BackendScore | null
+  last_response?: BackendMessagePiece | null
   last_message_preview?: string | null
   message_count: number
   related_conversation_ids: string[]
   operator?: string | null
   operation?: string | null
+  related_conversations?: Array<{
+    conversation_id: string
+    conversation_type: 'adversarial' | 'preparation' | 'pruned' | 'score' | 'converter'
+    description?: string | null
+  }>
   labels: Record<string, string>
   created_at: string
   updated_at: string
@@ -325,6 +336,11 @@ export interface CreateAttackRequest {
   prepended_conversation?: PrependedMessageRequest[]
 }
 
+export interface UpdateAttackRequest {
+  outcome?: 'undetermined' | 'success' | 'failure' | 'error'
+  objective?: string
+}
+
 export interface CreateAttackResponse {
   attack_result_id: string
   conversation_id: string
@@ -338,6 +354,7 @@ export interface BackendScore {
   id: string
   message_piece_id: string
   scorer_type: string
+  scorer_class_identifier?: ComponentIdentifier | null
   score_type: string
   score_value?: string | null
   status?: string
@@ -345,6 +362,28 @@ export interface BackendScore {
   score_category?: string[] | null
   score_rationale?: string | null
   timestamp: string
+}
+
+export interface ComponentIdentifier {
+  class_name: string
+  class_module: string
+  hash: string
+  eval_hash?: string | null
+  pyrit_version?: string
+  children?: Record<string, ComponentIdentifier | ComponentIdentifier[]>
+  attributes?: Record<string, unknown>
+  [parameter: string]: unknown
+}
+
+export interface ManualScoreInput {
+  value: boolean
+  rationale: string
+  update_attack: boolean
+}
+
+export type ManualScoreRequest = ManualScoreInput & {
+  attack_result_id: string
+  message_id: string
 }
 
 /** Score enriched with message-piece presentation fields for transcript rendering. */
