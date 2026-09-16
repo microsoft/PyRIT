@@ -71,6 +71,8 @@ print(f"[keyword] meth synthesis terms -> {hit.get_value()}")
 # - **`XXEOutputScorer`** — `<!ENTITY ... SYSTEM>` external entities, `<!DOCTYPE ...[<!ENTITY>]>` subsets.
 # - **`OpenRedirectOutputScorer`** — `redirect=//evil`, `%2f%2f` bypasses, `https://trusted@evil` userinfo confusion.
 # - **`LDAPInjectionOutputScorer`** — `*)(uid=*)` filter breaks, `)(objectClass=*)` clauses, `)|(` operator injection.
+# - **`AnsiEscapeOutputScorer`** — raw `ESC [` (CSI) and `ESC ]` (OSC) terminal control sequences, plus the C1 `U+009B`/`U+009D` introducers.
+# - **`EscapedAnsiOutputScorer`** — escaped forms such as `\x1b[`, `\033]`, `\u001b[`, `\e[`, `\x9b` that turn live once unescaped.
 #
 # Like `CredentialLeakScorer`, each ships a default `patterns` set; pass your own `patterns`
 # dict to replace it entirely.
