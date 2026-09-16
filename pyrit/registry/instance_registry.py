@@ -91,8 +91,8 @@ class InstanceRegistry(Protocol[T]):
         """Raise if ``name`` is reserved or already registered."""
         ...
 
-    def unregister(self, name: str) -> T | None:
-        """Remove and return the instance registered under ``name``, or None."""
+    def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
+        """Remove and return ``name`` when it still refers to ``expected_entry``, if supplied."""
         ...
 
     def get_entry(self, name: str) -> RegistryEntry[T] | None:
@@ -315,19 +315,23 @@ class DefaultInstanceRegistry(Generic[T]):
         if name in self._registry_items:
             raise ValueError(f"Instance '{name}' already exists")
 
-    def unregister(self, name: str) -> T | None:
+    def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
         """
         Remove a registered instance by name.
 
         Args:
             name (str): The registry name of the instance.
+            expected_entry (RegistryEntry[T] | None): When supplied, remove the
+                name only if it still refers to this exact registry entry.
 
         Returns:
-            T | None: The removed instance, or None if not found.
+            T | None: The removed instance, or None if the name is missing or now
+                refers to a different entry.
         """
-        entry = self._registry_items.pop(name, None)
-        if entry is None:
+        entry = self._registry_items.get(name)
+        if entry is None or (expected_entry is not None and entry is not expected_entry):
             return None
+        del self._registry_items[name]
         self._metadata_cache = None
         return entry.instance
 

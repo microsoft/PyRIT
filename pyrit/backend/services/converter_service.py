@@ -89,14 +89,14 @@ class ConverterService:
 
     async def close_async(self) -> None:
         """Remove this backend's temporary inputs after requests have stopped."""
-        owned_names = [
-            entry.name
+        owned_entries = [
+            entry
             for entry in self._registry.instances.get_all_instances()
             if any(path.is_relative_to(self._upload_path) for path in self._get_owned_artifact_paths(entry.metadata))
         ]
         await asyncio.to_thread(self._upload_directory.cleanup)
-        for name in owned_names:
-            self._registry.instances.unregister(name)
+        for entry in owned_entries:
+            self._registry.instances.unregister(entry.name, expected_entry=entry)
 
     async def list_converters_async(self) -> ConverterInstanceListResponse:
         """
@@ -192,7 +192,7 @@ class ConverterService:
 
         owned_paths = self._get_owned_artifact_paths(entry.metadata)
         await self._remove_owned_artifacts_async(paths=owned_paths)
-        return self._registry.instances.unregister(converter_id) is not None
+        return self._registry.instances.unregister(converter_id, expected_entry=entry) is not None
 
     async def create_converter_async(self, *, request: CreateConverterRequest) -> ConverterInstance:
         """
@@ -331,13 +331,13 @@ class ConverterService:
             ValueError: If a ``Path`` value is not a valid data URI.
         """
         metadata = self._registry.get_registered_class_metadata(converter_type)
-        param_types = {p.name: p.param_type for p in metadata.parameters} if metadata else {}
+        path_params = {parameter.name for parameter in metadata.parameters if parameter.is_path} if metadata else set()
 
         result = dict(params)
         owned_paths: list[Path] = []
         try:
             for name, value in result.items():
-                if param_types.get(name) is not Path:
+                if name not in path_params:
                     continue
                 if value is None:
                     continue

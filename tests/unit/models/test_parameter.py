@@ -105,8 +105,24 @@ class TestParameterSerialization:
         restored = Parameter.model_validate(dumped)
 
         assert dumped["reference_type"] == "target"
-        assert restored.reference == RegistryReference(component_type=ComponentType.TARGET)
+        assert dumped["type_name"] == "str"
+        assert dumped["is_list"] is False
+        assert restored.reference == RegistryReference(component_type=ComponentType.TARGET, annotation=str)
         assert restored.reference_type == "target"
+
+    def test_list_reference_shape_round_trips(self) -> None:
+        parameter = Parameter(
+            name="targets",
+            description="d",
+            reference=RegistryReference(component_type=ComponentType.TARGET, annotation=list[object]),
+        )
+
+        dumped = parameter.model_dump()
+        restored = Parameter.model_validate(dumped)
+
+        assert dumped["type_name"] == "list[str]"
+        assert dumped["is_list"] is True
+        assert restored.reference == RegistryReference(component_type=ComponentType.TARGET, annotation=list[str])
 
     def test_required_default_serializes_to_none(self) -> None:
         p = Parameter(name="mode", description="d", default=REQUIRED_VALUE, param_type=Literal["a", "b"])
@@ -157,6 +173,11 @@ class TestParameterSerialization:
         assert dumped["type_name"] == "Path"
         assert restored.param_type is Path
         assert restored.coerce_value("images/input.jpg") == Path("images/input.jpg")
+
+    def test_optional_path_is_path(self) -> None:
+        parameter = Parameter(name="input_path", description="d", param_type=Path | None)
+
+        assert parameter.is_path is True
 
 
 class TestIsScalarParamType:

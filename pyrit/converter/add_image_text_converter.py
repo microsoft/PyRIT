@@ -5,6 +5,7 @@ import base64
 import logging
 import math
 from io import BytesIO
+from pathlib import Path
 from typing import cast
 
 from PIL import Image, ImageFont
@@ -39,8 +40,8 @@ class AddImageTextConverter(_BaseImageTextConverter):
     def __init__(
         self,
         *,
-        img_to_add: str,
-        font_name: str | None = None,
+        img_to_add: Path,
+        font_name: Path | None = None,
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int | tuple[int, int] = 15,
         bounding_box: tuple[int, int, int, int] | None = None,
@@ -51,8 +52,8 @@ class AddImageTextConverter(_BaseImageTextConverter):
         Initialize the converter with the image file path and text properties.
 
         Args:
-            img_to_add (str): File path of image to add text to.
-            font_name (str | None): Path of font to use. Must be a TrueType font (.ttf).
+            img_to_add (Path): File path of image to add text to.
+            font_name (Path | None): Path of font to use. Must be a TrueType font (.ttf).
                 Defaults to None which uses Pillow's built-in default font.
             color (tuple[int, int, int]): Color to print text in, using RGB values. Defaults to (0, 0, 0).
             font_size (int | tuple[int, int]): Font size as a fixed int, or a (min, max) tuple for automatic
@@ -71,7 +72,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         """
         if not img_to_add:
             raise ValueError("Please provide valid image path")
-        if font_name is not None and not font_name.endswith(".ttf"):
+        if font_name is not None and Path(font_name).suffix.lower() != ".ttf":
             raise ValueError("The specified font must be a TrueType font with a .ttf extension")
         self._extract_font_size(font_size)
         if bounding_box is not None:
@@ -80,8 +81,8 @@ class AddImageTextConverter(_BaseImageTextConverter):
                 raise ValueError("bounding_box must have x2 > x1 and y2 > y1")
         if not math.isfinite(rotation):
             raise ValueError(f"rotation must be finite, got {rotation}")
-        self._img_to_add = img_to_add
-        self._font_name = font_name
+        self._img_to_add = str(img_to_add)
+        self._font_name = str(font_name) if font_name is not None else None
         self._font_size = self._font_size_max
         self._font_load_failed = font_name is None
         self._font = self._load_font()

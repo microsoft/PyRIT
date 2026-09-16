@@ -267,6 +267,8 @@ class TestListTargetCatalog:
         catalog_entry = next(item for item in catalog_result.items if item.target_type == "RoundRobinTarget")
         targets_parameter = next(param for param in types_entry.parameters if param.name == "targets")
         assert targets_parameter.reference_type == "target"
+        assert targets_parameter.type_name == "list[str]"
+        assert targets_parameter.is_list is True
         assert all(param.name != "targets" for param in catalog_entry.parameters)
         assert catalog_entry.parameters == [param for param in types_entry.parameters if param.is_string_coercible]
 

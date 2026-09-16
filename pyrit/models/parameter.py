@@ -74,7 +74,9 @@ class Parameter(BaseModel):
     ``reference``, when set, marks the parameter as a registry reference: its value
     is supplied *by name* and resolved to a registered instance by the registry
     layer (``Parameter`` itself never resolves references). The live reference is
-    excluded from serialization; ``reference_type`` exposes its component family.
+    excluded from serialization; ``reference_type`` exposes its component family,
+    while ``type_name`` and ``is_list`` expose whether clients supply one name or a
+    list of names.
 
     ``coerce_value`` and ``validate`` are the only public behaviors; all coercion
     branching lives behind them so callers never touch a free function.
@@ -149,14 +151,25 @@ class Parameter(BaseModel):
                 is_list=bool(data.get("is_list")),
             )
         if needs_reference:
-            data["reference"] = RegistryReference(component_type=ComponentType(data["reference_type"]))
+            data["reference"] = RegistryReference(
+                component_type=ComponentType(data["reference_type"]),
+                annotation=data.get("param_type"),
+            )
         return data
+
+    @property
+    def _display_type(self) -> Any:
+        """Wire type, where registry references are supplied as names."""
+        if self.reference is None:
+            return self.param_type
+        annotation = _unwrap_optional(self.reference.annotation)
+        return list[str] if get_origin(annotation) is list else str
 
     @computed_field
     @property
     def type_name(self) -> str:
         """Display name of the parameter's type (e.g. ``'int'``, ``'str'``, ``'list[str]'``, ``'any'``)."""
-        return _render_type_name(self.param_type)
+        return _render_type_name(self._display_type)
 
     @computed_field
     @property
@@ -168,14 +181,19 @@ class Parameter(BaseModel):
     @property
     def choices(self) -> list[str] | None:
         """Allowed values for a constrained scalar (``Literal`` / ``Enum``), or None when unconstrained."""
-        members = display_choices(self.param_type)
+        members = display_choices(self._display_type)
         return [str(member) for member in members] if members is not None else None
 
     @computed_field
     @property
     def is_list(self) -> bool:
         """True when the parameter accepts a list of values (e.g. ``list[str]``)."""
-        return get_origin(self.param_type) is list
+        return get_origin(self._display_type) is list
+
+    @property
+    def is_path(self) -> bool:
+        """Whether this is a local filesystem path parameter."""
+        return self.reference is None and _unwrap_optional(self.param_type) is Path
 
     @computed_field
     @property

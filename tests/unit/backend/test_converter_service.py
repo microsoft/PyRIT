@@ -224,6 +224,29 @@ class TestListConverterCatalog:
         assert path_param.required is True
         assert path_param.type_name == "Path"
 
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter_name"),
+        [
+            ("AddImageTextConverter", "img_to_add"),
+            ("AddImageTextConverter", "font_name"),
+            ("AddTextImageConverter", "font_name"),
+            ("ColloquialWordswapConverter", "wordswap_path"),
+            ("ImageOverlayConverter", "base_image"),
+            ("ImagePromptStyleConverter", "filter_path"),
+            ("PDFConverter", "existing_pdf"),
+            ("TransparencyAttackConverter", "benign_image_path"),
+        ],
+    )
+    async def test_local_constructor_files_use_path_parameters(self, converter_type: str, parameter_name: str) -> None:
+        service = ConverterService()
+
+        result = await service.list_converter_types_async()
+
+        entry = next(item for item in result.items if item.converter_type == converter_type)
+        parameter = next(item for item in entry.parameters if item.name == parameter_name)
+        assert parameter.is_path is True
+
+
 class TestGetConverter:
     """Tests for ConverterService.get_converter method."""
 
@@ -375,6 +398,25 @@ class TestDeleteConverter:
 
         assert await service.delete_converter_async(converter_id="missing") is False
 
+    async def test_delete_converter_preserves_replacement_registered_during_cleanup(self) -> None:
+        service = ConverterService()
+        original = Base64Converter()
+        replacement = Base64Converter()
+        service._registry.instances.register(original, name="converter")
+
+        async def replace_during_cleanup_async(*, paths: list[Path]) -> None:
+            assert paths == []
+            original_entry = service._registry.instances.get_entry("converter")
+            assert original_entry is not None
+            service._registry.instances.unregister("converter", expected_entry=original_entry)
+            service._registry.instances.register(replacement, name="converter")
+
+        with patch.object(service, "_remove_owned_artifacts_async", side_effect=replace_during_cleanup_async):
+            removed = await service.delete_converter_async(converter_id="converter")
+
+        assert removed is False
+        assert service._registry.instances.get("converter") is replacement
+
     async def test_delete_converter_removes_only_explicitly_owned_uploads(
         self, upload_service: ConverterService
     ) -> None:
@@ -435,20 +477,17 @@ class TestPersistDataUriParams:
         assert owned_paths == [result["existing_pdf"]]
         mock_factory.assert_not_called()
 
-    async def test_persist_data_uri_does_not_expand_legacy_string_path_support(self) -> None:
-        """String path parameters remain outside the managed ``Path`` upload contract."""
+    async def test_persist_data_uri_handles_optional_path_parameters(self) -> None:
         service = ConverterService()
         data_uri = _make_data_uri(mime_type="text/yaml", content=b"hello")
         params = {"wordswap_path": data_uri}
 
-        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory:
-            result, owned_paths = await service._persist_data_uri_params_async(
-                converter_type="ColloquialWordswapConverter", params=params
-            )
-
-        assert result == params
-        assert owned_paths == []
-        mock_factory.assert_not_called()
+        result, owned_paths = await service._persist_data_uri_params_async(
+            converter_type="ColloquialWordswapConverter", params=params
+        )
+        assert result["wordswap_path"] == owned_paths[0]
+        assert result["wordswap_path"] == owned_paths[0]
+        assert owned_paths[0].read_bytes() == b"hello"
 
     async def test_persist_data_uri_ignores_param_not_on_converter(self) -> None:
         """A data-URI value under a name that is not a constructor param is left unchanged."""
