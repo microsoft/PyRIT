@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 _HARM_CATEGORY_ALIASES: "dict[str, list[HarmCategory]]" = {}
 _CANONICAL_LOOKUP: "dict[str, HarmCategory]" = {}
+_SEP_TRANS = str.maketrans("", "", "_- ")
 
 with open(os.path.join(os.path.dirname(__file__), "harm_category_definitions.yaml")) as f:
     _HARM_CATEGORY_YAML: dict = yaml.safe_load(f) or {}
@@ -194,10 +195,10 @@ class HarmCategory(StrEnum):
 
         if not _CANONICAL_LOOKUP:
             for member in cls.__members__.values():
-                _CANONICAL_LOOKUP[str(member.value).lower()] = member
-                _CANONICAL_LOOKUP[str(member.name).lower()] = member
+                for key in (member.value.lower(), member.name.lower()):
+                    _CANONICAL_LOOKUP[key] = _CANONICAL_LOOKUP[key.translate(_SEP_TRANS)] = member
 
-        return _CANONICAL_LOOKUP.get(normalized_value)
+        return _CANONICAL_LOOKUP.get(normalized_value) or _CANONICAL_LOOKUP.get(normalized_value.translate(_SEP_TRANS))
 
     @classmethod
     def _coerce_alias_mapping_value(

@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
+_SEP_TRANS = str.maketrans("", "", "_- ")
 
 
 @dataclass
@@ -482,7 +483,8 @@ class ScorerEvaluator(abc.ABC):
     def _score_matches_harm_category(*, score: Score, harm_category: str) -> bool:
         """Return whether a score category matches a canonical or aliased harm category."""
         target_casefold = harm_category.casefold()
-        if any(c.casefold() == target_casefold for c in score.score_category or []):
+        target_clean = target_casefold.translate(_SEP_TRANS)
+        if any(c.casefold().translate(_SEP_TRANS) == target_clean for c in score.score_category or []):
             return True
 
         labeled_category = HarmCategory.parse(harm_category)
