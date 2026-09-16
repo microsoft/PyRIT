@@ -145,13 +145,13 @@ async def test_convert_async_file_not_found():
 
 def test_invalid_volume_factor_zero():
     """volume_factor of 0 should raise ValueError."""
-    with pytest.raises(ValueError, match="volume_factor must be greater than 0"):
+    with pytest.raises(ValueError, match="volume_factor must be finite and greater than 0"):
         AudioVolumeConverter(volume_factor=0)
 
 
 def test_invalid_volume_factor_negative():
     """Negative volume_factor should raise ValueError."""
-    with pytest.raises(ValueError, match="volume_factor must be greater than 0"):
+    with pytest.raises(ValueError, match="volume_factor must be finite and greater than 0"):
         AudioVolumeConverter(volume_factor=-1.0)
 
 
@@ -160,3 +160,10 @@ async def test_unsupported_input_type(sqlite_instance):
     converter = AudioVolumeConverter(volume_factor=1.5)
     with pytest.raises(ValueError, match="Input type not supported"):
         await converter.convert_async(prompt="some_file.wav", input_type="text")
+
+
+@pytest.mark.parametrize("volume_factor", [float("nan"), float("inf"), float("-inf")])
+def test_invalid_volume_factor_non_finite(volume_factor: float) -> None:
+    """Non-finite volume factors should fail during converter construction."""
+    with pytest.raises(ValueError, match="volume_factor must be finite"):
+        AudioVolumeConverter(volume_factor=volume_factor)

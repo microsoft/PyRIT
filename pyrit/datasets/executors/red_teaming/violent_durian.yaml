@@ -2,8 +2,6 @@ name: red_team_criminal_persona
 description: |
   A multi-turn strategy where the attacker AI manipulates the target AI into adopting the persona
   of a violent criminal and providing illegal or harmful suggestions based on this identity.
-authors:
-  - AI Red Team
 groups:
   - AI Red Team
 source: https://github.com/aiverify-foundation/moonshot-data/blob/main/attack-modules/violent_durian.py

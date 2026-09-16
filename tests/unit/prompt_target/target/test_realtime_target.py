@@ -3,6 +3,7 @@
 
 import asyncio
 import base64
+import gc
 import wave
 from collections.abc import AsyncIterator
 from typing import Any
@@ -84,6 +85,79 @@ async def test_send_prompt_async(target):
 
     # Clean up the WebSocket connections
     await target.cleanup_target_async()
+
+
+async def test_cancellation_during_session_config_discards_connection(target):
+    connection = AsyncMock()
+    target._connect_async = AsyncMock(return_value=connection)
+    config_started = asyncio.Event()
+
+    async def wait_in_config_async(*, conversation_id: str, conversation: list[Message]) -> None:
+        config_started.set()
+        await asyncio.Event().wait()
+
+    target.send_config_async = AsyncMock(side_effect=wait_in_config_async)
+    message = Message.from_prompt(prompt="Hello", role="user")
+    message.get_piece().conversation_id = "cancelled-config"
+
+    send_task = asyncio.create_task(target.send_prompt_async(message=message))
+    await config_started.wait()
+    send_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await send_task
+
+    connection.close.assert_awaited_once_with()
+    assert "cancelled-config" not in target._existing_conversation
+
+
+async def test_response_create_failure_cancels_receive_task(target):
+    connection = AsyncMock()
+    target._existing_conversation["response-failure"] = connection
+    receive_started = asyncio.Event()
+    receive_cancelled = asyncio.Event()
+
+    async def receive_events_async(*, conversation_id: str) -> RealtimeTargetResult:
+        receive_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            receive_cancelled.set()
+        raise AssertionError("unreachable")
+
+    async def fail_response_create_async(*, conversation_id: str) -> None:
+        await receive_started.wait()
+        raise RuntimeError("response create failed")
+
+    target.receive_events_async = receive_events_async
+    target.send_response_create_async = AsyncMock(side_effect=fail_response_create_async)
+
+    with pytest.raises(RuntimeError, match="response create failed"):
+        await target.send_text_async(text="Hello", conversation_id="response-failure")
+
+    assert receive_started.is_set()
+    assert receive_cancelled.is_set()
+
+
+async def test_cancel_receive_task_async_retrieves_completed_failure(target):
+    async def fail_receive_async() -> RealtimeTargetResult:
+        raise RuntimeError("receive failed")
+
+    receive_task = asyncio.create_task(fail_receive_async())
+    await asyncio.sleep(0)
+    assert receive_task.done()
+
+    unhandled_exceptions: list[dict[str, Any]] = []
+    loop = asyncio.get_running_loop()
+    previous_exception_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unhandled_exceptions.append(context))
+    try:
+        await target._cancel_receive_task_async(receive_task=receive_task)
+        del receive_task
+        gc.collect()
+    finally:
+        loop.set_exception_handler(previous_exception_handler)
+
+    assert not unhandled_exceptions
 
 
 async def test_send_prompt_async_propagates_interrupted_to_metadata(target):
@@ -432,7 +506,7 @@ async def test_receive_events_soft_finishes_after_audio_done(target):
         yield _scripted_event("response.output_audio.delta", delta=base64.b64encode(b"audio").decode("ascii"))
         yield _scripted_event("response.output_audio_transcript.delta", delta="partial")
         yield _scripted_event("response.output_audio.done")
-        raise asyncio.TimeoutError
+        raise TimeoutError
 
     mock_connection.__aiter__.side_effect = _events
 
@@ -549,7 +623,7 @@ async def test_receive_events_ignores_late_events_from_soft_finished_response(ta
             delta=base64.b64encode(b"first").decode("ascii"),
         )
         yield _scripted_event("response.audio.done", response_id="response-1")
-        raise asyncio.TimeoutError
+        raise TimeoutError
 
     async def _second_response_events() -> AsyncIterator[Any]:
         yield _scripted_event(
@@ -631,12 +705,12 @@ async def test_receive_events_timeout_before_audio_done_raises(target):
     target._existing_conversation[conversation_id] = mock_connection
 
     async def _events():
-        raise asyncio.TimeoutError
+        raise TimeoutError
         yield  # pragma: no cover
 
     mock_connection.__aiter__.side_effect = _events
 
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(TimeoutError):
         await target.receive_events_async(conversation_id)
 
 
@@ -1430,6 +1504,34 @@ async def test_reset_conversation_async_swallows_close_error(target):
     # The error is swallowed and the conversation is still removed.
     await target.reset_conversation_async(conversation_id="conv")
 
+    assert "conv" not in target._existing_conversation
+
+
+async def test_reset_conversation_async_finishes_close_before_propagating_cancellation(target):
+    close_started = asyncio.Event()
+    close_release = asyncio.Event()
+    close_finished = asyncio.Event()
+
+    async def close_async() -> None:
+        close_started.set()
+        await close_release.wait()
+        close_finished.set()
+
+    mock_connection = AsyncMock()
+    mock_connection.close.side_effect = close_async
+    target._existing_conversation["conv"] = mock_connection
+
+    cleanup_task = asyncio.create_task(target.reset_conversation_async(conversation_id="conv"))
+    await close_started.wait()
+    cleanup_task.cancel()
+    await asyncio.sleep(0)
+
+    assert not cleanup_task.done()
+    close_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup_task
+
+    assert close_finished.is_set()
     assert "conv" not in target._existing_conversation
 
 

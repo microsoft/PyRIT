@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import uuid
+from collections.abc import Sequence
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy.dialects import mssql
 from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.memory import MemoryInterface
@@ -83,6 +86,7 @@ def test_update_entries_merges_missing_entry(sqlite_instance: MemoryInterface):
     entry = PromptMemoryEntry(entry=MessagePiece(conversation_id="conversation", role="user", original_value="before"))
     session = MagicMock()
     session.get.return_value = None
+    session.scalar.return_value = None
     session.merge.return_value = entry
 
     with patch.object(sqlite_instance, "get_session", return_value=session):
@@ -93,9 +97,37 @@ def test_update_entries_merges_missing_entry(sqlite_instance: MemoryInterface):
     session.merge.assert_called_once_with(entry)
 
 
+def test_update_entries_locks_sql_server_prompt_before_observation_check(sqlite_instance: MemoryInterface):
+    entry = PromptMemoryEntry(entry=MessagePiece(conversation_id="conversation", role="user", original_value="before"))
+    session = MagicMock()
+    session.get_bind.return_value.dialect.name = "mssql"
+    session.scalars.return_value.all.return_value = [entry]
+    session.get.return_value = entry
+
+    def _assert_locked(*, session: MagicMock, piece_ids: Sequence[uuid.UUID]) -> bool:
+        assert session.scalars.called
+        return False
+
+    with (
+        patch.object(sqlite_instance, "get_session", return_value=session),
+        patch.object(
+            sqlite_instance,
+            "_message_pieces_are_observation_referenced_in_session",
+            side_effect=_assert_locked,
+        ),
+    ):
+        result = sqlite_instance._update_entries(entries=[entry], update_fields={"original_value": "after"})
+
+    statement = session.scalars.call_args.args[0]
+    compiled = str(statement.compile(dialect=mssql.dialect()))
+    assert "WITH (UPDLOCK, HOLDLOCK)" in compiled
+    assert result is True
+
+
 def test_update_entries_rolls_back_on_error(sqlite_instance: MemoryInterface):
     entry = PromptMemoryEntry(entry=MessagePiece(conversation_id="conversation", role="user", original_value="before"))
     session = MagicMock()
+    session.scalar.return_value = None
     session.get.side_effect = SQLAlchemyError("update failed")
 
     with patch.object(sqlite_instance, "get_session", return_value=session):

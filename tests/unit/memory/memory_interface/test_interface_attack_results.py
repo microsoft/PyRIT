@@ -4,7 +4,7 @@
 
 import uuid
 from dataclasses import FrozenInstanceError
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -56,7 +56,7 @@ def create_attack_result(
     )
 
 
-_BASE_TS = datetime(2024, 6, 1, tzinfo=timezone.utc)
+_BASE_TS = datetime(2024, 6, 1, tzinfo=UTC)
 
 
 def _make_attack_result(
@@ -574,8 +574,8 @@ def test_get_attack_results_nonexistent_ids(sqlite_instance: MemoryInterface):
     assert len(retrieved_results) == 0
 
 
-def test_attack_result_with_last_response_and_score(sqlite_instance: MemoryInterface):
-    """Test attack result with last_response and last_score relationships."""
+def test_attack_result_with_last_response_and_scores(sqlite_instance: MemoryInterface):
+    """Test attack result response and score relationships."""
     # Create a message piece first
     message_piece = MessagePiece(
         role="user",
@@ -599,17 +599,25 @@ def test_attack_result_with_last_response_and_score(sqlite_instance: MemoryInter
         score_rationale="Test score rationale",
         score_metadata={"test": "metadata"},
     )
+    human_score = score.model_copy(
+        update={
+            "id": uuid.uuid4(),
+            "score_value": "0.5",
+            "score_rationale": "Human score rationale",
+        }
+    )
 
     # Add message piece and score to memory
     sqlite_instance.add_message_pieces_to_memory(message_pieces=[message_piece])
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    sqlite_instance.add_scores_to_memory(scores=[score, human_score])
 
-    # Create attack result with last_response and last_score
+    # Create attack result with both score sources
     attack_result = AttackResult(
         conversation_id="conv_1",
         objective="Test objective with relationships",
         last_response=message_piece,
-        last_score=score,
+        automated_score=score,
+        human_score=human_score,
         executed_turns=5,
         execution_time_ms=1000,
         outcome=AttackOutcome.SUCCESS,
@@ -624,8 +632,12 @@ def test_attack_result_with_last_response_and_score(sqlite_instance: MemoryInter
     assert all_entries[0].conversation_id == "conv_1"
     assert all_entries[0].last_response is not None
     assert all_entries[0].last_response.id == message_piece.id
+    assert all_entries[0].automated_score is not None
+    assert all_entries[0].automated_score.id == score.id
+    assert all_entries[0].human_score is not None
+    assert all_entries[0].human_score.id == human_score.id
     assert all_entries[0].last_score is not None
-    assert all_entries[0].last_score.id == score.id
+    assert all_entries[0].last_score.id == human_score.id
 
 
 def test_attack_result_all_outcomes(sqlite_instance: MemoryInterface):
@@ -715,15 +727,20 @@ def test_attack_result_objective_sha256_auto_generation(sqlite_instance: MemoryI
 
 
 def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: MemoryInterface):
-    """Test attack result with related_conversations (PRUNED / ADVERSARIAL)."""
+    """Test attack result with persisted related conversations."""
     pruned_ids = {"pruned_conv_1", "pruned_conv_2"}
     adversarial_ids = {"adv_conv_1", "adv_conv_2", "adv_conv_3"}
+    preparation_ids = {"prep_conv_1", "prep_conv_2"}
 
     related_conversations: set[ConversationReference] = {
         *(ConversationReference(conversation_id=cid, conversation_type=ConversationType.PRUNED) for cid in pruned_ids),
         *(
             ConversationReference(conversation_id=cid, conversation_type=ConversationType.ADVERSARIAL)
             for cid in adversarial_ids
+        ),
+        *(
+            ConversationReference(conversation_id=cid, conversation_type=ConversationType.PREPARATION)
+            for cid in preparation_ids
         ),
     }
 
@@ -742,6 +759,7 @@ def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: 
 
     assert set(entry.pruned_conversation_ids) == pruned_ids  # type: ignore[arg-type]
     assert set(entry.adversarial_chat_conversation_ids) == adversarial_ids  # type: ignore[arg-type]
+    assert set(entry.preparation_conversation_ids) == preparation_ids  # type: ignore[arg-type]
 
     retrieved_result = entry.get_attack_result()
     assert {
@@ -750,6 +768,9 @@ def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: 
     assert {
         r.conversation_id for r in retrieved_result.get_conversations_by_type(ConversationType.ADVERSARIAL)
     } == adversarial_ids
+    assert {
+        r.conversation_id for r in retrieved_result.get_conversations_by_type(ConversationType.PREPARATION)
+    } == preparation_ids
 
 
 def test_attack_result_without_attack_generation_conversation_ids(sqlite_instance: MemoryInterface):
@@ -767,10 +788,12 @@ def test_attack_result_without_attack_generation_conversation_ids(sqlite_instanc
     entry: AttackResultEntry = sqlite_instance._query_entries(AttackResultEntry)[0]
     assert not entry.pruned_conversation_ids
     assert not entry.adversarial_chat_conversation_ids
+    assert not entry.preparation_conversation_ids
 
     retrieved_result = entry.get_attack_result()
     assert not retrieved_result.get_conversations_by_type(ConversationType.PRUNED)
     assert not retrieved_result.get_conversations_by_type(ConversationType.ADVERSARIAL)
+    assert not retrieved_result.get_conversations_by_type(ConversationType.PREPARATION)
 
 
 def test_update_attack_result_adversarial_chat_conversation_ids_round_trip(sqlite_instance: MemoryInterface):
@@ -2073,7 +2096,7 @@ def test_get_attack_results_paginated_hydrates_scores_under_limit(sqlite_instanc
         conversation_id="conv-scored",
         objective="scored objective",
         last_response=message_piece,
-        last_score=score,
+        automated_score=score,
         executed_turns=5,
         execution_time_ms=0,
         outcome=AttackOutcome.SUCCESS,

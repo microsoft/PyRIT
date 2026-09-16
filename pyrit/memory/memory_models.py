@@ -7,8 +7,8 @@ import uuid
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, ClassVar, Generic, Literal, TypeVar, get_args, get_origin
+from datetime import UTC, datetime
+from typing import Any, ClassVar, Generic, Literal, Self, TypeVar, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
@@ -23,6 +23,7 @@ from sqlalchemy import (
     String,
     TypeDecorator,
     Unicode,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.sqlite import CHAR
 from sqlalchemy.orm import (
@@ -32,7 +33,6 @@ from sqlalchemy.orm import (
     relationship,
 )
 from sqlalchemy.types import Uuid
-from typing_extensions import Self
 
 import pyrit
 from pyrit.common.utils import to_sha256
@@ -53,7 +53,10 @@ from pyrit.models import (
     ConversationType,
     ConverterIdentifier,
     EvaluationIdentifier,
+    JudgmentObservationPayload,
     MessagePiece,
+    MessageScorable,
+    Observation,
     PromptDataType,
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
@@ -214,7 +217,7 @@ class UTCDateTime(TypeDecorator[datetime]):
             datetime | None: The value with UTC tzinfo if it was naive, otherwise unchanged.
         """
         if value is not None and value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=UTC)
         return value
 
 
@@ -1119,6 +1122,117 @@ class ScorableContentEntry(Base):
         return f"{self.id}"
 
 
+class ObservationEntry(Base):
+    """A durable scorer observation."""
+
+    __tablename__ = "ObservationEntries"
+    __table_args__ = (
+        Index("ix_ObservationEntries_scorable_content_id", "scorable_content_id"),
+        Index("ix_ObservationEntries_scored_message_piece_id", "scored_message_piece_id"),
+        {"extend_existing": True},
+    )
+
+    id = mapped_column(CustomUUID, nullable=False, primary_key=True)
+    source_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    acquisition = mapped_column(String(16), nullable=False)
+    observed_at = mapped_column(UTCDateTime, nullable=False)
+    scorable: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    scorable_content_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ScorableContentEntry.__tablename__}.id"),
+        nullable=True,
+    )
+    scored_message_piece_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"),
+        nullable=True,
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    metadata_json: Mapped[dict[str, str]] = mapped_column("metadata", JSON, nullable=False)
+    pyrit_version = mapped_column(String, nullable=True)
+    message_piece_links: Mapped[list["ObservationMessagePieceEntry"]] = relationship(
+        "ObservationMessagePieceEntry",
+        back_populates="observation",
+        cascade="all, delete-orphan",
+        order_by="ObservationMessagePieceEntry.position",
+        lazy="selectin",
+    )
+    score_links: Mapped[list["ScoreObservationEntry"]] = relationship(
+        "ScoreObservationEntry",
+        back_populates="observation",
+        cascade="all, delete-orphan",
+    )
+
+    def __init__(self, *, entry: Observation) -> None:
+        """Initialize a persisted observation from its canonical model."""
+        entry = Observation.model_validate(entry.model_dump())
+        self.id = entry.id
+        self.source_identifier = entry.source_identifier.model_dump(mode="json")
+        self.acquisition = entry.acquisition.value
+        self.observed_at = entry.observed_at
+        self.scorable = entry.scorable.model_dump(mode="json")
+        self.scorable_content_id = (
+            entry.scorable.content_id if isinstance(entry.scorable, ContentEntryScorable) else None
+        )
+        self.scored_message_piece_id = (
+            entry.payload.scored_piece_id if isinstance(entry.scorable, MessageScorable) else None
+        )
+        self.payload = entry.payload.model_dump(mode="json")
+        self.metadata_json = dict(entry.metadata)
+        self.pyrit_version = pyrit.__version__
+
+    def get_observation(self) -> Observation:
+        """
+        Reconstruct the canonical observation model.
+
+        Returns:
+            Observation: The reconstructed observation.
+
+        Raises:
+            ValueError: If the stored observation has no source identifier.
+        """
+        stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
+        source_identifier = _load_identifier(self.source_identifier, pyrit_version=stored_version)
+        if source_identifier is None:
+            raise ValueError(f"Observation {self.id} has no source identifier.")
+        return Observation(
+            id=self.id,
+            source_identifier=source_identifier,
+            acquisition=self.acquisition,
+            observed_at=self.observed_at,
+            scorable=scorable_from_dict(self.scorable),
+            payload=JudgmentObservationPayload.model_validate(self.payload),
+            metadata=self.metadata_json or {},
+        )
+
+
+class ObservationMessagePieceEntry(Base):
+    """An ordered immutable message reference from an observation payload."""
+
+    __tablename__ = "ObservationMessagePieceEntries"
+    __table_args__ = (
+        UniqueConstraint("observation_id", "message_piece_id", name="uq_observation_message_pieces_piece"),
+        Index("ix_ObservationMessagePieceEntries_message_piece_id", "message_piece_id"),
+        {"extend_existing": True},
+    )
+
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ObservationEntry.__tablename__}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    message_piece_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"),
+        nullable=False,
+    )
+    observation: Mapped[ObservationEntry] = relationship(
+        "ObservationEntry",
+        back_populates="message_piece_links",
+    )
+
+
 class ScoreEntry(Base):
     """
     Represents the Score Memory Entry.
@@ -1157,6 +1271,13 @@ class ScoreEntry(Base):
     # Nullable for backwards compatibility with existing databases
     pyrit_version = mapped_column(String, nullable=True)
     prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="scores")
+    observation_links: Mapped[list["ScoreObservationEntry"]] = relationship(
+        "ScoreObservationEntry",
+        back_populates="score",
+        cascade="all, delete-orphan",
+        order_by="ScoreObservationEntry.position",
+        lazy="selectin",
+    )
 
     def __init__(self, *, entry: Score) -> None:
         """
@@ -1219,6 +1340,7 @@ class ScoreEntry(Base):
             scorer_class_identifier=scorer_identifier,
             message_piece_id=self.prompt_request_response_id,
             scorable=scorable_from_dict(self.scorable) if self.scorable else None,
+            observation_ids=[link.observation_id for link in self.observation_links],
             timestamp=self.timestamp,
             scored_expectation=(
                 ScoringExpectation.model_validate_persisted(self.scored_expectation)
@@ -1249,8 +1371,34 @@ class ScoreEntry(Base):
             "prompt_request_response_id": str(self.prompt_request_response_id),
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "scored_expectation": self.scored_expectation,
+            "observation_ids": [str(link.observation_id) for link in self.observation_links],
             "objective": self.scored_expectation.get("objective") if self.scored_expectation else None,
         }
+
+
+class ScoreObservationEntry(Base):
+    """An ordered many-to-many link between a score and its observations."""
+
+    __tablename__ = "ScoreObservationEntries"
+    __table_args__ = (
+        UniqueConstraint("score_id", "observation_id", name="uq_score_observations_observation"),
+        Index("ix_ScoreObservationEntries_observation_id", "observation_id"),
+        {"extend_existing": True},
+    )
+
+    score_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ScoreEntry.__tablename__}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ObservationEntry.__tablename__}.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    score: Mapped[ScoreEntry] = relationship("ScoreEntry", back_populates="observation_links")
+    observation: Mapped[ObservationEntry] = relationship("ObservationEntry", back_populates="score_links")
 
 
 class ConversationMessageWithSimilarity(BaseModel):
@@ -1555,7 +1703,8 @@ class AttackResultEntry(Base):
             (technique, seeds, etc.).
         objective_sha256 (str): The SHA256 hash of the objective.
         last_response_id (Uuid): Foreign key to the last response MessagePiece.
-        last_score_id (Uuid): Foreign key to the last score ScoreEntry.
+        automated_score_id (Uuid): Foreign key to the automated score ScoreEntry.
+        human_score_id (Uuid): Foreign key to the human score ScoreEntry.
         executed_turns (int): Total number of turns that were executed.
         execution_time_ms (int): Total execution time of the attack in milliseconds.
         outcome (AttackOutcome): The outcome of the attack, indicating success, failure, or undetermined.
@@ -1567,9 +1716,11 @@ class AttackResultEntry(Base):
         targeted_harm_categories (list[str]): Harm categories this attack targeted.
         pruned_conversation_ids (list[str]): List of conversation IDs that were pruned from the attack.
         adversarial_chat_conversation_ids (list[str]): List of conversation IDs used for adversarial chat.
+        preparation_conversation_ids (list[str]): List of conversations used to prepare the attack.
         timestamp (DateTime): The timestamp of the attack result entry.
         last_response (PromptMemoryEntry): Relationship to the last response prompt memory entry.
-        last_score (ScoreEntry): Relationship to the last score entry.
+        automated_score (ScoreEntry): Relationship to the automated score entry.
+        human_score (ScoreEntry): Relationship to the human score entry.
 
     Methods:
         __str__(): Returns a string representation of the attack result entry.
@@ -1620,7 +1771,10 @@ class AttackResultEntry(Base):
     last_response_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=True
     )
-    last_score_id: Mapped[uuid.UUID | None] = mapped_column(
+    automated_score_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey(f"{ScoreEntry.__tablename__}.id"), nullable=True
+    )
+    human_score_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey(f"{ScoreEntry.__tablename__}.id"), nullable=True
     )
     executed_turns = mapped_column(INTEGER, nullable=False, default=0)
@@ -1636,6 +1790,7 @@ class AttackResultEntry(Base):
     targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     adversarial_chat_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    preparation_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     timestamp = mapped_column(UTCDateTime, nullable=False)
     # Version of PyRIT used when this attack result was created
     # Nullable for backwards compatibility with existing databases
@@ -1667,9 +1822,13 @@ class AttackResultEntry(Base):
         "PromptMemoryEntry",
         foreign_keys=[last_response_id],
     )
-    last_score: Mapped["ScoreEntry | None"] = relationship(
+    automated_score: Mapped["ScoreEntry | None"] = relationship(
         "ScoreEntry",
-        foreign_keys=[last_score_id],
+        foreign_keys=[automated_score_id],
+    )
+    human_score: Mapped["ScoreEntry | None"] = relationship(
+        "ScoreEntry",
+        foreign_keys=[human_score_id],
     )
     atomic_attack_identifier_entry: Mapped["AtomicAttackIdentifierEntry | None"] = relationship(
         "AtomicAttackIdentifierEntry",
@@ -1704,7 +1863,8 @@ class AttackResultEntry(Base):
 
         # Use helper method for UUID conversions
         self.last_response_id = self._get_id_as_uuid(entry.last_response)
-        self.last_score_id = self._get_id_as_uuid(entry.last_score)
+        self.automated_score_id = self._get_id_as_uuid(entry.automated_score)
+        self.human_score_id = self._get_id_as_uuid(entry.human_score)
 
         self.executed_turns = entry.executed_turns
         self.execution_time_ms = entry.execution_time_ms
@@ -1730,7 +1890,11 @@ class AttackResultEntry(Base):
             ref.conversation_id for ref in entry.get_conversations_by_type(ConversationType.ADVERSARIAL)
         ] or None
 
-        self.timestamp = entry.timestamp or datetime.now(tz=timezone.utc)
+        self.preparation_conversation_ids = [
+            ref.conversation_id for ref in entry.get_conversations_by_type(ConversationType.PREPARATION)
+        ] or None
+
+        self.timestamp = entry.timestamp or datetime.now(tz=UTC)
         self.pyrit_version = pyrit.__version__
 
         # Error information
@@ -1823,6 +1987,15 @@ class AttackResultEntry(Base):
                 )
             )
 
+        for cid in self.preparation_conversation_ids or []:
+            related_conversations.add(
+                ConversationReference(
+                    conversation_id=cid,
+                    conversation_type=ConversationType.PREPARATION,
+                    description="preparation conversation",
+                )
+            )
+
         # eval_hash is recomputed on reload via AtomicAttackEvaluationIdentifier.
         atomic_id = _load_identifier(
             self.atomic_attack_identifier,
@@ -1842,14 +2015,15 @@ class AttackResultEntry(Base):
             objective=self.objective,
             atomic_attack_identifier=atomic_id,
             last_response=self.last_response.get_message_piece() if self.last_response else None,
-            last_score=self.last_score.get_score() if self.last_score else None,
+            automated_score=self.automated_score.get_score() if self.automated_score else None,
+            human_score=self.human_score.get_score() if self.human_score else None,
             executed_turns=self.executed_turns,
             execution_time_ms=self.execution_time_ms,
             outcome=AttackOutcome(self.outcome),
             outcome_reason=self.outcome_reason,
             related_conversations=related_conversations,
             metadata=self.attack_metadata or {},
-            timestamp=self.timestamp or datetime.now(tz=timezone.utc),
+            timestamp=self.timestamp or datetime.now(tz=UTC),
             operator=self.operator,
             operation=self.operation,
             labels=self.labels or {},

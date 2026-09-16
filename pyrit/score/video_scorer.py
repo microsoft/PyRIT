@@ -10,6 +10,7 @@ from pathlib import Path
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, MessageScorable, Score, ScoringExpectation
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
+from pyrit.score.observation import _get_current_scoring_expectation, _suppress_observation_collection
 from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)
@@ -151,11 +152,21 @@ class VideoHelper:
             formatted_objective = self.image_objective_template.format(objective=objective)
             scoring_objectives = [formatted_objective] * len(image_requests)
 
-        frame_scores = await self.image_scorer.score_batch_async(
-            scorables=[MessageScorable.from_message(request) for request in image_requests],
-            expectations=[ScoringExpectation(objective=scoring_objective) for scoring_objective in scoring_objectives],
-            batch_size=len(frames),
-        )
+        effective_expectation = _get_current_scoring_expectation()
+        frame_expectations = [
+            (
+                effective_expectation.model_copy(update={"objective": scoring_objective})
+                if effective_expectation is not None
+                else ScoringExpectation(objective=scoring_objective)
+            )
+            for scoring_objective in scoring_objectives
+        ]
+        with _suppress_observation_collection():
+            frame_scores = await self.image_scorer._score_batch_nested_async(
+                scorables=[MessageScorable.from_message(request) for request in image_requests],
+                expectations=frame_expectations,
+                batch_size=len(frames),
+            )
 
         if not frame_scores:
             raise ValueError("No scores returned for image frames extracted from video.")
@@ -268,13 +279,21 @@ class VideoHelper:
                 formatted_objective = self.audio_objective_template.format(objective=objective)
                 scoring_objectives = [formatted_objective]
 
-            audio_scores = await audio_scorer.score_batch_async(
-                scorables=[MessageScorable.from_message(audio_message)],
-                expectations=[
-                    ScoringExpectation(objective=scoring_objective) for scoring_objective in scoring_objectives
-                ],
-                batch_size=1,
-            )
+            effective_expectation = _get_current_scoring_expectation()
+            audio_expectations = [
+                (
+                    effective_expectation.model_copy(update={"objective": scoring_objective})
+                    if effective_expectation is not None
+                    else ScoringExpectation(objective=scoring_objective)
+                )
+                for scoring_objective in scoring_objectives
+            ]
+            with _suppress_observation_collection():
+                audio_scores = await audio_scorer._score_batch_nested_async(
+                    scorables=[MessageScorable.from_message(audio_message)],
+                    expectations=audio_expectations,
+                    batch_size=1,
+                )
 
             return audio_scores if audio_scores else []
 

@@ -481,23 +481,19 @@ class ScorerEvaluator(abc.ABC):
     @staticmethod
     def _score_matches_harm_category(*, score: Score, harm_category: str) -> bool:
         """Return whether a score category matches a canonical or aliased harm category."""
-        labeled_categories = set(HarmCategory.parse_many(harm_category))
-        if labeled_categories == {HarmCategory.OTHER} and harm_category.casefold() not in {
-            HarmCategory.OTHER.name.casefold(),
-            HarmCategory.OTHER.value.casefold(),
-        }:
-            labeled_categories = set()
+        target_casefold = harm_category.casefold()
+        if any(c.casefold() == target_casefold for c in score.score_category or []):
+            return True
+
+        labeled_category = HarmCategory.parse(harm_category)
+        if labeled_category == HarmCategory.OTHER and target_casefold != "other":
+            return False
 
         for score_category in score.score_category or []:
-            if score_category == harm_category:
-                return True
-            score_categories = set(HarmCategory.parse_many(score_category))
-            if score_categories == {HarmCategory.OTHER} and score_category.casefold() not in {
-                HarmCategory.OTHER.name.casefold(),
-                HarmCategory.OTHER.value.casefold(),
-            }:
+            score_category_parsed = HarmCategory.parse(score_category)
+            if score_category_parsed == HarmCategory.OTHER and score_category.casefold() != "other":
                 continue
-            if score_categories & labeled_categories:
+            if score_category_parsed == labeled_category:
                 return True
         return False
 

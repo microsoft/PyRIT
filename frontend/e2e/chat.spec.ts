@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
+import type { BackendMessage, BackendMessagePiece } from "@/types";
+import { makeAddMessageResponse } from "./_attacks";
 import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
@@ -10,10 +12,14 @@ const MOCK_CONVERSATION_ID = "e2e-conv-001";
 const WIDE_IMAGE_DATA_URI =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='600' viewBox='0 0 800 600'%3E%3Crect width='800' height='600' fill='%230078d4'/%3E%3C/svg%3E";
 
+function getMessageByText(page: Page, text: string): Locator {
+  return page.getByTestId("message-list").getByText(text, { exact: true });
+}
+
 /** Intercept targets & attacks APIs so the chat flow can run without real keys. */
 async function mockBackendAPIs(page: Page) {
   // Accumulate messages so multi-turn tests get full history back
-  let accumulatedMessages: Record<string, unknown>[] = [];
+  let accumulatedMessages: BackendMessage[] = [];
 
   // Mock targets list – return one target already available
   await page.route(/\/api\/targets/, async (route) => {
@@ -53,7 +59,7 @@ async function mockBackendAPIs(page: Page) {
       }
 
       const turnNumber = Math.floor(accumulatedMessages.length / 2) + 1;
-      const userMsg = {
+      const userMsg: BackendMessage = {
         turn_number: turnNumber,
         role: "user",
         created_at: new Date().toISOString(),
@@ -69,7 +75,7 @@ async function mockBackendAPIs(page: Page) {
           },
         ],
       };
-      const assistantMsg = {
+      const assistantMsg: BackendMessage = {
         turn_number: turnNumber,
         role: "assistant",
         created_at: new Date().toISOString(),
@@ -92,11 +98,9 @@ async function mockBackendAPIs(page: Page) {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          messages: {
-            messages: [...accumulatedMessages],
-          },
-        }),
+        body: JSON.stringify(makeAddMessageResponse(
+          "e2e-attack-001", MOCK_CONVERSATION_ID, [...accumulatedMessages],
+        )),
       });
     } else if (route.request().method() === "GET") {
       await route.fulfill({
@@ -236,7 +240,7 @@ test.describe("Chat Functionality", () => {
     const input = page.getByRole("textbox");
     await input.fill("Start a mobile conversation");
     await page.getByRole("button", { name: /send/i }).click();
-    await expect(page.getByText("Start a mobile conversation", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "Start a mobile conversation")).toBeVisible();
 
     await page.setViewportSize({ width: 390, height: 844 });
     const chatArea = page.getByTestId("chat-area");
@@ -277,7 +281,7 @@ test.describe("Chat Functionality", () => {
     await page.getByRole("button", { name: /send/i }).click();
 
     // User message appears
-    await expect(page.getByText("Hello, this is a test message", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "Hello, this is a test message")).toBeVisible();
 
     // Backend response appears
     await expect(
@@ -313,7 +317,7 @@ test.describe("Chat Functionality", () => {
     await input.fill("First message");
     await page.getByRole("button", { name: /send/i }).click();
 
-    await expect(page.getByText("First message", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "First message")).toBeVisible();
     await expect(
       page.getByText("Mock response for: First message"),
     ).toBeVisible({ timeout: 10000 });
@@ -339,7 +343,7 @@ test.describe("Multiple Messages", () => {
     // Send first message
     await input.fill("First message");
     await page.getByRole("button", { name: /send/i }).click();
-    await expect(page.getByText("First message", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "First message")).toBeVisible();
     await expect(
       page.getByText("Mock response for: First message"),
     ).toBeVisible({ timeout: 10000 });
@@ -347,14 +351,14 @@ test.describe("Multiple Messages", () => {
     // Send second message
     await input.fill("Second message");
     await page.getByRole("button", { name: /send/i }).click();
-    await expect(page.getByText("Second message", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "Second message")).toBeVisible();
     await expect(
       page.getByText("Mock response for: Second message"),
     ).toBeVisible({ timeout: 10000 });
 
     // Both user messages should still be visible
-    await expect(page.getByText("First message", { exact: true })).toBeVisible();
-    await expect(page.getByText("Second message", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "First message")).toBeVisible();
+    await expect(getMessageByText(page, "Second message")).toBeVisible();
   });
 });
 
@@ -375,7 +379,7 @@ test.describe("Chat without target", () => {
 /** Build the mock message/add-message route handler that returns the
  *  given response pieces for assistant messages. */
 function buildModalityMock(
-  assistantPieces: Record<string, unknown>[],
+  assistantPieces: BackendMessagePiece[],
   mockConversationId = "e2e-modality-conv",
 ) {
   return async function mockAPIs(page: Page) {
@@ -403,7 +407,7 @@ function buildModalityMock(
 
     // Add message – returns user turn + assistant with given pieces.
     // Also handles GET requests for loadConversation.
-    let lastMessages: Record<string, unknown>[] = [];
+    let lastMessages: BackendMessage[] = [];
     let postSeen = false; // track POST so GET doesn't return empty during render race
     await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
       if (route.request().method() === "POST") {
@@ -445,11 +449,9 @@ function buildModalityMock(
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({
-            messages: {
-              messages: lastMessages,
-            },
-          }),
+          body: JSON.stringify(makeAddMessageResponse(
+            "e2e-modality-attack", mockConversationId, lastMessages,
+          )),
         });
       } else if (route.request().method() === "GET") {
         // Return empty before any POST so loadConversation doesn't hang,
@@ -505,7 +507,7 @@ test.describe("Multi-modal: Image response", () => {
     await page.getByRole("button", { name: /send/i }).click();
 
     // User message visible
-    await expect(page.getByText("Generate an image", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "Generate an image")).toBeVisible();
 
     // Image element should appear (exclude logo)
     const img = page.locator('img:not([alt="Co-PyRIT Logo"])');
@@ -603,7 +605,7 @@ test.describe("Multi-modal: Audio response", () => {
     await input.fill("Speak this out loud");
     await page.getByRole("button", { name: /send/i }).click();
 
-    await expect(page.getByText("Speak this out loud", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "Speak this out loud")).toBeVisible();
 
     // Audio element should appear
     const audio = page.locator("audio");
@@ -666,7 +668,7 @@ test.describe("Multi-modal: Video response", () => {
     await input.fill("Create a video clip");
     await page.getByRole("button", { name: /send/i }).click();
 
-    await expect(page.getByText("Create a video clip", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "Create a video clip")).toBeVisible();
 
     // Video element should appear
     const video = page.locator("video");
@@ -707,7 +709,7 @@ test.describe("Multi-modal: Mixed text + image response", () => {
     await page.getByRole("button", { name: /send/i }).click();
 
     // Both text and image should be visible
-    await expect(page.getByText("Here is the analysis:", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(getMessageByText(page, "Here is the analysis:")).toBeVisible({ timeout: 10000 });
     const img = page.locator('img:not([alt="Co-PyRIT Logo"])');
     await expect(img).toBeVisible({ timeout: 10000 });
   });
@@ -736,7 +738,7 @@ test.describe("Multi-modal: Error response from target", () => {
     await input.fill("unsafe prompt");
     await page.getByRole("button", { name: /send/i }).click();
 
-    await expect(page.getByText("unsafe prompt", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "unsafe prompt")).toBeVisible();
 
     // Error should be displayed
     await expect(
@@ -758,7 +760,7 @@ test.describe("Multi-turn conversation flow", () => {
     // Turn 1
     await input.fill("First turn");
     await page.getByRole("button", { name: /send/i }).click();
-    await expect(page.getByText("First turn", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "First turn")).toBeVisible();
     await expect(
       page.getByText("Mock response for: First turn"),
     ).toBeVisible({ timeout: 10000 });
@@ -766,7 +768,7 @@ test.describe("Multi-turn conversation flow", () => {
     // Turn 2
     await input.fill("Second turn");
     await page.getByRole("button", { name: /send/i }).click();
-    await expect(page.getByText("Second turn", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(getMessageByText(page, "Second turn")).toBeVisible({ timeout: 10000 });
     await expect(
       page.getByText("Mock response for: Second turn"),
     ).toBeVisible({ timeout: 10000 });
@@ -774,15 +776,15 @@ test.describe("Multi-turn conversation flow", () => {
     // Turn 3
     await input.fill("Third turn");
     await page.getByRole("button", { name: /send/i }).click();
-    await expect(page.getByText("Third turn", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(getMessageByText(page, "Third turn")).toBeVisible({ timeout: 10000 });
     await expect(
       page.getByText("Mock response for: Third turn"),
     ).toBeVisible({ timeout: 10000 });
 
     // All previous messages still visible
-    await expect(page.getByText("First turn", { exact: true })).toBeVisible();
-    await expect(page.getByText("Second turn", { exact: true })).toBeVisible();
-    await expect(page.getByText("Third turn", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "First turn")).toBeVisible();
+    await expect(getMessageByText(page, "Second turn")).toBeVisible();
+    await expect(getMessageByText(page, "Third turn")).toBeVisible();
   });
 
   test("should reset conversation on New Chat and send again", async ({ page }) => {
@@ -791,19 +793,19 @@ test.describe("Multi-turn conversation flow", () => {
     // Send a message
     await input.fill("Before reset");
     await page.getByRole("button", { name: /send/i }).click();
-    await expect(page.getByText("Before reset", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "Before reset")).toBeVisible();
     await expect(
       page.getByText("Mock response for: Before reset"),
     ).toBeVisible({ timeout: 10000 });
 
     // New Attack
     await page.getByTestId("new-attack-btn").click();
-    await expect(page.getByText("Before reset", { exact: true })).not.toBeVisible();
+    await expect(getMessageByText(page, "Before reset")).not.toBeVisible();
 
     // Send new message in fresh conversation
     await input.fill("After reset");
     await page.getByRole("button", { name: /send/i }).click();
-    await expect(page.getByText("After reset", { exact: true })).toBeVisible();
+    await expect(getMessageByText(page, "After reset")).toBeVisible();
     await expect(
       page.getByText("Mock response for: After reset"),
     ).toBeVisible({ timeout: 10000 });

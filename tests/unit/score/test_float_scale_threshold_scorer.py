@@ -8,7 +8,7 @@ import pytest
 from unit.mocks import store_message
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, ContentScorable, Message, MessagePiece, Score
 from pyrit.score import FloatScaleThresholdScorer, MessageScorable
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -85,6 +85,30 @@ async def test_float_scale_threshold_scorer_keeps_scale_rationale_when_present()
         binary_score = (await threshold_scorer.score_text_async(text="mock example"))[0]
 
         assert "Rationale for scale score: A mock rationale" in binary_score.score_rationale
+
+
+def test_threshold_preserves_observations_from_all_scores():
+    scorer = create_mock_float_scorer(0.8)
+    threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+    observation_ids = [uuid.uuid4(), uuid.uuid4()]
+    scores = [
+        Score(
+            score_value=value,
+            score_type="float_scale",
+            scorable=ContentScorable(value="evidence"),
+            observation_ids=[observation_id],
+        )
+        for value, observation_id in zip(("0.2", "0.8"), observation_ids, strict=True)
+    ]
+
+    result = threshold_scorer._apply_threshold(
+        scores=scores,
+        expectation=None,
+        scorable=ContentScorable(value="evidence"),
+        message_piece_id=None,
+    )
+    assert result[0].observation_ids == observation_ids
+    assert result[0].observation_ids == observation_ids
 
 
 @pytest.mark.parametrize("threshold", [0.3, 0.5, 0.7])
