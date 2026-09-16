@@ -172,6 +172,7 @@ class HuggingFaceChatTarget(PromptTarget):
             raise RuntimeError("CUDA requested but not available.")
 
         self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer_async())
+        self._model_load_lock = asyncio.Lock()
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -347,7 +348,7 @@ class HuggingFaceChatTarget(PromptTarget):
         Raises:
             EmptyResponseException: If the model generates an empty response.
         """
-        await self.load_model_and_tokenizer_task
+        await self._wait_for_model_and_tokenizer_async()
 
         request = normalized_conversation[-1].message_pieces[0]
 
@@ -404,6 +405,14 @@ class HuggingFaceChatTarget(PromptTarget):
         except Exception as e:
             logger.error(f"Error occurred during inference: {e}")
             raise
+
+    async def _wait_for_model_and_tokenizer_async(self) -> None:
+        """Wait for shared model loading without allowing a send cancellation to cancel it."""
+        async with self._model_load_lock:
+            if self.load_model_and_tokenizer_task.cancelled():
+                self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer_async())
+            load_task = self.load_model_and_tokenizer_task
+        await asyncio.shield(load_task)
 
     def _build_chat_messages(self, *, normalized_conversation: list[Message]) -> list[dict[str, str]]:
         """
