@@ -56,14 +56,6 @@
       "sources": ["garak/probes/packagehallucination.py"]
     },
     {
-      "path": "pyrit/datasets/seed_datasets/local/garak/prompt_inject_contexts.prompt",
-      "sources": ["garak/probes/promptinject.py"]
-    },
-    {
-      "path": "pyrit/datasets/seed_datasets/local/garak/prompt_inject_techniques.prompt",
-      "sources": ["garak/probes/promptinject.py"]
-    },
-    {
       "path": "pyrit/datasets/seed_datasets/local/garak/slur_terms_en.prompt",
       "sources": ["garak/data/payloads/slur_terms_en.json"]
     },
@@ -82,6 +74,10 @@
     {
       "path": "pyrit/scenario/scenarios/garak/package_hallucination.py",
       "sources": ["garak/probes/packagehallucination.py"]
+    },
+    {
+      "path": "pyrit/scenario/scenarios/garak/prompt_inject.py",
+      "sources": ["garak/probes/promptinject.py"]
     },
     {
       "path": "pyrit/scenario/scenarios/garak/web_injection.py",

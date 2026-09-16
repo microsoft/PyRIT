@@ -16,3 +16,19 @@ The provenance inventory in third_party/garak-provenance.json identifies the
 garak revision, source paths, and modified PyRIT files.
 
 ---------------------------------------------------------
+
+PromptInject source portions - MIT
+https://github.com/agencyenterprise/PromptInject
+
+Copyright (c) 2020 Agency Enterprise, LLC
+
+PyRIT includes prompt templates and source code derived from PromptInject.
+Microsoft Corporation modified these portions for PyRIT.
+
+The PromptInject-derived portions are licensed under the MIT License.
+A copy of the license is provided in LICENSES/PromptInject-MIT.txt.
+
+The provenance inventory in third_party/promptinject-provenance.json identifies
+the PromptInject revision, source paths, and modified PyRIT files.
+
+---------------------------------------------------------
