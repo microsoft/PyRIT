@@ -166,7 +166,7 @@ class TargetService:
         items: list[TargetTypeEntry] = [
             TargetTypeEntry(
                 target_type=metadata.class_name,
-                parameters=[p for p in metadata.parameters if p.is_string_coercible or p.reference is not None],
+                parameters=list(metadata.parameters),
                 supported_auth_modes=self._get_catalog_auth_modes(metadata.supported_auth_modes),
                 description=metadata.class_description or None,
             )
@@ -180,9 +180,9 @@ class TargetService:
 
         LEGACY COMPATIBILITY: ``catalog`` is the pre-registry name for ``types``, and
         the whole concept goes away -- there is no ``TargetCatalog`` class and nothing
-        new should use this. It differs from ``list_target_types_async`` in exactly one
-        way: it drops registry-reference parameters, which the un-migrated
-        configuration UI cannot render. Delete this method, the ``/catalog`` route, and
+        new should use this. It keeps only string-coercible parameters; registry
+        references and structured parameters are excluded because the un-migrated
+        configuration UI cannot render them. Delete this method, the ``/catalog`` route, and
         the ``TargetCatalog*`` aliases together when that UI switches to
         ``/targets/types``.
 

@@ -200,6 +200,44 @@ class TestListConverterCatalog:
         target_param = next(param for param in persuasion_entry.parameters if param.name == "converter_target")
         assert target_param.reference_type == "target"
 
+    async def test_types_preserve_all_registry_parameters(self, upload_service: ConverterService) -> None:
+        result = await upload_service.list_converter_types_async()
+        metadata_by_name = {
+            metadata.class_name: metadata for metadata in upload_service._registry.get_all_registered_class_metadata()
+        }
+
+        assert {entry.converter_type for entry in result.items} == set(metadata_by_name)
+        for entry in result.items:
+            assert entry.parameters == list(metadata_by_name[entry.converter_type].parameters)
+
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter_name", "type_name", "required", "is_list"),
+        [
+            ("SearchReplaceConverter", "replace", "str | list[str]", True, False),
+            ("DenylistConverter", "denylist", "list[str]", False, True),
+        ],
+    )
+    async def test_types_expose_structured_parameters_without_changing_catalog(
+        self,
+        upload_service: ConverterService,
+        converter_type: str,
+        parameter_name: str,
+        type_name: str,
+        required: bool,
+        is_list: bool,
+    ) -> None:
+        types_result = await upload_service.list_converter_types_async()
+        catalog_result = await upload_service.list_converter_catalog_async()
+        types_entry = next(entry for entry in types_result.items if entry.converter_type == converter_type)
+        catalog_entry = next(entry for entry in catalog_result.items if entry.converter_type == converter_type)
+        parameter = next(param for param in types_entry.parameters if param.name == parameter_name)
+
+        assert parameter.type_name == type_name
+        assert parameter.required is required
+        assert parameter.is_list is is_list
+        assert catalog_entry.parameters == [param for param in types_entry.parameters if param.is_string_coercible]
+        assert all(param.name != parameter_name for param in catalog_entry.parameters)
+
     async def test_catalog_excludes_registry_reference_params(self) -> None:
         """The compatibility catalog preserves the scalar-only form contract."""
         service = ConverterService()

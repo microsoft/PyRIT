@@ -269,8 +269,24 @@ class TestListTargetCatalog:
         assert targets_parameter.reference_type == "target"
         assert targets_parameter.type_name == "list[str]"
         assert targets_parameter.is_list is True
+        weights_parameter = next(param for param in types_entry.parameters if param.name == "weights")
+        assert weights_parameter.type_name == "list[int]"
+        assert weights_parameter.is_list is True
+        assert weights_parameter.required is False
         assert all(param.name != "targets" for param in catalog_entry.parameters)
+        assert all(param.name != "weights" for param in catalog_entry.parameters)
         assert catalog_entry.parameters == [param for param in types_entry.parameters if param.is_string_coercible]
+
+    async def test_types_preserve_all_registry_parameters(self) -> None:
+        service = TargetService()
+        result = await service.list_target_types_async()
+        metadata_by_name = {
+            metadata.class_name: metadata for metadata in service._registry.get_all_registered_class_metadata()
+        }
+
+        assert {entry.target_type for entry in result.items} == set(metadata_by_name)
+        for entry in result.items:
+            assert entry.parameters == list(metadata_by_name[entry.target_type].parameters)
 
     async def test_catalog_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()

@@ -128,7 +128,7 @@ class ConverterService:
                 converter_type=metadata.class_name,
                 supported_input_types=list(metadata.supported_input_types),
                 supported_output_types=list(metadata.supported_output_types),
-                parameters=[p for p in metadata.parameters if p.is_string_coercible or p.reference is not None],
+                parameters=list(metadata.parameters),
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )
@@ -143,9 +143,9 @@ class ConverterService:
 
         LEGACY COMPATIBILITY: ``catalog`` is the pre-registry name for ``types``, and
         the whole concept goes away -- there is no ``ConverterCatalog`` class and
-        nothing new should use this. It differs from ``list_converter_types_async`` in
-        exactly one way: it drops registry-reference parameters, which the un-migrated
-        chat UI cannot render. Delete this method, the ``/catalog`` route, and the
+        nothing new should use this. It keeps only string-coercible parameters;
+        registry references and structured parameters are excluded because the
+        un-migrated chat UI cannot render them. Delete this method, the ``/catalog`` route, and the
         ``ConverterCatalog*`` aliases together when the chat-migration layer of this
         stack switches to ``/converters/types``.
 

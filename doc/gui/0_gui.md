@@ -193,6 +193,9 @@ Use **Reload** to discard local edits and fetch the latest source content. Saved
 ## Registry API Migration Notes
 
 Use `/api/converters/types` and `/api/targets/types` for registry build metadata.
+These endpoints return all constructor parameters from the registry, including
+lists, unions, and component references. The temporary `/catalog` routes retain
+their scalar-only filtering for the current UI.
 Create requests should supply an explicit registry `name`. Converter creation
 returns the complete `ConverterInstance`; read its type from
 `identifier.class_name`, not the old top-level `converter_type` field. Treat
