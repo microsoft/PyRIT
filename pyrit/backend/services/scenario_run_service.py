@@ -1255,6 +1255,8 @@ class ScenarioRunService:
                 status=header_result.scenario_run_state,
                 created_at=header_result.creation_time,
                 completed_at=header_result.completion_time if terminal else None,
+                error=header_result.error_message,
+                error_type=header_result.error_type,
                 pyrit_version=header_result.pyrit_version,
                 target=target,
                 techniques_used=techniques_used,

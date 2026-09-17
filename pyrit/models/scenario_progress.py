@@ -101,6 +101,8 @@ class ScenarioProgressHeader(BaseModel):
     status: ScenarioRunState
     created_at: datetime
     completed_at: datetime | None = None
+    error: str | None = None
+    error_type: str | None = None
     pyrit_version: str | None = None
     target: "ScenarioTargetSummary | None" = None
     techniques_used: list[str] = Field(default_factory=list)

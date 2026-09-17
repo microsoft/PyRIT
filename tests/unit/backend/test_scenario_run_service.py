@@ -2309,6 +2309,29 @@ def test_get_progress_uses_lightweight_queries_without_full_hydration(mock_memor
     assert str(header.id) not in service._active_tasks
 
 
+def test_get_progress_maps_persisted_failure_details(mock_memory) -> None:
+    plan = ScenarioRunPlan(atomic_groups=[], seed_groups=[], scenario_registry_name="test.scenario")
+    header = make_scenario_result(
+        attack_results={},
+        scenario_run_state=ScenarioRunState.FAILED,
+        error_message="Scenario initialization failed.",
+        error_type="ValueError",
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+    )
+    mock_memory.get_scenario_result_header.return_value = header
+    mock_memory.get_scenario_attack_result_deltas.return_value = ([], False)
+
+    progress = ScenarioRunService().get_run_progress(
+        scenario_result_id=str(header.id),
+        since=None,
+        limit=25,
+    )
+
+    assert progress is not None
+    assert progress.run.error == "Scenario initialization failed."
+    assert progress.run.error_type == "ValueError"
+
+
 def test_get_progress_cache_only_maps_new_storage_rows(mock_memory) -> None:
     seed_group_ids = ["seed-1", "seed-2"]
     plan = ScenarioRunPlan(

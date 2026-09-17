@@ -787,6 +787,8 @@ export interface ScenarioProgressHeader {
   status: ScenarioRunState
   created_at: string
   completed_at?: string | null
+  error?: string | null
+  error_type?: string | null
   pyrit_version?: string | null
   target?: ScenarioTargetSummary | null
   techniques_used?: string[]
