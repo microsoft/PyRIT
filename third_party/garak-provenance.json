@@ -76,6 +76,10 @@
       "sources": ["garak/probes/packagehallucination.py"]
     },
     {
+      "path": "pyrit/scenario/scenarios/garak/prompt_inject.py",
+      "sources": ["garak/probes/promptinject.py"]
+    },
+    {
       "path": "pyrit/scenario/scenarios/garak/web_injection.py",
       "sources": ["garak/probes/web_injection.py", "garak/data/xss"]
     },
