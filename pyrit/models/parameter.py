@@ -9,14 +9,22 @@ import copy
 import types
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, model_validator
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE
 
-_SUPPORTED_SCALAR_TYPES: tuple[type, ...] = (str, int, float, bool)
-_SCALAR_NAME_TO_TYPE: dict[str, type] = {"int": int, "float": float, "bool": bool, "str": str}
+_SUPPORTED_SCALAR_TYPES: tuple[type, ...] = (str, int, float, bool, Path)
+_SCALAR_NAME_TO_TYPE: dict[str, type | types.UnionType] = {
+    "Path": Path,
+    "Path | str": Path | str,
+    "bool": bool,
+    "float": float,
+    "int": int,
+    "str": str,
+}
 
 
 class ComponentType(str, Enum):
@@ -66,8 +74,10 @@ class Parameter(BaseModel):
 
     ``reference``, when set, marks the parameter as a registry reference: its value
     is supplied *by name* and resolved to a registered instance by the registry
-    layer (``Parameter`` itself never resolves references). It is also excluded
-    from serialization.
+    layer (``Parameter`` itself never resolves references). The live reference is
+    excluded from serialization; ``reference_type`` exposes its component family,
+    while ``type_name`` and ``is_list`` expose whether clients supply one name or a
+    list of names.
 
     ``coerce_value`` and ``validate`` are the only public behaviors; all coercion
     branching lives behind them so callers never touch a free function.
@@ -130,21 +140,37 @@ class Parameter(BaseModel):
         """
         if not isinstance(data, dict):
             return data
-        if data.get("param_type") is not None or "type_name" not in data:
+        needs_param_type = data.get("param_type") is None and "type_name" in data
+        needs_reference = data.get("reference") is None and data.get("reference_type") is not None
+        if not needs_param_type and not needs_reference:
             return data
         data = dict(data)
-        data["param_type"] = _param_type_from_display(
-            type_name=data.get("type_name"),
-            choices=data.get("choices"),
-            is_list=bool(data.get("is_list")),
-        )
+        if needs_param_type:
+            data["param_type"] = _param_type_from_display(
+                type_name=data.get("type_name"),
+                choices=data.get("choices"),
+                is_list=bool(data.get("is_list")),
+            )
+        if needs_reference:
+            data["reference"] = RegistryReference(
+                component_type=ComponentType(data["reference_type"]),
+                annotation=data.get("param_type"),
+            )
         return data
+
+    @property
+    def _display_type(self) -> Any:
+        """Wire type, where registry references are supplied as names."""
+        if self.reference is None:
+            return self.param_type
+        annotation = _unwrap_optional(self.reference.annotation)
+        return list[str] if get_origin(annotation) is list else str
 
     @computed_field
     @property
     def type_name(self) -> str:
         """Display name of the parameter's type (e.g. ``'int'``, ``'str'``, ``'list[str]'``, ``'any'``)."""
-        return _render_type_name(self.param_type)
+        return _render_type_name(self._display_type)
 
     @computed_field
     @property
@@ -156,14 +182,30 @@ class Parameter(BaseModel):
     @property
     def choices(self) -> list[str] | None:
         """Allowed values for a constrained scalar (``Literal`` / ``Enum``), or None when unconstrained."""
-        members = display_choices(self.param_type)
+        members = display_choices(self._display_type)
         return [str(member) for member in members] if members is not None else None
 
     @computed_field
     @property
     def is_list(self) -> bool:
         """True when the parameter accepts a list of values (e.g. ``list[str]``)."""
-        return get_origin(self.param_type) is list
+        return get_origin(self._display_type) is list
+
+    @property
+    def is_path(self) -> bool:
+        """Whether this is a local filesystem path parameter."""
+        return self.reference is None and _unwrap_optional(self.param_type) is Path
+
+    @property
+    def is_path_or_str(self) -> bool:
+        """Whether this parameter accepts paths or strings without URL normalization."""
+        return self.reference is None and _is_path_or_str(self.param_type)
+
+    @computed_field
+    @property
+    def reference_type(self) -> str | None:
+        """Registry component family this parameter references, or None."""
+        return self.reference.component_type.value if self.reference is not None else None
 
     @field_serializer("default")
     def _serialize_default(self, value: Any) -> str | list[str] | None:
@@ -191,7 +233,7 @@ class Parameter(BaseModel):
         Whether a single string token can be coerced to this parameter's value.
 
         True for a non-reference plain scalar (``str`` / ``int`` / ``float`` /
-        ``bool``), ``Literal[...]``, or ``Enum`` parameter — exactly the forms a
+        ``bool`` / ``Path`` / ``Path | str``), ``Literal[...]``, or ``Enum`` parameter — exactly the forms a
         text field or CLI token can supply. References and structured types (lists
         and arbitrary objects) are False and are surfaced/handled elsewhere.
 
@@ -284,7 +326,7 @@ class Parameter(BaseModel):
 
         raise ValueError(
             f"Parameter '{self.name}' has unsupported param_type {param_type!r}. "
-            f"Supported types: str, int, float, bool, Literal[...], Enum, a list of those, "
+            f"Supported types: str, int, float, bool, Path, Path | str, Literal[...], Enum, a list of those, "
             f"or None (or provide a default)."
         )
 
@@ -310,18 +352,26 @@ def _is_enum_type(annotation: Any) -> bool:
     return isinstance(annotation, type) and issubclass(annotation, Enum)
 
 
+def _is_path_or_str(annotation: Any) -> bool:
+    """Return whether the annotation is ``Path | str``, optionally including None."""
+    return get_origin(annotation) in (Union, types.UnionType) and set(get_args(annotation)) in (
+        {Path, str},
+        {Path, str, type(None)},
+    )
+
+
 def _is_scalar_param_type(annotation: Any) -> bool:
     """
     Return True when ``annotation`` is a coercible scalar form.
 
-    A scalar form is a plain scalar (``str`` / ``int`` / ``float`` / ``bool``) or a
+    A scalar form is a plain scalar (``str`` / ``int`` / ``float`` / ``bool`` / ``Path``) or a
     constrained scalar (``Literal[...]`` or an ``Enum`` subclass) that carries its
     own allowed set.
 
     Returns:
         bool: True when the annotation is a single coercible scalar form.
     """
-    if annotation in _SUPPORTED_SCALAR_TYPES:
+    if annotation in _SUPPORTED_SCALAR_TYPES or _is_path_or_str(annotation):
         return True
     if get_origin(annotation) is Literal:
         return True
@@ -346,6 +396,10 @@ def _coerce_simple_value(*, param_name: str, annotation: Any, raw_value: Any) ->
             cannot be coerced to the annotated scalar type.
     """
     annotation = _unwrap_optional(annotation)
+    if _is_path_or_str(annotation):
+        if isinstance(raw_value, (Path, str)):
+            return raw_value
+        raise ValueError(f"Parameter '{param_name}' expects a Path or str, got {type(raw_value).__name__}.")
     if get_origin(annotation) is Literal:
         return _coerce_literal(param_name=param_name, annotation=annotation, raw_value=raw_value)
     if _is_enum_type(annotation):
@@ -358,6 +412,8 @@ def _coerce_simple_value(*, param_name: str, annotation: Any, raw_value: Any) ->
         return _coerce_scalar(param_name=param_name, scalar_type=float, raw_value=raw_value)
     if annotation is str:
         return str(raw_value)
+    if annotation is Path:
+        return Path(raw_value)
     return raw_value
 
 
@@ -504,7 +560,7 @@ def _param_type_from_display(*, type_name: str | None, choices: list[str] | None
     if not type_name or type_name == "any":
         return None
     base_name = type_name.removeprefix("list[").rstrip("]") if is_list else type_name
-    base_type: type = _SCALAR_NAME_TO_TYPE.get(base_name, str)
+    base_type = _SCALAR_NAME_TO_TYPE.get(base_name, str)
     if choices:
         coerced = tuple(_coerce_simple_value(param_name="", annotation=base_type, raw_value=c) for c in choices)
         element_type: Any = Literal[coerced]  # ty: ignore[invalid-type-form]
@@ -533,6 +589,8 @@ def _render_type_name(param_type: Any) -> str:
     if param_type is None:
         return "any"
     param_type = _unwrap_optional(param_type)
+    if _is_path_or_str(param_type):
+        return "Path | str"
     if get_origin(param_type) is Literal:
         args = get_args(param_type)
         literal_type_name: str = type(args[0]).__name__ if args else "str"
@@ -548,7 +606,7 @@ def _render_type_name(param_type: Any) -> str:
             member = next(iter(element_type), None)
             return f"list[{type(member.value).__name__ if member is not None else 'str'}]"
         if _is_scalar_param_type(element_type):
-            return f"list[{element_type.__name__}]"
+            return f"list[{_render_type_name(element_type)}]"
     # Detect parameterized generics (list[str], dict[str, int], ...) reliably across Python
     # versions: get_origin returns the unparameterized type for GenericAlias, None otherwise.
     if get_origin(param_type) is not None:

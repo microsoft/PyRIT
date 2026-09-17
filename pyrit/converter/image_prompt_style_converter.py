@@ -40,7 +40,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
         *,
         converter_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         filter_name: str | None = None,
-        filter_path: str | Path | None = None,
+        filter_path: Path | None = None,
         variation: str | None = None,
     ) -> None:
         """

@@ -178,6 +178,7 @@ def mock_pdf_path(tmp_path):
     return pdf_path
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_injection_into_mock_pdf(mock_pdf_path):
     """Test injecting text into a generic mock PDF."""
     # Define injection items
@@ -213,6 +214,7 @@ async def test_injection_into_mock_pdf(mock_pdf_path):
     modified_pdf_path.unlink()  # Clean up after the test
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_multiple_injections_into_mock_pdf(mock_pdf_path):
     """Test injecting text into multiple pages of a generic mock PDF."""
     # Define multiple injection items
@@ -360,6 +362,7 @@ async def test_empty_injection_items(mock_pdf_path):
         await converter.convert_async(prompt="")
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_injection_items_non_existent_page_number(mock_pdf_path):
     """
     Test the PDFConverter's handling of injection items with a non-existent page number.
@@ -394,6 +397,7 @@ async def test_injection_items_non_existent_page_number(mock_pdf_path):
     modified_pdf_path.unlink()
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_non_standard_font_usage():
     """
     Test the ability to use a non-standard font (Times) in PDF generation.
@@ -422,6 +426,7 @@ async def test_non_standard_font_usage():
     output_path.unlink()
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_injection_on_last_page(mock_pdf_path):
     """
     Test injecting text on the last page of a multi-page PDF
