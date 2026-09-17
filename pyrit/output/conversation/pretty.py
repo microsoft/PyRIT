@@ -6,6 +6,7 @@ import textwrap
 
 from colorama import Fore, Style
 
+from pyrit.common.text_helper import escape_control_characters
 from pyrit.models import Message, MessagePiece
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.conversation.base import ConversationPrinterBase
@@ -201,7 +202,8 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
             replace_whitespace=False,
         )
 
-        text_lines = text.split("\n")
+        # Escape before wrapping so escaped sequences count toward the width and none are dropped.
+        text_lines = escape_control_characters(text.replace("\r\n", "\n")).split("\n")
         for line_num, line in enumerate(text_lines):
             if line.strip():
                 wrapped_lines = text_wrapper.wrap(line)
