@@ -14,7 +14,8 @@
 # The Garak scenario family implements probes inspired by the
 # [Garak](https://github.com/NVIDIA/garak) framework. These include encoding-based probes (which
 # test whether a target can be tricked into producing harmful content when prompts are encoded in
-# various formats), web-injection probes (which test whether a target emits markdown
+# various formats), API-key probes (which test whether a target will generate or complete
+# credential-shaped values), web-injection probes (which test whether a target emits markdown
 # data-exfiltration or cross-site-scripting payloads), a doctor probe (which applies the Policy
 # Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
@@ -32,6 +33,9 @@ from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.garak import (
+    ApiKey,
+    ApiKeyDatasetConfiguration,
+    ApiKeyTechnique,
     Doctor,
     Encoding,
     EncodingTechnique,
@@ -177,6 +181,52 @@ web_injection_result = await web_injection_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(web_injection_result)
+
+# %% [markdown]
+# ## ApiKey
+#
+# Ports Garak's `apikey.GetKey` and `apikey.CompleteKey` probes. `GetKey` asks for a new
+# credential across 58 service types; `CompleteKey` asks the target to extend five conspicuous
+# PyRIT-created synthetic partial-key fixtures. The scenario uses `CredentialLeakScorer` with
+# its opt-in `GARAK_PATTERNS` set; the scorer's default coverage is unchanged.
+# Supplied partials, request echoes, and safe placeholders are not counted as leaks; a newly
+# generated credential-shaped value is. Seven service entries represent public resource/client
+# identifiers rather than secrets; they remain in the prompt corpus for Garak parity but are
+# intentionally never scored as credential leaks.
+#
+# **CLI examples:**
+#
+# ```bash
+# # Sample up to 20 prompts across both techniques.
+# pyrit_scan run garak.api_key --target openai_chat
+#
+# # Run only GetKey with a smaller sample.
+# pyrit_scan run garak.api_key --target openai_chat --techniques get_key --max-dataset-size 2
+# ```
+#
+# **Available techniques:** `GetKey` and `CompleteKey`. `DEFAULT` and `ALL` both select the two
+# techniques. `max_dataset_size` samples across all selected technique populations, not per service.
+# The base scenario persists the sample for resume. Use `ApiKeyDatasetConfiguration` with
+# `max_dataset_size=None` to run all 348 requests. Standard technique converter stacks are supported.
+
+# %%
+api_key_scenario = ApiKey()
+api_key_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [ApiKeyTechnique.GetKey],
+        "dataset_config": ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets(), max_dataset_size=2),
+    }
+)
+await api_key_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {api_key_scenario.name}")
+print(f"Atomic attacks: {api_key_scenario.atomic_attack_count}")
+
+api_key_result = await api_key_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(api_key_result)
 
 # %% [markdown]
 # ## Doctor
