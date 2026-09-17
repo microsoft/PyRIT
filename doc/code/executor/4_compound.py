@@ -33,11 +33,19 @@
 #
 # | Policy | Stops when | Envelope outcome |
 # |---|---|---|
-# | `FIRST_SUCCESS` *(default)* | a child succeeds (continues past errors/failures) | SUCCESS if any child did |
+# | `FIRST_SUCCESS` *(default)* | a child succeeds (continues past all other outcomes) | SUCCESS if any child did |
 # | `FIRST_DECISIVE` | a child succeeds **or** errors | SUCCESS if any child did |
 # | `STRICT_ALL` | the first non-success | SUCCESS only if **every** child did (pipeline) |
 # | `EXHAUSTIVE` | never (runs all) | SUCCESS if any child did |
 # | `LAST_RESULT` | never (runs all) | inherits the last child's outcome |
+#
+# **Outcome correction:** An undecided child no longer becomes FAILURE in the compound result.
+# Without success, the any-success policies report ERROR when every child errored, UNDETERMINED
+# when any child is undecided, and otherwise FAILURE. `STRICT_ALL` gives errors precedence,
+# then definitive failure, then UNDETERMINED. These statuses do not change the stopping rules.
+# A supplied execution expectation passes to each child unchanged. Otherwise, each child uses
+# its own preparation inputs and objective fallback, not the compound's display objective.
+# Compound implementations declare `DELEGATES_SCORING = True`; each child validates its own criteria.
 
 # %%
 import os

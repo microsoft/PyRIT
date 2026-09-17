@@ -158,6 +158,14 @@ print(df.to_string(index=False))
 # Cleanup and the reference removal share one transaction; shared observations remain available.
 # Bulk SQL deletes do not use this ORM cleanup path.
 #
+# Response helpers accept `expectation=`; their bare `objective=` input is deprecated until 2.0.
+# Objective and auxiliary scorers receive the complete expectation, with condition routing checked
+# across the group. Each scorer root keeps its own score/observation persistence boundary.
+# Direct scorers check required and duplicate criteria but ignore condition types they do not use.
+# Use a group helper, even with one scorer, when every condition must have a consumer.
+# `Scorer.score_with_scorers_async` accepts optional `scorer_roles`, one per scorer, for execution
+# context. Its result lists follow scorer input order, including empty lists.
+#
 # Scoring APIs return `list[Score]`. An empty list means that the scorer does not apply to the
 # evidence, such as a message with no supported role or data type. A non-empty list contains
 # completed or undetermined scores.

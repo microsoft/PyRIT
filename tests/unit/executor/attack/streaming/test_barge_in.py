@@ -17,7 +17,7 @@ from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
 from pyrit.executor.attack.core import AttackConverterConfig, AttackParameters
-from pyrit.models import AttackOutcome, Message, MessagePiece
+from pyrit.models import AttackOutcome, MatchesObjective, Message, MessagePiece, ScoringExpectation
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import RealtimeTarget
 
@@ -96,6 +96,23 @@ async def test_validate_context_requires_audio_chunks(vad_target):
     )
     with pytest.raises(ValueError, match="audio_chunks"):
         attack._validate_context(context=ctx)
+
+
+async def test_execute_rejects_conditions_before_opening_stream(vad_target):
+    attack = BargeInAttack(objective_target=vad_target)
+    ctx = BargeInAttackContext(
+        params=AttackParameters(
+            objective="o",
+            expectation=ScoringExpectation(objective="criterion", conditions=(MatchesObjective(),)),
+        ),
+        audio_chunks=_aiter([b"\x00" * 96]),
+    )
+    with (
+        patch.object(attack, "_setup_async", new_callable=AsyncMock) as setup,
+        pytest.raises(ValueError, match="does not match the condition"),
+    ):
+        await attack.execute_with_context_async(context=ctx)
+    setup.assert_not_awaited()
 
 
 # ---- _setup_async + prepended_conversation persistence ---------------------------------------

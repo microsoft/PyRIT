@@ -26,14 +26,14 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field
 
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
-from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup
+from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, ScoringExpectation
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -55,24 +55,23 @@ class SequenceCompletionPolicy(str, Enum):
     """
 
     FIRST_SUCCESS = "first_success"
-    """Stop on the first ``AttackOutcome.SUCCESS``; continue past ERROR and FAILURE.
-    Outcome: SUCCESS if any child attack succeeded, ERROR if every child attack errored, else FAILURE.
+    """Stop on the first ``AttackOutcome.SUCCESS``; continue past other outcomes.
+    Outcome: SUCCESS if any succeeded, ERROR if all errored, UNDETERMINED if any are undecided, else FAILURE.
     Resilient adaptive default — keep trying other strategies past transient errors."""
 
     FIRST_DECISIVE = "first_decisive"
     """Stop on the first ``AttackOutcome.SUCCESS`` or ``AttackOutcome.ERROR``;
-    continue past FAILURE. Outcome: SUCCESS if any child attack succeeded, ERROR if every
-    child attack errored, else FAILURE. Use when ERRORs should short-circuit the sequence."""
+    continue past FAILURE and UNDETERMINED. Use the same outcome rule as FIRST_SUCCESS.
+    Use when ERRORs should short-circuit the sequence."""
 
     STRICT_ALL = "strict_all"
     """Stop on the first non-SUCCESS. Outcome: SUCCESS only if every child attack succeeded,
-    ERROR if any child attack errored, else FAILURE. Pipeline semantics — each child attack is
-    required."""
+    ERROR if any errored, FAILURE if any failed, otherwise UNDETERMINED.
+    Pipeline semantics — each child attack is required."""
 
     EXHAUSTIVE = "exhaustive"
-    """Run every child attack regardless of intermediate outcomes. Outcome: SUCCESS if any
-    child attack succeeded, ERROR if every child attack errored, else FAILURE. Use for evaluation
-    sweeps where you want to try everything."""
+    """Run every child attack. Use the same outcome rule as FIRST_SUCCESS.
+    Use for evaluation sweeps where you want to try everything."""
 
     LAST_RESULT = "last_result"
     """Run every child attack; inherit the last child attack's outcome verbatim. Use for chained
@@ -190,6 +189,8 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         result = await sequential.execute_async(objective="...")
     """
 
+    DELEGATES_SCORING: ClassVar[bool] = True
+
     CHILD_ATTACK_RESULT_IDS_KEY: str = "child_attack_result_ids"
     """Metadata key under which the per-child-attack result IDs are stored."""
 
@@ -254,6 +255,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 child_attack=child_attack,
                 memory_labels=labels,
                 attribution=context._attribution,
+                expectation=context.params.expectation,
             )
             results.append(result)
             if self._should_stop_after(result=result):
@@ -289,6 +291,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         child_attack: SequentialChildAttack,
         memory_labels: dict[str, str],
         attribution: AttackResultAttribution | None = None,
+        expectation: ScoringExpectation | None = None,
     ) -> AttackResult:
         """
         Execute one child attack via ``AttackExecutor`` and return its result.
@@ -307,6 +310,8 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 provided, the executor stamps it onto every inner
                 ``AttackResult`` so the persisted child rows carry the
                 parent linkage.
+            expectation (ScoringExpectation | None): Explicit scoring input forwarded unchanged.
+                Omission leaves the child's seed preparation and objective fallback in control.
 
         Returns:
             AttackResult: The ``AttackResult`` produced by the inner
@@ -319,6 +324,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             RuntimeError: If the executor returned neither a completed
                 result nor an incomplete objective (defensive guard).
         """
+        expectation_override = {"expectation": expectation} if expectation is not None else {}
         executor_result = await self._executor.execute_attack_from_seed_groups_async(
             attack=child_attack.strategy,
             seed_groups=[child_attack.seed_group],
@@ -326,6 +332,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             objective_scorer=child_attack.objective_scorer,
             memory_labels=memory_labels,
             attribution=attribution,
+            **expectation_override,
         )
         if executor_result.completed_results:
             return executor_result.completed_results[0]
@@ -353,10 +360,14 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 return AttackOutcome.SUCCESS
             if any(r.outcome is AttackOutcome.ERROR for r in results):
                 return AttackOutcome.ERROR
-            return AttackOutcome.FAILURE
+            if any(r.outcome is AttackOutcome.FAILURE for r in results):
+                return AttackOutcome.FAILURE
+            return AttackOutcome.UNDETERMINED
         # FIRST_SUCCESS, FIRST_DECISIVE, EXHAUSTIVE all share any-success semantics.
         if any(r.outcome is AttackOutcome.SUCCESS for r in results):
             return AttackOutcome.SUCCESS
         if all(r.outcome is AttackOutcome.ERROR for r in results):
             return AttackOutcome.ERROR
+        if any(r.outcome is AttackOutcome.UNDETERMINED for r in results):
+            return AttackOutcome.UNDETERMINED
         return AttackOutcome.FAILURE
