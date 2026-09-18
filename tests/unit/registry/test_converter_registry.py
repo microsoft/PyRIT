@@ -6,6 +6,7 @@ Tests for the merged ``ConverterRegistry`` (buildable catalog + instance contain
 and its introspection helpers.
 """
 
+from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -116,6 +117,21 @@ def registry():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("converter_type", "parameter_name"),
+    [("AddImageVideoConverter", "video_path"), ("ImageOverlayConverter", "base_image")],
+)
+@pytest.mark.parametrize(
+    "source",
+    [Path("input.png"), "input.png", "https://account.blob.core.windows.net/container/input.png"],
+)
+def test_registry_preserves_path_or_str_inputs(
+    registry: ConverterRegistry, converter_type: str, parameter_name: str, source: Path | str
+) -> None:
+    instance = registry.create_instance(converter_type, **{parameter_name: source})
+    assert instance.get_identifier().params[parameter_name] == str(source)
+
+
 class TestConverterRegistrySingleton:
     """Tests for the singleton pattern in ConverterRegistry."""
 
@@ -161,15 +177,39 @@ class TestConverterRegistryRegisterInstance:
 
         assert len(registry.instances) == 2
 
-    def test_register_instance_duplicate_name_overwrites(self, registry: ConverterRegistry):
+    def test_register_instance_duplicate_name_raises(self, registry: ConverterRegistry):
         converter1 = MockTextConverter()
         converter2 = MockImageConverter()
 
         registry.instances.register(converter1, name="shared_name")
-        registry.instances.register(converter2, name="shared_name")
 
-        assert len(registry.instances) == 1
-        assert registry.instances.get("shared_name") is converter2
+        with pytest.raises(ValueError, match="already exists"):
+            registry.instances.register(converter2, name="shared_name")
+
+        assert registry.instances.get("shared_name") is converter1
+
+    def test_create_named_instance_builds_and_stores_converter(self, registry: ConverterRegistry):
+        converter = registry.create_named_instance(name="base64", type_name="Base64Converter")
+
+        assert isinstance(converter, Base64Converter)
+        assert registry.instances.get("base64") is converter
+
+    def test_create_named_instance_stores_registry_metadata(self, registry: ConverterRegistry):
+        converter = registry.create_named_instance(
+            name="base64",
+            type_name="Base64Converter",
+            registry_metadata={"owned_artifact_paths": ["managed.dat"]},
+        )
+
+        entry = registry.instances.get_entry("base64")
+        assert entry is not None
+        assert entry.instance is converter
+        assert entry.metadata == {"owned_artifact_paths": ["managed.dat"]}
+
+    @pytest.mark.parametrize("name", ["catalog", "preview", "types"])
+    def test_create_named_instance_rejects_reserved_name(self, registry: ConverterRegistry, name: str):
+        with pytest.raises(ValueError, match="reserved"):
+            registry.create_named_instance(name=name, type_name="Base64Converter")
 
     def test_register_instance_rejects_non_converter(self, registry: ConverterRegistry):
         class NotAConverter:

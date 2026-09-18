@@ -78,9 +78,19 @@ class WordLevelConverter(Converter):
     def validate_input(self, prompt: str) -> None:
         """Validate the input before processing (can be overridden by subclasses)."""
 
+    # Deprecation helper: remove in 1.4.0 with BinaryConverter's override.
+    def _validate_before_conversion(self, prompt: str) -> None:
+        """Delegate automatic validation to the existing subclass hook."""
+        self.validate_input(prompt=prompt)
+
     def join_words(self, words: list[str]) -> str:
         """
         Provide a way for subclasses to override the default behavior of joining words.
+
+        Words are rejoined with the same separator they were split on, so a custom
+        ``word_split_separator`` survives the round trip. A ``None`` separator splits on
+        arbitrary whitespace, which has no single representation to restore, so those
+        words are joined with a space.
 
         Args:
             words (list[str]): List of words to join.
@@ -88,7 +98,8 @@ class WordLevelConverter(Converter):
         Returns:
             str: The joined string.
         """
-        return " ".join(words)
+        separator = " " if self._word_split_separator is None else self._word_split_separator
+        return separator.join(words)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
@@ -111,7 +122,8 @@ class WordLevelConverter(Converter):
         if input_type != "text":
             raise ValueError(f"Input type {input_type} not supported")
 
-        self.validate_input(prompt=prompt)
+        # Deprecation helper: restore self.validate_input(prompt=prompt) in 1.4.0.
+        self._validate_before_conversion(prompt=prompt)
 
         words = prompt.split() if self._word_split_separator is None else prompt.split(self._word_split_separator)
 

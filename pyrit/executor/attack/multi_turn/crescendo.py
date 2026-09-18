@@ -415,7 +415,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             )
 
             # Check for refusal and backtrack if needed
-            context.last_response_was_refusal = False
             backtracked = await self._perform_backtrack_if_refused_async(
                 context=context,
                 prompt_sent=message_to_send.get_value(),
@@ -456,7 +455,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             outcome_reason=outcome_reason,
             executed_turns=context.executed_turns,
             last_response=context.last_response.get_piece() if context.last_response else None,
-            last_score=context.last_score,
+            automated_score=context.last_score,
             related_conversations=context.related_conversations,
             labels=context.memory_labels,
         )
@@ -703,9 +702,8 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             raise ValueError("No response available in context to score")
 
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
@@ -713,7 +711,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 response=context.last_response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                objective=context.objective,
+                expectation=context.expectation,
             )
 
         objective_score = scoring_results["objective_scores"]
@@ -795,6 +793,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Returns:
             bool: True if backtracking was performed, False otherwise.
         """
+        context.last_response_was_refusal = False
         # Check for refusal using the scorer (handles blocked/error responses internally)
         refusal_score = await self._check_refusal_async(context, prompt_sent)
         is_refusal = score_is_true(refusal_score)

@@ -41,6 +41,7 @@ from pyrit.models import (
     MessagePiece,
     Score,
     ScoreStatus,
+    ScoringExpectation,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
@@ -160,6 +161,8 @@ class MockNodeFactory:
                 get_value=MagicMock(return_value=config.objective_score_value),
                 is_undetermined=False,
                 score_metadata=None,
+                scored_expectation=None,
+                observation_ids=[],
             )
         else:
             node.objective_score = None
@@ -1195,6 +1198,7 @@ class TestBlockedScoringDefaults:
                 objective_target=builder.objective_target,
             ),
             record_objective_conversation=lambda *, conversation_id: None,
+            expectation=ScoringExpectation(objective="test objective"),
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1262,6 +1266,7 @@ class TestBlockedScoringDefaults:
                 objective_target=builder.objective_target,
             ),
             record_objective_conversation=lambda *, conversation_id: None,
+            expectation=ScoringExpectation(objective="test objective"),
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1570,7 +1575,7 @@ class TestEndToEndExecution:
             conversation_id="test_conv_id",
             objective="Test objective",
             last_response=None,
-            last_score=helpers.create_score(0.5),
+            automated_score=helpers.create_score(0.5),
             executed_turns=1,
             execution_time_ms=100,
             outcome=AttackOutcome.FAILURE,
@@ -1615,7 +1620,7 @@ class TestEndToEndExecution:
             conversation_id="success_conv_id",
             objective="Test objective",
             last_response=None,
-            last_score=helpers.create_score(0.9),
+            automated_score=helpers.create_score(0.9),
             executed_turns=1,
             execution_time_ms=100,
             outcome=AttackOutcome.SUCCESS,
@@ -1690,6 +1695,7 @@ class TestTreeOfAttacksNode:
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "modality_router": modality_router,
             "record_objective_conversation": lambda *, conversation_id: None,
+            "expectation": ScoringExpectation(objective="test objective"),
             "memory_labels": {"test": "label"},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
@@ -2772,6 +2778,7 @@ class TestTreeOfAttacksConversationTracking:
         )
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_tap_init_raises_when_objective_scorer_is_none():
     """Test that TAP __init__ raises ValueError when AttackScoringConfig has objective_scorer=None."""
     scoring_config = AttackScoringConfig(objective_scorer=None)
@@ -2881,12 +2888,16 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
                 spec=Score,
                 get_value=MagicMock(return_value=0.0),
                 score_metadata=None,
+                scored_expectation=None,
+                observation_ids=[],
             )
         elif b.score is not None:
             node.objective_score = MagicMock(
                 spec=Score,
                 get_value=MagicMock(return_value=b.score),
                 score_metadata=None,
+                scored_expectation=None,
+                observation_ids=[],
             )
 
     node = MagicMock()
@@ -3192,6 +3203,7 @@ class TestModalityRouterIntegration:
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "modality_router": modality_router,
             "record_objective_conversation": lambda *, conversation_id: None,
+            "expectation": ScoringExpectation(objective="test objective"),
             "memory_labels": {},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
@@ -3438,6 +3450,7 @@ class TestModalityRouterIntegration:
         assert sent.get_value() == "feedback text"
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestTAPAdversarialIdentity:
     """Tests for adversarial config in the TAP attack identity and inline system prompt."""
 

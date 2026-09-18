@@ -12,9 +12,11 @@ from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, Se
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PackageHallucination,
     PackageHallucinationTechnique,
+    WebInjectionTechnique,
 )
 from pyrit.score import TrueFalseScorer
 from pyrit.score.true_false.regex.package_hallucination_scorer import (
@@ -137,6 +139,24 @@ class TestPackageHallucinationAtomicAttacks:
                 }
             )
             await scenario.initialize_async()
+
+    async def test_seed_resolution_rejects_foreign_technique(self):
+        scenario = PackageHallucination()
+        scenario._scenario_techniques = [WebInjectionTechnique.TaskXSS]
+
+        with pytest.raises(TypeError, match="Unexpected package hallucination technique: WebInjectionTechnique"):
+            await scenario._resolve_seed_groups_by_dataset_async()
+
+    async def test_atomic_attack_build_rejects_foreign_technique(self, mock_objective_target):
+        scenario = PackageHallucination()
+        context = ScenarioContext(
+            objective_target=mock_objective_target,
+            scenario_techniques=[WebInjectionTechnique.TaskXSS],
+            dataset_config=scenario._default_dataset_config,
+        )
+
+        with pytest.raises(TypeError, match="Unexpected package hallucination technique: WebInjectionTechnique"):
+            await scenario._build_atomic_attacks_async(context=context)
 
     async def test_default_builds_one_rust_atomic_attack(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()

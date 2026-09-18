@@ -5,7 +5,7 @@
 Unit tests for pyrit.cli.api_client.PyRITApiClient.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -90,7 +90,7 @@ def _target_payload(*, target_registry_name: str = "t1") -> dict:
 
 
 def _run_summary_payload(*, scenario_result_id: str = "abc", status: str = "CREATED") -> dict:
-    now = datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat()
+    now = datetime(2025, 1, 1, tzinfo=UTC).isoformat()
     return {
         "scenario_result_id": scenario_result_id,
         "scenario_name": "x",

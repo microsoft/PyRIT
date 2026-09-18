@@ -2,6 +2,17 @@
 
 Modern TypeScript + React frontend for PyRIT, built with Fluent UI.
 
+## Appearance
+
+The **Theme** menu at the bottom of the sidebar offers System, Light, Dark,
+Raccoon, Jimothy, Pirate, Seattle Rain, Evergreen, Blueprint, and Night Sky.
+Each named preset combines a fixed palette with a decorative workspace
+background. Content panels remain solid for readability.
+
+Your choice is saved in this browser. System follows the operating system's
+light/dark preference. High-contrast mode overrides every palette and hides
+decorations without forgetting the selected preset.
+
 ## Development
 
 ```bash
@@ -85,6 +96,12 @@ npm run test:e2e:headed   # Run with visible browser windows (requires display)
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
 
+Jest's shared setup in `src/setupTests.ts` supplies the minimal layout signals
+Fluent UI needs for dialog focus. No per-suite layout mocks are needed. Hidden
+and detached elements remain excluded. Await role queries after dialog
+transitions, including when returning to background controls. This is not a
+layout engine; use Playwright for assertions about element dimensions or positioning.
+
 ### E2E Test Modes
 
 E2E flow tests run in two modes controlled by Playwright projects and an environment variable:
@@ -114,3 +131,53 @@ E2E tests use `dev.py` to automatically start both frontend and backend servers.
 
 The frontend proxies API requests to `http://localhost:8000` in development.
 Configure this in `vite.config.ts` if needed.
+
+## Adding a theme preset
+
+The catalog in `src/themes/themePresets.ts` is the source of truth for preset
+IDs, labels, palettes, backgrounds, menu entries, and stored-value validation.
+
+1. Draw a new, self-contained SVG in `public/backgrounds/`. Use a transparent
+   background and keep prominent artwork away from the upper-left reading area.
+   Do not embed scripts, external resources, fonts, or raster images.
+2. Add one entry to `THEME_PRESETS`, using a unique, stable ID. For example:
+
+   ```ts
+   'my-background': {
+     label: 'My Background',
+     resolved: 'light',
+     theme: webLightTheme,
+     background: {
+       imageUrl: '/backgrounds/my-background.svg',
+       opacity: 0.08,
+     },
+   },
+   ```
+
+3. For a coordinated palette, follow a nearby preset's `createPaletteTheme`
+   definition instead of changing colors in individual components. Keep
+   `resolved` consistent with the palette's light/dark base. Its status
+   foregrounds cover custom surfaces while preserving Fluent's semantic
+   backgrounds and borders.
+4. Document how the artwork was made and keep the palette accessibility tests
+   passing. They check neutral/status text and button contrast, including the
+   strongest possible artwork at the configured opacity, plus semantic
+   foreground/background pairs used by badges and messages.
+
+No hook, menu switch, or page-specific background needs to be added for a new
+preset. Existing page canvases share one decorative layer; controls, dialogs,
+cards, tables, and message bubbles continue using opaque Fluent UI tokens.
+An unknown or removed stored preset returns to System.
+
+### Background artwork provenance
+
+All seven SVGs in `public/backgrounds/` were newly drawn from scratch for this
+change with Copilot assistance and are provided under this repository's MIT
+license. No artist's illustration, photograph, or stock wallpaper was copied,
+traced, vectorized, or used as image-generation input.
+
+The Jimothy drawing uses the real Seattle raccoon's distinctive compact,
+rounded appearance. [Know Your Meme](https://knowyourmeme.com/memes/jimothy-the-raccoon)
+and [Wikipedia](https://en.wikipedia.org/wiki/Jimothy_(Raccoon)) were consulted
+for factual descriptions only. Their displayed artwork and photographs were
+not reused. The existing CoPyRIT logo is unchanged.

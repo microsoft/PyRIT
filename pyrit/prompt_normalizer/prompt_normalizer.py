@@ -36,6 +36,16 @@ from pyrit.prompt_target.common.target_send_context import TargetSendContext
 logger = logging.getLogger(__name__)
 
 
+def _is_write_only_response(responses: object) -> bool:
+    """
+    Distinguish a write-only target's empty list from a malformed None response.
+
+    Returns:
+        bool: Whether the target returned an empty list.
+    """
+    return isinstance(responses, list) and len(responses) == 0
+
+
 class PromptNormalizer:
     """
     Handles normalization and processing of prompts before they are sent to targets.
@@ -173,7 +183,7 @@ class PromptNormalizer:
         if not responses or not any(responses):
             # An empty list is valid for write-only targets (e.g., TextTarget)
             # that don't produce responses. Return the request as-is.
-            if responses is not None and len(responses) == 0:
+            if _is_write_only_response(responses):
                 return request
             empty_response = construct_response_from_request(
                 request=request.message_pieces[0],

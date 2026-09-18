@@ -14,11 +14,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
-try:
-    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
-except ImportError:  # pragma: no cover - exercised only on 3.10
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
-
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
     get_retry_collector,
@@ -43,11 +38,13 @@ from pyrit.models import (
     Message,
     Score,
     ScorerIdentifier,
+    ScoringExpectation,
     SeedPrompt,
     TargetIdentifier,
     UndeterminedScoreError,
 )
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.score import Scorer
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -183,6 +180,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
     _error_result_persistence_error: Exception | None = field(default=None, init=False, repr=False)
+    _persist_attack_result: bool = field(default=True, init=False, repr=False, compare=False)
     _objective_target_conversation_lifecycle: _ObjectiveTargetConversationLifecycle | None = field(
         default=None,
         init=False,
@@ -204,7 +202,31 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     # for ad-hoc/direct attack execution outside any orchestrator.
     _attribution: AttackResultAttribution | None = None
 
+    _expectation: ScoringExpectation = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """
+        Resolve scoring context and copy preparation-time conversation references.
+
+        Raises:
+            TypeError: If the expectation is not a ScoringExpectation or None.
+        """
+        expectation = getattr(self.params, "expectation", None)
+        ScoringExpectation.validate_type(expectation)
+        if expectation is None:
+            self._expectation = ScoringExpectation(objective=self.params.objective)
+        elif expectation.objective is None:
+            self._expectation = expectation.model_copy(update={"objective": self.params.objective})
+        else:
+            self._expectation = expectation
+        self.related_conversations.update(getattr(self.params, "source_conversations", ()))
+
     # Convenience properties that delegate to params or overrides
+    @property
+    def expectation(self) -> ScoringExpectation:
+        """The effective scoring question for this execution."""
+        return self._expectation
+
     @property
     def objective(self) -> str:
         """Natural-language description of what the attack tries to achieve."""
@@ -374,6 +396,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         # Stamp attribution onto the result before persistence so the
         # AttackResultEntry row records its lineage. Outside an orchestrator
         # _attribution is None and both attribution fields stay None.
+        event_data.result.related_conversations.update(event_data.context.related_conversations)
         self._apply_attribution(context=event_data.context, result=event_data.result)
         self._apply_targeted_harm_categories(context=event_data.context, result=event_data.result)
 
@@ -484,6 +507,9 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         context = event_data.context
         if not error or not context:
             return
+        if not context._persist_attack_result:
+            self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
+            return
 
         # Collect retry events (visible via inherited ContextVar copy)
         collector = get_retry_collector()
@@ -540,6 +566,10 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+
+    #: Compound attacks set this when children own outcome scoring and expectation validation.
+    #: No scoring configuration alone does not imply delegation.
+    DELEGATES_SCORING: ClassVar[bool] = False
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -803,6 +833,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Raises:
             ExceptionGroup: If attack execution and recording its error result both fail.
         """
+        self._validate_scoring_expectation(context=context)
         context._error_result_persistence_error = None
         lifecycle = _ObjectiveTargetConversationLifecycle(
             objective_target=self._objective_target,
@@ -824,17 +855,32 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         finally:
             context._objective_target_conversation_lifecycle = None
 
-        self._default_event_handler._persist_result(result=result)
+        if context._persist_attack_result:
+            self._default_event_handler._persist_result(result=result)
         return result
+
+    def _validate_scoring_expectation(self, *, context: AttackStrategyContextT) -> None:
+        """Check execution criteria before setup unless child attacks own scoring."""
+        if self.DELEGATES_SCORING:
+            return
+        scoring_config = self.get_attack_scoring_config()
+        scorers: list[Scorer] = []
+        if scoring_config is not None:
+            scorers.extend(scoring_config.auxiliary_scorers)
+            if scoring_config.objective_scorer is not None:
+                scorers.append(scoring_config.objective_scorer)
+        Scorer.validate_expectation_for_scorers(scorers=scorers, expectation=context.expectation)
 
     @overload
     async def execute_async(
         self,
         *,
         objective: str,
+        expectation: ScoringExpectation | None = None,
         next_message: Message | None = None,
         prepended_conversation: list[Message] | None = None,
         memory_labels: dict[str, str] | None = None,
+        persist_attack_result: bool = True,
         **kwargs: Any,
     ) -> AttackStrategyResultT: ...
 
@@ -852,23 +898,32 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Execute the attack strategy asynchronously with the provided parameters.
 
         This method provides a stable contract for all attacks. The signature includes
-        all standard parameters (objective, next_message, prepended_conversation, memory_labels).
+        all standard parameters (objective, expectation, next_message, prepended_conversation, memory_labels).
         Attacks that don't accept certain parameters will raise ValueError if those
         parameters are provided.
 
         Args:
             objective (str): The objective of the attack.
+            expectation (ScoringExpectation | None): Per-execution scoring criteria. Missing scoring
+                context defaults to the attack objective without changing supplied conditions.
             next_message (Message | None): Message to send to the target.
             prepended_conversation (list[Message] | None): Conversation to prepend.
             memory_labels (dict[str, str] | None): Memory labels for the attack context.
+            persist_attack_result (bool): Whether to persist the completed or error attack result.
+                Messages produced during execution are persisted independently.
             **kwargs: Additional context-specific parameters (conversation_id, metadata, etc.).
 
         Returns:
             AttackStrategyResultT: The result of the attack execution.
 
         Raises:
+            TypeError: If ``persist_attack_result`` is not a boolean.
             ValueError: If required parameters are missing or if unsupported parameters are provided.
         """
+        persist_attack_result = kwargs.pop("persist_attack_result", True)
+        if not isinstance(persist_attack_result, bool):
+            raise TypeError("persist_attack_result must be a bool")
+
         # Get valid field names for params and context
         params_fields = {f.name for f in dataclasses.fields(self._params_type)}
         context_fields = {f.name for f in dataclasses.fields(self._context_type)} - {"params"}
@@ -907,5 +962,6 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         # Note: We use cast here because the type checker doesn't know that _context_type
         # (which is AttackContext or a subclass) always accepts 'params' as a keyword argument.
         context = self._context_type(params=params, **context_kwargs)
+        context._persist_attack_result = persist_attack_result
 
         return await self.execute_with_context_async(context=context)

@@ -130,11 +130,14 @@ if TYPE_CHECKING:
         ScenarioTechniqueProgress,
     )
     from pyrit.models.score import (
+        Acquisition,
         Condition,
         ContentEntryScorable,
         ContentScorable,
+        JudgmentObservationPayload,
         MatchesObjective,
         MessageScorable,
+        Observation,
         Scorable,
         ScorableUnion,
         Score,
@@ -144,6 +147,7 @@ if TYPE_CHECKING:
         UndeterminedScoreError,
         UnvalidatedScore,
         scorable_from_dict,
+        scoring_expectation_fingerprint,
     )
     from pyrit.models.seeds import (
         AttackSeedGroup,
@@ -177,6 +181,7 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "Acquisition": "pyrit.models.score",
     "ALLOWED_CHAT_MESSAGE_ROLES": "pyrit.models.messages.chat_message",
     "AtomicAttackEvaluationIdentifier": "pyrit.models.identifiers",
     "AtomicAttackIdentifier": "pyrit.models.identifiers",
@@ -233,6 +238,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "JSON_SCHEMA_METADATA_KEY": "pyrit.models.target",
     "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY": "pyrit.models.target",
     "JsonSchemaDefinition": "pyrit.models.target",
+    "JudgmentObservationPayload": "pyrit.models.score",
     "MatchesObjective": "pyrit.models.score",
     "MEDIA_PATH_DATA_TYPES": "pyrit.models.literals",
     "Message": "pyrit.models.messages.message",
@@ -240,6 +246,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "MessageScorable": "pyrit.models.score",
     "Modality": "pyrit.models.literals",
     "NextMessageSystemPromptPaths": "pyrit.models.seeds",
+    "Observation": "pyrit.models.score",
     "ObjectiveTargetEvaluationIdentifier": "pyrit.models.identifiers",
     "Parameter": "pyrit.models.parameter",
     "ParameterDestination": "pyrit.models.parameter",
@@ -320,6 +327,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "read_usage_int": "pyrit.models.target",
     "read_usage_value": "pyrit.models.target",
     "scorable_from_dict": "pyrit.models.score",
+    "scoring_expectation_fingerprint": "pyrit.models.score",
     "validate_registry_name": "pyrit.models.identifiers",
     "project_behavioral_identity": "pyrit.models.identifiers",
     "RetryEvent": "pyrit.models.retry_event",

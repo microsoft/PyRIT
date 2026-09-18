@@ -8,6 +8,8 @@ import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
+import ConverterRegistry from './components/Registry/ConverterRegistry'
+import RegistryLayout from './components/Registry/RegistryLayout'
 import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
 import HistoryPage from './components/History/HistoryPage'
@@ -31,7 +33,7 @@ import {
 } from './components/History/scenarioHistoryFilters'
 import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
-import type { TargetInfo } from './types'
+import type { AttackOutcome, AttackSummary, BackendScore, TargetInfo } from './types'
 import {
   targetEndpoint,
   targetIdentifierHash,
@@ -58,7 +60,8 @@ const VIEW_PATHS: Record<ViewName, string> = {
   home: '/',
   chat: '/chat',
   history: HISTORY_ATTACKS_PATH,
-  targets: '/targets',
+  registry: '/registry/targets',
+  targets: '/registry/targets',
   scenarios: '/scanner',
   configuration: '/config',
 }
@@ -72,6 +75,9 @@ const VIEW_PATHS: Record<ViewName, string> = {
 function viewFromPath(pathname: string): ViewName {
   if (pathname === '/history' || pathname.startsWith('/history/') || pathname.startsWith('/scanner-history/')) {
     return 'history'
+  }
+  if (pathname.startsWith('/registry')) {
+    return 'registry'
   }
   if (
     pathname === VIEW_PATHS.scenarios
@@ -110,9 +116,14 @@ interface LoadedAttack {
   targetSource: 'persisted' | 'active-selection'
   mainConversationId: string | null
   labels: Record<string, string> | null
+  operator: string | null
   target: TargetInfo | null
   relatedConversationIds: string[]
   objective: string
+  outcome: NonNullable<AttackSummary['outcome']>
+  automatedScore: BackendScore | null
+  humanScore: BackendScore | null
+  lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
 }
 
@@ -319,9 +330,14 @@ function App() {
       status: 'loading',
       mainConversationId: null,
       labels: null,
+      operator: null,
       target: null,
       relatedConversationIds: [],
       objective: '',
+      outcome: 'undetermined',
+      automatedScore: null,
+      humanScore: null,
+      lastResponseMessagePieceId: null,
     })
     attacksApi
       .getAttack(routeAttackId)
@@ -333,9 +349,18 @@ function App() {
           targetSource: 'persisted',
           mainConversationId: attack.conversation_id,
           labels: attack.labels ?? {},
+          operator: attack.operator ?? null,
           target: attack.target ?? null,
-          relatedConversationIds: attack.related_conversation_ids ?? [],
+          relatedConversationIds: attack.related_conversations
+            ? attack.related_conversations
+                .filter((reference) => reference.conversation_type === 'pruned')
+                .map((reference) => reference.conversation_id)
+            : (attack.related_conversation_ids ?? []),
           objective: attack.objective ?? '',
+          outcome: attack.outcome ?? 'undetermined',
+          automatedScore: attack.automated_score ?? null,
+          humanScore: attack.human_score ?? null,
+          lastResponseMessagePieceId: attack.last_response?.id ?? null,
           status: 'success',
         })
       })
@@ -352,9 +377,14 @@ function App() {
           status: isMissing ? 'not-found' : 'error',
           mainConversationId: null,
           labels: null,
+          operator: null,
           target: null,
           relatedConversationIds: [],
           objective: '',
+          outcome: 'undetermined',
+          automatedScore: null,
+          humanScore: null,
+          lastResponseMessagePieceId: null,
         })
       })
     // Drop a stale response once the route has moved on to another attack.
@@ -414,7 +444,7 @@ function App() {
     navigate(VIEW_PATHS.chat)
   }, [navigate])
 
-  const handleConversationCreated = useCallback((arId: string, convId: string) => {
+  const handleConversationCreated = useCallback((arId: string, convId: string, objective?: string) => {
     // Seed the freshly-created attack synchronously and tell the loader to skip
     // its next fetch for this id, so the attack opens without a redundant load.
     if (activeTarget) {
@@ -441,15 +471,43 @@ function App() {
       mainConversationId: convId,
       // New attack uses the current user's labels, so it is never operator-locked.
       labels: null,
+      operator: null,
       target,
       relatedConversationIds: [],
-      objective: '',
+      objective: objective ?? '',
+      outcome: 'undetermined',
+      automatedScore: null,
+      humanScore: null,
+      lastResponseMessagePieceId: null,
       status: 'success',
     })
     // Replace when promoting an empty /chat to its attack url (first message);
     // push when branching from an existing attack so Back returns to the source.
     navigate(attackRoutePath(arId), { replace: routeAttackId === null })
   }, [activeTarget, handleSetActiveTarget, routeAttackId, navigate])
+
+  const handleObjectiveChange = useCallback((objective: string) => {
+    setLoadedAttack((current) => current ? { ...current, objective } : current)
+  }, [])
+
+  const handleHumanScoreChange = useCallback((humanScore: BackendScore | null, outcome: AttackOutcome) => {
+    setLoadedAttack((current) => current ? { ...current, humanScore, outcome } : current)
+  }, [])
+
+  const handleAttackChange = useCallback((attack: AttackSummary) => {
+    setLoadedAttack((current) => (
+      current && current.id === attack.attack_result_id
+        ? {
+            ...current,
+            objective: attack.objective ?? '',
+            outcome: attack.outcome ?? 'undetermined',
+            automatedScore: attack.automated_score ?? null,
+            humanScore: attack.human_score ?? null,
+            lastResponseMessagePieceId: attack.last_response?.id ?? null,
+          }
+        : current
+    ))
+  }, [])
 
   const handleSelectConversation = useCallback((convId: string) => {
     if (!routeAttackId) return
@@ -485,16 +543,23 @@ function App() {
       activeConversationId={activeConversationId}
       onConversationCreated={handleConversationCreated}
       onSelectConversation={handleSelectConversation}
+      onObjectiveChange={handleObjectiveChange}
+      onHumanScoreChange={handleHumanScoreChange}
+      onAttackChange={handleAttackChange}
       labels={globalLabels}
       onLabelsChange={handleGlobalLabelsChange}
       onNavigate={handleNavigate}
-      attackLabels={readyAttack ? readyAttack.labels : null}
+      attackOperator={readyAttack ? readyAttack.operator : null}
       attackTarget={readyAttack ? readyAttack.target : null}
       targetResolutionStatus={targetResolutionStatus}
       onRetryTargetResolution={retryTargetResolution}
       isLoadingAttack={isLoadingAttack}
       relatedConversationCount={readyAttack ? readyAttack.relatedConversationIds.length : 0}
       objective={readyAttack ? readyAttack.objective : ''}
+      outcome={readyAttack?.outcome}
+      automatedScore={readyAttack?.automatedScore}
+      humanScore={readyAttack?.humanScore}
+      lastResponseMessagePieceId={readyAttack?.lastResponseMessagePieceId}
       scenarioResultId={readyAttack ? scenarioResultId : null}
     />
   )
@@ -546,15 +611,19 @@ function App() {
                 path="/attacks/:attackId/conversations/:conversationId"
                 element={chatElement}
               />
-              <Route
-                path="/targets"
-                element={
-                  <TargetConfig
-                    activeTarget={activeTarget}
-                    onSetActiveTarget={handleSetActiveTarget}
-                  />
-                }
-              />
+              <Route path="/registry" element={<RegistryLayout />}>
+                <Route index element={<Navigate to="/registry/targets" replace />} />
+                <Route
+                  path="targets"
+                  element={
+                    <TargetConfig
+                      activeTarget={activeTarget}
+                      onSetActiveTarget={handleSetActiveTarget}
+                    />
+                  }
+                />
+                <Route path="converters" element={<ConverterRegistry />} />
+              </Route>
               <Route path="/scanner" element={<ScenarioCatalog />} />
               <Route
                 path="/scanner/:scenarioName"

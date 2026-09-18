@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import {
   Button,
@@ -12,9 +12,11 @@ import {
 } from '@fluentui/react-components'
 import type { SelectTabData, SelectTabEvent } from '@fluentui/react-components'
 import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
+import { useBeforeUnload, useBlocker, useSearchParams } from 'react-router'
 
 import { configurationApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import EditorWorkspace from '@/components/EditorWorkspace'
 import Initializers from '@/components/Initializers/Initializers'
 
@@ -30,8 +32,21 @@ interface StatusMessage {
 
 type ConfigurationTab = 'configuration' | 'environment' | 'initializers' | 'custom-initializers'
 
+function isConfigurationTab(value: unknown): value is ConfigurationTab {
+  return value === 'configuration'
+    || value === 'environment'
+    || value === 'initializers'
+    || value === 'custom-initializers'
+}
+
+function configurationTabFromSearchParams(searchParams: URLSearchParams): ConfigurationTab {
+  const tab = searchParams.get('tab')
+  return isConfigurationTab(tab) ? tab : 'configuration'
+}
+
 export default function Configuration() {
   const styles = useConfigurationStyles()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [content, setContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
   const [source, setSource] = useState('')
@@ -40,7 +55,21 @@ export default function Configuration() {
   const [saving, setSaving] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
-  const [selectedTab, setSelectedTab] = useState<ConfigurationTab>('configuration')
+  const [environmentHasUnsavedChanges, setEnvironmentHasUnsavedChanges] = useState(false)
+  const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null)
+  const selectedTab = configurationTabFromSearchParams(searchParams)
+  const configurationHasUnsavedChanges = content !== savedContent
+  const hasUnsavedChanges = selectedTab === 'configuration'
+    ? configurationHasUnsavedChanges
+    : selectedTab === 'environment' && environmentHasUnsavedChanges
+  const blocker = useBlocker(hasUnsavedChanges)
+
+  useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
+    if (hasUnsavedChanges) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+  }, [hasUnsavedChanges]))
 
   useEffect(() => {
     let cancelled = false
@@ -74,7 +103,15 @@ export default function Configuration() {
   }, [reloadCount])
 
   const handleReload = (): void => {
-    setReloadCount((currentCount: number) => currentCount + 1)
+    const reload = (): void => {
+      setReloadCount((currentCount: number) => currentCount + 1)
+    }
+
+    if (configurationHasUnsavedChanges) {
+      setPendingDiscardAction(() => reload)
+      return
+    }
+    reload()
   }
 
   const handleSave = async (): Promise<void> => {
@@ -97,21 +134,40 @@ export default function Configuration() {
     }
   }
 
-  const hasUnsavedChanges = content !== savedContent
-
   const handleTabSelect = (_: SelectTabEvent, data: SelectTabData): void => {
-    if (
-      data.value === 'configuration'
-      || data.value === 'environment'
-      || data.value === 'initializers'
-      || data.value === 'custom-initializers'
-    ) {
-      setSelectedTab(data.value)
+    if (!isConfigurationTab(data.value) || data.value === selectedTab) {
+      return
+    }
+
+    const nextSearchParams = new URLSearchParams(searchParams)
+    if (data.value === 'configuration') {
+      nextSearchParams.delete('tab')
+    } else {
+      nextSearchParams.set('tab', data.value)
+    }
+    setSearchParams(nextSearchParams)
+  }
+
+  const handleDiscardChanges = (): void => {
+    const discardAction = pendingDiscardAction
+    setPendingDiscardAction(null)
+    setContent(savedContent)
+    if (blocker.state === 'blocked') {
+      blocker.proceed()
+    } else {
+      discardAction?.()
+    }
+  }
+
+  const handleKeepEditing = (): void => {
+    setPendingDiscardAction(null)
+    if (blocker.state === 'blocked') {
+      blocker.reset()
     }
   }
 
   return (
-    <main className={styles.root}>
+    <div className={styles.root}>
       <div className={styles.header}>
         <Text as="h1" size={600} weight="semibold">Configuration</Text>
       </div>
@@ -134,7 +190,12 @@ export default function Configuration() {
       ) : selectedTab === 'initializers' ? (
         <Initializers />
       ) : selectedTab === 'environment' ? (
-        <EnvironmentFiles />
+        <EnvironmentFiles
+          onUnsavedChangesChange={setEnvironmentHasUnsavedChanges}
+          onRequestDiscardChanges={(discardChanges: () => void): void => {
+            setPendingDiscardAction(() => discardChanges)
+          }}
+        />
       ) : loading ? (
         <div className={styles.loadingState}>
           <Spinner label="Loading PyRIT configuration..." />
@@ -161,7 +222,7 @@ export default function Configuration() {
                 appearance="primary"
                 className={styles.action}
                 icon={<SaveRegular />}
-                disabled={loading || saving || !hasUnsavedChanges}
+                disabled={loading || saving || !configurationHasUnsavedChanges}
                 onClick={() => void handleSave()}
               >
                 {saving ? 'Saving...' : 'Save'}
@@ -182,6 +243,16 @@ export default function Configuration() {
           </Field>
         </EditorWorkspace>
       )}
-    </main>
+      <ConfirmDialog
+        open={blocker.state === 'blocked' || pendingDiscardAction !== null}
+        title="Discard unsaved changes?"
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        onConfirm={handleDiscardChanges}
+        onCancel={handleKeepEditing}
+      >
+        Your unsaved configuration changes will be lost if you continue.
+      </ConfirmDialog>
+    </div>
   )
 }

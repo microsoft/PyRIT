@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 import uuid
+from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.memory.memory_models import ScoreEntry
-from pyrit.models import ComponentIdentifier, Score
+from pyrit.models import ComponentIdentifier, MatchesObjective, Score, ScoringExpectation
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -176,6 +178,67 @@ class TestScoreEntryRoundtrip:
         # to_dict returns the dict representation
         assert result["scorer_class_identifier"][ComponentIdentifier.KEY_CLASS_NAME] == "TestScorer"
         assert result["objective"] == "objective"
+
+    def test_score_entry_roundtrip_scored_expectation_with_conditions(self):
+        """A ScoreEntry preserves the full versioned expectation, including typed conditions."""
+        expectation = ScoringExpectation(objective="obj", conditions=(MatchesObjective(),))
+        score = Score(
+            score_value="true",
+            score_type="true_false",
+            scorer_class_identifier=ComponentIdentifier(class_name="X", class_module="pyrit.score"),
+            message_piece_id=uuid.uuid4(),
+            scored_expectation=expectation,
+        )
+
+        entry = ScoreEntry(entry=score)
+
+        assert entry.scored_expectation == {
+            "schema_version": 1,
+            "objective": "obj",
+            "conditions": [{"condition_type": "matches_objective"}],
+        }
+        retrieved = entry.get_score()
+        assert retrieved.scored_expectation == expectation
+        assert retrieved.objective == "obj"
+
+    def test_score_entry_without_expectation_roundtrips_as_none(self):
+        """A score with no expectation stores and restores a NULL scored_expectation."""
+        score = Score(
+            score_value="true",
+            score_type="true_false",
+            scorer_class_identifier=ComponentIdentifier(class_name="X", class_module="pyrit.score"),
+            message_piece_id=uuid.uuid4(),
+        )
+
+        entry = ScoreEntry(entry=score)
+
+        assert entry.scored_expectation is None
+        assert entry.get_score().scored_expectation is None
+        assert entry.to_dict()["objective"] is None
+
+    @pytest.mark.parametrize("stored_expectation", [{}, []])
+    def test_score_entry_rejects_falsey_malformed_expectation(self, stored_expectation: Any):
+        """Any non-NULL stored expectation must pass strict schema validation."""
+        entry = ScoreEntry(entry=Score(score_value="true", score_type="true_false"))
+        entry.scored_expectation = stored_expectation
+
+        with pytest.raises(ValidationError, match="requires an explicit schema_version"):
+            entry.get_score()
+
+    def test_score_entry_to_dict_derives_objective_from_expectation(self):
+        """to_dict emits both the stored expectation and the derived objective view."""
+        score = Score(
+            score_value="true",
+            score_type="true_false",
+            scorer_class_identifier=ComponentIdentifier(class_name="X", class_module="pyrit.score"),
+            message_piece_id=uuid.uuid4(),
+            objective="derived-obj",
+        )
+
+        result = ScoreEntry(entry=score).to_dict()
+
+        assert result["objective"] == "derived-obj"
+        assert result["scored_expectation"]["objective"] == "derived-obj"
 
     def test_score_to_dict_serializes_scorer_identifier(self):
         """Test that Score.model_dump() properly serializes the ComponentIdentifier."""

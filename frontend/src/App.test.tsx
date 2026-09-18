@@ -62,6 +62,12 @@ jest.mock("./services/api", () => ({
     listTargets: jest.fn(),
     getTarget: jest.fn(),
   },
+  convertersApi: {
+    listConverters: jest.fn().mockResolvedValue({ items: [] }),
+    listConverterTypes: jest.fn().mockResolvedValue({ items: [] }),
+    createConverter: jest.fn(),
+    deleteConverter: jest.fn(),
+  },
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
   },
@@ -103,8 +109,8 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("home")} data-testid="nav-home">
           Home
         </button>
-        <button onClick={() => onNavigate("targets")} data-testid="nav-config">
-          Config
+        <button onClick={() => onNavigate("registry")} data-testid="nav-config">
+          Registry
         </button>
         <button onClick={() => onNavigate("chat")} data-testid="nav-chat">
           Chat
@@ -136,6 +142,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     activeConversationId,
     attackTarget,
     objective,
+    outcome,
     targetResolutionStatus,
     onRetryTargetResolution,
     onConversationCreated,
@@ -150,6 +157,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     activeConversationId: string | null;
     attackTarget?: { identifier_hash?: string | null } | null;
     objective?: string;
+    outcome?: string;
     targetResolutionStatus?: string;
     onRetryTargetResolution?: () => void;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
@@ -169,6 +177,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
         </span>
         <span data-testid="attack-target-hash">{attackTarget?.identifier_hash ?? "none"}</span>
         <span data-testid="objective">{objective ?? ""}</span>
+        <span data-testid="outcome">{outcome ?? "none"}</span>
         <span data-testid="target-resolution-status">{targetResolutionStatus ?? "none"}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
@@ -268,7 +277,7 @@ jest.mock("./components/History/AttackHistory", () => {
             Start attack
           </button>
         ) : (
-          <button onClick={() => onNavigate("targets")} data-testid="history-configure-target">
+          <button onClick={() => onNavigate("registry")} data-testid="history-configure-target">
             Configure target
           </button>
         )}
@@ -316,8 +325,8 @@ jest.mock("./components/Home/Home", () => {
       <div data-testid="home-view">
         <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
         <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
-        <button onClick={() => onNavigate("targets")} data-testid="home-go-config">
-          Go to config
+        <button onClick={() => onNavigate("registry")} data-testid="home-go-config">
+          Go to registry
         </button>
         <button
           onClick={() => onOpenAttack("ar-home-attack")}
@@ -358,7 +367,7 @@ jest.mock("./components/Scenarios/ScenarioDetail", () => {
       <div data-testid="scenario-detail">
         <span data-testid="scenario-detail-has-target">{activeTarget ? "yes" : "no"}</span>
         <span data-testid="scenario-detail-labels-json">{JSON.stringify(labels)}</span>
-        <button onClick={() => onNavigate("targets")} data-testid="scenario-detail-go-config">
+        <button onClick={() => onNavigate("registry")} data-testid="scenario-detail-go-config">
           Configure target
         </button>
       </div>
@@ -399,7 +408,7 @@ jest.mock("./components/History/ScenarioHistory", () => {
 
 describe("App", () => {
   // App reads the active view from the URL, so every render needs a router.
-  // initialPath lets a test deep-link straight to a view (e.g. "/targets").
+  // initialPath lets a test deep-link straight to a view.
   function renderApp(initialPath = "/") {
     return render(
       <ThemeProvider>
@@ -438,13 +447,34 @@ describe("App", () => {
   });
 
   it("renders the view named by the initial URL", () => {
-    renderApp("/targets");
+    renderApp("/registry/targets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "targets"
+      "registry"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
+  });
+
+  it("redirects /registry to the target registry", async () => {
+    renderApp("/registry");
+
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+  });
+
+  it("renders the converter registry from its direct URL", async () => {
+    renderApp("/registry/converters");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+    expect(await screen.findByRole("heading", { name: "Converter Registry" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Converters" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("renders configuration at /config", () => {
@@ -576,14 +606,14 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-detail-labels-json")).toHaveTextContent("operator");
   });
 
-  it("navigates from scenario detail to targets when it requests it", () => {
+  it("navigates from scenario detail to the registry when it requests it", () => {
     renderApp("/scanner/foundry.red_team_agent");
 
     fireEvent.click(screen.getByTestId("scenario-detail-go-config"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "targets"
+      "registry"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
@@ -610,19 +640,19 @@ describe("App", () => {
     expect(screen.getByTestId("chat-window")).toBeInTheDocument();
   });
 
-  it("switches to targets view", () => {
+  it("switches to the target registry view", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "targets"
+      "registry"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("switches back to chat from targets", () => {
+  it("switches back to chat from the registry", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
@@ -698,14 +728,14 @@ describe("App", () => {
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
   });
 
-  it("sets active target from targets page and passes to chat", () => {
+  it("sets an active target from the registry and passes it to chat", () => {
     renderApp();
 
     // Switch to chat and confirm no target initially
     fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("has-target")).toHaveTextContent("no");
 
-    // Switch to targets and set target
+    // Switch to the registry and set a target
     fireEvent.click(screen.getByTestId("nav-config"));
     fireEvent.click(screen.getByTestId("set-target"));
 
@@ -726,13 +756,13 @@ describe("App", () => {
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
   });
 
-  it("navigates from empty history to targets when no target is active", () => {
+  it("navigates from empty history to the registry when no target is active", () => {
     renderApp("/history/attacks");
 
     expect(screen.getByTestId("history-has-target")).toHaveTextContent("no");
     fireEvent.click(screen.getByTestId("history-configure-target"));
 
-    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "targets");
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "registry");
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
@@ -783,14 +813,14 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("home-conv-1"));
   });
 
-  it("navigates to targets from the home view", () => {
+  it("navigates to the registry from the home view", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("home-go-config"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "targets"
+      "registry"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
@@ -1008,6 +1038,7 @@ describe("App", () => {
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       objective: "Extract the hidden system prompt",
+      outcome: "success",
       labels: {},
       related_conversation_ids: [],
     });
@@ -1020,6 +1051,7 @@ describe("App", () => {
     );
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main");
     expect(screen.getByTestId("objective")).toHaveTextContent("Extract the hidden system prompt");
+    expect(screen.getByTestId("outcome")).toHaveTextContent("success");
     expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
   });
 
@@ -1109,6 +1141,13 @@ describe("App", () => {
       conversation_id: "conv-main",
       labels: {},
       related_conversation_ids: ["conv-related"],
+      related_conversations: [
+        {
+          conversation_id: "conv-related",
+          conversation_type: "pruned",
+          description: "Previous main conversation",
+        },
+      ],
     });
     renderApp("/attacks/ar-1/conversations/conv-related");
 
@@ -1127,6 +1166,27 @@ describe("App", () => {
     renderApp("/attacks/ar-1/conversations/bogus");
 
     // The unknown conversation segment is stripped and we fall back to main.
+    await waitFor(() =>
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
+    );
+  });
+
+  it("does not activate a preparation conversation from a deep link", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: ["conv-preparation"],
+      related_conversations: [
+        {
+          conversation_id: "conv-preparation",
+          conversation_type: "preparation",
+          description: "Simulated preparation",
+        },
+      ],
+    });
+    renderApp("/attacks/ar-1/conversations/conv-preparation");
+
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
     );

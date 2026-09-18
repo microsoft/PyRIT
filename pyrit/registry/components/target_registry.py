@@ -27,8 +27,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pyrit.models.identifiers import TargetIdentifier
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
-from pyrit.registry.registry import Registry
+from pyrit.registry.registry import InstanceHoldingRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
@@ -57,7 +56,7 @@ class TargetMetadata(RegistryMetadata):
         return auth_modes
 
 
-class TargetRegistry(Registry["PromptTarget", TargetMetadata]):
+class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
     """
     Registry that discovers, builds, and holds ``PromptTarget`` instances.
 
@@ -80,8 +79,10 @@ class TargetRegistry(Registry["PromptTarget", TargetMetadata]):
             lazy_discovery (bool): If True, class discovery is deferred until first
                 access. If False, discovery runs immediately.
         """
-        super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[PromptTarget] = DefaultInstanceRegistry(instance_type=self._base_type)
+        super().__init__(
+            lazy_discovery=lazy_discovery,
+            reserved_instance_names={"catalog", "types"},
+        )
 
     def _base_type(self) -> type[PromptTarget]:
         """Return the ``PromptTarget`` base class, imported lazily."""

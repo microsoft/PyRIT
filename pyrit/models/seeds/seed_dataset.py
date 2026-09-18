@@ -11,11 +11,12 @@ import logging
 import random
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from pyrit.common.utils import combine_list
 from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
 from pyrit.models.seeds.seed import (  # AwareDatetimeUTC is runtime-required by Pydantic
@@ -29,6 +30,7 @@ from pyrit.models.seeds.seed_group import (  # runtime-required by Pydantic fiel
 )
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -43,37 +45,6 @@ logger = logging.getLogger(__name__)
 # (default_factory) are the source of truth.
 _SCALAR_DEFAULT_KEYS = ("name", "description", "source")
 _LIST_DEFAULT_KEYS = ("harm_categories", "authors", "groups")
-
-
-def _merge_unique(left: Any, right: Any) -> list[str]:
-    """
-    Concatenate two list-or-str inputs into a deterministic, order-preserving deduped list.
-
-    Treats ``None`` as empty, accepts bare strings as single-element lists, and preserves the
-    order of first occurrence (left first, then any new items from right). Used instead of
-    ``utils.combine_list`` because the latter goes through ``set()`` and is nondeterministic
-    across processes for non-trivial inputs.
-
-    Args:
-        left: First list (or string) of values; falsy values are treated as empty.
-        right: Second list (or string) of values; falsy values are treated as empty.
-
-    Returns:
-        list[str]: Deduplicated concatenation, preserving first-occurrence order.
-    """
-
-    def _as_list(v: Any) -> list[str]:
-        if not v:
-            return []
-        return [v] if isinstance(v, str) else list(v)
-
-    seen: set[str] = set()
-    result: list[str] = []
-    for item in _as_list(left) + _as_list(right):
-        if item not in seen:
-            seen.add(item)
-            result.append(item)
-    return result
 
 
 class SeedDataset(BaseModel):
@@ -93,7 +64,7 @@ class SeedDataset(BaseModel):
     authors: list[str] | None = Field(default_factory=list)
     groups: list[str] | None = Field(default_factory=list)
     source: str | None = None
-    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=UTC))
     added_by: str | None = None
     # The default seed type for items that don't specify their own ("prompt", "objective", ...).
     seed_type: SeedType | None = None
@@ -115,6 +86,7 @@ class SeedDataset(BaseModel):
           when the seed has none.
         - List defaults (harm_categories, authors, groups) are concatenated with deterministic
           order-preserving dedup (dataset values first, then seed-only additions).
+          Bare empty strings are treated as missing metadata.
         - For prompts: ``data_type`` falls back to the dataset's; ``role`` defaults to ``"user"``.
         - For objective/simulated_conversation: ``data_type``/``role``/``sequence``/
           ``parameters`` are stripped — they aren't valid fields on those classes and a
@@ -160,7 +132,7 @@ class SeedDataset(BaseModel):
                 p["dataset_name"] = default_dataset_name
 
             for key in _LIST_DEFAULT_KEYS:
-                p[key] = _merge_unique(data.get(key), p.get(key))
+                p[key] = combine_list(data.get(key) or None, p.get(key) or None)
 
             if seed_type == "prompt":
                 if not p.get("data_type"):
@@ -344,10 +316,15 @@ class SeedDataset(BaseModel):
             prompt_group_id. Each group will be ordered by the sequence number of
             the seeds, if available.
 
+        Raises:
+            ValueError: If a seed has an unsupported concrete type.
+
         """
         # Group seeds by `prompt_group_id`
-        grouped_seeds: dict[uuid.UUID, list[Seed]] = defaultdict(list)
+        grouped_seeds: dict[uuid.UUID, list[SeedUnion]] = defaultdict(list)
         for seed in seeds:
+            if not isinstance(seed, (SeedPrompt, SeedObjective, SeedSimulatedConversation)):
+                raise ValueError(f"Unsupported seed type: {type(seed).__name__}")
             if seed.prompt_group_id:
                 grouped_seeds[seed.prompt_group_id].append(seed)
             else:
@@ -361,10 +338,10 @@ class SeedDataset(BaseModel):
 
             # Try to create a AttackSeedGroup first; fall back to SeedGroup if validation fails
             try:
-                attack_group = AttackSeedGroup(seeds=cast("list[SeedUnion]", group_seeds))
+                attack_group = AttackSeedGroup(seeds=group_seeds)
                 seed_groups.append(attack_group)
             except ValueError:
-                seed_groups.append(SeedGroup(seeds=cast("list[SeedUnion]", group_seeds)))
+                seed_groups.append(SeedGroup(seeds=group_seeds))
 
         return seed_groups
 

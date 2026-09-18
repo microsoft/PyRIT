@@ -3,7 +3,7 @@
 
 import json
 import logging
-from collections.abc import Awaitable, Callable, MutableSequence
+from collections.abc import Awaitable, Callable, MutableSequence, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
@@ -589,7 +589,7 @@ class OpenAIResponseTarget(OpenAITarget):
     def _parse_response_message_content(
         self,
         *,
-        content: list[ResponseOutputText | ResponseOutputRefusal],
+        content: Sequence[object],
         message_piece: MessagePiece,
         error: PromptResponseError | None,
         tolerate_empty: bool = False,
@@ -598,7 +598,7 @@ class OpenAIResponseTarget(OpenAITarget):
         Parse a Responses API message content union into a PyRIT message piece.
 
         Args:
-            content (list[ResponseOutputText | ResponseOutputRefusal]): Typed message content.
+            content (Sequence[object]): Provider content to validate as text or refusal parts.
             message_piece (MessagePiece): The original request piece.
             error (PromptResponseError | None): Any response error classification.
             tolerate_empty (bool): When True, empty content returns None instead of raising

@@ -153,11 +153,11 @@ async function expectWithin(
   );
 }
 
-/** Navigate to the targets view. */
+/** Navigate to the target registry. */
 async function goToTargets(page: Page) {
   await page.goto("/");
-  await page.getByTitle("Targets").click();
-  await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
+  await page.getByTitle("Registry").click();
+  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 }
 
 async function selectTargetType(
@@ -177,7 +177,7 @@ async function selectTargetType(
 // Tests
 // ---------------------------------------------------------------------------
 
-test.describe("Target Configuration Page", () => {
+test.describe("Target Registry Page", () => {
   test("should show loading state then target list", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       // Small delay to see spinner
@@ -422,7 +422,7 @@ test.describe("Create Target Dialog", () => {
   });
 });
 
-test.describe("Responsive Target Configuration", () => {
+test.describe("Responsive Target Registry", () => {
   for (const viewport of RESPONSIVE_VIEWPORTS) {
     test(`should contain configuration actions at ${viewport.name} width`, async ({
       page,
@@ -552,7 +552,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await expect(page.getByTestId("no-target-banner")).toBeVisible();
 
     // Go to targets, set a target
-    await page.getByTitle("Targets").click();
+    await page.getByTitle("Registry").click();
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: /set active/i }).first().click();
 

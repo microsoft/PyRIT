@@ -54,6 +54,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScoringExpectation,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
@@ -379,6 +380,7 @@ class _TreeOfAttacksNode:
         attack_strategy_name: str,
         modality_router: _ModalityFeedbackRouter,
         record_objective_conversation: Callable[..., None],
+        expectation: ScoringExpectation,
         use_score_as_feedback: bool = True,
         memory_labels: dict[str, str] | None = None,
         parent_id: str | None = None,
@@ -409,6 +411,7 @@ class _TreeOfAttacksNode:
                 messages. Typically shared across all nodes of the same attack.
             record_objective_conversation (Callable[..., None]): Records an objective-target
                 conversation ID for cleanup before each objective send.
+            expectation (ScoringExpectation): The execution's resolved scoring question.
             use_score_as_feedback (bool): Whether subsequent adversarial prompts include
                 the objective score. Defaults to True.
             memory_labels (dict[str, str] | None): Labels for memory storage.
@@ -439,6 +442,7 @@ class _TreeOfAttacksNode:
         self._record_objective_conversation = record_objective_conversation
         self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         self._use_score_as_feedback = use_score_as_feedback
+        self._expectation = expectation
 
         # Initialize utilities
         self._memory = CentralMemory.get_memory_instance()
@@ -567,13 +571,7 @@ class _TreeOfAttacksNode:
             - `off_topic`: `True` if the prompt was deemed off-topic after all retries
             - `error_message`: Set if an error occurred during execution
         """
-        # Clear the previous turn's outcome before reusing this branch.
-        self.completed = False
-        self.off_topic = False
-        self.objective_score = None
-        self.auxiliary_scores = {}
-        self.last_prompt_sent = None
-        self.error_message = None
+        self._reset_turn_outcome()
 
         # Store objective for use in execution context
         self._objective = objective
@@ -707,6 +705,15 @@ class _TreeOfAttacksNode:
 
         return response
 
+    def _reset_turn_outcome(self) -> None:
+        """Clear the previous turn's outcome before reusing this branch."""
+        self.completed = False
+        self.off_topic = False
+        self.objective_score = None
+        self.auxiliary_scores = {}
+        self.last_prompt_sent = None
+        self.error_message = None
+
     async def _send_initial_prompt_to_target_async(self) -> Message:
         """
         Send the initial prompt (from next_message) directly to the objective target.
@@ -814,7 +821,7 @@ class _TreeOfAttacksNode:
             response (Message): The response from the objective target to evaluate.
                 This contains the target's reply to the adversarial prompt.
             objective (str): The attack objective describing what the attacker wants to achieve.
-                This is passed to scorers as context for evaluation.
+                Used for execution diagnostics; the resolved expectation supplies scoring criteria.
 
         Raises:
             RuntimeError: If the scoring process returns no objective score.
@@ -830,9 +837,8 @@ class _TreeOfAttacksNode:
         """
         # Use the Scorer utility method to handle all scoring
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self._attack_strategy_name,
-            component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=objective,
         ):
@@ -840,7 +846,7 @@ class _TreeOfAttacksNode:
                 response=response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                objective=objective,
+                expectation=self._expectation,
             )
 
         # Extract objective score
@@ -973,6 +979,7 @@ class _TreeOfAttacksNode:
             modality_router=self._modality_router,
             record_objective_conversation=self._record_objective_conversation,
             use_score_as_feedback=self._use_score_as_feedback,
+            expectation=self._expectation,
             memory_labels=self._memory_labels,
             desired_response_prefix=self._desired_response_prefix,
             parent_id=self.node_id,
@@ -1647,19 +1654,44 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._request_converters = attack_converter_config.request_converters
         self._response_converters = attack_converter_config.response_converters
 
-        # Initialize scoring configuration
+        tap_scoring_config = self._resolve_scoring_config(attack_scoring_config)
+        self._attack_scoring_config = tap_scoring_config
+        self._auxiliary_scorers = tap_scoring_config.auxiliary_scorers
+        self._objective_scorer = tap_scoring_config.objective_scorer
+
+        # Use the adversarial chat target for scoring, as in CrescendoAttack
+        self._scoring_target = self._adversarial_chat
+
+        if self._configuration.on_topic_checking_enabled and not self._scoring_target:
+            raise ValueError("On-topic checking is enabled but no scoring target is available.")
+
+        self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
+
+    def _resolve_scoring_config(self, attack_scoring_config: AttackScoringConfig | None) -> TAPAttackScoringConfig:
+        """
+        Normalize runtime inputs while preserving the constructor's factory-facing TAP type contract.
+
+        Args:
+            attack_scoring_config: Optional scoring config, including legacy base configs from direct callers.
+
+        Returns:
+            A TAP scoring config with a float-scale threshold scorer.
+
+        Raises:
+            ValueError: If a base config has no objective scorer or an incompatible scorer.
+        """
         # If no scoring config provided, create the default TAP scorer using FloatScaleThresholdScorer
         if attack_scoring_config is None:
             # Determine supported data types based on target's output modalities.
             # The default SelfAskScaleScorer only supports text; for targets that output
             # images (or other non-text types), we need a scorer that accepts those types
             # so it can evaluate the response with a multimodal LLM.
-            output_types: set[str] = set()
+            output_types: set[PromptDataType] = set()
             for modality_set in self._objective_target.configuration.capabilities.output_modalities:
                 output_types.update(modality_set)
-            supported_types: list[PromptDataType] = cast(
-                "list[PromptDataType]", sorted(output_types) if output_types else ["text"]
-            )
+            supported_types = sorted(output_types)
+            if not supported_types:
+                supported_types.append("text")
 
             scorer_validator = ScorerPromptValidator(
                 supported_data_types=supported_types,
@@ -1698,17 +1730,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 use_score_as_feedback=attack_scoring_config.use_score_as_feedback,
             )
 
-        self._attack_scoring_config = tap_scoring_config
-        self._auxiliary_scorers = tap_scoring_config.auxiliary_scorers
-        self._objective_scorer = tap_scoring_config.objective_scorer
-
-        # Use the adversarial chat target for scoring, as in CrescendoAttack
-        self._scoring_target = self._adversarial_chat
-
-        if self._configuration.on_topic_checking_enabled and not self._scoring_target:
-            raise ValueError("On-topic checking is enabled but no scoring target is available.")
-
-        self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
+        return tap_scoring_config
 
     def _load_adversarial_prompts(self) -> None:
         """Load the adversarial chat prompt template and seed prompt from the default paths."""
@@ -2226,6 +2248,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             modality_router=self._modality_router,
             record_objective_conversation=context._record_objective_target_invocation,
             use_score_as_feedback=self._attack_scoring_config.use_score_as_feedback,
+            expectation=context.expectation,
             memory_labels=context.memory_labels,
             desired_response_prefix=self._configuration.desired_response_prefix,
             parent_id=parent_id,
@@ -2452,7 +2475,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             outcome_reason=outcome_reason,
             executed_turns=context.executed_turns,
             last_response=last_response,
-            last_score=context.best_objective_score,
+            automated_score=context.best_objective_score,
             related_conversations=context.related_conversations,
             labels=context.memory_labels,
         )
@@ -2599,6 +2622,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self,
         *,
         objective: str,
+        expectation: ScoringExpectation | None = None,
         memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> TAPAttackResult: ...

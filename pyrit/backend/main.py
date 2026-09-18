@@ -34,10 +34,12 @@ from pyrit.backend.routes import (
     labels,
     media,
     scenarios,
+    scores,
     targets,
     version,
 )
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.registry import InitializerRegistry
@@ -109,7 +111,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # don't emit noise and don't perform filesystem side effects.
     setup_frontend()
 
-    yield
+    converter_service = await asyncio.to_thread(get_converter_service)
+    try:
+        yield
+    finally:
+        try:
+            await converter_service.close_async()
+        finally:
+            get_converter_service.cache_clear()
 
 
 app = FastAPI(
@@ -145,7 +154,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
@@ -162,6 +171,7 @@ app.include_router(labels.router, prefix="/api", tags=["labels"])
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(media.router, prefix="/api", tags=["media"])
+app.include_router(scores.router, prefix="/api", tags=["scores"])
 app.include_router(version.router, tags=["version"])
 
 

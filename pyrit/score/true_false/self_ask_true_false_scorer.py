@@ -10,9 +10,19 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import ComponentIdentifier, JsonSchemaDefinition, MessagePiece, Score, SeedPrompt
+from pyrit.models import (
+    ComponentIdentifier,
+    JsonSchemaDefinition,
+    MessagePiece,
+    Observation,
+    Score,
+    ScoringExpectation,
+    SeedPrompt,
+    UnvalidatedScore,
+)
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
+from pyrit.score.observation import _ObservationEvidence
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -315,10 +325,40 @@ class SelfAskTrueFalseScorer(MessageTrueFalseScorer):
             data_type=scoring_data_type,
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             prepended_text=prepended_text,
             category=self._score_category,
-            objective=objective,
         )
 
-        score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
-        return [score]
+        return [self._convert_score(unvalidated_score)]
+
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared true/false conversion contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained true/false judgment evidence.
+
+        Returns:
+            list[Score]: The replayed true/false score.
+        """
+        unvalidated = _parse_judgment_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
+            expectation=expectation,
+            category=self._score_category,
+        )
+        return [self._convert_score(unvalidated)]
+
+    def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
+        return unvalidated.to_score(score_value=unvalidated.raw_score_value.lower(), score_type="true_false")

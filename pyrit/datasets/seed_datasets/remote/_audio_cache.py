@@ -51,8 +51,8 @@ async def cache_audio_bytes_async(
         extension=extension,
     )
 
-    results_path = serializer._memory.results_path if serializer._memory is not None else None
-    results_storage_io = serializer._memory.results_storage_io if serializer._memory is not None else None
+    results_path = serializer._memory.results_path
+    results_storage_io = serializer._memory.results_storage_io
     if not results_path or results_storage_io is None:
         raise RuntimeError(
             f"[{log_prefix}] Serializer memory is not properly configured: "

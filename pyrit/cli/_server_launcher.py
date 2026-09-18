@@ -678,7 +678,7 @@ class ServerLauncher:
                 self.probe_health_async(base_url=base_url),
                 timeout=min(_HEALTH_PROBE_TIMEOUT, timeout),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
 
     async def _print_startup_diagnostics_async(self, *, startup_state: _ServerStartupState) -> None:
@@ -825,18 +825,7 @@ class ServerLauncher:
             _logger.info("Backend launcher PID: %d (logs: %s)", process.pid, self._log_path)
             await self._wait_for_readiness_async(plan=plan, host=host, startup_state=startup_state)
         finally:
-            if startup_state.phase is not _StartupPhase.READY and startup_state.process is not None:
-                if self._process is None:
-                    self._process = startup_state.process
-                    self._listener_pid = startup_state.process.pid
-                    self._port = port if startup_state.pid_record_written else None
-                try:
-                    await startup_state.cleanup_async()
-                finally:
-                    if startup_state.cleanup_succeeded:
-                        self._clear_process_state()
-                    elif startup_state.cleanup_succeeded is False:
-                        _logger.warning("Failed to stop backend launcher process %d", startup_state.process.pid)
+            await self._cleanup_failed_startup_async(startup_state=startup_state, port=port)
 
         if startup_state.timed_out:
             cleanup_message = (
@@ -855,6 +844,22 @@ class ServerLauncher:
                 f"{preload_message}{cleanup_message}"
             )
         return plan.base_url
+
+    async def _cleanup_failed_startup_async(self, *, startup_state: _ServerStartupState, port: int) -> None:
+        """Clean up even when spawning raised before the launcher stored its process."""
+        if startup_state.phase is _StartupPhase.READY or startup_state.process is None:
+            return
+        if self._process is None:
+            self._process = startup_state.process
+            self._listener_pid = startup_state.process.pid
+            self._port = port if startup_state.pid_record_written else None
+        try:
+            await startup_state.cleanup_async()
+        finally:
+            if startup_state.cleanup_succeeded:
+                self._clear_process_state()
+            elif startup_state.cleanup_succeeded is False:
+                _logger.warning("Failed to stop backend launcher process %d", startup_state.process.pid)
 
     def _clear_process_state(self) -> None:
         """Clear process state after the owned backend exits."""

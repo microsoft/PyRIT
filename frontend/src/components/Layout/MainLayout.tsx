@@ -3,8 +3,12 @@ import {
   Button,
   Text,
   Tooltip,
+  mergeClasses,
 } from '@fluentui/react-components'
 import { QuestionCircleRegular } from '@fluentui/react-icons'
+
+import { useTheme } from '@/hooks/useTheme'
+
 import { versionApi } from '../../services/api'
 import Navigation, { type ViewName } from '../Sidebar/Navigation'
 import { UserAccountButton } from '../UserAccountButton'
@@ -28,6 +32,7 @@ export default function MainLayout({
   onStartTour,
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
+  const { background } = useTheme()
   const [version, setVersion] = useState<string>('Loading...')
   const [commit, setCommit] = useState<string | null>(null)
   const [databaseInfo, setDatabaseInfo] = useState<string | null>(null)
@@ -36,14 +41,23 @@ export default function MainLayout({
     versionApi.getVersion()
       .then(data => {
         setVersion(data.version)
+        document.title = `Co-PyRIT ${data.version}`
         setCommit(data.version.includes('.dev') ? data.commit ?? null : null)
         setDatabaseInfo(data.database_info ?? null)
       })
-      .catch(() => setVersion('Unknown'))
+      .catch(() => {
+        setVersion('Unknown')
+        document.title = 'Co-PyRIT'
+      })
   }, [])
+
+  const title = version === 'Unknown' ? 'Co-PyRIT' : `Co-PyRIT ${version}`
 
   return (
     <div className={styles.root}>
+      <a href="#main-content" className={styles.skipLink}>
+        Skip to main content
+      </a>
       <div className={styles.topBar}>
         <Tooltip
           content={
@@ -61,7 +75,7 @@ export default function MainLayout({
             className={styles.logo}
           />
         </Tooltip>
-        <Text className={styles.title}>Co-PyRIT</Text>
+        <Text className={styles.title}>{title}</Text>
         <Text className={styles.subtitle}>Python Risk Identification Tool</Text>
         <div className={styles.spacer} />
         {onStartTour && (
@@ -86,7 +100,24 @@ export default function MainLayout({
             canManageConfiguration={canManageConfiguration}
           />
         </aside>
-        <main className={styles.main}>{children}</main>
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className={mergeClasses(styles.main, background && styles.decorated)}
+        >
+          {background && (
+            <div
+              aria-hidden="true"
+              data-testid="workspace-background"
+              className={styles.background}
+              style={{
+                backgroundImage: `url("${background.imageUrl}")`,
+                opacity: background.opacity,
+              }}
+            />
+          )}
+          {children}
+        </main>
       </div>
     </div>
   )

@@ -6,7 +6,7 @@ import struct
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy import (
@@ -37,6 +37,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioResultEntry,
 )
+from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import AzureBlobStorageIO
 from pyrit.models import ConversationStats
 
@@ -118,7 +119,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         # Enable token-based authorization
         self._enable_azure_authorization()
 
-        self.SessionFactory = sessionmaker(bind=self.engine)
+        self.SessionFactory = sessionmaker(bind=self.engine, class_=MemorySession)
 
         prod_connection_string = default_values.get_non_required_value(
             env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING_PROD
@@ -194,9 +195,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         if self._auth_token_expiry is None:
             raise RuntimeError("Auth token expiry not initialized; call _create_auth_token() first")
-        if datetime.now(timezone.utc) >= datetime.fromtimestamp(
-            float(self._auth_token_expiry), tz=timezone.utc
-        ) - timedelta(minutes=5):
+        if datetime.now(UTC) >= datetime.fromtimestamp(float(self._auth_token_expiry), tz=UTC) - timedelta(minutes=5):
             logger.info("Refreshing Microsoft Entra ID access token...")
             self._create_auth_token()
 
@@ -564,24 +563,28 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         sql = text(
             f"""
             SELECT
-                pme.conversation_id,
-                COUNT(DISTINCT pme.sequence) AS msg_count,
-                (
-                    SELECT TOP 1 LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN})
-                    FROM "PromptMemoryEntries" p2
-                    WHERE p2.conversation_id = pme.conversation_id
-                    ORDER BY p2.sequence DESC, p2.id DESC
-                ) AS last_preview,
-                (
-                    SELECT TOP 1 p2b.converted_value_data_type
-                    FROM "PromptMemoryEntries" p2b
-                    WHERE p2b.conversation_id = pme.conversation_id
-                    ORDER BY p2b.sequence DESC, p2b.id DESC
-                ) AS last_data_type,
-                MIN(pme.timestamp) AS created_at
-            FROM "PromptMemoryEntries" pme
-            WHERE pme.conversation_id IN ({placeholders})
-            GROUP BY pme.conversation_id
+                aggregate_rows.conversation_id,
+                aggregate_rows.msg_count,
+                latest.last_preview,
+                latest.last_data_type,
+                aggregate_rows.created_at
+            FROM (
+                SELECT
+                    pme.conversation_id,
+                    COUNT(DISTINCT pme.sequence) AS msg_count,
+                    MIN(pme.timestamp) AS created_at
+                FROM "PromptMemoryEntries" pme
+                WHERE pme.conversation_id IN ({placeholders})
+                GROUP BY pme.conversation_id
+            ) AS aggregate_rows
+            OUTER APPLY (
+                SELECT TOP 1
+                    LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN}) AS last_preview,
+                    p2.converted_value_data_type AS last_data_type
+                FROM "PromptMemoryEntries" p2
+                WHERE p2.conversation_id = aggregate_rows.conversation_id
+                ORDER BY p2.sequence DESC, p2.id DESC
+            ) AS latest
             """
         )
 

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import math
 import uuid
 from typing import TYPE_CHECKING, cast
 
@@ -18,6 +19,7 @@ from pyrit.models import (
 )
 from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggregatorFunc, FloatScaleScoreAggregator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.observation import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -56,12 +58,12 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
 
         Args:
             scorer (FloatScaleScorer): The underlying float scale scorer to use.
-            threshold (float): The threshold value between 0 and 1. Scores >= threshold are True, otherwise False.
+            threshold (float): A finite threshold in (0, 1]. Scores >= threshold are True, otherwise False.
             float_scale_aggregator (FloatScaleAggregatorFunc): The aggregator function to use for combining
                 multiple float scale scores. Defaults to FloatScaleScoreAggregator.MAX.
 
         Raises:
-            ValueError: If the threshold is not between 0 and 1.
+            ValueError: If the threshold is non-finite or not in (0, 1].
         """
         self._scorer = scorer
         self._threshold = threshold
@@ -69,7 +71,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
 
         super().__init__()
 
-        if threshold <= 0 or threshold > 1:
+        if not math.isfinite(threshold) or threshold <= 0 or threshold > 1:
             raise ValueError("The threshold must be between 0 and 1")
 
     @property
@@ -119,6 +121,11 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             frozenset[type[Condition]]: The required condition types.
         """
         return self._scorer.required_conditions()
+
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """Validate wrapper and child criteria without checking sibling condition coverage."""
+        super()._validate_expectation(expectation=expectation)
+        self._scorer._validate_expectation(expectation=expectation)
 
     async def _score_scorable_async(
         self,
@@ -188,6 +195,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
                     scorer_class_identifier=self.get_identifier(),
                     message_piece_id=message_piece_id,
                     scorable=scorable,
+                    observation_ids=_merge_observation_ids(scores=scores),
                     objective=objective,
                 )
             ]
@@ -220,6 +228,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         score.score_category = aggregate_score.category
         score.id = uuid.uuid4()
         score.scorer_class_identifier = self.get_identifier()
+        score.observation_ids = _merge_observation_ids(scores=scores)
         # Store the original float value in metadata for granular comparison
         score.score_metadata = {
             **aggregate_score.metadata,

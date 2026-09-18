@@ -6,6 +6,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { ThemeProvider, useTheme } from "@/hooks/useTheme";
 import MainLayout from "./MainLayout";
 
 // Mock the api module
@@ -26,7 +27,7 @@ jest.mock("../Sidebar/Navigation", () => {
   }) => {
     return (
       <div data-testid="navigation" data-current-view={currentView}>
-        <button onClick={() => onNavigate("targets")}>Targets</button>
+        <button onClick={() => onNavigate("registry")}>Registry</button>
       </div>
     );
   };
@@ -48,6 +49,7 @@ const renderWithProvider = (ui: React.ReactElement) => {
 describe("MainLayout", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
   });
 
   const defaultProps = {
@@ -66,15 +68,12 @@ describe("MainLayout", () => {
       </MainLayout>
     );
 
-    expect(screen.getByText("Co-PyRIT")).toBeInTheDocument();
     expect(
       screen.getByText("Python Risk Identification Tool")
     ).toBeInTheDocument();
 
-    // Wait for async useEffect to complete
-    await waitFor(() => {
-      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
-    });
+    expect(await screen.findByText("Co-PyRIT 1.0.0")).toBeInTheDocument();
+    expect(document.title).toBe("Co-PyRIT 1.0.0");
   });
 
   it("renders children content", async () => {
@@ -179,6 +178,8 @@ describe("MainLayout", () => {
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
     });
+    expect(screen.getByText("Co-PyRIT")).toBeInTheDocument();
+    expect(document.title).toBe("Co-PyRIT");
   });
 
   it("renders a 'Take a tour' button in the top bar when onStartTour is provided", async () => {
@@ -230,5 +231,64 @@ describe("MainLayout", () => {
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
     });
+  });
+
+  it("renders a skip link as the first focusable element that targets the main landmark", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
+
+    const { container } = renderWithProvider(
+      <MainLayout {...defaultProps}>
+        <div>Content</div>
+      </MainLayout>
+    );
+
+    const skipLink = screen.getByRole("link", { name: /skip to main content/i });
+    expect(skipLink).toHaveAttribute("href", "#main-content");
+
+    const main = container.querySelector("main");
+    expect(main).toHaveAttribute("id", "main-content");
+    expect(main).toHaveAttribute("tabIndex", "-1");
+
+    // The skip link must be the first focusable element in the shell so
+    // keyboard users reach it on the very first Tab press.
+    const focusable = container.querySelectorAll<HTMLElement>(
+      'a[href], button, [tabindex]:not([tabindex="-1"])'
+    );
+    expect(focusable[0]).toBe(skipLink);
+
+    await waitFor(() => {
+      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
+    });
+  });
+
+  it("changes decoration without remounting workspace content", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
+    const user = userEvent.setup();
+
+    function Workspace() {
+      const { setMode } = useTheme();
+      return (
+        <MainLayout {...defaultProps}>
+          <input aria-label="Draft" defaultValue="" />
+          <button onClick={() => setMode("jimothy")}>Use Jimothy</button>
+          <button onClick={() => setMode("dark")}>Use Dark</button>
+        </MainLayout>
+      );
+    }
+
+    render(<ThemeProvider><Workspace /></ThemeProvider>);
+    await screen.findByText("Co-PyRIT 1.0.0");
+    const draft = screen.getByRole("textbox", { name: "Draft" });
+    await user.type(draft, "draft");
+    expect(screen.queryByTestId("workspace-background")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Use Jimothy" }));
+    expect(screen.getByTestId("workspace-background")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("textbox", { name: "Draft" })).toBe(draft);
+    expect(draft).toHaveValue("draft");
+
+    await user.click(screen.getByRole("button", { name: "Use Dark" }));
+    expect(screen.queryByTestId("workspace-background")).not.toBeInTheDocument();
+    expect(draft).toHaveValue("draft");
   });
 });

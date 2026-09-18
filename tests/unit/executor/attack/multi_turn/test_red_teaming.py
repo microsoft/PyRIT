@@ -1426,7 +1426,7 @@ class TestAttackLifecycle:
                             outcome=AttackOutcome.SUCCESS,
                             executed_turns=1,
                             last_response=sample_response.get_piece(),
-                            last_score=success_score,
+                            automated_score=success_score,
                         )
 
                         # Execute using execute_async
@@ -1505,7 +1505,7 @@ class TestAttackLifecycle:
                             outcome=AttackOutcome.SUCCESS,
                             executed_turns=1,
                             last_response=sample_response.get_piece(),
-                            last_score=success_score,
+                            automated_score=success_score,
                         )
 
                         # Execute using execute_with_context_async
@@ -2144,6 +2144,7 @@ class TestModalityRouterIntegration:
             attack._validate_context(context=basic_context)
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestRedTeamingAdversarialIdentity:
     """Tests for adversarial config in the RedTeaming attack identity and inline system prompt."""
 
