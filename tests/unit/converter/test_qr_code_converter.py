@@ -1,12 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import io
+import itertools
 import os
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import segno
 
 from pyrit.converter import QRCodeConverter
+from pyrit.memory import DataTypeSerializer
 
 
 def test_qr_code_converter_initialization():
@@ -51,14 +55,34 @@ async def test_qr_code_converter_invalid_prompt() -> None:
 
 async def test_qr_code_converter_convert_async(tmp_path) -> None:
     converter = QRCodeConverter()
-    with patch.object(converter._img_serializer, "get_data_filename_async") as mock_get_data_filename:
-        expected_filename = tmp_path / "sample_file.png"
-        mock_get_data_filename.return_value = expected_filename
+    expected_filename = tmp_path / "sample_file.png"
+    serializer = MagicMock(spec=DataTypeSerializer)
+    serializer.get_data_filename_async = AsyncMock(return_value=expected_filename)
+    with patch("pyrit.converter.qr_code_converter.data_serializer_factory", return_value=serializer) as mock_factory:
         qr = await converter.convert_async(prompt="Sample prompt", input_type="text")
         assert qr
         assert str(qr.output_text) == str(expected_filename)
         assert qr.output_type == "image_path"
         assert os.path.exists(qr.output_text)
+        mock_factory.assert_called_once()
+
+
+async def test_qr_code_converter_convert_async_writes_a_new_file_per_call(sqlite_instance) -> None:
+    converter = QRCodeConverter()
+    ticks = itertools.count(1)
+    # A serializer names its file after the clock, so drive the clock to keep the
+    # two names apart independently of the platform's time resolution.
+    with patch("pyrit.memory.storage.serializers.time") as mock_time:
+        mock_time.time.side_effect = lambda: next(ticks)
+        first = await converter.convert_async(prompt="first prompt", input_type="text")
+        second = await converter.convert_async(prompt="second prompt", input_type="text")
+
+    assert first.output_text != second.output_text
+    for result, prompt in ((first, "first prompt"), (second, "second prompt")):
+        expected = io.BytesIO()
+        segno.make_qr(prompt).save(expected, kind="png", scale=converter._scale, border=converter._border)
+        with open(result.output_text, "rb") as actual:
+            assert actual.read() == expected.getvalue()
 
 
 def test_text_image_converter_input_supported():
