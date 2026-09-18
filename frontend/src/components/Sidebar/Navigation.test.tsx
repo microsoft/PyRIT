@@ -6,6 +6,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, useTheme } from "../../hooks/useTheme";
+import { THEME_PRESETS } from "@/themes/themePresets";
+import type { ThemePreset } from "@/types";
 import Navigation from "./Navigation";
 
 const STORAGE_KEY = "pyrit.themeMode";
@@ -220,7 +222,7 @@ describe("Navigation", () => {
     ).toBeInTheDocument();
   });
 
-  it("opens the theme menu and exposes all three modes", async () => {
+  it("opens the theme menu and exposes standard modes and every preset", async () => {
     const user = userEvent.setup();
     renderWithProvider(<Navigation {...defaultProps} />);
 
@@ -235,6 +237,10 @@ describe("Navigation", () => {
     expect(
       screen.getByRole("menuitemradio", { name: "Dark" })
     ).toBeInTheDocument();
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(Object.keys(THEME_PRESETS).length + 1);
+    for (const preset of Object.values(THEME_PRESETS)) {
+      expect(screen.getByRole("menuitemradio", { name: preset.label })).toBeInTheDocument();
+    }
   });
 
   it("changes the theme mode when a menu item is selected", async () => {
@@ -268,4 +274,24 @@ describe("Navigation", () => {
       screen.getByRole("button", { name: "Theme: Light" })
     ).toBeInTheDocument();
   });
+
+  it.each(Object.entries(THEME_PRESETS))(
+    "selects and checks %s without navigating",
+    async (id: string, preset: ThemePreset) => {
+      const user = userEvent.setup();
+      const onNavigate = jest.fn();
+      renderWithProvider(
+        <Navigation {...defaultProps} canManageConfiguration={false} onNavigate={onNavigate} />
+      );
+
+      await user.click(screen.getByRole("button", { name: "Theme: System" }));
+      await user.click(screen.getByRole("menuitemradio", { name: preset.label }));
+      expect(window.localStorage.getItem(STORAGE_KEY)).toBe(id);
+      expect(onNavigate).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole("button", { name: `Theme: ${preset.label}` }));
+      expect(screen.getByRole("menuitemradio", { name: preset.label, checked: true })).toBeInTheDocument();
+    }
+  );
+
 });
