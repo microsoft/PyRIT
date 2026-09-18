@@ -20,9 +20,8 @@ import {
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ConverterInstance, ConverterPreviewResponse } from '@/types'
+import type { ChatConverterController, ConverterInputPiece, ConverterInstance } from '@/types'
 
-import type { PieceConversion } from '../converterTypes'
 import {
   PIECE_TYPE_TO_DATA_TYPE,
   basenameFromValue,
@@ -47,18 +46,6 @@ const MIN_PANEL_WIDTH = 480
 const MAX_PANEL_WIDTH = 1200
 const DEFAULT_PANEL_WIDTH = 800
 
-/** A converted result kept only while it still matches its input and pipeline. */
-interface PreviewSnapshot {
-  converterIds: string[]
-  inputValue: string
-  pieceType: string
-  response: ConverterPreviewResponse
-}
-
-type PreviewOutcome =
-  | { pieceType: string; snapshot: PreviewSnapshot }
-  | { pieceType: string; error: string }
-
 interface ValuePreviewProps {
   dataType: string
   emptyText: string
@@ -70,10 +57,7 @@ interface ValuePreviewProps {
 
 interface ConverterPanelProps {
   onClose: () => void
-  previewText?: string
-  attachmentData?: Record<string, string>
-  activeInputTypes?: string[]
-  onUseConvertedValues?: (conversions: PieceConversion[]) => void
+  controller: ChatConverterController
 }
 
 function formatDataType(dataType: string): string {
@@ -81,21 +65,6 @@ function formatDataType(dataType: string): string {
     .replace('_path', '')
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (character: string) => character.toUpperCase())
-}
-
-function previewMatches(
-  snapshot: PreviewSnapshot | undefined,
-  inputValue: string,
-  converterIds: string[],
-): snapshot is PreviewSnapshot {
-  return Boolean(
-    snapshot
-    && snapshot.inputValue === inputValue
-    && snapshot.converterIds.length === converterIds.length
-    && snapshot.converterIds.every(
-      (converterId: string, index: number) => converterId === converterIds[index],
-    ),
-  )
 }
 
 /** Read-only rendering of a value, using a media player whenever the type allows. */
@@ -116,7 +85,7 @@ function ValuePreview({
   } else if (!isPathDataType(dataType)) {
     content = <pre className={styles.previewPre}>{value}</pre>
   } else {
-    const mediaUrl = buildMediaUrl(value)
+    const mediaUrl = value.startsWith('blob:') ? value : buildMediaUrl(value)
     const attachmentKind = dataTypeToAttachmentKind(dataType)
     if (attachmentKind === 'image') {
       content = <img className={styles.previewImage} src={mediaUrl} alt={`${accessibleLabel} preview`} />
@@ -164,18 +133,12 @@ function ValuePreview({
 
 export default function ConverterPanel({
   onClose,
-  previewText = '',
-  attachmentData = {},
-  activeInputTypes = ['text'],
-  onUseConvertedValues,
+  controller,
 }: ConverterPanelProps) {
   const styles = useConverterPanelStyles()
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const [activeTab, setActiveTab] = useState('text')
-  const [pipelines, setPipelines] = useState<Record<string, string[]>>({})
-  const [previewResults, setPreviewResults] = useState<Record<string, PreviewSnapshot>>({})
-  const [previewErrors, setPreviewErrors] = useState<Record<string, string>>({})
-  const [isPreviewing, setIsPreviewing] = useState(false)
+  const { inputs, pipelines, results, errors, isConverting, setPipeline, retainConverters } = controller
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -186,14 +149,15 @@ export default function ConverterPanel({
   const tabs = useMemo(() => {
     const seen = new Set(['text'])
     const result = ['text']
-    for (const inputType of activeInputTypes) {
+    for (const input of inputs) {
+      const inputType = input.pieceType
       if (!seen.has(inputType)) {
         result.push(inputType)
         seen.add(inputType)
       }
     }
     return result
-  }, [activeInputTypes])
+  }, [inputs])
 
   // The selected tab can disappear when an attachment is removed; fall back to
   // text for every derivation instead of resetting state from an effect.
@@ -202,26 +166,8 @@ export default function ConverterPanel({
     () => pipelines[effectiveActiveTab] ?? [],
     [effectiveActiveTab, pipelines],
   )
-  const activeDataType = PIECE_TYPE_TO_DATA_TYPE[effectiveActiveTab] ?? 'text'
-
-  const inputValueFor = useCallback((pieceType: string): string => (
-    pieceType === 'text' ? previewText : (attachmentData[pieceType] ?? '')
-  ), [attachmentData, previewText])
-
-  const clearPreviewFor = useCallback((pieceType: string): void => {
-    setPreviewResults((current) => {
-      if (!(pieceType in current)) return current
-      const next = { ...current }
-      delete next[pieceType]
-      return next
-    })
-    setPreviewErrors((current) => {
-      if (!(pieceType in current)) return current
-      const next = { ...current }
-      delete next[pieceType]
-      return next
-    })
-  }, [])
+  const activeInputs = inputs.filter((input: ConverterInputPiece) => input.pieceType === effectiveActiveTab)
+  const activeDataType = activeInputs[0]?.dataType ?? PIECE_TYPE_TO_DATA_TYPE[effectiveActiveTab]
 
   const loadConverters = useCallback(async (
     selectId?: string,
@@ -235,29 +181,17 @@ export default function ConverterPanel({
       const availableIds = new Set(
         response.items.map((converter: ConverterInstance) => converter.converter_id),
       )
-      setPipelines((current) => {
-        const next = Object.fromEntries(
-          Object.entries(current).map(([pieceType, converterIds]) => [
-            pieceType,
-            converterIds.filter((converterId: string) => availableIds.has(converterId)),
-          ]),
-        )
-        if (selectId && selectPieceType && availableIds.has(selectId)) {
-          next[selectPieceType] = [...(next[selectPieceType] ?? []), selectId]
-        }
-        return next
-      })
-      if (selectPieceType) clearPreviewFor(selectPieceType)
+      retainConverters(availableIds)
+      if (selectId && selectPieceType && availableIds.has(selectId)) {
+        setPipeline(selectPieceType, (ids: string[]) => [...ids, selectId])
+      }
     } catch (loadError) {
       setConverters([])
-      setPipelines({})
-      setPreviewResults({})
-      setPreviewErrors({})
       setError(toApiError(loadError).detail)
     } finally {
       setIsLoading(false)
     }
-  }, [clearPreviewFor])
+  }, [retainConverters, setPipeline])
 
   useEffect(() => {
     let cancelled = false
@@ -265,14 +199,12 @@ export default function ConverterPanel({
       .then((response) => {
         if (cancelled) return
         setConverters(response.items)
+        retainConverters(new Set(response.items.map((converter: ConverterInstance) => converter.converter_id)))
         setError(null)
       })
       .catch((loadError: unknown) => {
         if (cancelled) return
         setConverters([])
-        setPipelines({})
-        setPreviewResults({})
-        setPreviewErrors({})
         setError(toApiError(loadError).detail)
       })
       .finally(() => {
@@ -281,7 +213,7 @@ export default function ConverterPanel({
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [retainConverters])
 
   const selectedConverters = useMemo(
     () => selectedConverterIds
@@ -299,62 +231,40 @@ export default function ConverterPanel({
   const lastSelectedConverter = selectedConverters[selectedConverters.length - 1]
   const nextInputType = lastSelectedConverter?.identifier.supported_output_types?.[0] ?? activeDataType
 
-  const filteredConverters = useMemo(() => converters.filter((converter: ConverterInstance) => {
+  const filteredConverters = converters.filter((converter: ConverterInstance) => {
     const supported = converter.identifier.supported_input_types ?? []
     return supported.length === 0 || supported.includes(nextInputType)
-  }), [converters, nextInputType])
+  })
 
-  const groupedConverters = useMemo(() => {
-    const groups: Record<string, ConverterInstance[]> = {}
-    for (const converter of filteredConverters) {
-      const outputType = converter.identifier.supported_output_types?.[0] ?? 'text'
-      if (!groups[outputType]) groups[outputType] = []
-      groups[outputType].push(converter)
-    }
-    const unknownTypes = Object.keys(groups).filter(
-      (type: string) => !OUTPUT_TYPE_ORDER.includes(type),
-    )
-    return [...OUTPUT_TYPE_ORDER, ...unknownTypes]
-      .filter((type: string) => groups[type]?.length)
-      .map((type: string) => ({ type, converters: groups[type] }))
-  }, [filteredConverters])
-
-  const validPreviewResults = useMemo(() => Object.fromEntries(
-    tabs.flatMap((pieceType: string) => {
-      const converterIds = pipelines[pieceType] ?? []
-      const snapshot = previewResults[pieceType]
-      return previewMatches(snapshot, inputValueFor(pieceType), converterIds)
-        ? [[pieceType, snapshot]]
-        : []
-    }),
-  ) as Record<string, PreviewSnapshot>, [inputValueFor, pipelines, previewResults, tabs])
+  const groups: Record<string, ConverterInstance[]> = {}
+  for (const converter of filteredConverters) {
+    const outputType = converter.identifier.supported_output_types?.[0] ?? 'text'
+    if (!groups[outputType]) groups[outputType] = []
+    groups[outputType].push(converter)
+  }
+  const unknownTypes = Object.keys(groups).filter(
+    (type: string) => !OUTPUT_TYPE_ORDER.includes(type),
+  )
+  const groupedConverters = [...OUTPUT_TYPE_ORDER, ...unknownTypes]
+    .filter((type: string) => groups[type]?.length)
+    .map((type: string) => ({ type, converters: groups[type] }))
 
   const configuredPieceTypes = tabs.filter(
     (pieceType: string) => (pipelines[pieceType]?.length ?? 0) > 0,
   )
-  const convertiblePieceTypes = configuredPieceTypes.filter(
-    (pieceType: string) => inputValueFor(pieceType).trim().length > 0,
+  const convertibleInputs = inputs.filter(
+    (input: ConverterInputPiece) => input.value.trim() && pipelines[input.pieceType]?.length,
   )
-  const currentInput = inputValueFor(effectiveActiveTab)
-  const previewResponse = validPreviewResults[effectiveActiveTab]?.response
 
   const handleConverterSelect = useCallback((converterId: string): void => {
-    setPipelines((current) => ({
-      ...current,
-      [effectiveActiveTab]: [...(current[effectiveActiveTab] ?? []), converterId],
-    }))
-    clearPreviewFor(effectiveActiveTab)
-  }, [clearPreviewFor, effectiveActiveTab])
+    setPipeline(effectiveActiveTab, (ids: string[]) => [...ids, converterId])
+  }, [setPipeline, effectiveActiveTab])
 
   const removeConverter = useCallback((index: number): void => {
-    setPipelines((current) => ({
-      ...current,
-      [effectiveActiveTab]: (current[effectiveActiveTab] ?? []).filter(
-        (_: string, currentIndex: number) => currentIndex !== index,
-      ),
-    }))
-    clearPreviewFor(effectiveActiveTab)
-  }, [clearPreviewFor, effectiveActiveTab])
+    setPipeline(effectiveActiveTab, (ids: string[]) => ids.filter(
+      (_: string, currentIndex: number) => currentIndex !== index,
+    ))
+  }, [setPipeline, effectiveActiveTab])
 
   const moveConverter = useCallback((sourceIndex: number, targetIndex: number): void => {
     if (
@@ -366,14 +276,13 @@ export default function ConverterPanel({
     ) {
       return
     }
-    setPipelines((current) => {
-      const nextPipeline = [...(current[effectiveActiveTab] ?? [])]
+    setPipeline(effectiveActiveTab, (ids: string[]) => {
+      const nextPipeline = [...ids]
       const [movedConverter] = nextPipeline.splice(sourceIndex, 1)
       nextPipeline.splice(targetIndex, 0, movedConverter)
-      return { ...current, [effectiveActiveTab]: nextPipeline }
+      return nextPipeline
     })
-    clearPreviewFor(effectiveActiveTab)
-  }, [clearPreviewFor, effectiveActiveTab, selectedConverterIds.length])
+  }, [setPipeline, effectiveActiveTab, selectedConverterIds.length])
 
   const handleDragStart = useCallback((
     event: DragEvent<HTMLElement>,
@@ -407,62 +316,6 @@ export default function ConverterPanel({
       moveConverter(index, index + 1)
     }
   }, [moveConverter])
-
-  const handleConvert = useCallback(async (): Promise<void> => {
-    if (convertiblePieceTypes.length === 0) return
-
-    setIsPreviewing(true)
-    const outcomes = await Promise.all(convertiblePieceTypes.map(
-      async (pieceType: string): Promise<PreviewOutcome> => {
-        const converterIds = [...(pipelines[pieceType] ?? [])]
-        const inputValue = inputValueFor(pieceType)
-        try {
-          const response = await convertersApi.previewConversion({
-            original_value: inputValue,
-            converter_ids: converterIds,
-            original_value_data_type: PIECE_TYPE_TO_DATA_TYPE[pieceType] ?? 'text',
-          })
-          return {
-            pieceType,
-            snapshot: { converterIds, inputValue, pieceType, response },
-          }
-        } catch (previewError) {
-          return { pieceType, error: toApiError(previewError).detail }
-        }
-      },
-    ))
-
-    const nextResults: Record<string, PreviewSnapshot> = {}
-    const nextErrors: Record<string, string> = {}
-    for (const outcome of outcomes) {
-      if ('snapshot' in outcome) {
-        nextResults[outcome.pieceType] = outcome.snapshot
-      } else {
-        nextErrors[outcome.pieceType] = outcome.error
-      }
-    }
-    setPreviewResults(nextResults)
-    setPreviewErrors(nextErrors)
-    setIsPreviewing(false)
-  }, [convertiblePieceTypes, inputValueFor, pipelines])
-
-  const successfulConversions = useMemo(() => tabs.flatMap((pieceType: string) => {
-    const snapshot = validPreviewResults[pieceType]
-    if (!snapshot) return []
-    const conversion: PieceConversion = {
-      pieceType,
-      converterInstanceIds: snapshot.converterIds,
-      convertedValue: snapshot.response.converted_value,
-      originalValue: snapshot.inputValue,
-      convertedDataType: snapshot.response.converted_value_data_type,
-    }
-    return [conversion]
-  }), [tabs, validPreviewResults])
-
-  const handleUseConvertedValues = useCallback((): void => {
-    if (successfulConversions.length === 0 || !onUseConvertedValues) return
-    onUseConvertedValues(successfulConversions)
-  }, [onUseConvertedValues, successfulConversions])
 
   const handleMouseDown = useCallback((): void => {
     isResizing.current = true
@@ -529,17 +382,18 @@ export default function ConverterPanel({
           </TabList>
         )}
         <div className={styles.body}>
-          <ValuePreview
-            dataType={activeDataType}
+          {activeInputs.map((input: ConverterInputPiece) => <ValuePreview
+            key={input.id}
+            dataType={input.dataType}
             emptyText={
               effectiveActiveTab === 'text'
                 ? 'Enter a prompt in the chat input.'
                 : `Attach a ${effectiveActiveTab} file in the chat input.`
             }
-            label={`Input - ${formatDataType(activeDataType)}`}
+            label={input.pieceType === 'text' ? 'Input - Text' : `Input - ${input.name}`}
             testId="converter-input-value"
-            value={currentInput}
-          />
+            value={input.value}
+          />)}
           {isLoading && (
             <div className={styles.loading} data-testid="converter-panel-loading">
               <Spinner size="tiny" />
@@ -561,22 +415,22 @@ export default function ConverterPanel({
                 <Button
                   appearance="primary"
                   size="small"
-                  icon={isPreviewing ? <Spinner size="tiny" /> : <PlayRegular />}
-                  onClick={() => void handleConvert()}
-                  disabled={isPreviewing || convertiblePieceTypes.length === 0}
+                  icon={isConverting ? <Spinner size="tiny" /> : <PlayRegular />}
+                  onClick={() => void controller.convert()}
+                  disabled={isConverting || convertibleInputs.length === 0}
                   className={styles.previewButton}
                   data-testid="converter-preview-btn"
                 >
-                  {isPreviewing ? 'Converting...' : 'Convert'}
+                  {isConverting ? 'Converting...' : 'Convert'}
                 </Button>
               )}
-              {previewErrors[effectiveActiveTab] && (
-                <MessageBar intent="error" data-testid="converter-preview-error">
+              {inputs.filter((input: ConverterInputPiece) => errors[input.id]).map((input: ConverterInputPiece) => (
+                <MessageBar key={input.id} intent="error" data-testid="converter-preview-error">
                   <MessageBarBody className={styles.errorBody}>
-                    {previewErrors[effectiveActiveTab]}
+                    {input.name}: {errors[input.id]} This piece is not converted.
                   </MessageBarBody>
                 </MessageBar>
-              )}
+              ))}
               {selectedConverters.map((converter: ConverterInstance, index: number) => {
                 const matchingConverterIds = selectedConverterIds.filter(
                   (converterId: string) => converterId === converter.converter_id,
@@ -589,10 +443,6 @@ export default function ConverterPanel({
                   ? `, stage ${occurrenceNumber} of ${matchingConverterIds.length}`
                   : ''
                 const cardTestIdSuffix = occurrenceNumber > 1 ? `-${occurrenceNumber}` : ''
-                const stage = previewResponse?.steps[index]
-                const outputDataType = stage?.output_data_type
-                  ?? converter.identifier.supported_output_types?.[0]
-                  ?? 'text'
                 return (
                   <div
                     key={`${converter.converter_id}-${index}`}
@@ -647,28 +497,30 @@ export default function ConverterPanel({
                     <Text size={200} className={styles.hintText}>
                       {converter.description || 'No description is available.'}
                     </Text>
-                    <ValuePreview
-                      dataType={outputDataType}
-                      emptyText={
-                        previewResponse
+                    {activeInputs.map((input: ConverterInputPiece) => {
+                      const response = results[input.id]
+                      const stage = response?.steps[index]
+                      return <ValuePreview
+                        key={input.id}
+                        label={activeInputs.length > 1 ? input.name : undefined}
+                        dataType={stage?.output_data_type ?? converter.identifier.supported_output_types?.[0] ?? 'text'}
+                        emptyText={response
                           ? 'This stage returned an empty value.'
-                          : 'Choose Convert to see this stage output.'
-                      }
-                      sectionTestId={`converter-stage-output-${index}`}
-                      testId={
-                        previewResponse && index === selectedConverters.length - 1
+                          : 'Choose Convert to see this stage output.'}
+                        sectionTestId={`converter-stage-output-${index}`}
+                        testId={response && index === selectedConverters.length - 1
                           ? 'converter-preview-result'
-                          : undefined
-                      }
-                      value={stage?.output_value}
-                    />
+                          : undefined}
+                        value={stage?.output_value}
+                      />
+                    })}
                   </div>
                 )
               })}
               <Button
                 appearance="primary"
-                onClick={handleUseConvertedValues}
-                disabled={successfulConversions.length === 0 || !onUseConvertedValues}
+                onClick={controller.apply}
+                disabled={isConverting || Object.keys(results).length === 0}
                 className={styles.addConvertedButton}
                 data-testid="use-converted-btn"
               >

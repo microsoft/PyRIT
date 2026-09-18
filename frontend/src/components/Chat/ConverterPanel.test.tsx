@@ -1,9 +1,11 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { useMemo } from 'react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { convertersApi } from '@/services/api'
-import type { ConverterInstance } from '@/types'
+import { useChatConverters } from '@/hooks/useChatConverters'
+import type { ConverterInstance, ConverterPreviewResponse, MessageAttachment } from '@/types'
 
 import ConverterPanel from './ConverterPanel'
 
@@ -61,21 +63,46 @@ const imageConverter = makeConverter(
   ['image_path'],
 )
 
-function renderPanel(
-  props: Partial<React.ComponentProps<typeof ConverterPanel>> = {},
-) {
-  return render(
+interface PanelHarnessProps {
+  previewText?: string
+  attachmentData?: Record<string, string>
+  activeInputTypes?: string[]
+  attachments?: MessageAttachment[]
+  onClose?: () => void
+  open?: boolean
+}
+
+function PanelHarness({
+  previewText = '',
+  attachmentData,
+  activeInputTypes,
+  attachments,
+  onClose = jest.fn(),
+  open = true,
+}: PanelHarnessProps) {
+  const media = useMemo(() => attachments ?? (activeInputTypes ?? [])
+    .filter((type: string) => type !== 'text')
+    .map((type: string): MessageAttachment => ({
+      draftId: type,
+      type: type as MessageAttachment['type'],
+      name: `${type} input`,
+      url: attachmentData?.[type] ?? '',
+      sourceValue: attachmentData?.[type] ?? '',
+      sourceDataType: type === 'file' ? 'binary_path' : `${type}_path`,
+      mimeType: `${type}/example`,
+    })), [attachments, attachmentData, activeInputTypes])
+  const controller = useChatConverters(previewText, media)
+  return (
     <FluentProvider theme={webLightTheme}>
-      <ConverterPanel
-        onClose={jest.fn()}
-        previewText=""
-        attachmentData={{}}
-        activeInputTypes={['text']}
-        onUseConvertedValues={jest.fn()}
-        {...props}
-      />
-    </FluentProvider>,
+      {open && <ConverterPanel onClose={onClose} controller={controller} />}
+      <output data-testid="applied-conversions">{JSON.stringify(controller.applied)}</output>
+    </FluentProvider>
   )
+}
+
+function renderPanel(props: PanelHarnessProps = {}) {
+  const rendered = render(<PanelHarness {...props} />)
+  return { ...rendered, rerender: (next: PanelHarnessProps) => rendered.rerender(<PanelHarness {...next} />) }
 }
 
 async function selectConverter(converterId: string) {
@@ -313,24 +340,24 @@ describe('ConverterPanel', () => {
   })
 
   it('returns the selected registry ID with the converted value', async () => {
-    const onUseConvertedValues = jest.fn()
     mockedConvertersApi.previewConversion.mockResolvedValue(
       makePreviewResponse(['base64-default'], ['converted']),
     )
     const user = userEvent.setup()
-    renderPanel({ previewText: 'hello', onUseConvertedValues })
+    renderPanel({ previewText: 'hello' })
     await screen.findByTestId('converter-panel-list')
     await selectConverter('base64-default')
     await user.click(screen.getByTestId('converter-preview-btn'))
     expect(await screen.findByTestId('use-converted-btn')).toBeEnabled()
     await user.click(screen.getByTestId('use-converted-btn'))
 
-    expect(onUseConvertedValues).toHaveBeenCalledWith([
-      expect.objectContaining({
+    expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}')).toEqual({
+      text: expect.objectContaining({
+        pieceId: 'text',
         converterInstanceIds: ['base64-default'],
         convertedValue: 'converted',
       }),
-    ])
+    })
   })
 
   it('reorders a pipeline with the keyboard before converting', async () => {
@@ -408,7 +435,6 @@ describe('ConverterPanel', () => {
   })
 
   it('preserves, converts, and applies text and image pipelines together', async () => {
-    const onUseConvertedValues = jest.fn()
     const inputImage = 'data:image/png;base64,aW5wdXQ='
     const outputImage = 'data:image/png;base64,b3V0cHV0'
     mockedConvertersApi.listConverters.mockResolvedValue({
@@ -438,7 +464,6 @@ describe('ConverterPanel', () => {
       previewText: 'hello',
       attachmentData: { image: inputImage },
       activeInputTypes: ['text', 'image'],
-      onUseConvertedValues,
     })
     await screen.findByTestId('converter-panel-list')
 
@@ -458,10 +483,10 @@ describe('ConverterPanel', () => {
       screen.getByRole('img', { name: 'Converted output preview' }),
     )
     await user.click(screen.getByTestId('use-converted-btn'))
-    expect(onUseConvertedValues).toHaveBeenCalledWith(expect.arrayContaining([
-      expect.objectContaining({ pieceType: 'text', convertedValue: 'aGVsbG8=' }),
-      expect.objectContaining({ pieceType: 'image', convertedValue: outputImage }),
-    ]))
+    expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}')).toEqual({
+      text: expect.objectContaining({ pieceType: 'text', convertedValue: 'aGVsbG8=' }),
+      image: expect.objectContaining({ pieceType: 'image', convertedValue: outputImage }),
+    })
   })
 
   it.each([
@@ -523,5 +548,126 @@ describe('ConverterPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Close converters' }))
 
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the pipeline, outputs, and applied selection when the panel is reopened', async () => {
+    mockedConvertersApi.previewConversion.mockResolvedValue(makePreviewResponse(['base64-default'], ['converted']))
+    const user = userEvent.setup()
+    const panel = renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
+    await screen.findByText('converted')
+    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    const applied = screen.getByTestId('applied-conversions').textContent
+
+    panel.rerender({ previewText: 'hello', open: false })
+    expect(screen.queryByTestId('converter-panel')).not.toBeInTheDocument()
+    panel.rerender({ previewText: 'hello' })
+
+    expect(await screen.findByTestId('converter-item-base64-default')).toBeInTheDocument()
+    expect(screen.getByTestId('converter-preview-result')).toHaveTextContent('converted')
+    expect(screen.getByTestId('applied-conversions')).toHaveTextContent(applied ?? '')
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears applied converters when their pipeline is removed', async () => {
+    mockedConvertersApi.previewConversion.mockResolvedValue(makePreviewResponse(['base64-default'], ['converted']))
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.getByTestId('applied-conversions')).toHaveTextContent('base64-default')
+
+    await user.click(screen.getByRole('button', { name: 'Remove converter base64-default' }))
+
+    expect(screen.getByTestId('applied-conversions')).toHaveTextContent('{}')
+    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+  })
+
+  it.each(['input', 'pipeline'])('ignores a late response after the %s changes and changes back', async (changed: string) => {
+    let finish: (response: ConverterPreviewResponse) => void = () => { throw new Error('Conversion not started') }
+    mockedConvertersApi.previewConversion.mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    const user = userEvent.setup()
+    const panel = renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
+    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+
+    if (changed === 'input') {
+      panel.rerender({ previewText: 'edited' })
+      panel.rerender({ previewText: 'hello' })
+    } else {
+      await user.click(screen.getByRole('button', { name: 'Remove converter base64-default' }))
+      await selectConverter('base64-default')
+    }
+    await act(async () => { finish(makePreviewResponse(['base64-default'], ['stale'])) })
+
+    expect(screen.queryByText('stale')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.getByTestId('applied-conversions')).toHaveTextContent('{}')
+  })
+
+  it('converts two images with the same filename independently and replaces old successes on partial failure', async () => {
+    const attachments: MessageAttachment[] = ['first', 'second'].map((id: string) => ({
+      draftId: id, type: 'image', name: 'same.png', mimeType: 'image/png',
+      url: `data:image/png;base64,${id}`, sourceValue: `data:image/png;base64,${id}`,
+    }))
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [imageConverter] })
+    mockedConvertersApi.previewConversion.mockImplementation(async (request) => ({
+      original_value: request.original_value,
+      original_value_data_type: 'image_path',
+      converted_value: `${request.original_value}-converted`,
+      converted_value_data_type: 'image_path',
+      steps: [{
+        converter_id: 'image-compressor', converter_type: 'ImageCompressionConverter',
+        input_value: request.original_value, input_data_type: 'image_path',
+        output_value: `${request.original_value}-converted`, output_data_type: 'image_path',
+      }],
+    }))
+    const user = userEvent.setup()
+    renderPanel({ attachments })
+    await screen.findByTestId('converter-panel-list')
+    await user.click(screen.getByRole('tab', { name: 'Image' }))
+    await selectConverter('image-compressor')
+    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
+
+    expect(await screen.findAllByRole('img', { name: 'same.png preview' })).toHaveLength(2)
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(2)
+    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(Object.keys(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}')))
+      .toEqual(['first', 'second'])
+
+    mockedConvertersApi.previewConversion.mockRejectedValueOnce(new Error('First image failed'))
+    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
+    expect(await screen.findByTestId('converter-preview-error')).toHaveTextContent('First image failed')
+    expect(screen.getByTestId('applied-conversions')).toHaveTextContent('{}')
+    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(Object.keys(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}')))
+      .toEqual(['second'])
+  })
+
+  it('preserves an unaffected piece when another input changes', async () => {
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [textConverter, imageConverter] })
+    mockedConvertersApi.previewConversion.mockResolvedValue(makePreviewResponse(['base64-default'], ['converted']))
+    const attachments: MessageAttachment[] = [{
+      draftId: 'image', type: 'image', name: 'image.png', mimeType: 'image/png',
+      url: 'data:image/png;base64,aGVsbG8=', sourceValue: 'data:image/png;base64,aGVsbG8=',
+    }]
+    const user = userEvent.setup()
+    const panel = renderPanel({ previewText: 'hello', attachments })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await user.click(screen.getByRole('tab', { name: 'Image' }))
+    await selectConverter('image-compressor')
+    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+
+    panel.rerender({ previewText: 'changed', attachments })
+    await waitFor(() => expect(Object.keys(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}')))
+      .toEqual(['image']))
   })
 })

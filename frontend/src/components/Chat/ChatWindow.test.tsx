@@ -64,6 +64,7 @@ jest.mock("../../services/api", () => ({
 }));
 
 jest.mock("../../utils/messageMapper", () => ({
+  ...jest.requireActual<typeof import("../../utils/messageMapper")>("../../utils/messageMapper"),
   buildMessagePieces: jest.fn(),
   backendMessageToFrontend: jest.fn(),
   backendMessageToOriginalDraft: jest.fn(),
@@ -385,6 +386,8 @@ describe("ChatWindow Integration", () => {
     mockedMapper.backendMessageToOriginalDraft.mockImplementation(
       actualMessageMapper.backendMessageToOriginalDraft
     );
+    mockedMapper.fileToBase64.mockReset();
+    mockedMapper.fileToBase64.mockImplementation(actualMessageMapper.fileToBase64);
     window.localStorage.clear();
     mockMatchMedia(false);
     // Default: panel API returns empty conversations
@@ -2235,12 +2238,12 @@ describe("ChatWindow Integration", () => {
       <TestWrapper><ChatWindow {...props} activeConversationId="conv-media-recovery" /></TestWrapper>
     );
     await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).toBeEnabled());
-    expect(deferredReads).toHaveLength(1);
+    expect(deferredReads).toHaveLength(0);
 
     await user.click(screen.getByRole("button", { name: /send message/i }));
-    await waitFor(() => expect(deferredReads).toHaveLength(2));
+    await waitFor(() => expect(deferredReads).toHaveLength(1));
     await act(async () => {
-      await deferredReads[1]();
+      await deferredReads[0]();
     });
     expect(mockedAttacksApi.addMessage).toHaveBeenLastCalledWith(
       props.attackResultId,
@@ -2253,9 +2256,6 @@ describe("ChatWindow Integration", () => {
         pieces: [expect.objectContaining({ data_type: "image_path" })],
       }),
     );
-    await act(async () => {
-      await deferredReads[0]();
-    });
   });
 
   it("should preserve the draft and expose recovery for an HTTP 200 processing error", async () => {
@@ -5149,7 +5149,10 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(mockedMapper.buildMessagePieces).toHaveBeenCalledWith(
         "Here is an image",
-        [copiedAttachments[0], copiedAttachments[2]]
+        [
+          { ...copiedAttachments[0], draftId: expect.any(String) },
+          { ...copiedAttachments[2], draftId: expect.any(String) },
+        ]
       );
     });
   });
@@ -5316,6 +5319,101 @@ describe("ChatWindow Integration", () => {
   // -----------------------------------------------------------------------
   // Text → File converter flow (e.g. PDFConverter)
   // -----------------------------------------------------------------------
+
+  it.each([false, true])("sends only the successful image after a partial failure (remove failed input: %s)", async (removeFailed: boolean) => {
+    const user = userEvent.setup();
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [makeConverterInstance("compress", "ImageCompressionConverter", ["image_path"], ["image_path"])],
+    });
+    mockedConvertersApi.previewConversion.mockImplementation(async (request) => {
+      if (request.original_value.endsWith("Zmlyc3Q=")) throw new Error("First image failed");
+      return {
+        original_value: request.original_value,
+        original_value_data_type: "image_path",
+        converted_value: "/converted/second.png",
+        converted_value_data_type: "image_path",
+        steps: [{
+          converter_id: "compress", converter_type: "ImageCompressionConverter",
+          input_value: request.original_value, input_data_type: "image_path",
+          output_value: "/converted/second.png", output_data_type: "image_path",
+        }],
+      };
+    });
+    mockedMapper.buildMessagePieces.mockImplementation(actualMessageMapper.buildMessagePieces);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedAttacksApi.addMessage.mockImplementation(() => new Promise(() => {}));
+    render(<TestWrapper><ChatWindow
+      {...defaultProps}
+      attackResultId="ar-pieces"
+      conversationId="conv-pieces"
+      activeConversationId="conv-pieces"
+      activeTarget={makeTarget({
+        capabilities: buildCapabilities({ supported_input_modalities: ["text", "image_path"] }),
+      })}
+    /></TestWrapper>);
+    await waitFor(() => expect(screen.getByTestId("chat-input")).toBeEnabled());
+    await user.upload(screen.getByTestId("file-input"), [
+      new File(["first"], "same.png", { type: "image/png" }),
+      new File(["second"], "same.png", { type: "image/png" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+    await user.click(await screen.findByRole("tab", { name: "Image" }));
+    await user.click(screen.getByRole("combobox", { name: "Add converter" }));
+    await user.click(await screen.findByRole("option", { name: /ImageCompressionConverter/ }));
+    await user.click(screen.getByRole("button", { name: "Convert", exact: true }));
+    expect(await screen.findByTestId("converter-preview-error")).toHaveTextContent("First image failed");
+    await user.click(screen.getByRole("button", { name: "Add converted value" }));
+    expect(screen.getAllByTestId("clear-media-conversion-image")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Close converters" }));
+    if (removeFailed) await user.click(screen.getByTestId("remove-attachment-0"));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(mockedAttacksApi.addMessage).toHaveBeenCalledWith("ar-pieces", expect.objectContaining({
+      request_converter_configurations: [{ converter_ids: ["compress"], indexes_to_apply: [removeFailed ? 0 : 1] }],
+    })));
+    const request = mockedAttacksApi.addMessage.mock.calls[0][1];
+    expect(request.pieces[removeFailed ? 0 : 1].original_value).toBe("c2Vjb25k");
+    expect(request.pieces).toHaveLength(removeFailed ? 1 : 2);
+  });
+
+  it("keeps a pipeline after sending but does not reuse the previous message's applied result", async () => {
+    const user = userEvent.setup();
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [makeConverterInstance("base64", "Base64Converter")] });
+    mockedConvertersApi.previewConversion.mockResolvedValue({
+      original_value: "hello", original_value_data_type: "text",
+      converted_value: "aGVsbG8=", converted_value_data_type: "text",
+      steps: [{
+        converter_id: "base64", converter_type: "Base64Converter",
+        input_value: "hello", input_data_type: "text", output_value: "aGVsbG8=", output_data_type: "text",
+      }],
+    });
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.buildMessagePieces.mockImplementation(actualMessageMapper.buildMessagePieces);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedAttacksApi.addMessage.mockResolvedValue(makeTextResponse("response") as never);
+    render(<TestWrapper><ChatWindow
+      {...defaultProps} attackResultId="ar-persist" conversationId="conv-persist" activeConversationId="conv-persist"
+    /></TestWrapper>);
+    await waitFor(() => expect(screen.getByTestId("chat-input")).toBeEnabled());
+    await user.type(screen.getByTestId("chat-input"), "hello");
+    await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+    await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
+    await user.click(await screen.findByRole("option", { name: /Base64Converter/ }));
+    await user.click(screen.getByRole("button", { name: "Convert", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Add converted value" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(screen.getByTestId("chat-input")).toHaveValue(""));
+    expect(screen.getByTestId("converter-item-base64")).toBeInTheDocument();
+    expect(screen.queryByTestId("converted-indicator")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add converted value" })).toBeDisabled();
+    await user.type(screen.getByTestId("chat-input"), "next");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockedAttacksApi.addMessage).toHaveBeenCalledTimes(2));
+    expect(mockedAttacksApi.addMessage.mock.calls[0][1].request_converter_configurations)
+      .toEqual([{ converter_ids: ["base64"], indexes_to_apply: [0] }]);
+    expect(mockedAttacksApi.addMessage.mock.calls[1][1].request_converter_configurations).toBeUndefined();
+  });
 
   it("should render converted-file chip and synthesize file attachment when a text→file converter is used", async () => {
     mockedConvertersApi.listConverters.mockResolvedValue({

@@ -1,4 +1,16 @@
-import { test, expect, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+import { test, expect, type APIRequestContext, type Page, type Request } from "@playwright/test";
+
+import type {
+  AddMessageRequest,
+  AddMessageResponse,
+  BackendMessage,
+  ConverterPreviewRequest,
+  TargetInstance,
+} from "@/types";
+
 import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
@@ -490,6 +502,214 @@ async function selectConverter(page: Page, converterName: string) {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+async function registerConverter(
+  request: APIRequestContext,
+  type: string,
+  params: Record<string, unknown> = {},
+): Promise<string> {
+  const name = `e2e-${randomUUID()}`;
+  const response = await request.post("/api/converters", { data: { name, type, params } });
+  expect(response.status()).toBe(201);
+  return name;
+}
+
+async function addPipelineConverter(page: Page, converterId: string): Promise<void> {
+  await page.getByTestId("converter-panel-select").click();
+  await page.getByTestId(`converter-option-${converterId}`).click();
+  await expect(page.getByTestId(`converter-item-${converterId}`)).toBeVisible();
+}
+
+test.describe("Shared per-piece converter pipelines @seeded", () => {
+  test.setTimeout(90_000);
+
+  let targetRegistryName: string;
+  let base64Id: string;
+  let caesarId: string;
+  let imageId: string;
+  const registeredConverters: string[] = [];
+  const image = readFileSync(new URL("../public/roakey.png", import.meta.url));
+
+  test.beforeAll(async ({ request }) => {
+    const targetResponse = await request.post("/api/targets", {
+      data: { type: "TextTarget", name: `e2e-converters-${randomUUID()}`, params: {} },
+    });
+    expect(targetResponse.status()).toBe(201);
+    const target: TargetInstance = await targetResponse.json();
+    targetRegistryName = target.target_registry_name;
+
+    base64Id = await registerConverter(request, "Base64Converter");
+    registeredConverters.push(base64Id);
+    caesarId = await registerConverter(request, "CaesarConverter", { caesar_offset: 1 });
+    registeredConverters.push(caesarId);
+    imageId = await registerConverter(request, "ImageCompressionConverter", {
+      output_format: "PNG",
+      min_compression_threshold: 0,
+      fallback_to_original: false,
+    });
+    registeredConverters.push(imageId);
+  });
+
+  test.afterAll(async ({ request }) => {
+    for (const converterId of registeredConverters) {
+      const response = await request.delete(`/api/converters/${encodeURIComponent(converterId)}`);
+      expect(response.status()).toBe(204);
+    }
+  });
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.getByTitle("Registry", { exact: true }).click();
+    await page.getByTestId(`target-row-${targetRegistryName}`)
+      .getByRole("button", { name: "Set Active", exact: true }).click();
+    await page.getByTitle("Chat", { exact: true }).click();
+    await expect(page.getByTestId("chat-input")).toBeEnabled();
+  });
+
+  test("should preserve an ordered pipeline and its output across close and reopen, then persist the send", async ({
+    page, request,
+  }) => {
+    await page.getByTestId("chat-input").fill("hello");
+    await selectConverter(page, base64Id);
+    await addPipelineConverter(page, caesarId);
+
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+    await expect(page.getByTestId("converter-panel")).toHaveCount(0);
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    await expect(page.getByTestId(`converter-item-${base64Id}`)).toBeVisible();
+    await expect(page.getByTestId(`converter-item-${caesarId}`)).toBeVisible();
+    await expect(page.getByTestId("converter-preview-result")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    await expect(page.getByTestId("converter-stage-output-0")).toContainText("aGVsbG8=");
+    await expect(page.getByTestId("converter-stage-output-1")).toContainText("bHWtcH9=");
+    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await expect(page.getByTestId("converted-value-input")).toHaveValue("bHWtcH9=");
+
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    await expect(page.getByTestId("converter-preview-result")).toContainText("bHWtcH9=");
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+
+    const [response] = await Promise.all([
+      page.waitForResponse((candidate) => candidate.request().method() === "POST"
+        && /\/api\/attacks\/[^/]+\/messages$/.test(new URL(candidate.url()).pathname)),
+      page.getByRole("button", { name: "Send message", exact: true }).click(),
+    ]);
+    expect(response.status()).toBe(200);
+    const sentRequest: AddMessageRequest = response.request().postDataJSON();
+    expect(sentRequest.pieces).toHaveLength(1);
+    expect(sentRequest.pieces[0]).toMatchObject({ data_type: "text", original_value: "hello" });
+    expect(sentRequest.pieces[0]).not.toHaveProperty("converted_value");
+    expect(sentRequest.request_converter_configurations).toEqual([
+      { converter_ids: [base64Id, caesarId], indexes_to_apply: [0] },
+    ]);
+
+    const sent: AddMessageResponse = await response.json();
+    const historyResponse = await request.get(
+      `/api/attacks/${sent.attack.attack_result_id}/messages?conversation_id=${sent.attack.conversation_id}`,
+    );
+    expect(historyResponse.ok()).toBeTruthy();
+    const history: AddMessageResponse["messages"] = await historyResponse.json();
+    const userMessage = history.messages.find((message: BackendMessage) => message.role === "user");
+    expect(userMessage?.message_pieces).toEqual([
+      expect.objectContaining({
+        original_value: "hello",
+        converted_value: "bHWtcH9=",
+        converted_value_data_type: "text",
+      }),
+    ]);
+  });
+
+  test("should convert every configured input and keep duplicate image pieces independent", async ({ page }) => {
+    const previewRequests: ConverterPreviewRequest[] = [];
+    page.on("request", (request: Request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/converters/preview") {
+        previewRequests.push(request.postDataJSON());
+      }
+    });
+    await page.getByTestId("chat-input").fill("hello");
+    await page.locator('input[type="file"]').setInputFiles([
+      { name: "duplicate.png", mimeType: "image/png", buffer: image },
+      { name: "duplicate.png", mimeType: "image/png", buffer: image },
+    ]);
+    await selectConverter(page, base64Id);
+    await page.getByRole("tab", { name: "Image", exact: true }).click();
+    await expect(page.getByTestId("converter-input-value")).toHaveCount(2);
+    await addPipelineConverter(page, imageId);
+
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    const results = page.getByTestId("converter-preview-result");
+    await expect(results).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Add converted value", exact: true })).toBeEnabled();
+    expect(previewRequests).toHaveLength(3);
+    expect(previewRequests.filter((preview: ConverterPreviewRequest) => preview.original_value_data_type === "text"))
+      .toEqual([{ original_value: "hello", original_value_data_type: "text", converter_ids: [base64Id] }]);
+    expect(previewRequests.filter((preview: ConverterPreviewRequest) => preview.original_value_data_type === "image_path"))
+      .toEqual([
+        { original_value: `data:image/png;base64,${image.toString("base64")}`, original_value_data_type: "image_path", converter_ids: [imageId] },
+        { original_value: `data:image/png;base64,${image.toString("base64")}`, original_value_data_type: "image_path", converter_ids: [imageId] },
+      ]);
+    for (const result of await results.all()) {
+      const preview = result.getByRole("img");
+      await expect(preview).toBeVisible();
+      await expect.poll(() => preview.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBeGreaterThan(0);
+    }
+    const firstOutput = await results.nth(0).getByRole("img").getAttribute("src");
+    const secondOutput = await results.nth(1).getByRole("img").getAttribute("src");
+    expect(firstOutput).not.toBe(secondOutput);
+
+    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+    await expect(page.getByTestId("converted-value-input")).toHaveValue("aGVsbG8=");
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(2);
+
+    await page.getByTestId("clear-media-conversion-image").nth(0).click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(1);
+    await page.getByTestId("remove-attachment-0").click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(1);
+
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    await expect(page.getByTestId("converter-preview-result")).toContainText("aGVsbG8=");
+    await page.getByRole("tab", { name: "Image (1)", exact: true }).click();
+    await expect(page.getByTestId(`converter-item-${imageId}`)).toBeVisible();
+    await expect(page.getByTestId("converter-input-value")).toHaveCount(1);
+    await expect(results).toHaveCount(1);
+    await expect(results.getByRole("img")).toHaveAttribute("src", secondOutput ?? "");
+    expect(previewRequests).toHaveLength(3);
+  });
+
+  test("should apply only successful current pieces after an image failure and a text edit", async ({ page }) => {
+    await page.getByTestId("chat-input").fill("original text");
+    await page.locator('input[type="file"]').setInputFiles([
+      { name: "valid.png", mimeType: "image/png", buffer: image },
+      { name: "broken.png", mimeType: "image/png", buffer: Buffer.from("not an image") },
+    ]);
+    await selectConverter(page, base64Id);
+    await page.getByRole("tab", { name: "Image", exact: true }).click();
+    await addPipelineConverter(page, imageId);
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+
+    await expect(page.getByTestId("converter-preview-error")).toContainText("broken.png");
+    await expect(page.getByTestId("converter-preview-result")).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Add converted value", exact: true })).toBeEnabled();
+    await page.getByRole("tab", { name: "Text (1)", exact: true }).click();
+    await expect(page.getByTestId("converter-preview-result")).toContainText(
+      Buffer.from("original text").toString("base64"),
+    );
+    await page.getByTestId("chat-input").fill("changed after conversion");
+    await expect(page.getByTestId("converter-preview-result")).toHaveCount(0);
+    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+
+    await expect(page.getByTestId("chat-input")).toHaveValue("changed after conversion");
+    await expect(page.getByTestId("converted-value-input")).toHaveCount(0);
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(1);
+    await page.getByTestId("remove-attachment-0").click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
+    await expect(page.getByText("broken.png", { exact: false })).toBeVisible();
+  });
+});
 
 test.describe("Converter Panel", () => {
   test.beforeEach(async ({ page }) => {

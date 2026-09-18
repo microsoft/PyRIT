@@ -63,6 +63,22 @@ pyrit_backend --host 127.0.0.1 --port 8080
 
 **Production Mode**: When installed from PyPI, the backend serves the bundled frontend and will exit if frontend files are missing.
 
+## Chat converters
+
+Chat keeps one ordered converter pipeline per input modality in memory. Closing
+the converter panel does not clear these pipelines. Sending a message clears
+its conversion results, but keeps the pipelines for the next message.
+
+**Convert** processes each input piece separately, including multiple attachments
+of the same type. **Add converted value** replaces the applied selection with the
+current successful results. Failed pieces remain unconverted and show an error.
+Changing an input or its pipeline clears the affected results and selections;
+late responses cannot restore them.
+
+Send uses the applied pieces' exact message indexes and runs their configured
+converters on the backend. A nondeterministic converter can produce a different
+value at Send than the value shown in the converter panel.
+
 ## Stack
 
 - **React 18** - UI framework

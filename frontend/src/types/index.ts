@@ -3,6 +3,8 @@
 // ============================================================================
 
 export interface MessageAttachment {
+  /** Client-side identity of one attachment in the editable draft. */
+  draftId?: string
   type: 'image' | 'audio' | 'video' | 'file'
   name: string
   url: string
@@ -22,6 +24,41 @@ export interface MessageAttachment {
   pieceId?: string
   /** Backend prompt_metadata — preserved so video_id etc. carry over on remix/copy */
   metadata?: Record<string, unknown>
+}
+
+export interface ConverterInputPiece {
+  id: string
+  pieceType: string
+  name: string
+  dataType: string
+  value: string
+  file?: File
+}
+
+export interface PieceConversion {
+  pieceId: string
+  pieceType: string
+  converterInstanceIds: string[]
+  convertedValue: string
+  originalValue: string
+  convertedDataType: string
+}
+
+export interface ChatConverterController {
+  inputs: ConverterInputPiece[]
+  pipelines: Record<string, string[]>
+  results: Record<string, ConverterPreviewResponse>
+  errors: Record<string, string>
+  applied: Record<string, PieceConversion>
+  isConverting: boolean
+  setPipeline: (pieceType: string, update: (ids: string[]) => string[]) => void
+  retainConverters: (availableIds: Set<string>) => void
+  convert: () => Promise<void>
+  apply: () => void
+  clear: (pieceId: string) => void
+  clearAll: () => void
+  editConvertedValue: (pieceId: string, value: string) => void
+  restore: (text: string, attachments: MessageAttachment[], conversions: Record<string, PieceConversion>) => void
 }
 
 export interface MessageTextDisplayPiece {
