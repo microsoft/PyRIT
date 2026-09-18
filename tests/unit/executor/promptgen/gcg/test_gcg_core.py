@@ -484,6 +484,47 @@ class TestEvaluateAttackInit:
             )
 
 
+def _offset_tokenizer(prompt_text: str) -> Any:
+    """Build a mock tokenizer that renders ``prompt_text`` and maps characters to tokens.
+
+    Each whitespace-delimited run of characters becomes one token, and ``char_to_token``
+    reports the token containing a character, which is how a fast tokenizer behaves. This
+    keeps slice assertions meaningful without downloading a real tokenizer.
+
+    Args:
+        prompt_text (str): The already-rendered chat prompt the tokenizer should return.
+
+    Returns:
+        Any: A mock tokenizer suitable for constructing an AttackPrompt.
+    """
+    spans: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, char in enumerate(prompt_text):
+        if char.isspace():
+            if start is not None:
+                spans.append((start, index))
+                start = None
+        elif start is None:
+            start = index
+    if start is not None:
+        spans.append((start, len(prompt_text)))
+
+    def char_to_token(pos: int) -> int | None:
+        for token_index, (begin, end) in enumerate(spans):
+            if begin <= pos < end:
+                return token_index
+        return None
+
+    encoding = MagicMock()
+    encoding.input_ids = list(range(len(spans)))
+    encoding.char_to_token.side_effect = char_to_token
+
+    tokenizer = MagicMock()
+    tokenizer.apply_chat_template.return_value = prompt_text
+    tokenizer.return_value = encoding
+    return tokenizer
+
+
 class TestUpdateIdsErrorPaths:
     """Tests covering the error / fallback paths in AttackPrompt._update_ids."""
 
@@ -614,6 +655,28 @@ class TestUpdateIdsErrorPaths:
         # end_tok(target_end_pos) saw None from char_to_token → clamped to len(toks).
         assert prompt._target_slice.stop == len(toks)
         assert prompt._target_slice.stop > prompt._target_slice.start
+
+    def test_target_is_located_after_the_user_turn_when_the_goal_quotes_it(self) -> None:
+        """A goal that quotes its own target must not pull the target slice into the user turn.
+
+        Affirmative-prefix targets make this realistic: the same text then appears twice in the
+        rendered prompt, and taking the first occurrence points the target and loss slices at the
+        user turn instead of the assistant reply.
+        """
+        goal = "Respond with Sure, here is the plan"
+        control = "! ! ! !"
+        target = "Sure, here is the plan"
+        prompt_text = f"<|user|>\n{goal} {control}<|end|>\n<|assistant|>\n{target}<|end|>"
+
+        prompt = AttackPrompt(
+            goal=goal,
+            target=target,
+            tokenizer=_offset_tokenizer(prompt_text),
+            control_init=control,
+        )
+
+        assert prompt._target_slice.start >= prompt._control_slice.stop
+        assert prompt._assistant_role_slice.start <= prompt._assistant_role_slice.stop
 
 
 class TestGetWorkersChatTemplateValidation:

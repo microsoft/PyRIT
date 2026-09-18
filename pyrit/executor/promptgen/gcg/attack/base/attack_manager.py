@@ -373,16 +373,23 @@ class AttackPrompt:
         encoding = self.tokenizer(prompt)
         toks = encoding.input_ids
 
-        # Locate goal/control/target substrings in the rendered prompt.
-        goal_start = prompt.find(self.goal)
-        control_start = prompt.find(self.control)
-        target_start = prompt.find(self.target)
-        if goal_start == -1 or control_start == -1 or target_start == -1:
+        # Locate goal/control/target substrings in the rendered prompt. The goal and control are
+        # rendered as one contiguous user turn, so search for that whole string, derive the control
+        # offset from it, and look for the target only after that turn. Searching for each piece
+        # independently takes the first occurrence anywhere in the prompt, so a goal that quotes its
+        # own target (common with affirmative-prefix targets) or that contains the control string
+        # silently produced slices pointing back into the user turn.
+        user_content = f"{self.goal} {self.control}"
+        user_start = prompt.find(user_content)
+        target_start = prompt.find(self.target, user_start + len(user_content)) if user_start != -1 else -1
+        if user_start == -1 or target_start == -1:
             raise ValueError(
                 "Could not locate goal/control/target in chat-templated prompt. "
                 f"prompt={prompt!r}, goal={self.goal!r}, "
                 f"control={self.control!r}, target={self.target!r}"
             )
+        goal_start = user_start
+        control_start = user_start + len(self.goal) + 1
 
         # ``char_to_token`` returns None when the character index has no
         # corresponding token (e.g. when the substring ends exactly at the end
