@@ -39,6 +39,7 @@ APP_INPUTS = {
     "PYRIT_ENTRA_CLIENT_ID": SUBSCRIPTION,
     "PYRIT_ALLOWED_GROUP_OBJECT_IDS": SUBSCRIPTION,
     "PYRIT_ADMIN_GROUP_OBJECT_ID": SUBSCRIPTION,
+    "PYRIT_ALLOW_CUSTOM_INITIALIZERS": "true",
     "PYRIT_SQL_SERVER_FQDN": "copyrit.database.windows.net",
     "PYRIT_SQL_DATABASE_NAME": "copyrit",
     "PYRIT_KEY_VAULT_RESOURCE_ID": f"{RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/copyrit-kv",
@@ -175,6 +176,7 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
                     "entraClientId",
                     "allowedGroupObjectIds",
                     "adminGroupObjectId",
+                    "allowCustomInitializers",
                     "allowedCidr",
                     "sqlServerFqdn",
                     "sqlDatabaseName",
@@ -190,6 +192,7 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
                 assert parameters["containerImage"] == IMAGE
                 assert parameters["sqlDatabaseName"] == "copyrit"
                 assert parameters["enableFrontDoor"] == front_door
+                assert parameters["allowCustomInitializers"] == "true"
                 assert parameters["allowedCidr"] == parameters["pyritConfigFileUri"] == ""
 
     def test_common_inputs_reject_missing_unresolved_and_noncanonical_values(self) -> None:
@@ -253,6 +256,7 @@ initialize_deployment_scope
             ("PYRIT_ENV_SECRET_NAME", "invalid/secret", "Invalid SQL"),
             ("PYRIT_ALLOWED_CLIENT_CIDR", "$(allowed)", "Optional deployment value"),
             ("PYRIT_CONFIG_FILE_URI", "$(config)", "Optional deployment value"),
+            ("PYRIT_ALLOW_CUSTOM_INITIALIZERS", "yes", "Invalid allowCustomInitializers"),
             ("PYRIT_ALLOWED_CLIENT_CIDR", "192.0.2.0/24", "leave PYRIT_ALLOWED_CLIENT_CIDR empty"),
             ("PYRIT_CONFIG_FILE_URI", "https://example.com/container/config", "Invalid Entra"),
             ("PYRIT_CONFIG_FILE_URI", "https://account.blob.core.windows.net/container/config?sas=1", "Invalid Entra"),

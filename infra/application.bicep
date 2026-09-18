@@ -27,6 +27,9 @@ param allowedGroupObjectIds string
 @minLength(1)
 param adminGroupObjectId string
 
+@description('Allow administrators to register and manage custom initializers')
+param allowCustomInitializers bool = false
+
 @description('Azure SQL server FQDN (e.g., myserver.database.windows.net)')
 param sqlServerFqdn string
 
@@ -208,6 +211,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'PYRIT_INITIALIZER'
               value: pyritInitializer
+            }
+            {
+              name: 'PYRIT_ALLOW_CUSTOM_INITIALIZERS'
+              value: allowCustomInitializers ? 'true' : 'false'
             }
             // Keep the managed-identity config URI out of plain Container App configuration.
             !empty(pyritConfigFileUri)

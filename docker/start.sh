@@ -68,6 +68,9 @@ write_deployment_config() {
                 echo "  - $(echo "$name" | xargs)"
             done
         fi
+        if [ -n "$PYRIT_ALLOW_CUSTOM_INITIALIZERS" ]; then
+            echo "allow_custom_initializers: $PYRIT_ALLOW_CUSTOM_INITIALIZERS"
+        fi
         if [ -n "$PYRIT_ENV_AKV_REF" ]; then
             echo "Using Azure Key Vault environment reference" >&2
             echo "env_akv_ref:"
