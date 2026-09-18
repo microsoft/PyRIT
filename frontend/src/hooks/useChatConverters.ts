@@ -6,10 +6,12 @@ import { toApiError } from '@/services/errors'
 import type {
   ChatConverterController,
   ConverterInputPiece,
+  ConverterPipelineStage,
   ConverterPreviewResponse,
   MessageAttachment,
   PieceConversion,
 } from '@/types'
+import { generateClientId } from '@/utils/clientId'
 import { fileToBase64 } from '@/utils/messageMapper'
 
 interface VersionedInput extends ConverterInputPiece {
@@ -20,7 +22,7 @@ interface ConversionState {
   sourceInputs: ConverterInputPiece[]
   inputs: VersionedInput[]
   nextRevision: number
-  pipelines: Record<string, string[]>
+  pipelines: Record<string, ConverterPipelineStage[]>
   pipelineRevisions: Record<string, number>
   results: Record<string, ConverterPreviewResponse>
   errors: Record<string, string>
@@ -58,9 +60,11 @@ function reconcileInputs(state: ConversionState, inputs: ConverterInputPiece[]):
   }
 }
 
-function changePipeline(state: ConversionState, pieceType: string, ids: string[]): ConversionState {
+function changePipeline(state: ConversionState, pieceType: string, stages: ConverterPipelineStage[]): ConversionState {
   const previous = state.pipelines[pieceType] ?? []
-  if (previous.length === ids.length && previous.every((id: string, index: number) => id === ids[index])) {
+  if (previous.length === stages.length && previous.every(
+    (stage: ConverterPipelineStage, index: number) => stage === stages[index],
+  )) {
     return state
   }
   const affected = new Set(state.inputs
@@ -68,7 +72,7 @@ function changePipeline(state: ConversionState, pieceType: string, ids: string[]
     .map((input: VersionedInput) => input.id))
   return {
     ...state,
-    pipelines: { ...state.pipelines, [pieceType]: ids },
+    pipelines: { ...state.pipelines, [pieceType]: stages },
     pipelineRevisions: {
       ...state.pipelineRevisions,
       [pieceType]: (state.pipelineRevisions[pieceType] ?? 0) + 1,
@@ -110,15 +114,25 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     setState(reconcileInputs(state, inputs))
   }
 
-  const setPipeline = useCallback((pieceType: string, update: (ids: string[]) => string[]): void => {
+  const setPipeline = useCallback((
+    pieceType: string,
+    update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[],
+  ): void => {
     setState((current: ConversionState) => changePipeline(current, pieceType, update(current.pipelines[pieceType] ?? [])))
   }, [])
+
+  const addConverter = useCallback((pieceType: string, converterId: string): void => {
+    const stage: ConverterPipelineStage = { id: generateClientId(), converterId }
+    setPipeline(pieceType, (stages: ConverterPipelineStage[]) => [...stages, stage])
+  }, [setPipeline])
 
   const retainConverters = useCallback((availableIds: Set<string>): void => {
     setState((current: ConversionState) => {
       let next = current
-      for (const [pieceType, ids] of Object.entries(current.pipelines)) {
-        next = changePipeline(next, pieceType, ids.filter((id: string) => availableIds.has(id)))
+      for (const [pieceType, stages] of Object.entries(current.pipelines)) {
+        next = changePipeline(next, pieceType, stages.filter(
+          (stage: ConverterPipelineStage) => availableIds.has(stage.converterId),
+        ))
       }
       return next
     })
@@ -136,7 +150,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     }))
 
     const outcomes = await Promise.all(selectedInputs.map(async (input: VersionedInput) => {
-      const converterIds = [...state.pipelines[input.pieceType]]
+      const converterIds = state.pipelines[input.pieceType].map((stage: ConverterPipelineStage) => stage.converterId)
       const pipelineRevision = state.pipelineRevisions[input.pieceType]
       try {
         const value = input.file
@@ -176,7 +190,10 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
       const applied: Record<string, PieceConversion> = {}
       for (const input of current.inputs) {
         const result = current.results[input.id]
-        if (result) applied[input.id] = makeConversion(input, current.pipelines[input.pieceType], result)
+        if (result) {
+          const converterIds = current.pipelines[input.pieceType].map((stage: ConverterPipelineStage) => stage.converterId)
+          applied[input.id] = makeConversion(input, converterIds, result)
+        }
       }
       return { ...current, applied }
     })
@@ -205,10 +222,21 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     restoredAttachments: MessageAttachment[],
     conversions: Record<string, PieceConversion>,
   ): void => {
+    const restoredPipelines: Record<string, ConverterPipelineStage[]> = {}
+    for (const conversion of Object.values(conversions)) {
+      restoredPipelines[conversion.pieceType] = conversion.converterInstanceIds.map((converterId: string) => ({
+        id: generateClientId(), converterId,
+      }))
+    }
     setState((current: ConversionState) => {
       let next = reconcileInputs(current, buildConverterInputs(restoredText, restoredAttachments))
-      for (const conversion of Object.values(conversions)) {
-        next = changePipeline(next, conversion.pieceType, [...conversion.converterInstanceIds])
+      for (const [pieceType, stages] of Object.entries(restoredPipelines)) {
+        const previous = next.pipelines[pieceType] ?? []
+        if (previous.length !== stages.length || previous.some(
+          (stage: ConverterPipelineStage, index: number) => stage.converterId !== stages[index].converterId,
+        )) {
+          next = changePipeline(next, pieceType, stages)
+        }
       }
       return {
         ...next, applied: { ...conversions }, results: {}, errors: {}, runId: 0, isConverting: false,
@@ -223,6 +251,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     errors: state.errors,
     applied: state.applied,
     isConverting: state.isConverting,
+    addConverter,
     setPipeline,
     retainConverters,
     convert,

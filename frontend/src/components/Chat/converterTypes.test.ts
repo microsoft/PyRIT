@@ -1,7 +1,27 @@
 import type { PieceConversion } from '@/components/Chat/converterTypes'
-import { buildConverterInputs, buildDraftPieceIds, buildRequestConverterConfigurations } from '@/components/Chat/converterTypes'
+import { buildConverterInputs, buildDraftPieceIds, buildRequestConverterConfigurations, withDraftIdentity } from '@/components/Chat/converterTypes'
 import type { MessageAttachment } from '@/types'
 import { buildMessagePieces } from '@/utils/messageMapper'
+
+describe('withDraftIdentity', () => {
+  it('assigns distinct attachment identities when randomUUID is unavailable', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(crypto, 'randomUUID')
+    Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: undefined })
+    try {
+      const attachment: MessageAttachment = {
+        type: 'image', name: 'same.png', url: 'same.png', mimeType: 'image/png',
+      }
+      const first = withDraftIdentity(attachment)
+      const second = withDraftIdentity(attachment)
+      expect(first.draftId).toEqual(expect.any(String))
+      expect(first.draftId).not.toBe(second.draftId)
+      expect(withDraftIdentity(first).draftId).toBe(first.draftId)
+    } finally {
+      if (descriptor) Object.defineProperty(crypto, 'randomUUID', descriptor)
+      else Reflect.deleteProperty(crypto, 'randomUUID')
+    }
+  })
+})
 
 function makeConversion(
   pieceId: string,

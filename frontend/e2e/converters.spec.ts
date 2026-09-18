@@ -566,6 +566,57 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await expect(page.getByTestId("chat-input")).toBeEnabled();
   });
 
+  test("should keep the same stage focused through repeated keyboard moves, including duplicates", async ({ page }) => {
+    await page.getByTestId("chat-input").fill("hello");
+    await selectConverter(page, base64Id);
+    await addPipelineConverter(page, caesarId);
+    await addPipelineConverter(page, base64Id);
+
+    const handles = page.getByRole("button", { name: /^Reorder converter/ });
+    await handles.nth(2).focus();
+    const focusedStage = await handles.nth(2).elementHandle();
+    expect(focusedStage).not.toBeNull();
+    for (const key of ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowUp", "ArrowUp"]) {
+      await page.keyboard.press(key);
+      expect(await focusedStage?.evaluate((element: HTMLElement) => document.activeElement === element)).toBe(true);
+    }
+    expect(await handles.evaluateAll((elements: HTMLElement[]) => (
+      elements.map((element: HTMLElement) => element.getAttribute("aria-label"))
+    ))).toEqual([
+      `Reorder converter ${base64Id}, stage 1 of 2`,
+      `Reorder converter ${base64Id}, stage 2 of 2`,
+      `Reorder converter ${caesarId}`,
+    ]);
+    const previewResponse = page.waitForResponse((response) => (
+      response.request().method() === "POST" && new URL(response.url()).pathname === "/api/converters/preview"
+    ));
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    const response = await previewResponse;
+    expect(response.ok()).toBeTruthy();
+    expect(response.request().postDataJSON().converter_ids).toEqual([base64Id, base64Id, caesarId]);
+    await expect(page.getByTestId("converter-preview-result")).toBeVisible();
+  });
+
+  test("should upload attachments and create pipeline stages without crypto.randomUUID", async ({ page }) => {
+    await page.evaluate(() => {
+      Object.defineProperty(crypto, "randomUUID", { configurable: true, value: undefined });
+    });
+    await page.locator('input[type="file"]').setInputFiles([
+      { name: "first.png", mimeType: "image/png", buffer: image },
+      { name: "second.png", mimeType: "image/png", buffer: image },
+    ]);
+    await expect(page.getByTestId("remove-attachment-0")).toBeVisible();
+    await expect(page.getByTestId("remove-attachment-1")).toBeVisible();
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    await page.getByRole("tab", { name: "Image", exact: true }).click();
+    await addPipelineConverter(page, imageId);
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    await expect(page.getByTestId("converter-preview-result")).toHaveCount(2);
+    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(2);
+  });
+
   test("should preserve an ordered pipeline and its output across close and reopen, then persist the send", async ({
     page, request,
   }) => {

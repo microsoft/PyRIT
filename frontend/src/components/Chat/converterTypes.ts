@@ -1,4 +1,5 @@
 import type { ConverterConfigurationRequest, ConverterInputPiece, MessageAttachment, PieceConversion } from '@/types'
+import { generateClientId } from '@/utils/clientId'
 import { mimeTypeToDataType } from '@/utils/messageMapper'
 
 export const PIECE_TYPE_TO_DATA_TYPE: Record<string, string> = {
@@ -19,7 +20,7 @@ export {
 } from '@/utils/media'
 
 export function withDraftIdentity(attachment: MessageAttachment): MessageAttachment {
-  return { ...attachment, draftId: attachment.draftId ?? crypto.randomUUID() }
+  return { ...attachment, draftId: attachment.draftId ?? generateClientId() }
 }
 
 export function buildConverterInputs(text: string, attachments: MessageAttachment[]): ConverterInputPiece[] {

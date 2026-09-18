@@ -71,14 +71,20 @@ export interface PieceConversion {
   convertedDataType: string
 }
 
+export interface ConverterPipelineStage {
+  readonly id: string
+  readonly converterId: string
+}
+
 export interface ChatConverterController {
   inputs: ConverterInputPiece[]
-  pipelines: Record<string, string[]>
+  pipelines: Record<string, ConverterPipelineStage[]>
   results: Record<string, ConverterPreviewResponse>
   errors: Record<string, string>
   applied: Record<string, PieceConversion>
   isConverting: boolean
-  setPipeline: (pieceType: string, update: (ids: string[]) => string[]) => void
+  addConverter: (pieceType: string, converterId: string) => void
+  setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
   retainConverters: (availableIds: Set<string>) => void
   convert: () => Promise<void>
   apply: () => void

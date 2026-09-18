@@ -20,7 +20,7 @@ import {
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ChatConverterController, ConverterInputPiece, ConverterInstance } from '@/types'
+import type { ChatConverterController, ConverterInputPiece, ConverterInstance, ConverterPipelineStage } from '@/types'
 
 import {
   PIECE_TYPE_TO_DATA_TYPE,
@@ -58,6 +58,10 @@ interface ValuePreviewProps {
 interface ConverterPanelProps {
   onClose: () => void
   controller: ChatConverterController
+}
+
+interface SelectedConverter extends ConverterInstance {
+  readonly stageId: string
 }
 
 function formatDataType(dataType: string): string {
@@ -138,7 +142,7 @@ export default function ConverterPanel({
   const styles = useConverterPanelStyles()
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const [activeTab, setActiveTab] = useState('text')
-  const { inputs, pipelines, results, errors, isConverting, setPipeline, retainConverters } = controller
+  const { inputs, pipelines, results, errors, isConverting, addConverter, setPipeline, retainConverters } = controller
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -162,7 +166,7 @@ export default function ConverterPanel({
   // The selected tab can disappear when an attachment is removed; fall back to
   // text for every derivation instead of resetting state from an effect.
   const effectiveActiveTab = tabs.includes(activeTab) ? activeTab : 'text'
-  const selectedConverterIds = useMemo(
+  const selectedStages = useMemo(
     () => pipelines[effectiveActiveTab] ?? [],
     [effectiveActiveTab, pipelines],
   )
@@ -183,7 +187,7 @@ export default function ConverterPanel({
       )
       retainConverters(availableIds)
       if (selectId && selectPieceType && availableIds.has(selectId)) {
-        setPipeline(selectPieceType, (ids: string[]) => [...ids, selectId])
+        addConverter(selectPieceType, selectId)
       }
     } catch (loadError) {
       setConverters([])
@@ -191,7 +195,7 @@ export default function ConverterPanel({
     } finally {
       setIsLoading(false)
     }
-  }, [retainConverters, setPipeline])
+  }, [retainConverters, addConverter])
 
   useEffect(() => {
     let cancelled = false
@@ -216,14 +220,11 @@ export default function ConverterPanel({
   }, [retainConverters])
 
   const selectedConverters = useMemo(
-    () => selectedConverterIds
-      .map((converterId: string) => converters.find(
-        (converter: ConverterInstance) => converter.converter_id === converterId,
-      ))
-      .filter((converter: ConverterInstance | undefined): converter is ConverterInstance => (
-        converter !== undefined
-      )),
-    [converters, selectedConverterIds],
+    () => selectedStages.flatMap((stage: ConverterPipelineStage): SelectedConverter[] => {
+      const converter = converters.find((candidate: ConverterInstance) => candidate.converter_id === stage.converterId)
+      return converter ? [{ ...converter, stageId: stage.id }] : []
+    }),
+    [converters, selectedStages],
   )
 
   // Offer converters that accept whatever the pipeline currently emits, so a
@@ -257,12 +258,12 @@ export default function ConverterPanel({
   )
 
   const handleConverterSelect = useCallback((converterId: string): void => {
-    setPipeline(effectiveActiveTab, (ids: string[]) => [...ids, converterId])
-  }, [setPipeline, effectiveActiveTab])
+    addConverter(effectiveActiveTab, converterId)
+  }, [addConverter, effectiveActiveTab])
 
   const removeConverter = useCallback((index: number): void => {
-    setPipeline(effectiveActiveTab, (ids: string[]) => ids.filter(
-      (_: string, currentIndex: number) => currentIndex !== index,
+    setPipeline(effectiveActiveTab, (stages: ConverterPipelineStage[]) => stages.filter(
+      (_: ConverterPipelineStage, currentIndex: number) => currentIndex !== index,
     ))
   }, [setPipeline, effectiveActiveTab])
 
@@ -271,18 +272,18 @@ export default function ConverterPanel({
       sourceIndex === targetIndex
       || sourceIndex < 0
       || targetIndex < 0
-      || sourceIndex >= selectedConverterIds.length
-      || targetIndex >= selectedConverterIds.length
+      || sourceIndex >= selectedStages.length
+      || targetIndex >= selectedStages.length
     ) {
       return
     }
-    setPipeline(effectiveActiveTab, (ids: string[]) => {
-      const nextPipeline = [...ids]
+    setPipeline(effectiveActiveTab, (stages: ConverterPipelineStage[]) => {
+      const nextPipeline = [...stages]
       const [movedConverter] = nextPipeline.splice(sourceIndex, 1)
       nextPipeline.splice(targetIndex, 0, movedConverter)
       return nextPipeline
     })
-  }, [setPipeline, effectiveActiveTab, selectedConverterIds.length])
+  }, [setPipeline, effectiveActiveTab, selectedStages.length])
 
   const handleDragStart = useCallback((
     event: DragEvent<HTMLElement>,
@@ -431,21 +432,21 @@ export default function ConverterPanel({
                   </MessageBarBody>
                 </MessageBar>
               ))}
-              {selectedConverters.map((converter: ConverterInstance, index: number) => {
-                const matchingConverterIds = selectedConverterIds.filter(
-                  (converterId: string) => converterId === converter.converter_id,
+              {selectedConverters.map((converter: SelectedConverter, index: number) => {
+                const matchingStages = selectedStages.filter(
+                  (stage: ConverterPipelineStage) => stage.converterId === converter.converter_id,
                 )
-                const occurrenceNumber = selectedConverterIds
+                const occurrenceNumber = selectedStages
                   .slice(0, index + 1)
-                  .filter((converterId: string) => converterId === converter.converter_id)
+                  .filter((stage: ConverterPipelineStage) => stage.converterId === converter.converter_id)
                   .length
-                const duplicateStageContext = matchingConverterIds.length > 1
-                  ? `, stage ${occurrenceNumber} of ${matchingConverterIds.length}`
+                const duplicateStageContext = matchingStages.length > 1
+                  ? `, stage ${occurrenceNumber} of ${matchingStages.length}`
                   : ''
                 const cardTestIdSuffix = occurrenceNumber > 1 ? `-${occurrenceNumber}` : ''
                 return (
                   <div
-                    key={`${converter.converter_id}-${index}`}
+                    key={converter.stageId}
                     className={styles.converterCard}
                     data-testid={`converter-item-${converter.converter_id}${cardTestIdSuffix}`}
                     onDragOver={(event: DragEvent<HTMLDivElement>) => {

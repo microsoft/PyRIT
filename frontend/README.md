@@ -79,6 +79,8 @@ pyrit_backend --host 127.0.0.1 --port 8080
 Chat keeps one ordered converter pipeline per input modality in memory. Closing
 the converter panel does not clear these pipelines. Sending a message clears
 its conversion results, but keeps the pipelines for the next message.
+Use the arrow keys on a stage's reorder button to move it. Focus stays on that
+stage, including when the same converter occurs more than once.
 
 **Convert** processes each input piece separately, including multiple attachments
 of the same type. **Add converted value** replaces the applied selection with the

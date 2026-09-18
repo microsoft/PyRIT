@@ -386,6 +386,46 @@ describe('ConverterPanel', () => {
     )
   })
 
+  it.each([false, true])('keeps focus through consecutive keyboard moves (repeated converter: %s)', async (repeated: boolean) => {
+    const secondConverter = makeConverter('suffix-default', 'SuffixAppendConverter')
+    const thirdConverter = makeConverter('caesar-default', 'CaesarConverter')
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [textConverter, secondConverter, thirdConverter],
+    })
+    mockedConvertersApi.previewConversion.mockResolvedValue(
+      makePreviewResponse(['base64-default'], ['converted']),
+    )
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await selectConverter('suffix-default')
+    await selectConverter(repeated ? 'base64-default' : 'caesar-default')
+    const handle = screen.getByRole('button', {
+      name: repeated
+        ? 'Reorder converter base64-default, stage 2 of 2'
+        : 'Reorder converter caesar-default',
+    })
+    await user.click(handle)
+    await user.keyboard('{ArrowUp}')
+    expect(handle).toHaveFocus()
+    await user.keyboard('{ArrowUp}')
+    expect(handle).toHaveFocus()
+    expect(screen.getAllByRole('button', { name: /^Reorder converter/ })[0]).toBe(handle)
+    await user.keyboard('{ArrowDown}{ArrowDown}')
+    expect(handle).toHaveFocus()
+    expect(screen.getAllByRole('button', { name: /^Reorder converter/ })[2]).toBe(handle)
+    await user.keyboard('{ArrowUp}{ArrowUp}')
+    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith(expect.objectContaining({
+      converter_ids: [
+        repeated ? 'base64-default' : 'caesar-default',
+        'base64-default',
+        'suffix-default',
+      ],
+    }))
+  })
+
   it('ignores external file drops on converter cards', async () => {
     const secondConverter = makeConverter('suffix-default', 'SuffixAppendConverter')
     mockedConvertersApi.listConverters.mockResolvedValue({

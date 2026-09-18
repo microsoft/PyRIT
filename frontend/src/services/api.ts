@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
+import { generateClientId } from '@/utils/clientId'
 import { toApiError } from './errors'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
@@ -60,23 +61,6 @@ const apiClient = axios.create({
 })
 
 // ---------------------------------------------------------------------------
-// Request interceptor: attach X-Request-ID for log correlation
-// ---------------------------------------------------------------------------
-
-/** Generate a UUID v4, falling back to Math.random for HTTP dev environments. */
-function generateRequestId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  // Fallback for environments without crypto.randomUUID
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0
-    const v = c === 'x' ? r : (r & 0x3) | 0x8
-    return v.toString(16)
-  })
-}
-
-// ---------------------------------------------------------------------------
 // MSAL token acquisition for API calls
 // ---------------------------------------------------------------------------
 
@@ -110,7 +94,7 @@ async function getAccessToken(forceRefresh = false): Promise<string | null> {
 }
 
 apiClient.interceptors.request.use(async (config) => {
-  config.headers.set('X-Request-ID', generateRequestId())
+  config.headers.set('X-Request-ID', generateClientId())
 
   const token = await getAccessToken()
   if (token) {
