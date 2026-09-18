@@ -150,10 +150,13 @@ IDs, labels, palettes, backgrounds, menu entries, and stored-value validation.
 
 3. For a coordinated palette, follow a nearby preset's `createPaletteTheme`
    definition instead of changing colors in individual components. Keep
-   `resolved` consistent with the palette's light/dark base.
+   `resolved` consistent with the palette's light/dark base. Its status
+   foregrounds cover custom surfaces while preserving Fluent's semantic
+   backgrounds and borders.
 4. Document how the artwork was made and keep the palette accessibility tests
-   passing. They check text/button contrast, including the strongest possible
-   artwork at the configured opacity.
+   passing. They check neutral/status text and button contrast, including the
+   strongest possible artwork at the configured opacity, plus semantic
+   foreground/background pairs used by badges and messages.
 
 No hook, menu switch, or page-specific background needs to be added for a new
 preset. Existing page canvases share one decorative layer; controls, dialogs,

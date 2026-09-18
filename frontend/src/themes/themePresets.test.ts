@@ -33,6 +33,37 @@ const CUSTOM_ENTRIES = PRESET_ENTRIES.filter(([, preset]: [string, ThemePreset])
 const READING_SURFACES = [
   'colorNeutralBackground1', 'colorNeutralBackground2', 'colorNeutralBackground3',
 ] as const
+const STATUS_TEXT_TOKENS = [
+  'colorPaletteRedForeground1', 'colorPaletteRedForeground3',
+  'colorPaletteGreenForeground1', 'colorPaletteGreenForeground3',
+  'colorPaletteDarkOrangeForeground1', 'colorPaletteDarkOrangeForeground3',
+  'colorPaletteYellowForeground1', 'colorPaletteYellowForeground2',
+  'colorStatusDangerForeground1', 'colorStatusDangerForeground3',
+  'colorStatusSuccessForeground1', 'colorStatusSuccessForeground3',
+  'colorStatusWarningForeground1', 'colorStatusWarningForeground3',
+] as const
+const ACCENT_TEXT_TOKENS = [
+  'colorPaletteBlueForeground2', 'colorPaletteGreenForeground2',
+  'colorPalettePurpleForeground2', 'colorPaletteRedForeground2',
+] as const
+const SEMANTIC_PAIRS = [
+  ['colorPaletteRedForeground1', 'colorPaletteRedBackground1'],
+  ['colorPaletteGreenForeground1', 'colorPaletteGreenBackground1'],
+  ['colorPaletteDarkOrangeForeground1', 'colorPaletteDarkOrangeBackground1'],
+  ['colorPaletteYellowForeground1', 'colorPaletteYellowBackground1'],
+  ['colorPaletteRedForeground2', 'colorPaletteRedBackground2'],
+  ['colorPaletteGreenForeground2', 'colorPaletteGreenBackground2'],
+  ['colorPaletteBlueForeground2', 'colorPaletteBlueBackground2'],
+  ['colorPalettePurpleForeground2', 'colorPalettePurpleBackground2'],
+  ['colorPaletteYellowForeground2', 'colorPaletteYellowBackground2'],
+  ['colorStatusDangerForeground1', 'colorStatusDangerBackground1'],
+  ['colorStatusSuccessForeground1', 'colorStatusSuccessBackground1'],
+  ['colorStatusWarningForeground1', 'colorStatusWarningBackground1'],
+  ['colorStatusWarningForeground3', 'colorStatusWarningBackground1'],
+  ['colorStatusDangerForeground2', 'colorStatusDangerBackground2'],
+  ['colorStatusSuccessForeground2', 'colorStatusSuccessBackground2'],
+  ['colorStatusWarningForeground2', 'colorStatusWarningBackground2'],
+] as const
 
 describe('themePresets', () => {
   it('keeps the existing standard Fluent themes unchanged', () => {
@@ -81,6 +112,13 @@ const CONTENT_CONTRAST_CASES = CUSTOM_ENTRIES.flatMap(([id, { theme }]: [string,
         { name: `${id} links on ${surface}`, foreground: theme.colorBrandForegroundLink, background },
         { name: `${id} hovered links on ${surface}`, foreground: theme.colorBrandForegroundLinkHover, background },
         { name: `${id} pressed links on ${surface}`, foreground: theme.colorBrandForegroundLinkPressed, background },
+        ...[...STATUS_TEXT_TOKENS, ...ACCENT_TEXT_TOKENS].map(
+          (token: typeof STATUS_TEXT_TOKENS[number] | typeof ACCENT_TEXT_TOKENS[number]) => ({
+            name: `${id} ${token} on ${surface}`,
+            foreground: theme[token],
+            background,
+          }),
+        ),
       ]
     },
   ),
@@ -99,13 +137,31 @@ const BUTTON_CONTRAST_CASES = CUSTOM_ENTRIES.flatMap(([id, { theme }]: [string, 
   })),
 )
 
+const SEMANTIC_CONTRAST_CASES = CUSTOM_ENTRIES.flatMap(([id, { theme }]: [string, ThemePreset]) =>
+  SEMANTIC_PAIRS.map(([foreground, background]: typeof SEMANTIC_PAIRS[number]) => ({
+    name: `${id} ${foreground} on ${background}`,
+    foreground: theme[foreground],
+    background: theme[background],
+  })),
+)
+
 describe('preset palette accessibility', () => {
-  it.each([...CONTENT_CONTRAST_CASES, ...BUTTON_CONTRAST_CASES])(
+  it.each([...CONTENT_CONTRAST_CASES, ...BUTTON_CONTRAST_CASES, ...SEMANTIC_CONTRAST_CASES])(
     '$name has AA text contrast',
     ({ foreground, background }: { foreground: string; background: string }) => {
       expect(contrast(foreground, channels(background))).toBeGreaterThanOrEqual(4.5)
     },
   )
+
+  it.each(CUSTOM_ENTRIES)('%s preserves Fluent semantic backgrounds and borders', (
+    _id: string, preset: ThemePreset,
+  ) => {
+    const baseTheme = preset.resolved === 'dark' ? webDarkTheme : webLightTheme
+    const semanticSurfaces = Object.entries(baseTheme).filter(
+      ([token]: [string, string]) => /^color(?:Palette|Status).*(?:Background|Border)/.test(token),
+    )
+    expect(preset.theme).toEqual(expect.objectContaining(Object.fromEntries(semanticSurfaces)))
+  })
 
   it.each(CUSTOM_ENTRIES)(
     '%s keeps bare workspace text readable even over the strongest possible artwork',
@@ -122,6 +178,7 @@ describe('preset palette accessibility', () => {
         preset.theme.colorBrandForegroundLink,
         preset.theme.colorBrandForegroundLinkHover,
         preset.theme.colorBrandForegroundLinkPressed,
+        ...STATUS_TEXT_TOKENS.map((token: typeof STATUS_TEXT_TOKENS[number]) => preset.theme[token]),
       ]) {
         expect(contrast(foreground, background)).toBeGreaterThanOrEqual(4.5)
       }

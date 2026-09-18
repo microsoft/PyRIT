@@ -19,13 +19,48 @@ interface Palette {
   readonly stroke: string
 }
 
+const STATUS_COLORS = {
+  light: {
+    red: '#751d1f',
+    green: '#094509',
+    darkOrange: '#7a2101',
+    yellow: '#4c4400',
+    danger: '#6e0811',
+    warning: '#6b2b05',
+  },
+  dark: {
+    red: '#f6d1d1',
+    green: '#c1e6c1',
+    darkOrange: '#f8d6c8',
+    yellow: '#fffde0',
+    danger: '#f6d3d7',
+    warning: '#fdd9c4',
+  },
+} as const
+
 function createPaletteTheme(palette: Palette): Theme {
   const theme = palette.resolved === 'dark'
     ? createDarkTheme(palette.brand)
     : createLightTheme(palette.brand)
+  const status = STATUS_COLORS[palette.resolved]
 
   return {
     ...theme,
+    // Status text also sits on custom neutrals and artwork, not just Fluent's tinted surfaces.
+    colorPaletteRedForeground1: status.red,
+    colorPaletteRedForeground3: status.red,
+    colorPaletteGreenForeground1: status.green,
+    colorPaletteGreenForeground3: status.green,
+    colorPaletteDarkOrangeForeground1: status.darkOrange,
+    colorPaletteDarkOrangeForeground3: status.darkOrange,
+    colorPaletteYellowForeground1: status.yellow,
+    colorPaletteYellowForeground2: status.yellow,
+    colorStatusDangerForeground1: status.danger,
+    colorStatusDangerForeground3: status.danger,
+    colorStatusSuccessForeground1: status.green,
+    colorStatusSuccessForeground3: status.green,
+    colorStatusWarningForeground1: status.warning,
+    colorStatusWarningForeground3: status.warning,
     colorNeutralBackground1: palette.surface,
     colorNeutralBackground1Hover: palette.raised,
     colorNeutralBackground1Pressed: palette.canvas,
