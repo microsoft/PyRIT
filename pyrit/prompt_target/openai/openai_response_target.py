@@ -53,6 +53,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+ToolExecutor = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
 @dataclass(frozen=True)
 class _SerializedPiece:
     item: dict[str, Any]
@@ -111,6 +114,7 @@ class OpenAIResponseTarget(OpenAITarget):
     def __init__(
         self,
         *,
+        custom_functions: dict[str, ToolExecutor] | None = None,
         tools: Sequence[Tool] | None = None,
         tool_providers: Sequence[ToolProvider] | None = None,
         max_output_tokens: int | None = None,
@@ -127,6 +131,7 @@ class OpenAIResponseTarget(OpenAITarget):
         Initialize the OpenAIResponseTarget with the provided parameters.
 
         Args:
+            custom_functions: Mapping of user-defined function names to executors.
             tools: Tools to advertise to the endpoint and execute on the host.
             tool_providers: Providers whose tools are discovered before the first request,
                 advertised to the endpoint, and registered for host-side execution.
@@ -189,6 +194,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
         self._extra_body_parameters = extra_body_parameters
 
+        self._custom_functions: dict[str, ToolExecutor] = custom_functions or {}
         self._tools = list(tools or [])
         self._tool_providers = list(tool_providers or [])
         self._tools_initialized = False
@@ -430,9 +436,6 @@ class OpenAIResponseTarget(OpenAITarget):
         return {k: v for k, v in body_parameters.items() if v is not None}
 
     async def _initialize_tools_async(self) -> None:
-        if self._tools_initialized:
-            return
-
         async with self._tool_initialization_lock:
             if self._tools_initialized:
                 return
@@ -878,28 +881,32 @@ class OpenAIResponseTarget(OpenAITarget):
                 "function": name,
                 "raw_arguments": args_json,
             }
-        if not isinstance(args, dict):
-            if self._fail_on_missing_function:
-                raise ValueError(f"Arguments for function '{name}' must be a JSON object")
-            return {
-                "error": "malformed_arguments",
-                "function": name,
-                "raw_arguments": args_json,
-            }
-
         await self._initialize_tools_async()
         configured_tool = next((tool for tool in self._tools if tool.name == name), None)
-        if configured_tool is None:
-            if self._fail_on_missing_function:
-                raise KeyError(f"Function '{name}' is not registered")
-            available_tools = sorted(tool.name for tool in self._tools)
-            logger.warning("Function '%s' not registered. Available: %s", name, available_tools)
-            return {
-                "error": "function_not_found",
-                "missing_function": name,
-                "available_functions": available_tools,
-            }
-        return await configured_tool.execute_async(arguments=args)
+        if configured_tool is not None:
+            if not isinstance(args, dict):
+                if self._fail_on_missing_function:
+                    raise ValueError(f"Arguments for function '{name}' must be a JSON object")
+                return {
+                    "error": "malformed_arguments",
+                    "function": name,
+                    "raw_arguments": args_json,
+                }
+            return await configured_tool.execute_async(arguments=args)
+
+        custom_function = self._custom_functions.get(name)
+        if custom_function is not None:
+            return await custom_function(cast("dict[str, Any]", args))
+
+        if self._fail_on_missing_function:
+            raise KeyError(f"Function '{name}' is not registered")
+        available_functions = sorted({*(tool.name for tool in self._tools), *self._custom_functions})
+        logger.warning("Function '%s' not registered. Available: %s", name, available_functions)
+        return {
+            "error": "function_not_found",
+            "missing_function": name,
+            "available_functions": available_functions,
+        }
 
     def _make_tool_piece(self, output: object, call_id: str, *, reference_piece: MessagePiece) -> MessagePiece:
         """

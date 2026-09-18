@@ -36,7 +36,7 @@ from pyrit.models import (
     PromptDataType,
     flatten_to_message_pieces,
 )
-from pyrit.prompt_target import FunctionTool, OpenAIResponseTarget, PromptTarget
+from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.prompt_target.openai.openai_response_target import token_usage_from_responses
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 
@@ -1119,11 +1119,11 @@ def test_make_tool_piece_serializes_output_and_sets_call_id(target: OpenAIRespon
 
 
 async def test_execute_call_section_calls_registered_function(target: OpenAIResponseTarget):
-    async def add_fn(*, a: int, b: int) -> dict[str, int]:
-        return {"sum": a + b}
+    async def add_fn(args: dict[str, Any]) -> dict[str, Any]:
+        return {"sum": args["a"] + args["b"]}
 
     # inject registry
-    target._tools = [FunctionTool(function=add_fn, name="add")]
+    target._custom_functions["add"] = add_fn
 
     section = {"type": "function_call", "name": "add", "arguments": json.dumps({"a": 2, "b": 3})}
     result = await target._execute_call_section_async(section)
@@ -1140,10 +1140,10 @@ async def test_execute_call_section_missing_function_tolerant_mode(target: OpenA
 
 
 async def test_execute_call_section_malformed_arguments_tolerant_mode(target: OpenAIResponseTarget):
-    async def echo_fn(*, value: str) -> dict[str, str]:
-        return {"value": value}
+    async def echo_fn(args: dict[str, Any]) -> dict[str, Any]:
+        return args
 
-    target._tools = [FunctionTool(function=echo_fn, name="echo")]
+    target._custom_functions["echo"] = echo_fn
     section = {"type": "function_call", "name": "echo", "arguments": "{not-json"}
     result = await target._execute_call_section_async(section)
     assert result["error"] == "malformed_arguments"
@@ -1152,7 +1152,7 @@ async def test_execute_call_section_malformed_arguments_tolerant_mode(target: Op
 
 
 async def test_execute_call_section_missing_function_strict_mode(target: OpenAIResponseTarget):
-    target._tools = []
+    target._custom_functions = {}
     target._fail_on_missing_function = True
     section = {"type": "function_call", "name": "nope", "arguments": "{}"}
     with pytest.raises(KeyError, match="Function 'nope' is not registered"):
@@ -1161,10 +1161,10 @@ async def test_execute_call_section_missing_function_strict_mode(target: OpenAIR
 
 async def test_send_prompt_async_agentic_loop_executes_function_and_returns_final_answer(target: OpenAIResponseTarget):
     # 1) Register a simple function
-    async def times2(*, x: int) -> dict[str, int]:  # pyrit-async-suffix-exempt
-        return {"result": x * 2}
+    async def times2(args: dict[str, Any]) -> dict[str, Any]:
+        return {"result": args["x"] * 2}
 
-    target._tools = [FunctionTool(function=times2)]
+    target._custom_functions["times2"] = times2
 
     # Create a shared conversation ID and reference piece for consistency
     shared_conversation_id = "test-conversation-123"

@@ -16,7 +16,7 @@ from openai.types.responses import ResponseOutputText
 
 from pyrit.memory import CentralMemory
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target import FunctionTool, OpenAIResponseTarget
+from pyrit.prompt_target import OpenAIResponseTarget
 
 
 @pytest.fixture
@@ -74,10 +74,10 @@ async def test_single_function_call_preserves_history(response_target, patch_cen
     conversation_id = str(uuid.uuid4())
 
     # Register function
-    async def get_weather(*, location: str) -> dict[str, object]:
+    async def get_weather(args: dict) -> dict:
         return {"temperature": 72, "condition": "sunny"}
 
-    response_target._tools = [FunctionTool(function=get_weather)]
+    response_target._custom_functions["get_weather"] = get_weather
 
     # User message
     user_message = Message(
@@ -143,13 +143,14 @@ async def test_chained_function_calls_preserve_all_history(response_target, patc
     conversation_id = str(uuid.uuid4())
 
     # Register two functions
-    async def get_location() -> dict[str, str]:
+    async def get_location(args: dict) -> dict:
         return {"location": "New York"}
 
-    async def get_weather(*, location: str) -> dict[str, object]:
+    async def get_weather(args: dict) -> dict:
         return {"temperature": 68, "condition": "cloudy"}
 
-    response_target._tools = [FunctionTool(function=get_location), FunctionTool(function=get_weather)]
+    response_target._custom_functions["get_location"] = get_location
+    response_target._custom_functions["get_weather"] = get_weather
 
     # User message
     user_message = Message(
@@ -217,10 +218,10 @@ async def test_function_call_memory_persistence(response_target, patch_central_d
     """Test that all intermediate function calls are stored in memory."""
     conversation_id = str(uuid.uuid4())
 
-    async def calculate(*, x: int) -> dict[str, int]:  # pyrit-async-suffix-exempt
-        return {"result": x * 2}
+    async def calculate(args: dict) -> dict:
+        return {"result": args["x"] * 2}
 
-    response_target._tools = [FunctionTool(function=calculate)]
+    response_target._custom_functions["calculate"] = calculate
 
     user_message = Message(
         message_pieces=[
@@ -261,13 +262,14 @@ async def test_call_id_consistency_across_chain(response_target, patch_central_d
     """Test that call_ids are correctly maintained throughout the function call chain."""
     conversation_id = str(uuid.uuid4())
 
-    async def func_a() -> dict[str, str]:
+    async def func_a(args: dict) -> dict:
         return {"value": "a"}
 
-    async def func_b() -> dict[str, str]:
+    async def func_b(args: dict) -> dict:
         return {"value": "b"}
 
-    response_target._tools = [FunctionTool(function=func_a), FunctionTool(function=func_b)]
+    response_target._custom_functions["func_a"] = func_a
+    response_target._custom_functions["func_b"] = func_b
 
     user_message = Message(
         message_pieces=[
@@ -321,10 +323,10 @@ async def test_no_duplicate_messages_in_conversation(response_target, patch_cent
     """Test that messages aren't duplicated when building conversation history."""
     conversation_id = str(uuid.uuid4())
 
-    async def noop() -> dict[str, str]:  # pyrit-async-suffix-exempt
+    async def noop(args: dict) -> dict:
         return {"status": "ok"}
 
-    response_target._tools = [FunctionTool(function=noop)]
+    response_target._custom_functions["noop"] = noop
 
     user_message = Message(
         message_pieces=[
