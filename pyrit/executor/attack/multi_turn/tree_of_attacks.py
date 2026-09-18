@@ -1540,7 +1540,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: AttackConverterConfig | None = None,
-        attack_scoring_config: AttackScoringConfig | None = None,
+        attack_scoring_config: TAPAttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         tree_width: int = 3,
         tree_depth: int = 5,
@@ -1558,7 +1558,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial chat component.
             attack_converter_config (AttackConverterConfig | None): Configuration for attack converters.
                 Defaults to None.
-            attack_scoring_config (AttackScoringConfig | None): Scoring configuration for TAP.
+            attack_scoring_config (TAPAttackScoringConfig | None): Scoring configuration for TAP.
                 The objective_scorer must be a FloatScaleThresholdScorer, which provides both
                 granular float scores for node comparison and a threshold for determining success.
                 Can be either AttackScoringConfig or TAPAttackScoringConfig. If not provided,
@@ -1650,7 +1650,32 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._request_converters = attack_converter_config.request_converters
         self._response_converters = attack_converter_config.response_converters
 
-        # Initialize scoring configuration
+        tap_scoring_config = self._resolve_scoring_config(attack_scoring_config)
+        self._attack_scoring_config = tap_scoring_config
+        self._auxiliary_scorers = tap_scoring_config.auxiliary_scorers
+        self._objective_scorer = tap_scoring_config.objective_scorer
+
+        # Use the adversarial chat target for scoring, as in CrescendoAttack
+        self._scoring_target = self._adversarial_chat
+
+        if self._configuration.on_topic_checking_enabled and not self._scoring_target:
+            raise ValueError("On-topic checking is enabled but no scoring target is available.")
+
+        self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
+
+    def _resolve_scoring_config(self, attack_scoring_config: AttackScoringConfig | None) -> TAPAttackScoringConfig:
+        """
+        Normalize runtime inputs while preserving the constructor's factory-facing TAP type contract.
+
+        Args:
+            attack_scoring_config: Optional scoring config, including legacy base configs from direct callers.
+
+        Returns:
+            A TAP scoring config with a float-scale threshold scorer.
+
+        Raises:
+            ValueError: If a base config has no objective scorer or an incompatible scorer.
+        """
         # If no scoring config provided, create the default TAP scorer using FloatScaleThresholdScorer
         if attack_scoring_config is None:
             # Determine supported data types based on target's output modalities.
@@ -1701,17 +1726,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 use_score_as_feedback=attack_scoring_config.use_score_as_feedback,
             )
 
-        self._attack_scoring_config = tap_scoring_config
-        self._auxiliary_scorers = tap_scoring_config.auxiliary_scorers
-        self._objective_scorer = tap_scoring_config.objective_scorer
-
-        # Use the adversarial chat target for scoring, as in CrescendoAttack
-        self._scoring_target = self._adversarial_chat
-
-        if self._configuration.on_topic_checking_enabled and not self._scoring_target:
-            raise ValueError("On-topic checking is enabled but no scoring target is available.")
-
-        self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
+        return tap_scoring_config
 
     def _load_adversarial_prompts(self) -> None:
         """Load the adversarial chat prompt template and seed prompt from the default paths."""
