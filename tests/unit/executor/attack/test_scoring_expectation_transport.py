@@ -11,7 +11,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from unit.mocks import MockPromptTarget, store_message
 
-from pyrit.exceptions import ComponentRole, ExecutionContext, get_execution_context
+from pyrit.exceptions import (
+    ComponentRole,
+    ExecutionContext,
+    get_exception_execution_context,
+    get_execution_context,
+)
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackExecutor,
@@ -521,6 +526,49 @@ class TestExecutionExpectationTransport:
             ComponentRole.OBJECTIVE_SCORER,
             ComponentRole.AUXILIARY_SCORER,
         }
+
+    @pytest.mark.parametrize("attack_type", [PromptSendingAttack, ChunkedRequestAttack])
+    @pytest.mark.parametrize(
+        ("with_auxiliary", "failing_role"),
+        [
+            (False, ComponentRole.OBJECTIVE_SCORER),
+            (True, ComponentRole.OBJECTIVE_SCORER),
+            (True, ComponentRole.AUXILIARY_SCORER),
+        ],
+    )
+    async def test_attack_error_names_failing_scorer_async(
+        self,
+        *,
+        attack_type: type[PromptSendingAttack] | type[ChunkedRequestAttack],
+        with_auxiliary: bool,
+        failing_role: ComponentRole,
+    ) -> None:
+        objective, auxiliary = _RecordingScorer(), _RecordingScorer(value=False)
+        config = AttackScoringConfig(
+            objective_scorer=objective, auxiliary_scorers=[auxiliary] if with_auxiliary else []
+        )
+        target = MockPromptTarget()
+        attack = (
+            ChunkedRequestAttack(objective_target=target, attack_scoring_config=config, chunk_size=2, total_length=4)
+            if attack_type is ChunkedRequestAttack
+            else PromptSendingAttack(objective_target=target, attack_scoring_config=config)
+        )
+        failing = objective if failing_role is ComponentRole.OBJECTIVE_SCORER else auxiliary
+        original = ValueError("scoring failed")
+        with (
+            patch.object(failing, "_score_scorable_async", side_effect=original),
+            pytest.raises(RuntimeError, match=f"Strategy execution failed for {failing_role.value}") as raised,
+        ):
+            await attack.execute_async(objective="attack objective")
+
+        context = get_exception_execution_context(raised.value)
+        assert context is not None
+        assert context.component_role is failing_role
+        assert context.component_identifier == failing.get_identifier()
+        assert context.objective == "attack objective"
+        assert f"{failing_role.value} identifier:" in str(raised.value)
+        assert raised.value.__cause__.__cause__ is original
+        assert get_execution_context() is None
 
     @pytest.mark.parametrize("duplicate", [False, True], ids=["initial_node", "duplicated_node"])
     async def test_tap_node_preserves_execution_expectation_async(self, duplicate: bool) -> None:

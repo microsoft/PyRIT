@@ -162,6 +162,8 @@ print(df.to_string(index=False))
 # Objective and auxiliary scorers receive the complete expectation, with condition routing checked
 # across the group. Each scorer root keeps its own score/observation persistence boundary.
 # Direct scorers check required and duplicate criteria but ignore condition types they do not use.
+# Empty conditions retain legacy objective-only behavior and skip required-condition checks.
+# Data-bearing required conditions will need explicit validation before their scorer types are added.
 # Use a group helper, even with one scorer, when every condition must have a consumer.
 # `Scorer.score_with_scorers_async` accepts optional `scorer_roles`, one per scorer, for execution
 # context. Its result lists follow scorer input order, including empty lists.

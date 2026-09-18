@@ -41,8 +41,8 @@
 #
 # **Outcome correction:** An undecided child no longer becomes FAILURE in the compound result.
 # Without success, the any-success policies report ERROR when every child errored, UNDETERMINED
-# when any child is undecided, and otherwise FAILURE. `STRICT_ALL` gives errors precedence,
-# then definitive failure, then UNDETERMINED. These statuses do not change the stopping rules.
+# when any child is undecided, and otherwise FAILURE. `STRICT_ALL` stops at the first non-success
+# and reports that child's outcome: ERROR, FAILURE, or UNDETERMINED. If all children succeed, it reports SUCCESS.
 # A supplied execution expectation passes to each child unchanged. Otherwise, each child uses
 # its own preparation inputs and objective fallback, not the compound's display objective.
 # Compound implementations declare `DELEGATES_SCORING = True`; each child validates its own criteria.
