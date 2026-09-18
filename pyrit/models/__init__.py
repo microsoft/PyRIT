@@ -162,6 +162,8 @@ if TYPE_CHECKING:
         SeedUnion,
         SimulatedTargetSystemPromptPaths,
         group_seeds_into_attack_groups,
+        load_next_message_prompt,
+        load_simulated_target_prompt,
     )
     from pyrit.models.target import (
         COMMON_JSON_SCHEMAS,
@@ -311,6 +313,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SeedType": "pyrit.models.literals",
     "SeedUnion": "pyrit.models.seeds",
     "SimulatedTargetSystemPromptPaths": "pyrit.models.seeds",
+    "load_next_message_prompt": "pyrit.models.seeds",
+    "load_simulated_target_prompt": "pyrit.models.seeds",
     "snake_case_to_class_name": "pyrit.models.identifiers",
     "sort_message_pieces": "pyrit.models.messages.message_piece",
     "StrategyResult": "pyrit.models.results.strategy_result",

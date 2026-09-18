@@ -33,6 +33,8 @@ if TYPE_CHECKING:
         NextMessageSystemPromptPaths,
         SeedSimulatedConversation,
         SimulatedTargetSystemPromptPaths,
+        load_next_message_prompt,
+        load_simulated_target_prompt,
     )
     from pyrit.models.seeds.yaml_seed_loader import (
         load_seed_dataset_from_yaml,
@@ -44,6 +46,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "load_seed_dataset_from_yaml": "pyrit.models.seeds.yaml_seed_loader",
     "load_seed_from_yaml": "pyrit.models.seeds.yaml_seed_loader",
     "load_seed_prompt_from_yaml_with_required_parameters": "pyrit.models.seeds.yaml_seed_loader",
+    "load_next_message_prompt": "pyrit.models.seeds.seed_simulated_conversation",
+    "load_simulated_target_prompt": "pyrit.models.seeds.seed_simulated_conversation",
     "group_seeds_into_attack_groups": "pyrit.models.seeds.seed_grouping",
     "NextMessageSystemPromptPaths": "pyrit.models.seeds.seed_simulated_conversation",
     "Seed": "pyrit.models.seeds.seed",
