@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
@@ -244,5 +244,40 @@ describe('CreateConverterDialog', () => {
     expect(
       await screen.findByText(/already exists/i),
     ).toBeInTheDocument()
+  })
+
+  it('should not move focus onto an error from loading converter types', async () => {
+    mockedConvertersApi.listConverterTypes.mockRejectedValue(
+      new Error('converter registry unavailable'),
+    )
+    renderDialog()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/converter registry unavailable/i)
+    await act(async () => {
+      await new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()) })
+    })
+
+    expect(alert).not.toHaveFocus()
+  })
+
+  it('should keep keyboard focus inside the dialog when creation fails', async () => {
+    const onClose = jest.fn()
+    mockedConvertersApi.createConverter.mockRejectedValue(
+      new Error("Converter instance 'CaesarConverter' already exists"),
+    )
+    const user = userEvent.setup()
+    renderDialog({ onClose })
+    await selectConverterType('CaesarConverter')
+    await user.type(screen.getByLabelText(/caesar_offset/i), '5')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/already exists/i)
+    await waitFor(() => expect(alert).toHaveFocus())
+    expect(alert.closest('[role="dialog"]')).toBe(screen.getByRole('dialog'))
+
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalled()
   })
 })

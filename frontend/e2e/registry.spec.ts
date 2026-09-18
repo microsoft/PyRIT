@@ -167,6 +167,36 @@ async function installRegistryMocks(page: Page): Promise<void> {
   });
 }
 
+async function submitDuplicateName(page: Page): Promise<() => void> {
+  let releaseCreate: (() => void) | undefined;
+  await page.route(/\/api\/converters$/, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: "Converter instance 'caesar-custom' already exists",
+      }),
+    });
+  });
+
+  await page.getByRole("button", { name: "Create First Converter" }).click();
+  await page.getByRole("combobox", { name: "Converter type" }).click();
+  await page.getByTestId("converter-type-option-CaesarConverter").click();
+  await page.getByLabel("Registry name").fill("caesar-custom");
+  await page.getByLabel("caesar_offset *").fill("5");
+  await page.getByRole("button", { name: "Add Converter" }).click();
+  await expect(page.getByRole("button", { name: "Adding..." })).toBeVisible();
+
+  return () => releaseCreate?.();
+}
+
 test.describe("Converter Registry", () => {
   test.beforeEach(async ({ page }) => {
     await installRegistryMocks(page);
@@ -190,6 +220,59 @@ test.describe("Converter Registry", () => {
 
     await expect(page.getByText("caesar-custom")).toHaveCount(0);
     await expect(page.getByText("No Converters Registered")).toBeVisible();
+  });
+
+  test("restores focus to the trigger when the add dialog is dismissed", async ({ page }) => {
+    const trigger = page.getByRole("button", { name: "New Converter" });
+    await trigger.click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(trigger).toBeFocused();
+  });
+
+  test("moves focus to New Converter once the first converter is created", async ({ page }) => {
+    await page.getByRole("button", { name: "Create First Converter" }).click();
+    await page.getByRole("combobox", { name: "Converter type" }).click();
+    await page.getByTestId("converter-type-option-CaesarConverter").click();
+    await page.getByLabel("Registry name").fill("caesar-focus");
+    await page.getByLabel("caesar_offset *").fill("5");
+    await page.getByRole("button", { name: "Add Converter" }).click();
+
+    // The empty-state trigger unmounts with the list it belonged to, so focus
+    // falls back to the always-mounted header action.
+    await expect(page.getByText("caesar-focus")).toBeVisible();
+    await expect(page.getByRole("button", { name: "New Converter" })).toBeFocused();
+  });
+
+  test("keeps the add dialog operable while the create request is in flight", async ({ page }) => {
+    const release = await submitDuplicateName(page);
+
+    // Chromium runs the unfocusing steps for the disabled primary action a tick
+    // after it is disabled, so give it time to land before checking.
+    await page.waitForTimeout(250);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.locator(":focus")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    release();
+  });
+
+  test("moves focus to the error when the registry rejects the name", async ({ page }) => {
+    const release = await submitDuplicateName(page);
+    release();
+
+    const alert = page.getByRole("alert");
+    await expect(alert).toContainText(/already exists/i);
+    await expect(alert).toBeFocused();
+
+    // Escape only reaches the dialog surface while focus is still inside it.
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
   });
 
   test("uses the available viewport height for the converter type list", async ({ page }) => {

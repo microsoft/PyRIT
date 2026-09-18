@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { MouseEvent } from 'react'
 
 import {
   Badge,
@@ -17,6 +18,7 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular, DeleteRegular } from '@fluentui/react-icons'
 
@@ -70,6 +72,29 @@ export default function ConverterRegistry() {
   const [createOpen, setCreateOpen] = useState(false)
   const [converterToRemove, setConverterToRemove] = useState<ConverterInstance | null>(null)
   const [removing, setRemoving] = useState(false)
+  // Both dialogs open from state rather than from a DialogTrigger, so mark the
+  // opening controls as restore targets the way FeedbackDialog does; that is what
+  // hands focus back when a dialog is dismissed. Tabster cannot restore to a
+  // control that unmounted along with the dialog, so the paths that remove the
+  // trigger restore focus explicitly as well.
+  const restoreFocusTarget = useRestoreFocusTarget()
+  const newConverterRef = useRef<HTMLButtonElement>(null)
+  const createTriggerRef = useRef<HTMLElement | null>(null)
+  const removeTriggerRef = useRef<HTMLElement | null>(null)
+  // Kept in a ref because a queued restore outlives the render that scheduled it.
+  const dialogOpenRef = useRef(false)
+
+  // New Converter is always mounted, so it is the fallback whenever the control
+  // that opened the dialog is gone: a removed row, or the empty-state button
+  // once the registry holds a converter. A restore still queued when the next
+  // dialog opens is dropped, so a slow refresh cannot pull focus out of it.
+  const restoreFocus = (trigger: HTMLElement | null) => {
+    requestAnimationFrame(() => {
+      if (dialogOpenRef.current) return
+      const target = trigger?.isConnected ? trigger : newConverterRef.current
+      target?.focus()
+    })
+  }
 
   const loadConverters = useCallback(async () => {
     setLoading(true)
@@ -90,13 +115,40 @@ export default function ConverterRegistry() {
     })
   }, [loadConverters])
 
+  const openCreateDialog = (event: MouseEvent<HTMLButtonElement>) => {
+    createTriggerRef.current = event.currentTarget
+    dialogOpenRef.current = true
+    setCreateOpen(true)
+  }
+
+  const closeCreateDialog = () => {
+    dialogOpenRef.current = false
+    setCreateOpen(false)
+    restoreFocus(createTriggerRef.current)
+  }
+
+  const openRemoveDialog = (event: MouseEvent<HTMLButtonElement>, converter: ConverterInstance) => {
+    removeTriggerRef.current = event.currentTarget
+    dialogOpenRef.current = true
+    setConverterToRemove(converter)
+  }
+
+  const dismissRemoveDialog = () => {
+    dialogOpenRef.current = false
+    setConverterToRemove(null)
+    restoreFocus(removeTriggerRef.current)
+  }
+
   const removeConverter = async () => {
     if (!converterToRemove) return
     setRemoving(true)
     setError(null)
     try {
       await convertersApi.deleteConverter(converterToRemove.converter_id)
-      setConverterToRemove(null)
+      // The row that opened the dialog is about to unmount, so this restores to
+      // New Converter. Doing it before the refresh keeps focus off <body> while
+      // the list reloads.
+      dismissRemoveDialog()
       await loadConverters()
     } catch (err) {
       setError(toApiError(err).detail)
@@ -123,10 +175,12 @@ export default function ConverterRegistry() {
             Refresh
           </Button>
           <Button
+            {...restoreFocusTarget}
+            ref={newConverterRef}
             className={styles.action}
             appearance="primary"
             icon={<AddRegular />}
-            onClick={() => setCreateOpen(true)}
+            onClick={openCreateDialog}
           >
             New Converter
           </Button>
@@ -147,7 +201,12 @@ export default function ConverterRegistry() {
         <div className={styles.state}>
           <Text size={500} weight="semibold">No Converters Registered</Text>
           <Text>Add a configured converter to the registry.</Text>
-          <Button appearance="primary" icon={<AddRegular />} onClick={() => setCreateOpen(true)}>
+          <Button
+            {...restoreFocusTarget}
+            appearance="primary"
+            icon={<AddRegular />}
+            onClick={openCreateDialog}
+          >
             Create First Converter
           </Button>
         </div>
@@ -184,11 +243,12 @@ export default function ConverterRegistry() {
                   </TableCell>
                   <TableCell>
                     <Button
+                      {...restoreFocusTarget}
                       className={styles.deleteButton}
                       appearance="subtle"
                       icon={<DeleteRegular />}
                       aria-label={`Remove ${converter.converter_id}`}
-                      onClick={() => setConverterToRemove(converter)}
+                      onClick={(event) => openRemoveDialog(event, converter)}
                     >
                       Remove
                     </Button>
@@ -202,16 +262,16 @@ export default function ConverterRegistry() {
 
       <CreateConverterDialog
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={closeCreateDialog}
         onCreated={() => {
-          setCreateOpen(false)
+          closeCreateDialog()
           void loadConverters()
         }}
       />
 
       <Dialog
         open={converterToRemove !== null}
-        onOpenChange={(_, data) => { if (!data.open && !removing) setConverterToRemove(null) }}
+        onOpenChange={(_, data) => { if (!data.open && !removing) dismissRemoveDialog() }}
       >
         <DialogSurface>
           <DialogBody>
@@ -222,7 +282,7 @@ export default function ConverterRegistry() {
                 : ''}
             </DialogContent>
             <DialogActions>
-              <Button disabled={removing} onClick={() => setConverterToRemove(null)}>Cancel</Button>
+              <Button disabled={removing} onClick={dismissRemoveDialog}>Cancel</Button>
               <Button
                 appearance="primary"
                 disabled={removing}

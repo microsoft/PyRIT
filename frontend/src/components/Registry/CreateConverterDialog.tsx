@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Button,
@@ -170,6 +170,7 @@ export default function CreateConverterDialog({
   const [submitting, setSubmitting] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const errorRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -315,10 +316,20 @@ export default function CreateConverterDialog({
       onCreated(response.converter_id)
     } catch (err) {
       setError(toApiError(err).detail)
+      // Put focus on the failure so it is announced and so the keyboard is not
+      // left on the primary action, which is where the request left it.
+      requestAnimationFrame(() => errorRef.current?.focus())
     } finally {
       setSubmitting(false)
     }
   }
+
+  // Disabled, but still focusable: a browser runs the unfocusing steps when the
+  // primary action is disabled for the request, which drops focus to <body> and
+  // out of the open dialog, and Escape then stops dismissing it because Tabster
+  // handles that key on the dialog surface. aria-disabled still blocks a second
+  // submit, because Fluent drops the click and key handlers instead.
+  const submitDisabled = loading || submitting || converterTypes.length === 0
 
   return (
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) close() }}>
@@ -335,7 +346,7 @@ export default function CreateConverterDialog({
             >
               {error && (
                 <MessageBar intent="error">
-                  <MessageBarBody>{error}</MessageBarBody>
+                  <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error}</MessageBarBody>
                 </MessageBar>
               )}
               {loading && <Spinner label="Loading converter types..." />}
@@ -461,7 +472,8 @@ export default function CreateConverterDialog({
             <Button appearance="secondary" onClick={close}>Cancel</Button>
             <Button
               appearance="primary"
-              disabled={loading || submitting || converterTypes.length === 0}
+              disabled={submitDisabled}
+              disabledFocusable={submitDisabled}
               onClick={() => void submit()}
             >
               {submitting ? 'Adding...' : 'Add Converter'}
