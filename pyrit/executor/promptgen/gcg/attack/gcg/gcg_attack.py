@@ -18,6 +18,7 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     get_embedding_matrix,
     get_embeddings,
 )
+from pyrit.executor.promptgen.gcg.attack.gcg.candidate_proposer import GCGCandidateProposer
 from pyrit.executor.promptgen.gcg.default_implementations import (
     CrossEntropyLoss,
     LengthPreservingFilter,
@@ -308,61 +309,26 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             raise ValueError("GCG optimization requires at least one worker")
 
         main_device = self.models[0].device
-        control_cands = []
         loss_function = self._resolve_loss(target_weight=target_weight, control_weight=control_weight)
 
-        for j, worker in enumerate(self.workers):
-            worker(self.prompts[j], ModelWorkerOperation.GRAD)
-
-        # Aggregate gradients
-        grad = None
-        for j, worker in enumerate(self.workers):
-            new_grad = worker.results.get().to(main_device)
-            new_grad = new_grad / new_grad.norm(dim=-1, keepdim=True)
-            if grad is None:
-                grad = torch.zeros_like(new_grad)
-            if grad.shape != new_grad.shape:
-                with torch.no_grad():
-                    control_cand = self._sample_control_candidates(
-                        worker_index=j - 1,
-                        gradient=grad,
-                        batch_size=batch_size,
-                        topk=topk,
-                        temp=temp,
-                        allow_non_ascii=allow_non_ascii,
-                    )
-                    control_cands.append(
-                        self._filter_control_candidates(
-                            worker_index=j - 1,
-                            control_cand=control_cand,
-                            filter_cand=filter_cand,
-                        )
-                    )
-                grad = new_grad
-            else:
-                grad += new_grad
-
-        if grad is None:
-            raise RuntimeError("GCG workers did not produce an aggregate gradient")
-
-        last_worker_index = len(self.workers) - 1
-        with torch.no_grad():
-            control_cand = self._sample_control_candidates(
-                worker_index=last_worker_index,
-                gradient=grad,
-                batch_size=batch_size,
-                topk=topk,
-                temp=temp,
-                allow_non_ascii=allow_non_ascii,
-            )
-            control_cands.append(
-                self._filter_control_candidates(
-                    worker_index=last_worker_index,
-                    control_cand=control_cand,
-                    filter_cand=filter_cand,
-                )
-            )
-        del grad, control_cand
+        proposer = GCGCandidateProposer(
+            workers=self.workers,
+            prompts=self.prompts,
+            sampling=self._resolve_sampling(),
+            candidate_filter=self._resolve_candidate_filter(filter_cand=filter_cand),
+            sample_fn=self._sample_control_candidates,
+            filter_fn=self._filter_control_candidates,
+            main_device=main_device,
+        )
+        candidate_batch = proposer.propose_candidates(
+            batch_size=batch_size,
+            topk=topk,
+            temp=temp,
+            allow_non_ascii=allow_non_ascii,
+            filter_cand=filter_cand,
+            current_control_str=self.control_str,
+        )
+        control_cands = candidate_batch.control_candidates_by_group
 
         # Search
         loss = torch.zeros(len(control_cands) * batch_size).to(main_device)

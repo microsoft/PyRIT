@@ -15,9 +15,9 @@ import {
   HistoryRegular,
   PersonFeedbackRegular,
   ScriptRegular,
+  TargetRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
-  TargetRegular,
 } from '@fluentui/react-icons'
 import { useTheme } from '../../hooks/useTheme'
 import type { ThemeMode } from '../../hooks/useTheme'
@@ -27,6 +27,8 @@ export type ViewName =
   | 'home'
   | 'chat'
   | 'history'
+  | 'registry'
+  // Kept as an internal compatibility destination for the unchanged chat pane.
   | 'targets'
   | 'configuration'
   | 'scenarios'
@@ -110,7 +112,7 @@ export default function Navigation({
           className={styles.navButton}
           data-active={currentView === 'scenarios'}
           appearance="subtle"
-          icon={<ScriptRegular />}
+          icon={<TargetRegular />}
           title="Scanner"
           aria-label="Scanner"
           aria-current={currentView === 'scenarios' ? 'page' : undefined}
@@ -119,13 +121,13 @@ export default function Navigation({
 
         <Button
           className={styles.navButton}
-          data-active={currentView === 'targets'}
+          data-active={currentView === 'registry'}
           appearance="subtle"
-          icon={<TargetRegular />}
-          title="Targets"
-          aria-label="Targets"
-          aria-current={currentView === 'targets' ? 'page' : undefined}
-          onClick={() => onNavigate('targets')}
+          icon={<ScriptRegular />}
+          title="Registry"
+          aria-label="Registry"
+          aria-current={currentView === 'registry' ? 'page' : undefined}
+          onClick={() => onNavigate('registry')}
         />
 
         {canManageConfiguration && (

@@ -407,10 +407,10 @@ async function mockBackendAPIs(page: Page) {
   });
 }
 
-/** Navigate to targets, set the mock target as active, then return to chat. */
+/** Navigate to the target registry, set the mock target as active, then return to chat. */
 async function activateMockTarget(page: Page) {
-  await page.getByTitle("Targets").click();
-  await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
+  await page.getByTitle("Registry").click();
+  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 
   const setActiveBtn = page.getByRole("button", { name: /set active/i });
   await expect(setActiveBtn).toBeVisible({ timeout: 5000 });

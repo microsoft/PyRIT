@@ -249,7 +249,7 @@ describe('ScenarioDetail', () => {
     expect(await screen.findByTestId('scenario-target-select')).toBeInTheDocument()
   })
 
-  it('estimates without a target and directs to Targets before launch', async () => {
+  it('estimates without a target and directs to the registry before launch', async () => {
     jest.useFakeTimers()
     const onNavigate = jest.fn()
     mockListTargets.mockResolvedValueOnce({ items: [], pagination: { limit: 200, has_more: false } })
@@ -270,7 +270,7 @@ describe('ScenarioDetail', () => {
     )
     expect(within(screen.getByTestId('run-estimate')).getByText('8')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Configure target to launch' }))
-    expect(onNavigate).toHaveBeenCalledWith('targets')
+    expect(onNavigate).toHaveBeenCalledWith('registry')
   })
 
   it('defaults the target selector to the active target when it is among the fetched targets', async () => {

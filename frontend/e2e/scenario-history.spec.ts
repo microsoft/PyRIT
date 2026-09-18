@@ -517,7 +517,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
       "Chat",
       "History",
       "Scanner",
-      "Targets",
+      "Registry",
       "Configuration",
     ]);
     await expect(page.getByTitle("Scanner")).toHaveAttribute("aria-current", "page");
