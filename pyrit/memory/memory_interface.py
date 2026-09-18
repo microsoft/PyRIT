@@ -117,7 +117,7 @@ Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
 
 
-def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[str]) -> tuple[str, ...]:
+def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[object]) -> tuple[str, ...]:
     """
     Validate and snapshot one dedicated attribution filter.
 
@@ -128,11 +128,14 @@ def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[str]
         ValueError: If any value is not a string or exceeds the column limit.
     """
     values = (raw,) if isinstance(raw, str) else tuple(raw)
-    if any(not isinstance(value, str) for value in values):
-        raise ValueError(f"{field} values must be strings")
-    if any(len(value) > ATTRIBUTION_VALUE_MAX_LENGTH for value in values):
+    validated: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError(f"{field} values must be strings")
+        validated.append(value)
+    if any(len(value) > ATTRIBUTION_VALUE_MAX_LENGTH for value in validated):
         raise ValueError(f"{field} values must be at most {ATTRIBUTION_VALUE_MAX_LENGTH} characters")
-    return values
+    return tuple(validated)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

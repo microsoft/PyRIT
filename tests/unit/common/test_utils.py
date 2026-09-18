@@ -3,7 +3,15 @@
 
 import pytest
 
-from pyrit.common.utils import combine_list, to_sha256
+from pyrit.common.utils import combine_list, is_numeric_value, to_sha256
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(True, True), (False, True), (0, True), (1.5, True), ("1.5", False), (None, False), ([], False)],
+)
+def test_is_numeric_value_does_not_coerce_untrusted_values(value, expected):
+    assert is_numeric_value(value) is expected
 
 
 def test_combine_list_two_lists():

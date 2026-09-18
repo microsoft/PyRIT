@@ -567,13 +567,7 @@ class _TreeOfAttacksNode:
             - `off_topic`: `True` if the prompt was deemed off-topic after all retries
             - `error_message`: Set if an error occurred during execution
         """
-        # Clear the previous turn's outcome before reusing this branch.
-        self.completed = False
-        self.off_topic = False
-        self.objective_score = None
-        self.auxiliary_scores = {}
-        self.last_prompt_sent = None
-        self.error_message = None
+        self._reset_turn_outcome()
 
         # Store objective for use in execution context
         self._objective = objective
@@ -706,6 +700,15 @@ class _TreeOfAttacksNode:
         logger.debug(f"Node {self.node_id}: Received response from target")
 
         return response
+
+    def _reset_turn_outcome(self) -> None:
+        """Clear the previous turn's outcome before reusing this branch."""
+        self.completed = False
+        self.off_topic = False
+        self.objective_score = None
+        self.auxiliary_scores = {}
+        self.last_prompt_sent = None
+        self.error_message = None
 
     async def _send_initial_prompt_to_target_async(self) -> Message:
         """
@@ -1537,7 +1540,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         attack_adversarial_config: AttackAdversarialConfig,
         attack_converter_config: AttackConverterConfig | None = None,
-        attack_scoring_config: TAPAttackScoringConfig | None = None,
+        attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         tree_width: int = 3,
         tree_depth: int = 5,
@@ -1555,7 +1558,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_adversarial_config (AttackAdversarialConfig): Configuration for the adversarial chat component.
             attack_converter_config (AttackConverterConfig | None): Configuration for attack converters.
                 Defaults to None.
-            attack_scoring_config (TAPAttackScoringConfig | None): Scoring configuration for TAP.
+            attack_scoring_config (AttackScoringConfig | None): Scoring configuration for TAP.
                 The objective_scorer must be a FloatScaleThresholdScorer, which provides both
                 granular float scores for node comparison and a threshold for determining success.
                 Can be either AttackScoringConfig or TAPAttackScoringConfig. If not provided,

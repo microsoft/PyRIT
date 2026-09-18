@@ -8,9 +8,19 @@ import logging
 import math
 import random
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeGuard, TypeVar
 
 logger = logging.getLogger(__name__)
+
+
+def is_numeric_value(value: object) -> TypeGuard[int | float]:
+    """
+    Check a runtime value without coercing strings or other numeric-like objects.
+
+    Returns:
+        bool: Whether the value is an int or float (including bool).
+    """
+    return isinstance(value, (int, float))
 
 
 def verify_and_resolve_path(path: str | Path) -> Path:

@@ -87,8 +87,6 @@ class _HuggingFaceSequenceClassifier:
 
     async def load_model_async(self) -> None:
         """Download as needed and load the tokenizer and model exactly once."""
-        if self._is_loaded:
-            return
         async with self._load_lock:
             if self._is_loaded:
                 return
