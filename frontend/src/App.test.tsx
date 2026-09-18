@@ -466,6 +466,16 @@ describe("App", () => {
     );
   });
 
+  it("redirects legacy /targets to the target registry", async () => {
+    renderApp("/targets");
+
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+  });
+
   it("renders the converter registry from its direct URL", async () => {
     renderApp("/registry/converters");
 
