@@ -5,6 +5,7 @@ import {
   NARROW_VIEWPORT_QUERY,
   mobileTouchTarget,
 } from '@/styles/touchTargets'
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
 export const useScenarioRunPageStyles = makeStyles({
   root: {
@@ -15,7 +16,7 @@ export const useScenarioRunPageStyles = makeStyles({
     minWidth: 0,
     overflowY: 'auto',
     overflowX: 'hidden',
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
   },
   content: {
     display: 'flex',
