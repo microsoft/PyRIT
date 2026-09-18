@@ -57,6 +57,30 @@ Target-side rate limiting remains independent and continues to use `limit_reques
 `_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
 overriding `send_prompt_async`.
 
+## Provider policy blocks
+
+OpenAI-compatible targets map recognized HTTP 400 content-filter and policy refusals to a
+`Message` with `response_error="blocked"` and an error payload retaining the provider's
+details and status code. This records the refusal instead of propagating an SDK exception.
+It does not bypass provider safeguards or change attack branching or retry policies.
+Malformed requests, invalid parameters, and schema errors still raise.
+
+The shared `CONTENT_FILTER_MARKERS` set includes `bio_policy` and `cyber_policy`, both observed
+in provider HTTP 400 responses. Their public evidence differs:
+
+| Code | Public evidence |
+| --- | --- |
+| `bio_policy` | Listed under `Response.error.code` in the [OpenAI Responses API reference](https://developers.openai.com/api/reference/resources/responses) and the [official Python SDK](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/response_error.py). |
+| `cyber_policy` | Explicitly handled alongside `bio_policy` in [OpenAI Codex](https://github.com/openai/codex/blob/7498521d288b9b3b96ffba4eedf089d8d6e06a84/codex-rs/codex-api/src/api_bridge.rs#L118-L139). Its [HTTP 400 tests](https://github.com/openai/codex/blob/7498521d288b9b3b96ffba4eedf089d8d6e06a84/codex-rs/core/tests/suite/safety_check_downgrade.rs#L109-L152) check that neither code is retried. This is official client behavior, not a universal API contract. |
+
+Related documented signals are already recognized: Azure's
+[`content_filter` HTTP 400](https://learn.microsoft.com/en-us/azure/foundry-classic/foundry-models/concepts/content-filter#scenario-3-inappropriate-input-prompt),
+and OpenAI's `image_content_policy_violation` and `misalignment_policy_violation` codes
+(listed in the Responses reference and matched by `policy_violation`).
+Do not add broad markers such as `policy`, `safety`, or `invalid_request_error`:
+those can occur in unrelated errors. `invalid_prompt` alone is also insufficient;
+the OpenAI error handler requires safety-related message text for that code.
+
 ## Chat-style targets vs general targets
 
 A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Many attacks work generically with any `PromptTarget` including `RedTeamingAttack` and `PromptSendingAttack`.
