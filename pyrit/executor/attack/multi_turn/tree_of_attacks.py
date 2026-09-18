@@ -380,8 +380,8 @@ class _TreeOfAttacksNode:
         attack_strategy_name: str,
         modality_router: _ModalityFeedbackRouter,
         record_objective_conversation: Callable[..., None],
+        expectation: ScoringExpectation,
         use_score_as_feedback: bool = True,
-        expectation: ScoringExpectation | None = None,
         memory_labels: dict[str, str] | None = None,
         parent_id: str | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
@@ -411,9 +411,9 @@ class _TreeOfAttacksNode:
                 messages. Typically shared across all nodes of the same attack.
             record_objective_conversation (Callable[..., None]): Records an objective-target
                 conversation ID for cleanup before each objective send.
+            expectation (ScoringExpectation): The execution's resolved scoring question.
             use_score_as_feedback (bool): Whether subsequent adversarial prompts include
                 the objective score. Defaults to True.
-            expectation (ScoringExpectation | None): The execution's scoring question.
             memory_labels (dict[str, str] | None): Labels for memory storage.
             parent_id (str | None): ID of the parent node, if this is a child node
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts and responses.
@@ -818,7 +818,7 @@ class _TreeOfAttacksNode:
             response (Message): The response from the objective target to evaluate.
                 This contains the target's reply to the adversarial prompt.
             objective (str): The attack objective describing what the attacker wants to achieve.
-                This is passed to scorers as context for evaluation.
+                Used for execution diagnostics; the resolved expectation supplies scoring criteria.
 
         Raises:
             RuntimeError: If the scoring process returns no objective score.
@@ -843,9 +843,7 @@ class _TreeOfAttacksNode:
                 response=response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                expectation=self._expectation
-                if self._expectation is not None
-                else ScoringExpectation(objective=objective),
+                expectation=self._expectation,
             )
 
         # Extract objective score

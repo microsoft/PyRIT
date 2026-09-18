@@ -571,11 +571,14 @@ class TestExecutionExpectationTransport:
         assert get_execution_context() is None
 
     @pytest.mark.parametrize("duplicate", [False, True], ids=["initial_node", "duplicated_node"])
-    async def test_tap_node_preserves_execution_expectation_async(self, duplicate: bool) -> None:
+    @pytest.mark.parametrize("explicit_expectation", [False, True], ids=["default_objective", "scoring_objective"])
+    async def test_tap_node_preserves_execution_expectation_async(
+        self, *, duplicate: bool, explicit_expectation: bool
+    ) -> None:
         target = MockPromptTarget()
         leaf = _RecordingFloatScorer()
         auxiliary = _RecordingScorer()
-        supplied = _expectation()
+        supplied = _expectation() if explicit_expectation else None
         attack = TreeOfAttacksWithPruningAttack(
             objective_target=target,
             attack_adversarial_config=AttackAdversarialConfig(target=MockPromptTarget()),
@@ -586,6 +589,7 @@ class TestExecutionExpectationTransport:
             on_topic_checking_enabled=False,
         )
         context = TAPAttackContext(params=AttackParameters(objective="attack objective", expectation=supplied))
+        expected = context.expectation
         with patch.object(attack, "_create_on_topic_scorer", wraps=attack._create_on_topic_scorer) as on_topic:
             node = attack._create_attack_node(
                 context=context, initial_prompt=Message.from_prompt(prompt="seed prompt", role="user")
@@ -600,8 +604,8 @@ class TestExecutionExpectationTransport:
             node = child
 
         assert node.objective_score is not None
-        assert node.objective_score.scored_expectation == supplied
+        assert node.objective_score.scored_expectation == expected
         assert len(leaf.calls) == (2 if duplicate else 1)
-        assert all(expectation is supplied for _, expectation in leaf.calls)
-        assert all(expectation is supplied for _, expectation in auxiliary.calls)
+        assert all(expectation is expected for _, expectation in leaf.calls)
+        assert all(expectation is expected for _, expectation in auxiliary.calls)
         assert target.prompt_sent == ["seed prompt"]
