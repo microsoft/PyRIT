@@ -53,7 +53,7 @@ def _commit(*, repo: Path, filename: str, content: str) -> None:
     _git(repo=repo, args=["-c", "commit.gpgsign=false", "commit", "-m", filename])
 
 
-@pytest.fixture(params=["main", "releases/v1.2.0"])
+@pytest.fixture(params=["main", "releases/test-base"])
 def merged_pr(*, tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     return _make_merged_pr(repo=tmp_path, base_branch=request.param)
 
