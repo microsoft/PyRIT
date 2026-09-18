@@ -37,7 +37,7 @@
 # from pyrit.models import ScoringExpectation
 #
 # await attack.execute_async(
-#     objective="Ask who wrote Pride and Prejudice",
+#     objective="Identify who wrote Pride and Prejudice",
 #     expectation=ScoringExpectation(objective="The answer identifies Jane Austen"),
 # )
 # ```

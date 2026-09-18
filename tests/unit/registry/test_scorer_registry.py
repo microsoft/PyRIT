@@ -25,6 +25,7 @@ from pyrit.score import (
     SelfAskRefusalScorer,
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
+    create_conversation_scorer,
 )
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer import Scorer
@@ -284,6 +285,17 @@ class TestDiscovery:
         names = registry.get_class_names()
         assert "SelfAskRefusalScorer" in names
         assert "self_ask_refusal_scorer" not in names
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("scorer_type", [MockTrueFalseScorer, MockFloatScaleScorer])
+    def test_factory_scorer_is_not_a_discovered_class(
+        self, *, registry: ScorerRegistry, scorer_type: type[Scorer]
+    ) -> None:
+        scorer = create_conversation_scorer(scorer=scorer_type())
+
+        assert type(scorer).__name__ not in registry.get_class_names()
+        registry.instances.register(scorer, name="conversation")
+        assert registry.instances.get("conversation") is scorer
 
 
 class TestGetClass:

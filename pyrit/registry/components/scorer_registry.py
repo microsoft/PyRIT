@@ -99,15 +99,18 @@ class ScorerRegistry(Registry["Scorer", ScorerMetadata]):
 
     def _should_register_discovered_class(self, cls: type[Scorer]) -> bool:
         """
-        Exclude private scorer implementation classes from the buildable catalog.
+        Exclude private and function-local scorer classes from the buildable catalog.
+
+        Factory-local classes can capture a configured child scorer. Register their
+        instances instead of discovering those classes as independent constructors.
 
         Args:
             cls (type[Scorer]): The discovered scorer class.
 
         Returns:
-            bool: True for public scorer classes.
+            bool: True for public scorer classes defined outside functions.
         """
-        return not cls.__name__.startswith("_")
+        return not cls.__name__.startswith("_") and "<locals>" not in cls.__qualname__
 
     def _identifier_type(self) -> type[ScorerIdentifier]:
         """Return ``ScorerIdentifier`` so its ``Param.*`` markers drive derivation."""
