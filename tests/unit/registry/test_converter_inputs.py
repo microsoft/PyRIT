@@ -37,6 +37,22 @@ class _Forwarded(_Parent):
         super().__init__(**kwargs)
 
 
+class _GenericStructuredInput:
+    @classmethod
+    def get_registry_input_variants(cls) -> dict[str, type[_GenericStructuredInput]]:
+        return {"counted": _CountVariant}
+
+
+class _CountVariant(_GenericStructuredInput):
+    def __init__(self, *, count: int) -> None:
+        self.count = count
+
+
+class _GenericHolder:
+    def __init__(self, *, input_value: _GenericStructuredInput) -> None:
+        self.input_value = input_value
+
+
 @pytest.mark.parametrize("cls", [_Parent, _Inherited, _Forwarded])
 def test_defining_namespace_wrapping_and_child_precedence(cls: type) -> None:
     parameters = {param.name: param for param in derive_parameters(cls=cls)}
@@ -116,7 +132,7 @@ def test_binary_catalog_default_and_strategy_metadata() -> None:
     instance = registry.create_instance("BinaryConverter", bits_per_char=bits["default"])
     assert isinstance(instance, BinaryConverter)
     assert instance.bits_per_char.value == 16
-    strategies = parameters["word_selection_strategy"].model_dump(mode="json")["word_selection"]
+    strategies = parameters["word_selection_strategy"].model_dump(mode="json")["variants"]
     assert set(strategies) == {"all", "random", "position", "indices", "keywords", "regex", "content"}
     assert [(param["name"], param["type_name"]) for param in strategies["random"]] == [
         ("proportion", "float"),
@@ -125,6 +141,21 @@ def test_binary_catalog_default_and_strategy_metadata() -> None:
     assert strategies["indices"][0]["type_name"] == "list[int]"
     assert strategies["regex"][0]["type_name"] == "str"
     assert [param["type_name"] for param in strategies["content"]][-2:] == ["list[str]", "list[str]"]
+
+
+def test_structured_variants_are_not_converter_specific() -> None:
+    parameter = derive_parameters(cls=_GenericHolder)[0]
+    assert parameter.variants is not None
+    assert parameter.variants["counted"][0].type_name == "int"
+    parameter.validate()
+
+    resolved = resolve_constructor_args(
+        cls=_GenericHolder,
+        raw_args={"input_value": {"type": "counted", "parameters": {"count": 3}}},
+    )
+
+    assert isinstance(resolved["input_value"], _CountVariant)
+    assert resolved["input_value"].count == 3
 
 
 @pytest.mark.parametrize(

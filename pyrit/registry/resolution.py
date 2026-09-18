@@ -41,8 +41,11 @@ import inspect
 import logging
 import re
 import types
+from collections.abc import Collection
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, cast, get_args, get_origin, get_type_hints
+
+from pydantic import TypeAdapter, ValidationError
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
 from pyrit.common.brick_contract import init_parameters_are_forwarded
@@ -67,6 +70,7 @@ _SKIPPED_PARAM_NAMES: frozenset[str] = frozenset({"self", "args", "kwargs"})
 #: because no single static type captures all of these; the name documents intent.
 TypeAnnotation: TypeAlias = Any
 logger = logging.getLogger(__name__)
+_VARIANT_PROVIDER_METHOD = "get_registry_input_variants"
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +128,82 @@ def _default_for(param: inspect.Parameter) -> Any:
     if param.default is inspect.Parameter.empty or isinstance(param.default, _RequiredValueSentinel):
         return REQUIRED_VALUE
     return param.default
+
+
+def _structured_variant_types(annotation: TypeAnnotation) -> dict[str, type] | None:
+    """
+    Return the named implementations declared by a structured-input annotation.
+
+    Returns:
+        dict[str, type] | None: The declared variants, or None when the annotation
+            is not a structured input.
+
+    Raises:
+        TypeError: If the provider returns an invalid mapping or unrelated classes.
+    """
+    base_type = _unwrap_optional(annotation)
+    provider = getattr(base_type, _VARIANT_PROVIDER_METHOD, None)
+    if provider is None:
+        return None
+    variants = provider()
+    if not isinstance(variants, dict) or not all(
+        isinstance(name, str) and isinstance(implementation, type) for name, implementation in variants.items()
+    ):
+        raise TypeError(f"{_VARIANT_PROVIDER_METHOD}() must return dict[str, type].")
+    if isinstance(base_type, type) and not all(
+        issubclass(implementation, base_type) for implementation in variants.values()
+    ):
+        raise TypeError(f"{_VARIANT_PROVIDER_METHOD}() implementations must inherit from {base_type.__name__}.")
+    return cast("dict[str, type]", variants)
+
+
+def _json_input_type(annotation: TypeAnnotation) -> TypeAnnotation:
+    """
+    Project Python-only input annotations onto equivalent JSON-native types.
+
+    Returns:
+        TypeAnnotation: The JSON-native equivalent, or the original annotation.
+    """
+    allows_none = type(None) in get_args(annotation)
+    unwrapped = _unwrap_optional(annotation)
+    origin = get_origin(unwrapped)
+
+    if origin in (Union, types.UnionType):
+        members = get_args(unwrapped)
+        if members and all(member is str or get_origin(member) is re.Pattern for member in members):
+            result: TypeAnnotation = str
+        else:
+            return annotation
+    elif origin is re.Pattern:
+        result = str
+    elif isinstance(origin, type) and issubclass(origin, Collection) and origin is not str:
+        element_types = get_args(unwrapped)
+        element_type = element_types[0] if element_types else str
+        result = list[element_type]
+    else:
+        return annotation
+
+    return result | None if allows_none else result
+
+
+def _structured_variant_parameters(annotation: TypeAnnotation) -> dict[str, list[Parameter]] | None:
+    """
+    Derive JSON-native constructor parameters for a structured input's safe variants.
+
+    Returns:
+        dict[str, list[Parameter]] | None: Parameters keyed by variant, or None
+            when the annotation is not a structured input.
+    """
+    variants = _structured_variant_types(annotation)
+    if variants is None:
+        return None
+    return {
+        name: [
+            parameter.model_copy(update={"param_type": _json_input_type(parameter.param_type)})
+            for parameter in derive_parameters(cls=implementation)
+        ]
+        for name, implementation in variants.items()
+    }
 
 
 def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
@@ -192,8 +272,6 @@ def _parameters_from_signature(
         list[Parameter]: Parameters declared by the constructor.
     """
     descriptions = _parse_arg_descriptions(owner)
-    from pyrit.registry.resolution_custom import word_selection_parameters
-
     parameters: list[Parameter] = []
     for name, param in signature.parameters.items():
         if name in _SKIPPED_PARAM_NAMES or param.kind in (
@@ -221,7 +299,7 @@ def _parameters_from_signature(
                 description=descriptions.get(name, ""),
                 default=_default_for(param),
                 param_type=param_type,
-                word_selection=word_selection_parameters(_unwrap_optional(param_type)),
+                variants=_structured_variant_parameters(param_type),
             )
         )
     return parameters
@@ -502,10 +580,8 @@ def resolve_constructor_args(
                 name=name,
                 annotation=param.reference.annotation,
             )
-        elif param.word_selection is not None:
-            from pyrit.registry.resolution_custom import resolve_word_selection
-
-            resolved[name] = resolve_word_selection(parameter=param, value=value)
+        elif param.variants is not None:
+            resolved[name] = _resolve_structured_input(parameter=param, value=value)
         elif (isinstance(value, str) and param.is_string_coercible) or (
             isinstance(value_type, type) and issubclass(value_type, Enum)
         ):
@@ -517,6 +593,66 @@ def resolve_constructor_args(
             resolved[name] = value
 
     return resolved
+
+
+def _resolve_structured_input(*, parameter: Parameter, value: Any) -> Any:
+    """
+    Build a declared structured-input variant from its JSON representation.
+
+    Returns:
+        Any: An existing structured input, None, or the constructed variant.
+
+    Raises:
+        ValueError: If the input shape, variant, or nested parameters are invalid.
+    """
+    annotation = _unwrap_optional(parameter.param_type)
+    if isinstance(annotation, type) and isinstance(value, annotation):
+        return value
+    if value is None and type(None) in get_args(parameter.param_type):
+        return None
+
+    try:
+        if not isinstance(value, dict) or set(value) - {"type", "parameters"}:
+            raise ValueError("expected an object with 'type' and optional 'parameters'")
+        variants = _structured_variant_types(annotation)
+        if variants is None:
+            raise ValueError("annotation does not declare structured input variants")
+        name = value.get("type")
+        if not isinstance(name, str) or name not in variants:
+            raise ValueError(f"type must be one of {list(variants)}")
+        supplied = value.get("parameters", {})
+        if not isinstance(supplied, dict):
+            raise ValueError("parameters must be an object")
+
+        assert parameter.variants is not None
+        declared = {nested.name: nested for nested in parameter.variants[name]}
+        unknown = supplied.keys() - declared.keys()
+        if unknown:
+            raise ValueError(f"unknown parameters for '{name}': {sorted(unknown)}")
+        missing = [nested.name for nested in declared.values() if nested.required and nested.name not in supplied]
+        if missing:
+            raise ValueError(f"missing parameters for '{name}': {missing}")
+        args = {key: _coerce_structured_input(parameter=declared[key], value=raw) for key, raw in supplied.items()}
+        return variants[name](**args)
+    except (ValueError, re.error) as exc:
+        raise ValueError(f"Parameter '{parameter.name}': {exc}") from exc
+
+
+def _coerce_structured_input(*, parameter: Parameter, value: Any) -> Any:
+    """
+    Validate a JSON-native nested value before applying shared coercion.
+
+    Returns:
+        Any: The validated and coerced nested value.
+
+    Raises:
+        ValueError: If the value does not match the declared JSON type.
+    """
+    try:
+        TypeAdapter(parameter.param_type).validate_python(value, strict=True)
+    except ValidationError as exc:
+        raise ValueError(f"'{parameter.name}' expects {parameter.type_name}: {exc}") from exc
+    return parameter.coerce_value(value)
 
 
 # ---------------------------------------------------------------------------

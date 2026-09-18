@@ -254,6 +254,19 @@ class WordSelectionStrategy(TextSelectionStrategy):
 
         return (start_char, end_char)
 
+    @classmethod
+    def get_registry_input_variants(cls) -> dict[str, type["WordSelectionStrategy"]]:
+        """Return the safe implementations available to registry input consumers."""
+        return {
+            "all": AllWordsSelectionStrategy,
+            "random": WordProportionSelectionStrategy,
+            "position": WordPositionSelectionStrategy,
+            "indices": WordIndexSelectionStrategy,
+            "keywords": WordKeywordSelectionStrategy,
+            "regex": WordRegexSelectionStrategy,
+            "content": ContentWordSelectionStrategy,
+        }
+
 
 class IndexSelectionStrategy(TextSelectionStrategy):
     """

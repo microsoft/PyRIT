@@ -104,9 +104,9 @@ class Parameter(BaseModel):
         exclude=True,
         description="Set when the parameter references another registry component (resolved by name); not serialized.",
     )
-    word_selection: dict[str, list[Parameter]] | None = Field(
+    variants: dict[str, list[Parameter]] | None = Field(
         default=None,
-        description="Built-in word-selection types and their constructor parameters, supplied by the registry.",
+        description="Named structured-input variants and their constructor parameters, supplied by the registry.",
     )
     destination: ParameterDestination = Field(
         default=ParameterDestination.CONSTRUCTOR,
@@ -315,7 +315,7 @@ class Parameter(BaseModel):
         Raises:
             ValueError: If ``param_type`` is unsupported and no default is declared.
         """
-        if self.reference is not None or self.opaque:
+        if self.reference is not None or self.opaque or self.variants is not None:
             return
         param_type = _unwrap_optional(self.param_type)
         if param_type is None or _is_scalar_param_type(param_type):

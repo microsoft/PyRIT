@@ -48,7 +48,7 @@ const wordSelectionParameter: Parameter = {
   type_name: 'WordSelectionStrategy',
   required: false,
   default: null,
-  word_selection: {
+  variants: {
     all: [],
     random: [
       { name: 'proportion', type_name: 'float', required: true, default: null },

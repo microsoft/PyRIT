@@ -28,6 +28,7 @@ import ParameterField from '@/components/Parameters/ParameterField'
 import {
   buildParametersFromForm,
   getInitialFormValues,
+  isStructuredParameterFormValue,
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
 
@@ -65,11 +66,6 @@ interface ParameterInputProps {
   onBrowse: () => void
 }
 
-interface WordSelectionValue {
-  type: string
-  values: Record<string, ParameterFormValue>
-}
-
 function isEditableParameter(parameter: Parameter): boolean {
   let depth = 0
   for (const part of parameter.type_name.split(/(\[|\]|\|)/)) {
@@ -87,6 +83,17 @@ function parameterDefaultValue(parameter: Parameter): string {
     return parameter.default.join(', ')
   }
   return parameter.default ?? ''
+}
+
+function formValueIsSet(value: ParameterFormValue | undefined): boolean {
+  if (isStructuredParameterFormValue(value)) {
+    return Boolean(value.type)
+  }
+  return typeof value === 'string' ? Boolean(value.trim()) : Boolean(value?.length)
+}
+
+function stringFormValue(value: ParameterFormValue | undefined): string {
+  return typeof value === 'string' ? value : ''
 }
 
 function ParameterInput({
@@ -201,8 +208,7 @@ export default function CreateConverterDialog({
   const [selectedType, setSelectedType] = useState('')
   const [registryName, setRegistryName] = useState('')
   const [nameEdited, setNameEdited] = useState(false)
-  const [parameterValues, setParameterValues] = useState<Record<string, string>>({})
-  const [wordSelections, setWordSelections] = useState<Record<string, WordSelectionValue>>({})
+  const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
@@ -287,7 +293,6 @@ export default function CreateConverterDialog({
     setRegistryName('')
     setNameEdited(false)
     setParameterValues({})
-    setWordSelections({})
     setShowValidation(false)
     setError(null)
   }
@@ -301,15 +306,16 @@ export default function CreateConverterDialog({
     setSelectedType(converterType)
     if (!nameEdited) setRegistryName(converterType)
     const typeEntry = converterTypes.find((item) => item.converter_type === converterType)
-    setParameterValues(
-      Object.fromEntries(
-        (typeEntry?.parameters ?? [])
-          .filter((parameter) => !parameter.word_selection
+    const parameters = typeEntry?.parameters ?? []
+    setParameterValues({
+      ...getInitialFormValues(parameters.filter((parameter) => parameter.variants)),
+      ...Object.fromEntries(
+        parameters
+          .filter((parameter) => !parameter.variants
             && isEditableParameter(parameter) && parameter.default != null)
           .map((parameter) => [parameter.name, parameterDefaultValue(parameter)]),
       ),
-    )
-    setWordSelections({})
+    })
     setShowValidation(false)
     setError(null)
   }
@@ -336,28 +342,27 @@ export default function CreateConverterDialog({
     const missingParameters = (selectedConverterType?.parameters ?? []).some(
       (parameter) => parameter.required
         && !parameter.default
-        && !(parameter.word_selection
-          ? wordSelections[parameter.name]?.type
-          : parameterValues[parameter.name]?.trim()),
+        && !formValueIsSet(parameterValues[parameter.name]),
     )
     if (!selectedType || !registryName.trim() || missingParameters) {
       setShowValidation(true)
       return
     }
 
-    const params: Record<string, unknown> = { ...parameterValues }
-    for (const parameter of selectedConverterType?.parameters ?? []) {
-      const selection = wordSelections[parameter.name]
-      if (!parameter.word_selection || !selection?.type) continue
-      const result = buildParametersFromForm(
-        parameter.word_selection[selection.type],
-        selection.values,
-      )
-      if (!result.ok) {
-        setError(result.error)
-        return
-      }
-      params[parameter.name] = { type: selection.type, parameters: result.parameters ?? {} }
+    const parameters = selectedConverterType?.parameters ?? []
+    const params = Object.fromEntries(
+      Object.entries(parameterValues).filter(([, value]) => !isStructuredParameterFormValue(value)),
+    )
+    const structured = buildParametersFromForm(
+      parameters.filter((parameter) => parameter.variants),
+      parameterValues,
+    )
+    if (!structured.ok) {
+      setError(structured.error)
+      return
+    }
+    if (structured.parameters) {
+      Object.assign(params, structured.parameters)
     }
 
     setSubmitting(true)
@@ -491,60 +496,27 @@ export default function CreateConverterDialog({
                   <div className={styles.parameterGrid}>
                     {selectedConverterType?.parameters.map((parameter) => (
                       <div key={parameter.name} className={styles.parameterRow}>
-                        {parameter.word_selection ? (
-                          <>
-                            <Field
-                              label={`${parameter.name}${parameter.required ? ' *' : ''}`}
-                              hint={parameter.description ?? undefined}
-                              validationMessage={
-                                showValidation && parameter.required && !wordSelections[parameter.name]?.type
-                                  ? 'Required' : undefined
-                              }
-                            >
-                              <Select
-                                value={wordSelections[parameter.name]?.type ?? ''}
-                                disabled={submitting}
-                                onChange={(_, data) => setWordSelections((current) => ({
-                                  ...current,
-                                  [parameter.name]: {
-                                    type: data.value,
-                                    values: getInitialFormValues(parameter.word_selection?.[data.value] ?? []),
-                                  },
-                                }))}
-                              >
-                                <option value="">Use converter default</option>
-                                {Object.keys(parameter.word_selection).map((type) => (
-                                  <option key={type} value={type}>{type}</option>
-                                ))}
-                              </Select>
-                            </Field>
-                            {(parameter.word_selection[wordSelections[parameter.name]?.type] ?? []).map((nested) => (
-                              <ParameterField
-                                key={nested.name}
-                                parameter={nested}
-                                allowEmptyList
-                                value={wordSelections[parameter.name]?.values[nested.name] ?? ''}
-                                disabled={submitting || !isEditableParameter(nested)}
-                                testIdPrefix={`word-selection-${parameter.name}`}
-                                onChange={(name, value) => setWordSelections((current) => ({
-                                  ...current,
-                                  [parameter.name]: {
-                                    ...current[parameter.name],
-                                    values: { ...current[parameter.name].values, [name]: value },
-                                  },
-                                }))}
-                              />
-                            ))}
-                          </>
+                        {parameter.variants ? (
+                          <ParameterField
+                            parameter={parameter}
+                            value={parameterValues[parameter.name] ?? ''}
+                            disabled={submitting}
+                            showRequiredError={showValidation && parameter.required}
+                            testIdPrefix="structured"
+                            onChange={(name, value) => setParameterValues((current) => ({
+                              ...current,
+                              [name]: value,
+                            }))}
+                          />
                         ) : <ParameterInput
                           parameter={parameter}
                           referenceOptions={referenceOptions(parameter)}
-                          value={parameterValues[parameter.name] ?? ''}
+                          value={stringFormValue(parameterValues[parameter.name])}
                           showError={
                             showValidation
                             && parameter.required
                             && !parameter.default
-                            && !parameterValues[parameter.name]?.trim()
+                            && !formValueIsSet(parameterValues[parameter.name])
                           }
                           onChange={(value) => setParameterValues((current) => ({
                             ...current,

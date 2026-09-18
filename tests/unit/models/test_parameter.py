@@ -86,7 +86,7 @@ class TestParameterSerialization:
             "choices": None,
             "is_list": False,
             "reference_type": None,
-            "word_selection": None,
+            "variants": None,
         }
 
     def test_excludes_live_only_fields(self) -> None:
