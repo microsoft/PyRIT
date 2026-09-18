@@ -1,6 +1,33 @@
+import type { Theme } from '@fluentui/react-components'
+
+import type { THEME_PRESETS } from '@/themes/themePresets'
+
 // ============================================================================
 // Frontend UI Types
 // ============================================================================
+
+export type ThemeMode = 'system' | keyof typeof THEME_PRESETS
+
+export type ResolvedTheme = 'light' | 'dark' | 'high-contrast'
+
+export interface ThemeBackground {
+  readonly imageUrl: string
+  readonly opacity: number
+}
+
+export interface ThemePreset {
+  readonly label: string
+  readonly resolved: 'light' | 'dark'
+  readonly theme: Theme
+  readonly background?: ThemeBackground
+}
+
+export interface ThemeContextValue {
+  readonly mode: ThemeMode
+  readonly resolved: ResolvedTheme
+  readonly background?: ThemeBackground
+  readonly setMode: (mode: ThemeMode) => void
+}
 
 export interface MessageAttachment {
   /** Client-side identity of one attachment in the editable draft. */

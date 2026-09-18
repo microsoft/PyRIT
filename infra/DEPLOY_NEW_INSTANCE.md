@@ -234,19 +234,19 @@ Prepare a complete local file in the same format as `infra/env.demo.template`. T
 Use one of these approved update paths:
 
 1. Update the `env-file` Container App secret in the Azure portal without retrieving or printing its current value.
-2. Redeploy `main.bicep` with a complete parameter file containing the current resource values and override only the secure parameter from disk:
+2. Redeploy `application.bicep` with a complete application parameter file containing the current resource values and override only the secure parameter from disk:
 
    ```bash
    test -f ./updated.env || { echo "ERROR: ./updated.env not found"; exit 1; }
    test -f ./current.parameters.json || { echo "ERROR: complete parameter file not found"; exit 1; }
    az deployment group create \
      --resource-group copyrit-{instance-name} \
-     --template-file infra/main.bicep \
+     --template-file infra/application.bicep \
      --parameters @./current.parameters.json \
      --parameters envFileContents=@./updated.env
    ```
 
-   `current.parameters.json` must describe the existing deployment exactly; start from `infra/parameters.example.json` and fill it from the deployed resources. Review `what-if` first. Azure CLI file expansion is silent when a path is wrong, so both existence checks are mandatory.
+   `current.parameters.json` must describe the existing application deployment exactly; start from `infra/parameters.application.example.json` and fill it from the deployed resources. Review `what-if` first. Azure CLI file expansion is silent when a path is wrong, so both existence checks are mandatory.
 
 Application-scoped secret updates do not update an existing revision. Restart the active revision after either path:
 

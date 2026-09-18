@@ -136,7 +136,7 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
         Returns:
             List containing a single aggregated score for the video.
         """
-        piece_id = message_piece.id if message_piece.id is not None else message_piece.original_prompt_id
+        piece_id = message_piece.id
 
         # Get scores for all frames and aggregate with OR (True if ANY frame matches)
         frame_scores = await self._video_helper._score_frames_async(message_piece=message_piece, objective=objective)

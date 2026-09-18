@@ -977,6 +977,16 @@ class ScenarioRunService:
         )
 
     @staticmethod
+    def _identifier_techniques(scenario_identifier: ScenarioIdentifier | None) -> list[str]:
+        """
+        Read techniques when legacy persisted metadata has an identifier.
+
+        Returns:
+            list[str]: Stored techniques or an empty list.
+        """
+        return list(scenario_identifier.techniques or []) if scenario_identifier is not None else []
+
+    @staticmethod
     def _safe_run_metadata(
         *,
         scenario_identifier: ScenarioIdentifier | None,
@@ -1242,10 +1252,8 @@ class ScenarioRunService:
         target, datasets_used, scenario_parameters = self._safe_run_metadata(scenario_identifier=scenario_identifier)
         if plan is not None:
             techniques_used = list(dict.fromkeys(group.display_group for group in plan.atomic_groups))
-        elif scenario_identifier is not None:
-            techniques_used = list(scenario_identifier.techniques or [])
         else:
-            techniques_used = []
+            techniques_used = self._identifier_techniques(scenario_identifier)
         return ScenarioRunProgress(
             run=ScenarioProgressHeader(
                 scenario_result_id=scenario_result_id,

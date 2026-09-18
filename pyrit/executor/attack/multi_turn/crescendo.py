@@ -415,7 +415,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             )
 
             # Check for refusal and backtrack if needed
-            context.last_response_was_refusal = False
             backtracked = await self._perform_backtrack_if_refused_async(
                 context=context,
                 prompt_sent=message_to_send.get_value(),
@@ -795,6 +794,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         Returns:
             bool: True if backtracking was performed, False otherwise.
         """
+        context.last_response_was_refusal = False
         # Check for refusal using the scorer (handles blocked/error responses internally)
         refusal_score = await self._check_refusal_async(context, prompt_sent)
         is_refusal = score_is_true(refusal_score)

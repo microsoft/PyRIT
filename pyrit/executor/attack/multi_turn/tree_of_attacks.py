@@ -567,13 +567,7 @@ class _TreeOfAttacksNode:
             - `off_topic`: `True` if the prompt was deemed off-topic after all retries
             - `error_message`: Set if an error occurred during execution
         """
-        # Clear the previous turn's outcome before reusing this branch.
-        self.completed = False
-        self.off_topic = False
-        self.objective_score = None
-        self.auxiliary_scores = {}
-        self.last_prompt_sent = None
-        self.error_message = None
+        self._reset_turn_outcome()
 
         # Store objective for use in execution context
         self._objective = objective
@@ -706,6 +700,15 @@ class _TreeOfAttacksNode:
         logger.debug(f"Node {self.node_id}: Received response from target")
 
         return response
+
+    def _reset_turn_outcome(self) -> None:
+        """Clear the previous turn's outcome before reusing this branch."""
+        self.completed = False
+        self.off_topic = False
+        self.objective_score = None
+        self.auxiliary_scores = {}
+        self.last_prompt_sent = None
+        self.error_message = None
 
     async def _send_initial_prompt_to_target_async(self) -> Message:
         """
@@ -1647,7 +1650,32 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self._request_converters = attack_converter_config.request_converters
         self._response_converters = attack_converter_config.response_converters
 
-        # Initialize scoring configuration
+        tap_scoring_config = self._resolve_scoring_config(attack_scoring_config)
+        self._attack_scoring_config = tap_scoring_config
+        self._auxiliary_scorers = tap_scoring_config.auxiliary_scorers
+        self._objective_scorer = tap_scoring_config.objective_scorer
+
+        # Use the adversarial chat target for scoring, as in CrescendoAttack
+        self._scoring_target = self._adversarial_chat
+
+        if self._configuration.on_topic_checking_enabled and not self._scoring_target:
+            raise ValueError("On-topic checking is enabled but no scoring target is available.")
+
+        self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
+
+    def _resolve_scoring_config(self, attack_scoring_config: AttackScoringConfig | None) -> TAPAttackScoringConfig:
+        """
+        Normalize runtime inputs while preserving the constructor's factory-facing TAP type contract.
+
+        Args:
+            attack_scoring_config: Optional scoring config, including legacy base configs from direct callers.
+
+        Returns:
+            A TAP scoring config with a float-scale threshold scorer.
+
+        Raises:
+            ValueError: If a base config has no objective scorer or an incompatible scorer.
+        """
         # If no scoring config provided, create the default TAP scorer using FloatScaleThresholdScorer
         if attack_scoring_config is None:
             # Determine supported data types based on target's output modalities.
@@ -1698,17 +1726,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 use_score_as_feedback=attack_scoring_config.use_score_as_feedback,
             )
 
-        self._attack_scoring_config = tap_scoring_config
-        self._auxiliary_scorers = tap_scoring_config.auxiliary_scorers
-        self._objective_scorer = tap_scoring_config.objective_scorer
-
-        # Use the adversarial chat target for scoring, as in CrescendoAttack
-        self._scoring_target = self._adversarial_chat
-
-        if self._configuration.on_topic_checking_enabled and not self._scoring_target:
-            raise ValueError("On-topic checking is enabled but no scoring target is available.")
-
-        self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
+        return tap_scoring_config
 
     def _load_adversarial_prompts(self) -> None:
         """Load the adversarial chat prompt template and seed prompt from the default paths."""
