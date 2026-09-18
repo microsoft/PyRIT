@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pyrit.exceptions import (
-    BadRequestException,
+    AdversarialChatResponseBlockedException,
     ComponentRole,
     EmptyResponseException,
     InvalidJsonException,
@@ -208,7 +208,7 @@ def _raise_for_adversarial_error(response: Message) -> None:
         response: The adversarial-chat response to inspect.
 
     Raises:
-        BadRequestException: If the response was blocked.
+        AdversarialChatResponseBlockedException: If the response was blocked.
         EmptyResponseException: If the response was empty.
         PyritException: If the response carries another error category.
     """
@@ -223,7 +223,10 @@ def _raise_for_adversarial_error(response: Message) -> None:
     response_value = error_piece.converted_value
     if response_error == "blocked":
         status_code, message = _get_error_payload(response_value)
-        raise BadRequestException(status_code=status_code if status_code is not None else 400, message=message)
+        raise AdversarialChatResponseBlockedException(
+            status_code=status_code if status_code is not None else 400,
+            message=message,
+        )
     if response_error == "empty":
         raise EmptyResponseException(message="The adversarial chat returned an empty response.")
 

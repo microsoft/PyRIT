@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pyrit.exceptions import BadRequestException, EmptyResponseException, InvalidJsonException, PyritException
+from pyrit.exceptions import (
+    AdversarialChatResponseBlockedException,
+    BadRequestException,
+    EmptyResponseException,
+    InvalidJsonException,
+    PyritException,
+)
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
     _BLOCKED_FEEDBACK_TEXT,
     _DEFAULT_ADVERSARIAL_SCHEMA_NAME,
@@ -590,6 +596,7 @@ class TestGetNextMessageAsync:
 
         assert exc_info.value.status_code == 200
         assert exc_info.value.message == refusal
+        assert isinstance(exc_info.value, AdversarialChatResponseBlockedException)
         normalizer.send_prompt_async.assert_awaited_once()
 
     @pytest.mark.parametrize("response_error", ["processing", "unknown"])

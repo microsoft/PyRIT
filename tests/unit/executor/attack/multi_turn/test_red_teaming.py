@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.exceptions import AdversarialChatResponseBlockedException, BadRequestException
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -1107,6 +1108,80 @@ class TestResponseScoring:
 @pytest.mark.usefixtures("patch_central_database")
 class TestAttackExecution:
     """Tests for the main attack execution logic."""
+
+    async def test_adversarial_chat_block_is_completed_failure(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+    ) -> None:
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
+        attack = RedTeamingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=adversarial_config,
+            attack_scoring_config=scoring_config,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+        with (
+            patch.object(
+                attack,
+                "_generate_next_prompt_async",
+                new_callable=AsyncMock,
+                side_effect=AdversarialChatResponseBlockedException(
+                    status_code=200,
+                    message="I cannot assist with that request.",
+                ),
+            ),
+            patch.object(
+                attack,
+                "_send_prompt_to_objective_target_async",
+                new_callable=AsyncMock,
+            ) as mock_send,
+        ):
+            result = await attack.execute_async(objective="Test objective")
+
+        assert result.outcome is AttackOutcome.FAILURE
+        assert result.executed_turns == 0
+        assert result.last_response is None
+        assert result.automated_score is None
+        assert result.metadata["adversarial_chat_blocked"] is True
+        assert len(result.related_conversations) == 1
+        assert next(iter(result.related_conversations)).conversation_type is ConversationType.ADVERSARIAL
+        assert "Adversarial chat blocked" in (result.outcome_reason or "")
+        mock_send.assert_not_awaited()
+        [persisted_result] = CentralMemory.get_memory_instance().get_attack_results(objective="Test objective")
+        assert persisted_result.outcome is AttackOutcome.FAILURE
+        assert persisted_result.metadata["adversarial_chat_blocked"] is True
+
+    async def test_unrelated_adversarial_bad_request_still_propagates(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: MultiTurnAttackContext,
+    ) -> None:
+        adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
+        scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
+        attack = RedTeamingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=adversarial_config,
+            attack_scoring_config=scoring_config,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        with (
+            patch.object(
+                attack,
+                "_generate_next_prompt_async",
+                new_callable=AsyncMock,
+                side_effect=BadRequestException(status_code=400, message="Invalid request"),
+            ),
+            pytest.raises(BadRequestException, match="Invalid request"),
+        ):
+            await attack._perform_async(context=basic_context)
 
     async def test_perform_attack_with_message_bypasses_adversarial_chat_on_first_turn(
         self,

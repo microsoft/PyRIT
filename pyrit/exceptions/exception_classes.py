@@ -225,6 +225,10 @@ class EmptyResponseException(BadRequestException):
         super().__init__(status_code=status_code, message=message)
 
 
+class AdversarialChatResponseBlockedException(BadRequestException):
+    """Exception raised when an adversarial chat refuses or filters its response."""
+
+
 class ScorerLLMResponseBlockedException(BadRequestException):
     """Exception raised when a scorer's own LLM response is blocked by content filtering."""
 
@@ -456,10 +460,12 @@ def pyrit_placeholder_retry(func: Callable[..., Any]) -> Callable[..., Any]:
 #   - ``policy_violation``         - Substring of Azure's ``content_policy_violation``
 #                                    and OpenAI moderation's ``usage_policy_violation``.
 #   - ``moderation_blocked``       - OpenAI moderation ``error.code``.
+#   - ``cyber_policy``             - Azure OpenAI cybersecurity-policy ``error.code``.
 CONTENT_FILTER_MARKERS = frozenset(
     {
         "content_filter",
         "content_safety_violation",
+        "cyber_policy",
         "policy_violation",
         "moderation_blocked",
     }

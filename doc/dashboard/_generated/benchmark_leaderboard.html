@@ -1,0 +1,50 @@
+<style>
+.pyrit-leaderboard-card {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  max-width: 900px;
+  overflow: hidden;
+}
+.pyrit-leaderboard-card .lb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+.pyrit-leaderboard-card .lb-head h4 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8b949e;
+  font-weight: 600;
+}
+.pyrit-leaderboard-card .lb-meta { font-size: 11px; color: #8b949e; white-space: nowrap; }
+.pyrit-leaderboard-card table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.pyrit-leaderboard-card th {
+  text-align: left;
+  padding: 8px 14px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #3fb950;
+  border-bottom: 1px solid #30363d;
+  white-space: nowrap;
+}
+.pyrit-leaderboard-card th.lb-rank { text-align: center; }
+.pyrit-leaderboard-card td { padding: 8px 14px; border-bottom: 1px solid #21262d; }
+.pyrit-leaderboard-card td.lb-rank { color: #6e7681; text-align: center; }
+.pyrit-leaderboard-card .lb-note {
+  font-size: 11px;
+  color: #8b949e;
+  padding: 8px 16px;
+  border-top: 1px solid #30363d;
+}
+</style>
+<div class="pyrit-leaderboard-card"><div class="lb-head"><h4>Technique / Adversarial Model Leaderboard</h4><span class="lb-meta">9 rows</span></div><table><thead><tr><th class="lb-rank">#</th><th>Technique</th><th>Adversarial Model</th><th>Objective Target</th><th>Objective Scorer</th><th>Dataset</th><th>N</th><th>Success</th><th>Failure</th><th>Error</th><th>Undetermined</th><th>Retries</th><th>Success Rate</th></tr></thead><tbody><tr><td class='lb-rank'>1</td><td>role_play_video_game</td><td>adversarial_chat</td><td>gpt-4o</td><td>TrueFalseInverterScorer</td><td>harmbench</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>100%</td></tr><tr><td class='lb-rank'>2</td><td>tap</td><td>azure_gpt4o_unsafe_chat</td><td>openai_chat</td><td>&lt;unknown&gt;</td><td>adversarial_benchmark_v1</td><td>24</td><td>24</td><td>0</td><td>0</td><td>0</td><td>0</td><td>100%</td></tr><tr><td class='lb-rank'>3</td><td>red_teaming</td><td>adversarial_chat</td><td>gpt-4o</td><td>TrueFalseInverterScorer</td><td>harmbench</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>100%</td></tr><tr><td class='lb-rank'>4</td><td>tap</td><td>azure_openai_gpt4o</td><td>openai_chat</td><td>&lt;unknown&gt;</td><td>adversarial_benchmark_v1</td><td>24</td><td>22</td><td>2</td><td>0</td><td>0</td><td>0</td><td>92%</td></tr><tr><td class='lb-rank'>5</td><td>role_play_video_game</td><td>azure_openai_gpt4o</td><td>openai_chat</td><td>&lt;unknown&gt;</td><td>adversarial_benchmark_v1</td><td>24</td><td>8</td><td>15</td><td>0</td><td>1</td><td>0</td><td>33%</td></tr><tr><td class='lb-rank'>6</td><td>crescendo_simulated</td><td>azure_openai_gpt4o</td><td>openai_chat</td><td>&lt;unknown&gt;</td><td>adversarial_benchmark_v1</td><td>24</td><td>8</td><td>15</td><td>0</td><td>1</td><td>0</td><td>33%</td></tr><tr><td class='lb-rank'>7</td><td>role_play_video_game</td><td>azure_gpt4o_unsafe_chat</td><td>openai_chat</td><td>&lt;unknown&gt;</td><td>adversarial_benchmark_v1</td><td>24</td><td>4</td><td>19</td><td>0</td><td>1</td><td>0</td><td>17%</td></tr><tr><td class='lb-rank'>8</td><td>crescendo_simulated</td><td>azure_gpt4o_unsafe_chat</td><td>openai_chat</td><td>&lt;unknown&gt;</td><td>adversarial_benchmark_v1</td><td>24</td><td>3</td><td>20</td><td>0</td><td>1</td><td>0</td><td>12%</td></tr><tr><td class='lb-rank'>9</td><td>context_compliance</td><td>adversarial_chat</td><td>gpt-4o</td><td>TrueFalseInverterScorer</td><td>harmbench</td><td>1</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0%</td></tr></tbody></table><div class="lb-note">Ranked by success rate. N is the number of objectives attempted for that combination; treat rows with a small N as directional, not statistically robust.</div></div>

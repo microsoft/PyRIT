@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.common.utils import warn_if_set
-from pyrit.exceptions import ComponentRole, execution_context
+from pyrit.exceptions import AdversarialChatResponseBlockedException, ComponentRole, execution_context
 from pyrit.executor.attack.component import (
     ConversationManager,
     PrependedConversationConfig,
@@ -50,6 +50,8 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+ADVERSARIAL_CHAT_BLOCKED_METADATA_KEY = "adversarial_chat_blocked"
 
 # RedTeamingAttack sets a system prompt on its adversarial target and drives a multi-turn dialogue
 # through it. Both capabilities must be natively supported — adaptation would silently change the
@@ -342,9 +344,17 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             logger.info(f"Executing turn {context.executed_turns + 1}/{self._max_turns}")
 
             # Determine what to send next
-            message_to_send = await self._generate_next_prompt_async(
-                context=context, adversarial_manager=adversarial_manager
-            )
+            try:
+                message_to_send = await self._generate_next_prompt_async(
+                    context=context, adversarial_manager=adversarial_manager
+                )
+            except AdversarialChatResponseBlockedException:
+                return self._create_attack_result(
+                    context=context,
+                    outcome=AttackOutcome.FAILURE,
+                    outcome_reason="Adversarial chat blocked the attack before it could generate the next prompt.",
+                    metadata={ADVERSARIAL_CHAT_BLOCKED_METADATA_KEY: True},
+                )
 
             # Send the generated message to the objective target
             context.last_response = await self._send_prompt_to_objective_target_async(
@@ -366,16 +376,36 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             # Increment the executed turns
             context.executed_turns += 1
 
-        # Prepare the result
+        return self._create_attack_result(
+            context=context,
+            outcome=attack_outcome_from_score(context.last_score) if context.last_score else AttackOutcome.FAILURE,
+        )
+
+    def _create_attack_result(
+        self,
+        *,
+        context: MultiTurnAttackContext[Any],
+        outcome: AttackOutcome,
+        outcome_reason: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AttackResult:
+        """
+        Create a result from the current attack context.
+
+        Returns:
+            AttackResult: The completed attack result.
+        """
         return AttackResult(
             atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
-            outcome=(attack_outcome_from_score(context.last_score) if context.last_score else AttackOutcome.FAILURE),
+            outcome=outcome,
+            outcome_reason=outcome_reason,
             executed_turns=context.executed_turns,
             last_response=context.last_response.get_piece() if context.last_response else None,
             automated_score=context.last_score,
             related_conversations=context.related_conversations,
+            metadata=metadata or {},
             labels=context.memory_labels,
         )
 

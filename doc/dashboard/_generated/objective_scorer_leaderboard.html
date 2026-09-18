@@ -1,0 +1,50 @@
+<style>
+.pyrit-leaderboard-card {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  max-width: 900px;
+  overflow: hidden;
+}
+.pyrit-leaderboard-card .lb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+.pyrit-leaderboard-card .lb-head h4 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8b949e;
+  font-weight: 600;
+}
+.pyrit-leaderboard-card .lb-meta { font-size: 11px; color: #8b949e; white-space: nowrap; }
+.pyrit-leaderboard-card table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.pyrit-leaderboard-card th {
+  text-align: left;
+  padding: 8px 14px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #3fb950;
+  border-bottom: 1px solid #30363d;
+  white-space: nowrap;
+}
+.pyrit-leaderboard-card th.lb-rank { text-align: center; }
+.pyrit-leaderboard-card td { padding: 8px 14px; border-bottom: 1px solid #21262d; }
+.pyrit-leaderboard-card td.lb-rank { color: #6e7681; text-align: center; }
+.pyrit-leaderboard-card .lb-note {
+  font-size: 11px;
+  color: #8b949e;
+  padding: 8px 16px;
+  border-top: 1px solid #30363d;
+}
+</style>
+<div class="pyrit-leaderboard-card"><div class="lb-head"><h4>Objective Scorer Leaderboard</h4><span class="lb-meta">31 rows</span></div><table><thead><tr><th class="lb-rank">#</th><th>Name</th><th>Accuracy</th><th>F1 Score</th><th>Precision</th><th>Recall</th><th>Samples</th></tr></thead><tbody><tr><td class='lb-rank'>1</td><td>TrueFalseInverterScorer::e7af90c2</td><td>90%</td><td>89%</td><td>89%</td><td>90%</td><td>395</td></tr><tr><td class='lb-rank'>2</td><td>TrueFalseInverterScorer::9e875a98</td><td>89%</td><td>89%</td><td>88%</td><td>91%</td><td>395</td></tr><tr><td class='lb-rank'>3</td><td>TrueFalseInverterScorer::9355fe9c</td><td>88%</td><td>88%</td><td>87%</td><td>88%</td><td>395</td></tr><tr><td class='lb-rank'>4</td><td>TrueFalseInverterScorer::f31c9af8</td><td>88%</td><td>87%</td><td>91%</td><td>84%</td><td>395</td></tr><tr><td class='lb-rank'>5</td><td>TrueFalseInverterScorer::7383238a</td><td>85%</td><td>86%</td><td>79%</td><td>94%</td><td>376</td></tr><tr><td class='lb-rank'>6</td><td>TrueFalseInverterScorer::4c10ed71</td><td>85%</td><td>85%</td><td>79%</td><td>93%</td><td>395</td></tr><tr><td class='lb-rank'>7</td><td>TrueFalseInverterScorer::cc1b3ff2</td><td>79%</td><td>83%</td><td>71%</td><td>99%</td><td>376</td></tr><tr><td class='lb-rank'>8</td><td>TrueFalseInverterScorer::4c6b1acf</td><td>78%</td><td>82%</td><td>70%</td><td>99%</td><td>376</td></tr><tr><td class='lb-rank'>9</td><td>SelfAskTrueFalseScorer::b0079ec4</td><td>80%</td><td>77%</td><td>87%</td><td>69%</td><td>395</td></tr><tr><td class='lb-rank'>10</td><td>SelfAskTrueFalseScorer::f4f59053</td><td>79%</td><td>76%</td><td>88%</td><td>66%</td><td>395</td></tr><tr><td class='lb-rank'>11</td><td>SelfAskTrueFalseScorer::64fbaf40</td><td>76%</td><td>73%</td><td>78%</td><td>69%</td><td>395</td></tr><tr><td class='lb-rank'>12</td><td>FloatScaleThresholdScorer::d7cc533a</td><td>76%</td><td>67%</td><td>99%</td><td>50%</td><td>395</td></tr><tr><td class='lb-rank'>13</td><td>SelfAskTrueFalseScorer::8d79a865</td><td>74%</td><td>66%</td><td>87%</td><td>54%</td><td>395</td></tr><tr><td class='lb-rank'>14</td><td>SelfAskTrueFalseScorer::b725209f</td><td>72%</td><td>66%</td><td>83%</td><td>54%</td><td>395</td></tr><tr><td class='lb-rank'>15</td><td>FloatScaleThresholdScorer::e0a7d41b</td><td>75%</td><td>65%</td><td>99%</td><td>49%</td><td>395</td></tr><tr><td class='lb-rank'>16</td><td>FloatScaleThresholdScorer::c9812298</td><td>75%</td><td>65%</td><td>98%</td><td>49%</td><td>395</td></tr><tr><td class='lb-rank'>17</td><td>SelfAskTrueFalseScorer::33f88b9b</td><td>73%</td><td>64%</td><td>88%</td><td>51%</td><td>395</td></tr><tr><td class='lb-rank'>18</td><td>TrueFalseCompositeScorer::ec54812e</td><td>74%</td><td>64%</td><td>99%</td><td>47%</td><td>395</td></tr><tr><td class='lb-rank'>19</td><td>TrueFalseCompositeScorer::8aa7eab4</td><td>72%</td><td>61%</td><td>99%</td><td>44%</td><td>376</td></tr><tr><td class='lb-rank'>20</td><td>TrueFalseCompositeScorer::c76c685f</td><td>71%</td><td>58%</td><td>99%</td><td>41%</td><td>395</td></tr><tr><td class='lb-rank'>21</td><td>SelfAskTrueFalseScorer::69a1346f</td><td>63%</td><td>55%</td><td>66%</td><td>47%</td><td>395</td></tr><tr><td class='lb-rank'>22</td><td>FloatScaleThresholdScorer::71881fef</td><td>69%</td><td>54%</td><td>99%</td><td>37%</td><td>395</td></tr><tr><td class='lb-rank'>23</td><td>FloatScaleThresholdScorer::2e6d1db9</td><td>59%</td><td>53%</td><td>60%</td><td>48%</td><td>395</td></tr><tr><td class='lb-rank'>24</td><td>TrueFalseCompositeScorer::8fd8c548</td><td>69%</td><td>52%</td><td>99%</td><td>36%</td><td>395</td></tr><tr><td class='lb-rank'>25</td><td>TrueFalseCompositeScorer::d65698d6</td><td>66%</td><td>46%</td><td>95%</td><td>30%</td><td>395</td></tr><tr><td class='lb-rank'>26</td><td>SelfAskTrueFalseScorer::2c8c280f</td><td>63%</td><td>41%</td><td>85%</td><td>27%</td><td>395</td></tr><tr><td class='lb-rank'>27</td><td>TrueFalseCompositeScorer::dbf14fce</td><td>62%</td><td>40%</td><td>94%</td><td>25%</td><td>376</td></tr><tr><td class='lb-rank'>28</td><td>TrueFalseCompositeScorer::ee3b47d5</td><td>63%</td><td>39%</td><td>94%</td><td>25%</td><td>395</td></tr><tr><td class='lb-rank'>29</td><td>TrueFalseCompositeScorer::5c661e54</td><td>63%</td><td>39%</td><td>98%</td><td>24%</td><td>395</td></tr><tr><td class='lb-rank'>30</td><td>FloatScaleThresholdScorer::9e435bb2</td><td>62%</td><td>39%</td><td>89%</td><td>25%</td><td>395</td></tr><tr><td class='lb-rank'>31</td><td>FloatScaleThresholdScorer::ae5d6b19</td><td>58%</td><td>26%</td><td>94%</td><td>15%</td><td>395</td></tr></tbody></table><div class="lb-note">All metrics computed against human-labeled ground truth. Ranked by F1 (higher is better across all four metrics).</div></div>

@@ -11,6 +11,7 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 if TYPE_CHECKING:
     from pyrit.exceptions.exception_classes import (
         CONTENT_FILTER_MARKERS,
+        AdversarialChatResponseBlockedException,
         BadRequestException,
         EmptyResponseException,
         ExperimentalWarning,
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AdversarialChatResponseBlockedException": "pyrit.exceptions.exception_classes",
     "BadRequestException": "pyrit.exceptions.exception_classes",
     "clear_execution_context": "pyrit.exceptions.exception_context",
     "clear_retry_collector": "pyrit.exceptions.retry_collector",
