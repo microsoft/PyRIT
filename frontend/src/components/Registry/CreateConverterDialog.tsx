@@ -184,7 +184,8 @@ export default function CreateConverterDialog({
   const openEpochRef = useRef(0)
 
   useEffect(() => {
-    // Every change of `open` ends the opening before it.
+    // Every change of `open` ends the opening before it, so a response from the
+    // previous one leaves this opening's own state alone.
     openEpochRef.current += 1
     if (!open) return
     let cancelled = false
@@ -193,6 +194,9 @@ export default function CreateConverterDialog({
         if (cancelled) return null
         setLoading(true)
         setError(null)
+        // A request from the previous opening keeps its own "Adding..." state, so
+        // clear it here rather than letting that response clear it for this one.
+        setSubmitting(false)
         return Promise.all([
           convertersApi.listConverterTypes(),
           targetsApi.listTargets(200),
@@ -335,7 +339,12 @@ export default function CreateConverterDialog({
         type: selectedType,
         params: parameterValues,
       })
-      reset()
+      // Only the opening this request was submitted from is cleared: a response
+      // that outlived its opening must not wipe the form the user is filling in
+      // now. onCreated stays ungated so a late success still refreshes the list.
+      if (openEpochRef.current === epoch) {
+        reset()
+      }
       onCreated(response.converter_id)
     } catch (err) {
       // A failure from an opening the user has already left stays out of the
@@ -344,7 +353,9 @@ export default function CreateConverterDialog({
         setError({ message: toApiError(err).detail, fromSubmit: true })
       }
     } finally {
-      setSubmitting(false)
+      if (openEpochRef.current === epoch) {
+        setSubmitting(false)
+      }
     }
   }
 

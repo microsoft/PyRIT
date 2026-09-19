@@ -315,6 +315,37 @@ describe('CreateConverterDialog', () => {
     await waitFor(() => expect(alert).toHaveFocus())
   })
 
+  it('should not clear a later opening of the dialog when an earlier creation succeeds', async () => {
+    let resolveCreate: ((value: { converter_id: string }) => void) | undefined
+    mockedConvertersApi.createConverter.mockImplementation(
+      () => new Promise((resolve) => { resolveCreate = resolve }),
+    )
+    const onCreated = jest.fn()
+    const user = userEvent.setup()
+    const { rerender } = renderDialog({ onCreated })
+    await submitCaesarConverter(user)
+    await waitFor(() => expect(mockedConvertersApi.createConverter).toHaveBeenCalled())
+
+    // Dismissed while the request was in flight, then opened again and filled in.
+    rerender(dialogTree({ open: false, onCreated }))
+    rerender(dialogTree({ open: true, onCreated }))
+    await screen.findByRole('combobox', { name: /^converter type$/i })
+    await selectConverterType('CaesarConverter')
+    // Selecting a type prefills the registry name, so replace it rather than append.
+    await user.clear(screen.getByLabelText(/registry name/i))
+    await user.type(screen.getByLabelText(/registry name/i), 'my-second-converter')
+
+    await act(async () => {
+      resolveCreate?.({ converter_id: 'first-converter' })
+    })
+
+    // The list still refreshes, but the opening in front of the user is untouched.
+    expect(onCreated).toHaveBeenCalledWith('first-converter')
+    expect(screen.getByLabelText(/registry name/i)).toHaveValue('my-second-converter')
+    expect(screen.getByLabelText(/caesar_offset/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add Converter' })).toBeInTheDocument()
+  })
+
   it('should not surface a submission error in a later opening of the dialog', async () => {
     let rejectCreate: ((reason: Error) => void) | undefined
     mockedConvertersApi.createConverter.mockImplementation(
