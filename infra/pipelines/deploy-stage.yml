@@ -66,6 +66,7 @@ stages:
                       PYRIT_ENTRA_CLIENT_ID: $(entraClientId)
                       PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
                       PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)
+                      PYRIT_ALLOW_CUSTOM_INITIALIZERS: 'true'
                       PYRIT_CONFIG_FILE_URI: $(pyritConfigFileUri)
                       PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)
                       PYRIT_SQL_DATABASE_NAME: $(sqlDatabaseName)

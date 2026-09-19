@@ -8,8 +8,12 @@ validate_app_inputs() {
   validate_common_inputs
   require_values PYRIT_CONTAINER_IMAGE PYRIT_ENTRA_TENANT_ID PYRIT_ENTRA_CLIENT_ID \
     PYRIT_ALLOWED_GROUP_OBJECT_IDS PYRIT_ADMIN_GROUP_OBJECT_ID PYRIT_SQL_SERVER_FQDN \
-    PYRIT_SQL_DATABASE_NAME PYRIT_KEY_VAULT_RESOURCE_ID PYRIT_ENV_SECRET_NAME
+    PYRIT_SQL_DATABASE_NAME PYRIT_KEY_VAULT_RESOURCE_ID PYRIT_ENV_SECRET_NAME \
+    PYRIT_ALLOW_CUSTOM_INITIALIZERS
   validate_optional_values PYRIT_ALLOWED_CLIENT_CIDR PYRIT_CONFIG_FILE_URI
+  if [[ ! "$PYRIT_ALLOW_CUSTOM_INITIALIZERS" =~ ^(true|false)$ ]]; then
+    deployment_error "Invalid allowCustomInitializers value"
+  fi
   if [[ -n "${PYRIT_ALLOWED_CLIENT_CIDR:-}" ]]; then
     deployment_error "Front Door cannot use an ACA client CIDR restriction because ACA sees Front Door backend IPs, not client IPs; leave PYRIT_ALLOWED_CLIENT_CIDR empty"
   fi
@@ -92,6 +96,7 @@ build_app_parameters() {
     "entraClientId=$PYRIT_ENTRA_CLIENT_ID"
     "allowedGroupObjectIds=$PYRIT_ALLOWED_GROUP_OBJECT_IDS"
     "adminGroupObjectId=$PYRIT_ADMIN_GROUP_OBJECT_ID"
+    "allowCustomInitializers=$PYRIT_ALLOW_CUSTOM_INITIALIZERS"
     "allowedCidr=${PYRIT_ALLOWED_CLIENT_CIDR:-}"
     "sqlServerFqdn=$PYRIT_SQL_SERVER_FQDN"
     "sqlDatabaseName=$PYRIT_SQL_DATABASE_NAME"

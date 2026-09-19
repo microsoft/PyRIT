@@ -179,6 +179,7 @@ class TestBicepTopology(unittest.TestCase):
         assert ".clientId" in environment["AZURE_CLIENT_ID"]
         assert environment["ENTRA_CLIENT_ID"] == "[parameters('entraClientId')]"
         assert environment["ENTRA_TENANT_ID"] == "[parameters('entraTenantId')]"
+        assert "parameters('allowCustomInitializers')" in environment["PYRIT_ALLOW_CUSTOM_INITIALIZERS"]
         assert "parameters('enableOtel')" in environment["OTEL_EXPORTER_OTLP_ENDPOINT"]
         assert "http://localhost:4318" in environment["OTEL_EXPORTER_OTLP_ENDPOINT"]
         secrets = container_app["properties"]["configuration"]["secrets"]

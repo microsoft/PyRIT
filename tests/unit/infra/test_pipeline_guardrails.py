@@ -107,6 +107,7 @@ class TestPipelineGuardrails(unittest.TestCase):
             "PYRIT_ENTRA_CLIENT_ID",
             "PYRIT_ALLOWED_GROUP_OBJECT_IDS",
             "PYRIT_ADMIN_GROUP_OBJECT_ID",
+            "PYRIT_ALLOW_CUSTOM_INITIALIZERS",
             "PYRIT_CONFIG_FILE_URI",
             "PYRIT_SQL_SERVER_FQDN",
             "PYRIT_SQL_DATABASE_NAME",
@@ -114,6 +115,7 @@ class TestPipelineGuardrails(unittest.TestCase):
             "PYRIT_ENV_SECRET_NAME",
         }
         assert app["PYRIT_CONTAINER_IMAGE"] == "$(immutableImage)"
+        assert app["PYRIT_ALLOW_CUSTOM_INITIALIZERS"] == "true"
         image = stage["variables"][2]["${{ if eq(parameters.phase, 'app') }}"][0]
         assert image == {
             "name": "immutableImage",
