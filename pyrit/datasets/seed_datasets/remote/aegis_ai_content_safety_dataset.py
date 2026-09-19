@@ -288,11 +288,17 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         harm_definition: str | None = None,
         harm_definition_version: str = "1.0",
         dataset_version: str = "1.0",
+        label_sources: tuple[str, ...] = ("human",),
     ) -> HumanLabeledDataset:
         """Build a ``HumanLabeledDataset`` from labeled assistant responses in Aegis 2.0.
 
         Unlike :meth:`fetch_dataset_async`, this retains ``response`` and ``response_label``
         so scorer evaluation can reuse remote human/LLM-jury labels instead of hand-authored CSVs.
+
+        Args:
+            label_sources: ``response_label_source`` values to include. Defaults to
+                ``("human",)`` so ``human_scores`` reflects human labels only; pass
+                ``("human", "llm_jury")`` to opt into jury-labelled rows.
         """
         logger.info(
             "Loading NVIDIA Aegis AI Content Safety human-labeled rows for %s",
@@ -310,13 +316,21 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         if harm_definition is None:
             harm_definition = default_harm_definition
 
+        # Validate harm definition path before iterating rows.
+        HarmDefinition.from_yaml(harm_definition)
+
         entries: list[HarmHumanLabeledEntry] = []
+        skipped_missing_fields = 0
+        skipped_harm_category = 0
+        skipped_label_source = 0
+        label_source_counts: dict[str, int] = {}
 
         for split_name in hf_dataset:
             for example in hf_dataset[split_name]:
                 response_value = example.get("response")
                 response_label = example.get("response_label")
                 if not response_value or not response_label:
+                    skipped_missing_fields += 1
                     continue
 
                 violated_categories = example.get("violated_categories", "")
@@ -326,20 +340,38 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                     else []
                 )
                 if harm_category.value not in prompt_harm_categories:
+                    skipped_harm_category += 1
                     continue
 
-                messages = [
-                    Message(
-                        message_pieces=[
-                            MessagePiece(
-                                role="assistant",
-                                original_value=str(response_value).strip(),
-                                original_value_data_type="text",
-                                conversation_id=str(uuid4()),
-                            )
-                        ],
+                response_label_source = example.get("response_label_source") or ""
+                label_source_counts[response_label_source] = (
+                    label_source_counts.get(response_label_source, 0) + 1
+                )
+                if response_label_source not in label_sources:
+                    skipped_label_source += 1
+                    continue
+
+                prompt_value = example.get("prompt", "")
+                conversation_id = str(uuid4())
+                message_pieces: list[MessagePiece] = []
+                if prompt_value and str(prompt_value).strip():
+                    message_pieces.append(
+                        MessagePiece(
+                            role="user",
+                            original_value=str(prompt_value).strip(),
+                            original_value_data_type="text",
+                            conversation_id=conversation_id,
+                        )
                     )
-                ]
+                message_pieces.append(
+                    MessagePiece(
+                        role="assistant",
+                        original_value=str(response_value).strip(),
+                        original_value_data_type="text",
+                        conversation_id=conversation_id,
+                    )
+                )
+                messages = [Message(message_pieces=message_pieces)]
                 entries.append(
                     HarmHumanLabeledEntry(
                         conversation=messages,
@@ -348,13 +380,23 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                     )
                 )
 
+        logger.info(
+            "Aegis human-labeled %s: kept %d rows (label_sources=%s); "
+            "skipped missing fields=%d, wrong harm category=%d, label source=%d; "
+            "response_label_source counts=%s",
+            harm_category.value,
+            len(entries),
+            label_sources,
+            skipped_missing_fields,
+            skipped_harm_category,
+            skipped_label_source,
+            label_source_counts,
+        )
+
         if not entries:
             raise ValueError(
                 "HumanLabeledDataset cannot be empty. Check harm_category filter and response labels."
             )
-
-        # Validate harm definition path early (same relative name as scorer_evals CSVs).
-        HarmDefinition.from_yaml(harm_definition)
 
         return HumanLabeledDataset(
             name=f"aegis_{pyrit_harm_category}",
