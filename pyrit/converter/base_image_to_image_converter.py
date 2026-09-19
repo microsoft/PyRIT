@@ -18,6 +18,15 @@ from pyrit.models import PromptDataType
 logger = logging.getLogger(__name__)
 
 
+async def _download_image_from_url_async(url: str) -> bytes:
+    try:
+        async with aiohttp.ClientSession() as session, session.get(url) as response:
+            response.raise_for_status()
+            return await response.read()
+    except aiohttp.ClientError as e:
+        raise RuntimeError(f"Failed to download content from URL {url}: {str(e)}") from e
+
+
 class BaseImageToImageConverter(Converter, ABC):
     """
     Abstract base class for image converters that apply a transformation to an image.
@@ -139,12 +148,7 @@ class BaseImageToImageConverter(Converter, ABC):
         Raises:
             RuntimeError: If there is an error during the download process.
         """
-        try:
-            async with aiohttp.ClientSession() as session, session.get(url) as response:
-                response.raise_for_status()
-                return await response.read()
-        except aiohttp.ClientError as e:
-            raise RuntimeError(f"Failed to download content from URL {url}: {str(e)}") from e
+        return await _download_image_from_url_async(url)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """
