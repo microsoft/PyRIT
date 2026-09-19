@@ -137,7 +137,5 @@ class BinAsciiConverter(WordLevelConverter):
         if all_words_selected:
             if self._encoding_func in ("hex", "quoted-printable"):
                 return self._encoded_separator.join(words)
-            if self._encoding_func == "UUencode":
-                # UUencode: join with encoded space
-                return "".join(words)  # UUencode handles spaces within encoding
+            return "".join(words)  # UUencode handles spaces within encoding
         return super().join_words(words=words)

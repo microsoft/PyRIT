@@ -46,6 +46,19 @@ def _write_wav_sync(
         wav_file.writeframes(data)
 
 
+def _validate_category(category: object) -> None:
+    """
+    Reject missing storage categories before selecting a serializer.
+
+    Raises:
+        ValueError: If the category is missing.
+    """
+    if not category:
+        raise ValueError(
+            f"The 'category' argument is mandatory and must be one of the following: {get_args(AllowedCategories)}."
+        )
+
+
 def data_serializer_factory(
     *,
     data_type: PromptDataType,
@@ -69,10 +82,7 @@ def data_serializer_factory(
         ValueError: If the category is not provided or invalid.
 
     """
-    if not category:
-        raise ValueError(
-            f"The 'category' argument is mandatory and must be one of the following: {get_args(AllowedCategories)}."
-        )
+    _validate_category(category)
     if value is not None:
         if data_type in ["text", "reasoning", "function_call", "tool_call", "function_call_output"]:
             return TextDataTypeSerializer(prompt_text=value, data_type=data_type)

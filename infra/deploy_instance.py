@@ -49,7 +49,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 INFRA_DIR = Path(__file__).resolve().parent
-BICEP_TEMPLATE = INFRA_DIR / "main.bicep"
+INFRASTRUCTURE_BICEP_TEMPLATE = INFRA_DIR / "infrastructure.bicep"
+APPLICATION_BICEP_TEMPLATE = INFRA_DIR / "application.bicep"
 _MICROSOFT_GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
 _GRAPH_USER_READ_SCOPE_ID = "e1fe6dd8-ba31-4d61-89e7-88639da4683d"
 _INSTANCE_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,11}[a-z0-9])?$")
@@ -877,75 +878,14 @@ def create_key_vault(
     return kv_id
 
 
-def deploy_bicep(
+def _deploy_bicep_template(
     *,
     resource_group: str,
-    app_name: str,
-    container_image: str,
-    tenant_id: str,
-    client_id: str,
-    group_ids: str,
-    admin_group_id: str,
-    allowed_cidr: str,
-    sql_server_fqdn: str,
-    sql_database_name: str,
-    kv_resource_id: str,
-    acr_name: str,
-    env_file_contents: str,
-    pyrit_config_file_uri: str,
-    tags: dict[str, str],
+    deployment_name: str,
+    template_file: Path,
+    parameters: dict[str, object],
 ) -> dict[str, object]:
-    """
-    Deploy the Bicep template.
-
-    The .env contents are passed via a temp parameters file (not inline
-    --parameters key=value) because the value is multi-line, contains '='
-    characters, and is marked @secure() in Bicep — passing it inline is
-    fragile and can leak the value into shell history. The temp file is
-    deleted after deployment.
-
-    Args:
-        resource_group (str): The resource group name.
-        app_name (str): The Container App name.
-        container_image (str): The container image reference.
-        tenant_id (str): The Entra tenant ID.
-        client_id (str): The Entra app registration client ID.
-        group_ids (str): Comma-separated group object IDs.
-        admin_group_id (str): Admin group object ID.
-        allowed_cidr (str): Optional public ingress IPv4 CIDR.
-        sql_server_fqdn (str): The SQL server FQDN.
-        sql_database_name (str): The SQL database name.
-        kv_resource_id (str): The Key Vault resource ID (kept for the
-            keyVaultName output; not referenced at container runtime).
-        acr_name (str): The ACR name.
-        env_file_contents (str): The prepared .env content to inject as
-            the Container App's `env-file` secret.
-        pyrit_config_file_uri (str): Optional Azure Blob URI for the backend
-            configuration file.
-        tags (dict[str, str]): Ownership and governance tags for Bicep-managed resources.
-
-    Returns:
-        dict: The deployment outputs.
-    """
-    logger.info("Deploying Bicep template to resource group: %s", resource_group)
-
-    parameters: dict[str, object] = {
-        "appName": {"value": app_name},
-        "containerImage": {"value": container_image},
-        "entraTenantId": {"value": tenant_id},
-        "entraClientId": {"value": client_id},
-        "allowedGroupObjectIds": {"value": group_ids},
-        "adminGroupObjectId": {"value": admin_group_id},
-        "allowedCidr": {"value": allowed_cidr},
-        "sqlServerFqdn": {"value": sql_server_fqdn},
-        "sqlDatabaseName": {"value": sql_database_name},
-        "keyVaultResourceId": {"value": kv_resource_id},
-        "acrName": {"value": acr_name},
-        "envFileContents": {"value": env_file_contents},
-        "pyritConfigFileUri": {"value": pyrit_config_file_uri},
-        "tags": {"value": tags},
-    }
-
+    """Deploy one Bicep template and return its outputs."""
     parameters_doc: dict[str, object] = {
         "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
         "contentVersion": "1.0.0.0",
@@ -964,21 +904,116 @@ def deploy_bicep(
                     "deployment",
                     "group",
                     "create",
+                    "--name",
+                    deployment_name,
                     "--resource-group",
                     resource_group,
                     "--template-file",
-                    str(BICEP_TEMPLATE),
+                    str(template_file),
+                    "--mode",
+                    "Incremental",
                     "--parameters",
                     f"@{params_path}",
                     "--query",
                     "properties.outputs",
                 ]
             ),
-            context="deployment outputs",
+            context=f"{deployment_name} outputs",
         )
     finally:
         if params_path:
             Path(params_path).unlink(missing_ok=True)
+
+
+def deploy_bicep(
+    *,
+    resource_group: str,
+    app_name: str,
+    container_image: str,
+    tenant_id: str,
+    client_id: str,
+    group_ids: str,
+    admin_group_id: str,
+    allowed_cidr: str,
+    sql_server_fqdn: str,
+    sql_database_name: str,
+    kv_resource_id: str,
+    acr_name: str,
+    managed_identity_resource_id: str,
+    env_file_contents: str,
+    pyrit_config_file_uri: str,
+    tags: dict[str, str],
+) -> dict[str, object]:
+    """
+    Deploy the infrastructure and application Bicep templates in sequence.
+
+    The .env contents are passed via temporary parameter files (not inline
+    --parameters key=value) because the value is multi-line, contains '='
+    characters, and is marked @secure() in Bicep — passing it inline is
+    fragile and can leak the value into shell history. The temp file is
+    deleted after each deployment.
+
+    Args:
+        resource_group (str): The resource group name.
+        app_name (str): The Container App name.
+        container_image (str): The container image reference.
+        tenant_id (str): The Entra tenant ID.
+        client_id (str): The Entra app registration client ID.
+        group_ids (str): Comma-separated group object IDs.
+        admin_group_id (str): Admin group object ID.
+        allowed_cidr (str): Optional public ingress IPv4 CIDR.
+        sql_server_fqdn (str): The SQL server FQDN.
+        sql_database_name (str): The SQL database name.
+        kv_resource_id (str): The Key Vault resource ID used by application configuration.
+        acr_name (str): The ACR name.
+        managed_identity_resource_id (str): The existing managed identity resource ID.
+        env_file_contents (str): The prepared .env content to inject as
+            the Container App's `env-file` secret.
+        pyrit_config_file_uri (str): Optional Azure Blob URI for the backend
+            configuration file.
+        tags (dict[str, str]): Ownership and governance tags for Bicep-managed resources.
+
+    Returns:
+        dict: The deployment outputs.
+    """
+    logger.info("Deploying infrastructure Bicep template to resource group: %s", resource_group)
+    infrastructure_outputs = _deploy_bicep_template(
+        resource_group=resource_group,
+        deployment_name=f"{app_name}-infrastructure",
+        template_file=INFRASTRUCTURE_BICEP_TEMPLATE,
+        parameters={
+            "appName": {"value": app_name},
+            "acrName": {"value": acr_name},
+            "existingManagedIdentityResourceId": {"value": managed_identity_resource_id},
+            "tags": {"value": tags},
+        },
+    )
+
+    logger.info("Deploying application Bicep template to resource group: %s", resource_group)
+    application_parameters: dict[str, object] = {
+        "appName": {"value": app_name},
+        "containerImage": {"value": container_image},
+        "entraTenantId": {"value": tenant_id},
+        "entraClientId": {"value": client_id},
+        "allowedGroupObjectIds": {"value": group_ids},
+        "adminGroupObjectId": {"value": admin_group_id},
+        "allowedCidr": {"value": allowed_cidr},
+        "sqlServerFqdn": {"value": sql_server_fqdn},
+        "sqlDatabaseName": {"value": sql_database_name},
+        "keyVaultResourceId": {"value": kv_resource_id},
+        "acrName": {"value": acr_name},
+        "existingManagedIdentityResourceId": {"value": managed_identity_resource_id},
+        "envFileContents": {"value": env_file_contents},
+        "pyritConfigFileUri": {"value": pyrit_config_file_uri},
+        "tags": {"value": tags},
+    }
+    application_outputs = _deploy_bicep_template(
+        resource_group=resource_group,
+        deployment_name=f"{app_name}-application",
+        template_file=APPLICATION_BICEP_TEMPLATE,
+        parameters=application_parameters,
+    )
+    return infrastructure_outputs | application_outputs
 
 
 def post_deploy(
@@ -1396,9 +1431,10 @@ def main(args: list[str] | None = None) -> int:
         logger.error("Env file not found: %s", env_file)
         return 1
 
-    if not BICEP_TEMPLATE.exists():
-        logger.error("Bicep template not found: %s", BICEP_TEMPLATE)
-        return 1
+    for template_file in (INFRASTRUCTURE_BICEP_TEMPLATE, APPLICATION_BICEP_TEMPLATE):
+        if not template_file.exists():
+            logger.error("Bicep template not found: %s", template_file)
+            return 1
 
     # Derive resource names from instance name
     rg_name = f"copyrit-{instance}"
@@ -1556,7 +1592,7 @@ def main(args: list[str] | None = None) -> int:
             )
             logger.info("Granted Cognitive Services OpenAI User on %d/%d AOAI resources", aoai_granted, len(aoai_names))
 
-        # Step 9: Deploy Bicep (passes .env content inline as @secure() param)
+        # Step 9: Deploy infrastructure, then the application.
         outputs = deploy_bicep(
             resource_group=rg_name,
             app_name=app_name,
@@ -1570,6 +1606,9 @@ def main(args: list[str] | None = None) -> int:
             sql_database_name=sql["database_name"],
             kv_resource_id=kv_id,
             acr_name=parsed.acr_name,
+            managed_identity_resource_id=(
+                f"{resource_group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{mi_name}"
+            ),
             env_file_contents=env_content,
             pyrit_config_file_uri=parsed.pyrit_config_file_uri,
             tags=deployment_tags,

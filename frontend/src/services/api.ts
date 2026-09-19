@@ -7,8 +7,10 @@ import type {
   TargetListResponse,
   TargetCatalogResponse,
   ConverterCatalogResponse,
+  ConverterTypeListResponse,
   ConverterInstance,
   ConverterListResponse,
+  CreateConverterRequest,
   CreateTargetRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
@@ -34,6 +36,7 @@ import type {
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
+  ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
   EnvironmentFileContent,
@@ -231,6 +234,11 @@ export const convertersApi = {
     return response.data
   },
 
+  listConverterTypes: async (): Promise<ConverterTypeListResponse> => {
+    const response = await apiClient.get('/converters/types')
+    return response.data
+  },
+
   listConverters: async (): Promise<ConverterListResponse> => {
     const response = await apiClient.get('/converters')
     return response.data
@@ -241,9 +249,13 @@ export const convertersApi = {
     return response.data
   },
 
-  createConverter: async (request: { type: string; params?: Record<string, unknown> }): Promise<{ converter_id: string; converter_type: string }> => {
+  createConverter: async (request: CreateConverterRequest): Promise<ConverterInstance> => {
     const response = await apiClient.post('/converters', request)
     return response.data
+  },
+
+  deleteConverter: async (converterId: string): Promise<void> => {
+    await apiClient.delete(`/converters/${encodeURIComponent(converterId)}`)
   },
 
   previewConversion: async (request: { original_value: string; converter_ids: string[]; original_value_data_type?: string }): Promise<{ converted_value: string; converted_value_data_type?: string }> => {
@@ -482,6 +494,11 @@ export const scenariosApi = {
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/progress`,
       { params, signal },
     )
+    return response.data
+  },
+
+  getQueue: async (signal?: AbortSignal): Promise<ScenarioQueueSnapshot> => {
+    const response = await apiClient.get('/scenarios/runs/queue', { signal })
     return response.data
   },
 

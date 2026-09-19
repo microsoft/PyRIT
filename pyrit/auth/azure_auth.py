@@ -206,9 +206,9 @@ def ensure_async_token_provider(
             str: The token string from the synchronous provider.
         """
         result = api_key()
-        if inspect.isawaitable(result):
-            return await result  # type: ignore[ty:invalid-return-type]
-        return result
+        if isinstance(result, str):
+            return result
+        return await result
 
     return async_token_provider
 

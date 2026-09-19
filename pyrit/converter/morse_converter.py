@@ -164,11 +164,8 @@ class MorseConverter(Converter):
             "Ź": "--..-.",
             "Ż": "--..-",
         }
-        extended_char_support = True
+        morse_mapping = {**morse_mapping, **extended_mapping}
         supported_charset = "".join(morse_mapping.keys())
-        if extended_char_support:
-            supported_charset += "".join(extended_mapping.keys())
-            morse_mapping = {**morse_mapping, **extended_mapping}
         error_char = "........"
         return " ".join(
             [morse_mapping[char] if char in supported_charset else error_char for char in text_clean.upper()]

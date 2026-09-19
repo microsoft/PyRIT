@@ -36,12 +36,11 @@ from pyrit.models import (
     ConversationType,
     Message,
     Score,
-    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score import MessageScorable
+from pyrit.score import MessageScorer
 from pyrit.score.score_utils import score_is_true
 
 if TYPE_CHECKING:
@@ -143,6 +142,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         warn_if_set(config=attack_scoring_config, log=self._logger, unused_fields=["refusal_scorer"])
 
         self._objective_scorer = attack_scoring_config.objective_scorer
+        self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
         self._use_score_as_feedback = attack_scoring_config.use_score_as_feedback
 
         # Initialize adversarial configuration
@@ -199,6 +199,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         """
         return AttackScoringConfig(
             objective_scorer=self._objective_scorer,
+            auxiliary_scorers=self._auxiliary_scorers,
             use_score_as_feedback=self._use_score_as_feedback,
         )
 
@@ -533,17 +534,18 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             return None
 
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
             # score_async handles blocked, filtered, other errors
-            scoring_results = await self._objective_scorer.score_async(
-                scorable=MessageScorable.from_message(context.last_response),
-                expectation=ScoringExpectation(objective=context.objective),
+            scoring_results = await MessageScorer.score_response_async(
+                response=context.last_response,
+                objective_scorer=self._objective_scorer,
+                auxiliary_scorers=self._auxiliary_scorers,
+                expectation=context.expectation,
             )
 
-        objective_scores = scoring_results
+        objective_scores = scoring_results["objective_scores"]
         return objective_scores[0] if objective_scores else None

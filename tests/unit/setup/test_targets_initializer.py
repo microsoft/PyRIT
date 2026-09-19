@@ -9,7 +9,15 @@ import pytest
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
-from pyrit.setup.initializers.targets import TARGET_CONFIGS, generate_rr_name, get_behavioral_key
+from pyrit.setup.initializers.targets import TARGET_CONFIGS, _auto_group_enabled, generate_rr_name, get_behavioral_key
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(False, False), (True, True), ("false", False), ("YES", True), (["no"], False), (["true"], True)],
+)
+def test_auto_group_enabled_accepts_direct_and_yaml_values(value, expected):
+    assert _auto_group_enabled(value) is expected
 
 
 class TestTargetInitializerBasic:

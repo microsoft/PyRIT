@@ -56,6 +56,11 @@ class ConversationScorer(MessageScorer, ABC):
         """
         return self._get_wrapped_scorer().required_conditions()
 
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """Validate wrapper and child criteria without checking sibling condition coverage."""
+        super()._validate_expectation(expectation=expectation)
+        self._get_wrapped_scorer()._validate_expectation(expectation=expectation)
+
     def _build_scoring_message(self, *, message: Message) -> Message | None:
         """
         Keep the trigger that identifies the conversation to acquire.
