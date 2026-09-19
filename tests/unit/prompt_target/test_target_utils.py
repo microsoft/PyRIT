@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.exceptions import PyritException
+from pyrit.exceptions import PyritException, RateLimitException, pyrit_target_retry
 from pyrit.models import MessagePiece
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
@@ -110,6 +111,112 @@ async def test_limit_requests_per_minute_zero_rpm():
         result = await decorated(mock_self, message="test")
         mock_sleep.assert_not_called()
     assert result == "response"
+
+
+async def test_limit_requests_per_minute_serializes_concurrent_starts() -> None:
+    target = MagicMock()
+    target._max_requests_per_minute = 60
+    sleep_started: asyncio.Queue[int] = asyncio.Queue()
+    release_sleep: asyncio.Queue[None] = asyncio.Queue()
+    provider_calls: asyncio.Queue[int] = asyncio.Queue()
+    delays: list[float] = []
+
+    async def controlled_sleep_async(delay: float) -> None:
+        index = len(delays)
+        delays.append(delay)
+        await sleep_started.put(index)
+        await release_sleep.get()
+
+    async def send_async(target: MagicMock, *, request_index: int) -> int:
+        await provider_calls.put(request_index)
+        return request_index
+
+    decorated = limit_requests_per_minute(send_async)
+    with patch("pyrit.prompt_target.common.utils.asyncio.sleep", side_effect=controlled_sleep_async):
+        tasks = [asyncio.create_task(decorated(target, request_index=index)) for index in range(3)]
+
+        assert await sleep_started.get() == 0
+        assert delays == [1.0]
+
+        for index in range(3):
+            await release_sleep.put(None)
+            assert await provider_calls.get() == index
+            if index < 2:
+                assert await sleep_started.get() == index + 1
+                assert len(delays) == index + 2
+
+        assert await asyncio.gather(*tasks) == [0, 1, 2]
+
+
+async def test_limit_requests_per_minute_cancellation_releases_lock() -> None:
+    target = MagicMock()
+    target._max_requests_per_minute = 60
+    sleep_started = asyncio.Event()
+    release_sleep = asyncio.Event()
+    provider_calls: list[str] = []
+
+    async def controlled_sleep_async(delay: float) -> None:
+        sleep_started.set()
+        await release_sleep.wait()
+
+    async def send_async(target: MagicMock, *, value: str) -> str:
+        provider_calls.append(value)
+        return value
+
+    decorated = limit_requests_per_minute(send_async)
+    with patch("pyrit.prompt_target.common.utils.asyncio.sleep", side_effect=controlled_sleep_async):
+        cancelled_task = asyncio.create_task(decorated(target, value="cancelled"))
+        await sleep_started.wait()
+        cancelled_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled_task
+
+        sleep_started.clear()
+        next_task = asyncio.create_task(decorated(target, value="next"))
+        await sleep_started.wait()
+        release_sleep.set()
+
+        assert await next_task == "next"
+        assert provider_calls == ["next"]
+
+
+async def test_target_retry_paces_every_attempt() -> None:
+    target = MagicMock()
+    target._max_requests_per_minute = 1
+    attempts = 0
+
+    @pyrit_target_retry
+    @limit_requests_per_minute
+    async def send_async(target: MagicMock) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RateLimitException
+        return "response"
+
+    with patch("pyrit.prompt_target.common.utils.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        assert await send_async(target) == "response"
+
+    assert attempts == 2
+    assert [call.args[0] for call in mock_sleep.await_args_list].count(60.0) == 2
+
+
+def test_limit_requests_per_minute_rebuilds_lock_for_new_event_loop() -> None:
+    target = MagicMock()
+    target._max_requests_per_minute = 60
+    decorated = limit_requests_per_minute(AsyncMock(return_value="response"))
+
+    async def invoke_async() -> asyncio.Lock:
+        with patch("pyrit.prompt_target.common.utils.asyncio.sleep", new_callable=AsyncMock):
+            await decorated(target)
+        lock = vars(target)["_rate_limit_lock"]
+        assert isinstance(lock, asyncio.Lock)
+        return lock
+
+    first_lock = asyncio.run(invoke_async())
+    second_lock = asyncio.run(invoke_async())
+
+    assert first_lock is not second_lock
 
 
 def test_build_empty_truncated_response_returns_empty_message():
