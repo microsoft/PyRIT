@@ -17,7 +17,6 @@ import {
   mergeClasses,
   Select,
   Spinner,
-  SpinButton,
   Text,
   Tooltip,
   ToggleButton,
@@ -32,6 +31,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import ParameterField from '@/components/Parameters/ParameterField'
+import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import {
   buildParametersFromForm,
   getInitialFormValues,
@@ -1121,7 +1121,7 @@ function ScenarioLaunchForm({
                   />
                 </Field>
                 <Field label="Max concurrency">
-                  <SpinButton
+                  <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxConcurrency}
                     min={MIN_MAX_CONCURRENCY}
@@ -1132,7 +1132,7 @@ function ScenarioLaunchForm({
                   />
                 </Field>
                 <Field label="Max retries">
-                  <SpinButton
+                  <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxRetries}
                     min={MIN_MAX_RETRIES}

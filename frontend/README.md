@@ -102,6 +102,33 @@ and detached elements remain excluded. Await role queries after dialog
 transitions, including when returning to background controls. This is not a
 layout engine; use Playwright for assertions about element dimensions or positioning.
 
+### Numeric controls
+
+Scenario concurrency and retry fields use `SingleStepSpinButton`. Fluent's
+default pointer behavior starts repeating after 150 ms, so a single 200 ms
+click can change the value twice. The wrapper pairs Fluent's start/stop
+handlers on the completed click, disabling pointer hold-to-repeat without
+changing keyboard steps, typed-value commits, precision, or bounds. Use this
+wrapper for new Fluent steppers; pass the intended `step` for fractional values.
+
+The other numeric controls use Fluent `Input` with native `type="number"`:
+scenario dataset size, dynamic integer/float parameters, round-robin target
+weights, and Azure ML max tokens, temperature, top P, and repetition penalty.
+They do not share Fluent SpinButton's repeat timer. Their existing step settings
+and validation remain unchanged.
+
+`e2e/numeric-controls.spec.ts` covers real mouse presses of different durations,
+native spinner clicks, keyboard input, typed values, boundaries, defaults, and
+disabled controls. A browser-only fixture exercises a fractional step of `0.1`.
+All API and WebSocket traffic is intercepted; no backend or model is used.
+Run it on a dedicated port without reusing another worktree's servers:
+
+```powershell
+$env:E2E_FRONTEND_PORT = '14317'
+$env:PYRIT_BACKEND_URL = 'http://127.0.0.1:14318'
+npx playwright test numeric-controls --project mock --workers 1
+```
+
 ### E2E Test Modes
 
 E2E flow tests run in two modes controlled by Playwright projects and an environment variable:
