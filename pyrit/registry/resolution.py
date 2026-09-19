@@ -41,14 +41,15 @@ import inspect
 import logging
 import re
 import types
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, cast, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin, get_type_hints
 
 from pydantic import TypeAdapter, ValidationError
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
 from pyrit.common.brick_contract import init_parameters_are_forwarded
+from pyrit.models import StructuredParameterValue
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 
 # Re-exported so ``from pyrit.registry.resolution import display_choices`` keeps working;
@@ -70,7 +71,6 @@ _SKIPPED_PARAM_NAMES: frozenset[str] = frozenset({"self", "args", "kwargs"})
 #: because no single static type captures all of these; the name documents intent.
 TypeAnnotation: TypeAlias = Any
 logger = logging.getLogger(__name__)
-_VARIANT_PROVIDER_METHOD = "get_registry_input_variants"
 
 
 # ---------------------------------------------------------------------------
@@ -130,31 +130,28 @@ def _default_for(param: inspect.Parameter) -> Any:
     return param.default
 
 
-def _structured_variant_types(annotation: TypeAnnotation) -> dict[str, type] | None:
+def _structured_variant_types(annotation: TypeAnnotation) -> dict[str, type[StructuredParameterValue]] | None:
     """
     Return the named implementations declared by a structured-input annotation.
 
     Returns:
-        dict[str, type] | None: The declared variants, or None when the annotation
+        dict[str, type[StructuredParameterValue]] | None: The declared variants, or None when the annotation
             is not a structured input.
 
     Raises:
         TypeError: If the provider returns an invalid mapping or unrelated classes.
     """
     base_type = _unwrap_optional(annotation)
-    provider = getattr(base_type, _VARIANT_PROVIDER_METHOD, None)
-    if provider is None:
+    if not isinstance(base_type, type) or not issubclass(base_type, StructuredParameterValue):
         return None
-    variants = provider()
+    variants = base_type.get_registry_input_variants()
     if not isinstance(variants, dict) or not all(
         isinstance(name, str) and isinstance(implementation, type) for name, implementation in variants.items()
     ):
-        raise TypeError(f"{_VARIANT_PROVIDER_METHOD}() must return dict[str, type].")
-    if isinstance(base_type, type) and not all(
-        issubclass(implementation, base_type) for implementation in variants.values()
-    ):
-        raise TypeError(f"{_VARIANT_PROVIDER_METHOD}() implementations must inherit from {base_type.__name__}.")
-    return cast("dict[str, type]", variants)
+        raise TypeError("get_registry_input_variants() must return dict[str, type].")
+    if not all(issubclass(implementation, base_type) for implementation in variants.values()):
+        raise TypeError(f"get_registry_input_variants() implementations must inherit from {base_type.__name__}.")
+    return variants
 
 
 def _json_input_type(annotation: TypeAnnotation) -> TypeAnnotation:
@@ -176,9 +173,8 @@ def _json_input_type(annotation: TypeAnnotation) -> TypeAnnotation:
             return annotation
     elif origin is re.Pattern:
         result = str
-    elif isinstance(origin, type) and issubclass(origin, Collection) and origin is not str:
-        element_types = get_args(unwrapped)
-        element_type = element_types[0] if element_types else str
+    elif origin in (list, Collection, Sequence) and len(get_args(unwrapped)) == 1:
+        element_type = get_args(unwrapped)[0]
         result = list[element_type]
     else:
         return annotation
@@ -197,13 +193,20 @@ def _structured_variant_parameters(annotation: TypeAnnotation) -> dict[str, list
     variants = _structured_variant_types(annotation)
     if variants is None:
         return None
-    return {
-        name: [
-            parameter.model_copy(update={"param_type": _json_input_type(parameter.param_type)})
-            for parameter in derive_parameters(cls=implementation)
-        ]
-        for name, implementation in variants.items()
-    }
+    return {name: _json_input_parameters(implementation) for name, implementation in variants.items()}
+
+
+def _json_input_parameters(cls: type) -> list[Parameter]:
+    """
+    Derive constructor parameters with JSON-compatible input annotations.
+
+    Returns:
+        list[Parameter]: The constructor's input parameters.
+    """
+    return [
+        parameter.model_copy(update={"param_type": _json_input_type(parameter.param_type)})
+        for parameter in derive_parameters(cls=cls)
+    ]
 
 
 def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
@@ -624,8 +627,8 @@ def _resolve_structured_input(*, parameter: Parameter, value: Any) -> Any:
         if not isinstance(supplied, dict):
             raise ValueError("parameters must be an object")
 
-        assert parameter.variants is not None
-        declared = {nested.name: nested for nested in parameter.variants[name]}
+        implementation = variants[name]
+        declared = {nested.name: nested for nested in _json_input_parameters(implementation)}
         unknown = supplied.keys() - declared.keys()
         if unknown:
             raise ValueError(f"unknown parameters for '{name}': {sorted(unknown)}")
@@ -633,7 +636,7 @@ def _resolve_structured_input(*, parameter: Parameter, value: Any) -> Any:
         if missing:
             raise ValueError(f"missing parameters for '{name}': {missing}")
         args = {key: _coerce_structured_input(parameter=declared[key], value=raw) for key, raw in supplied.items()}
-        return variants[name](**args)
+        return implementation(**args)
     except (ValueError, re.error) as exc:
         raise ValueError(f"Parameter '{parameter.name}': {exc}") from exc
 

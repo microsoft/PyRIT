@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import types
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -57,6 +58,21 @@ class RegistryReference:
     component_type: ComponentType
     name: str | None = None
     annotation: Any | None = None
+
+
+class StructuredParameterValue(ABC):
+    """A parameter value with explicitly allowed structured variants."""
+
+    @classmethod
+    @abstractmethod
+    def get_registry_input_variants(cls) -> dict[str, type[StructuredParameterValue]]:
+        """
+        Declare the implementations available for registry construction.
+
+        Returns:
+            dict[str, type[StructuredParameterValue]]: Input names mapped to subclasses of the declaring type.
+        """
+        ...
 
 
 class Parameter(BaseModel):
@@ -449,12 +465,7 @@ def _coerce_enum(*, param_name: str, enum_type: type[Enum], raw_value: Any) -> A
         ValueError: If ``raw_value`` does not match any enum member by identity, value, or name.
     """
     for member in enum_type:
-        if (
-            raw_value is member
-            or str(raw_value) == str(member.value)
-            or str(raw_value) == member.name
-            or (isinstance(raw_value, (int, float)) and not isinstance(raw_value, bool) and raw_value == member.value)
-        ):
+        if raw_value is member or str(raw_value) == str(member.value) or str(raw_value) == member.name:
             return member
     raise ValueError(
         f"Parameter '{param_name}' expected one of {[member.name for member in enum_type]}, got {raw_value!r}."

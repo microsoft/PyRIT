@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Collection, Mapping, Sequence
 from enum import Enum
 from typing import Any
 
@@ -14,8 +16,14 @@ from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.converter import BinaryConverter, CodeAttackConverter, SATAMaskingConverter
 from pyrit.converter.text_selection_strategy import WordProportionSelectionStrategy, WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
+from pyrit.models import Parameter, StructuredParameterValue
 from pyrit.registry.components import ConverterRegistry
-from pyrit.registry.resolution import derive_parameters, resolve_constructor_args
+from pyrit.registry.resolution import (
+    _json_input_type,
+    _resolve_structured_input,
+    derive_parameters,
+    resolve_constructor_args,
+)
 
 
 class _Parent:
@@ -37,9 +45,9 @@ class _Forwarded(_Parent):
         super().__init__(**kwargs)
 
 
-class _GenericStructuredInput:
+class _GenericStructuredInput(StructuredParameterValue):
     @classmethod
-    def get_registry_input_variants(cls) -> dict[str, type[_GenericStructuredInput]]:
+    def get_registry_input_variants(cls) -> dict[str, type[StructuredParameterValue]]:
         return {"counted": _CountVariant}
 
 
@@ -50,6 +58,22 @@ class _CountVariant(_GenericStructuredInput):
 
 class _GenericHolder:
     def __init__(self, *, input_value: _GenericStructuredInput) -> None:
+        self.input_value = input_value
+
+
+class _OptionalGenericHolder:
+    def __init__(self, *, input_value: _GenericStructuredInput | None = None) -> None:
+        self.input_value = input_value
+
+
+class _UnrelatedInput:
+    @classmethod
+    def get_registry_input_variants(cls) -> dict[str, type]:
+        raise AssertionError("Unrelated methods must not be called during parameter discovery")
+
+
+class _UnrelatedHolder:
+    def __init__(self, *, input_value: _UnrelatedInput) -> None:
         self.input_value = input_value
 
 
@@ -72,13 +96,13 @@ def test_unresolved_annotation_does_not_hide_resolved_parameters() -> None:
     assert parameters["count"].param_type is int
 
 
-@pytest.mark.parametrize("raw", ["16", "BITS_16", 16, 16.0, BinaryConverter.BitsPerChar.BITS_16])
+@pytest.mark.parametrize("raw", ["16", "BITS_16", 16, BinaryConverter.BitsPerChar.BITS_16])
 def test_binary_enum_inputs(raw: Any) -> None:
     args = resolve_constructor_args(cls=BinaryConverter, raw_args={"bits_per_char": raw})
     assert BinaryConverter(**args).bits_per_char is BinaryConverter.BitsPerChar.BITS_16
 
 
-@pytest.mark.parametrize("raw", ["invalid", 12, None, True, {}, []])
+@pytest.mark.parametrize("raw", ["invalid", 12, 16.0, None, True, {}, []])
 def test_binary_invalid_enum_inputs(raw: Any) -> None:
     with pytest.raises(ValueError, match="bits_per_char"):
         resolve_constructor_args(cls=BinaryConverter, raw_args={"bits_per_char": raw})
@@ -92,6 +116,7 @@ def test_required_nullable_enum_uses_parameter_coercion(raw: Any) -> None:
 
     parameter = derive_parameters(cls=Holder)[0]
     assert parameter.required
+    assert parameter.model_dump(mode="json")["required"] is True
     assert parameter.param_type == _Parent.Mode | None
     parameter.validate()
     resolved = resolve_constructor_args(cls=Holder, raw_args={"mode": raw})
@@ -143,19 +168,65 @@ def test_binary_catalog_default_and_strategy_metadata() -> None:
     assert [param["type_name"] for param in strategies["content"]][-2:] == ["list[str]", "list[str]"]
 
 
-def test_structured_variants_are_not_converter_specific() -> None:
-    parameter = derive_parameters(cls=_GenericHolder)[0]
+@pytest.mark.parametrize("holder", [_GenericHolder, _OptionalGenericHolder])
+def test_structured_variants_are_not_converter_specific(holder: type) -> None:
+    parameter = derive_parameters(cls=holder)[0]
+    assert parameter.model_dump(mode="json")["required"] is (holder is _GenericHolder)
     assert parameter.variants is not None
     assert parameter.variants["counted"][0].type_name == "int"
     parameter.validate()
 
     resolved = resolve_constructor_args(
-        cls=_GenericHolder,
+        cls=holder,
         raw_args={"input_value": {"type": "counted", "parameters": {"count": 3}}},
     )
 
     assert isinstance(resolved["input_value"], _CountVariant)
     assert resolved["input_value"].count == 3
+
+
+def test_structured_input_requires_an_explicit_contract() -> None:
+    assert inspect.isabstract(StructuredParameterValue)
+    assert derive_parameters(cls=_UnrelatedHolder)[0].variants is None
+
+
+@pytest.mark.parametrize(
+    ("annotation", "expected"),
+    [
+        (Collection[str] | None, list[str] | None),
+        (Sequence[int], list[int]),
+        (list[int], list[int]),
+        (dict[str, int], dict[str, int]),
+        (Mapping[str, int] | None, Mapping[str, int] | None),
+        (tuple[int, str], tuple[int, str]),
+        (tuple[int, ...], tuple[int, ...]),
+        (set[int], set[int]),
+    ],
+)
+def test_json_input_type_preserves_non_list_collection_contracts(annotation: Any, expected: Any) -> None:
+    assert _json_input_type(annotation) == expected
+
+
+@pytest.mark.parametrize("variants", [None, {"stale": []}])
+def test_structured_resolution_uses_live_constructor_not_display_metadata(
+    variants: dict[str, list[Parameter]] | None,
+) -> None:
+    parameter = Parameter(name="input_value", description="", param_type=_GenericStructuredInput, variants=variants)
+    result = _resolve_structured_input(parameter=parameter, value={"type": "counted", "parameters": {"count": 3}})
+    assert isinstance(result, _CountVariant)
+    assert result.count == 3
+    with pytest.raises(ValueError, match="input_value.*missing parameters.*count"):
+        _resolve_structured_input(parameter=parameter, value={"type": "counted"})
+
+
+def test_generic_structured_input_preserves_objects_and_optional_defaults() -> None:
+    instance = _CountVariant(count=3)
+    assert resolve_constructor_args(cls=_GenericHolder, raw_args={"input_value": instance})["input_value"] is instance
+    for raw in ({}, {"input_value": None}):
+        args = resolve_constructor_args(cls=_OptionalGenericHolder, raw_args=raw)
+        assert _OptionalGenericHolder(**args).input_value is None
+    with pytest.raises(ValueError, match="input_value"):
+        resolve_constructor_args(cls=_GenericHolder, raw_args={"input_value": None})
 
 
 @pytest.mark.parametrize(
@@ -237,7 +308,9 @@ def test_word_level_and_binary_identifiers_include_strategy_settings() -> None:
     first = BinaryConverter(word_selection_strategy=WordProportionSelectionStrategy(proportion=0.3, seed=42))
     second = BinaryConverter(word_selection_strategy=WordProportionSelectionStrategy(proportion=0.6, seed=42))
     assert first.get_identifier() != second.get_identifier()
-    assert WordLevelConverter._build_identifier(first).params["word_selection_strategy_params"] == {
+    base_params = WordLevelConverter._build_identifier(first).params
+    assert base_params["word_selection_strategy_params"] == {
         "proportion": 0.3,
         "seed": 42,
     }
+    assert first.get_identifier().params == {**base_params, "bits_per_char": 16}

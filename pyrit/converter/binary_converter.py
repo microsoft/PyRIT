@@ -58,14 +58,8 @@ class BinaryConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        return self._create_identifier(
-            params={
-                "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
-                "word_selection_strategy_params": self._word_selection_strategy.get_identifier_params(),
-                "word_split_separator": self._word_split_separator,
-                "bits_per_char": self.bits_per_char.value,
-            }
-        )
+        base_identifier = super()._build_identifier()
+        return self._create_identifier(params={**base_identifier.params, "bits_per_char": self.bits_per_char.value})
 
     # Deprecation shim: remove in 1.4.0 with both hooks; keep _validate_word.
     def validate_input(self, prompt: str) -> None:

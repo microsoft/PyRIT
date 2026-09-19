@@ -230,7 +230,7 @@ describe('CreateConverterDialog', () => {
     })
   })
 
-  it.each(['str | list[str]', 'list[str] | str'])(
+  it.each(['str | list[str]', 'list[str] | str', 'dict[str, list[int | float]] | str'])(
     'should create SearchReplaceConverter with a string replacement for %s',
     async (typeName) => {
       const user = userEvent.setup()
@@ -522,6 +522,8 @@ describe('CreateConverterDialog', () => {
     'UnknownStrategy',
     'UnknownStrategy | OtherStrategy',
     'dict[str, list[int | str | float]]',
+    'list[str] | UnknownStrategy',
+    'int | float',
   ])('should not expose unsupported %s inputs as editable strings', async (typeName) => {
     const user = userEvent.setup()
     mockConverterParameters([{

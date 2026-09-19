@@ -9,6 +9,7 @@ from re import Pattern
 from typing import Any
 
 from pyrit.common.random_context import get_random_generator
+from pyrit.models import StructuredParameterValue
 
 # Common English function words used by ContentWordSelectionStrategy. This is a
 # dependency-free stand-in for POS filtering (no NLTK / tagger download).
@@ -193,7 +194,7 @@ class TokenSelectionStrategy(TextSelectionStrategy):
         return (0, 0)
 
 
-class WordSelectionStrategy(TextSelectionStrategy):
+class WordSelectionStrategy(TextSelectionStrategy, StructuredParameterValue):
     """
     Base class for word-level selection strategies.
 
@@ -255,7 +256,7 @@ class WordSelectionStrategy(TextSelectionStrategy):
         return (start_char, end_char)
 
     @classmethod
-    def get_registry_input_variants(cls) -> dict[str, type["WordSelectionStrategy"]]:
+    def get_registry_input_variants(cls) -> dict[str, type[StructuredParameterValue]]:
         """Return the safe implementations available to registry input consumers."""
         return {
             "all": AllWordsSelectionStrategy,

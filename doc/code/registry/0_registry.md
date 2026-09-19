@@ -68,8 +68,8 @@ reserved route names such as `catalog` and `types`. Use `.instances.unregister(n
 to remove an instance.
 
 Constructor annotations define parameter metadata and coercion. Enum parameters
-accept member names or values. An annotated input type can expose a safe set of
-named structured variants through `get_registry_input_variants()`; the registry
+accept member names or values. Types that inherit `StructuredParameterValue` declare their
+allowed variants through `get_registry_input_variants()`; the registry
 derives each variant's constructor fields and accepts `{ "type": "<name>",
 "parameters": { ... } }`. Word-selection strategies use this shared mechanism.
 Both enums and structured inputs also accept existing Python objects. Use `Path` for a

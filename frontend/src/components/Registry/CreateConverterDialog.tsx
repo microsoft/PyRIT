@@ -35,6 +35,9 @@ import {
 import { useCreateConverterDialogStyles } from './Registry.styles'
 
 const HIDDEN_CONVERTER_TYPES = new Set(['SelectiveTextConverter'])
+const EDITABLE_PARAMETER_TYPES = new Set([
+  'str', 'int', 'float', 'bool', 'Path', 'list[str]', 'list[int]', 'list[float]', 'list[bool]',
+])
 
 function formatDataType(dataType: string): string {
   const value = dataType.replace('_path', '').replace(/_/g, ' ')
@@ -67,15 +70,25 @@ interface ParameterInputProps {
 }
 
 function isEditableParameter(parameter: Parameter): boolean {
-  let depth = 0
-  for (const part of parameter.type_name.split(/(\[|\]|\|)/)) {
-    if (part === '[') depth++
-    else if (part === ']') depth--
-    else if (depth === 0 && part.trim() === 'str') return true
-  }
+  if (parameter.reference_type || parameter.choices?.length) return true
 
-  return Boolean(parameter.reference_type || parameter.choices?.length)
-    || /^(str|int|float|bool|Path( \| str)?|list\[(str|int|float|bool)\])$/.test(parameter.type_name)
+  const members: string[] = []
+  let member = ''
+  let depth = 0
+  for (const character of parameter.type_name) {
+    if (character === '|' && depth === 0) {
+      members.push(member.trim())
+      member = ''
+      continue
+    }
+    if (character === '[') depth++
+    else if (character === ']') depth--
+    member += character
+  }
+  members.push(member.trim())
+
+  // Mixed unions can use the text input only when they explicitly accept strings.
+  return members.some((type) => EDITABLE_PARAMETER_TYPES.has(type) && (members.length === 1 || type === 'str'))
 }
 
 function parameterDefaultValue(parameter: Parameter): string {
