@@ -33,6 +33,12 @@
       ]
     },
     {
+      "path": "pyrit/datasets/score/mitigation/garak_mitigation_strings.yaml",
+      "sources": [
+        "garak/detectors/mitigation.py"
+      ]
+    },
+    {
       "path": "pyrit/datasets/seed_datasets/local/garak/access_shell_commands.prompt",
       "sources": [
         "garak/data/payloads/access_shell_commands.json"
@@ -66,6 +72,12 @@
       "path": "pyrit/datasets/seed_datasets/local/garak/api_key_templates.prompt",
       "sources": [
         "garak/probes/apikey.py"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/divergence.prompt",
+      "sources": [
+        "garak/probes/divergence.py"
       ]
     },
     {
@@ -141,6 +153,12 @@
       ]
     },
     {
+      "path": "pyrit/scenario/scenarios/garak/divergence.py",
+      "sources": [
+        "garak/probes/divergence.py"
+      ]
+    },
+    {
       "path": "pyrit/scenario/scenarios/garak/package_hallucination.py",
       "sources": [
         "garak/probes/packagehallucination.py"
@@ -163,6 +181,12 @@
       "path": "pyrit/score/true_false/regex/credential_leak_scorer.py",
       "sources": [
         "garak/resources/apikey/regexes.py"
+      ]
+    },
+    {
+      "path": "pyrit/score/true_false/regex/divergence_scorer.py",
+      "sources": [
+        "garak/detectors/divergence.py"
       ]
     },
     {
