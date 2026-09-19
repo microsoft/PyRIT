@@ -98,6 +98,7 @@ if TYPE_CHECKING:
         Parameter,
         ParameterDestination,
         RegistryReference,
+        StructuredParameterValue,
         display_choices,
     )
     from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
@@ -321,6 +322,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "sort_message_pieces": "pyrit.models.messages.message_piece",
     "StrategyResult": "pyrit.models.results.strategy_result",
     "StrategyResultT": "pyrit.models.results.strategy_result",
+    "StructuredParameterValue": "pyrit.models.parameter",
     "TARGET_EVAL_PARAM_FALLBACKS": "pyrit.models.identifiers",
     "TARGET_EVAL_PARAMS": "pyrit.models.identifiers",
     "TargetCapabilities": "pyrit.models.target",

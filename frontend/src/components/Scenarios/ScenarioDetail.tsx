@@ -175,6 +175,9 @@ function formatParameterPreview(value: ParameterFormValue | undefined): string {
   if (Array.isArray(value)) {
     return value.length > 0 ? value.join(', ') : 'Not set'
   }
+  if (typeof value === 'object') {
+    return value.type || 'Not set'
+  }
   return value?.trim() || 'Not set'
 }
 

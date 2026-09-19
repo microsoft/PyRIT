@@ -380,8 +380,10 @@ class TestClassMetadata:
     def test_openai_metadata_includes_forwarded_base_parameters(self, registry: TargetRegistry) -> None:
         params = {param.name: param for param in self._metadata_for(registry, "OpenAIChatTarget").parameters}
 
-        assert params["endpoint"].param_type is str
-        assert params["model_name"].param_type is str
+        assert params["endpoint"].param_type == str | None
+        assert params["model_name"].param_type == str | None
+        assert params["endpoint"].type_name == "str"
+        assert params["model_name"].type_name == "str"
         assert "api_key" in params
 
 

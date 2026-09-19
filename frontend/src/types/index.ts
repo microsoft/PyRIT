@@ -334,6 +334,8 @@ export interface Parameter {
   default?: string | string[] | null
   choices?: string[] | null
   is_list?: boolean
+  /** Structured input variants mapped to their constructor parameters. */
+  variants?: Record<string, Parameter[]> | null
   reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
   description?: string | null
 }

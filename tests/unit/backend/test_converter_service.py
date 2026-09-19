@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from pyrit import converter
@@ -19,12 +20,14 @@ from pyrit.backend.models.converters import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
+from pyrit.backend.routes import converters as converter_routes
 from pyrit.backend.services.converter_service import (
     ConverterService,
     get_converter_service,
 )
 from pyrit.converter import (
     Base64Converter,
+    BinaryConverter,
     CaesarConverter,
     RepeatTokenConverter,
     SuffixAppendConverter,
@@ -90,6 +93,60 @@ async def upload_service() -> AsyncGenerator[ConverterService, None]:
         yield service
     finally:
         await service.close_async()
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"bits_per_char": "invalid"},
+        {"bits_per_char": 12},
+        {"word_selection_strategy": {"type": "random"}},
+        {"word_selection_strategy": {"type": "regex", "parameters": {"pattern": "["}}},
+    ],
+)
+async def test_converter_input_errors_return_400_async(
+    upload_service: ConverterService, params: dict[str, object]
+) -> None:
+    with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
+        with pytest.raises(HTTPException) as exc:
+            await converter_routes.create_converter(
+                CreateConverterRequest(name="invalid_binary", type="BinaryConverter", params=params)
+            )
+    assert exc.value.status_code == 400
+    assert next(iter(params)) in exc.value.detail
+
+
+async def test_binary_creation_from_metadata_and_selection_async(upload_service: ConverterService) -> None:
+    types = await upload_service.list_converter_types_async()
+    binary = next(item for item in types.items if item.converter_type == "BinaryConverter")
+    bits = next(param for param in binary.parameters if param.name == "bits_per_char").model_dump(mode="json")
+    with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
+        result = await converter_routes.create_converter(
+            CreateConverterRequest(
+                type="BinaryConverter",
+                name="selected_binary",
+                params={
+                    "bits_per_char": bits["default"],
+                    "word_selection_strategy": {"type": "indices", "parameters": {"indices": [1]}},
+                },
+            )
+        )
+    instance = upload_service.get_converter_object(converter_id=result.converter_id)
+    converted = await instance.convert_async(prompt="a b")
+    assert converted.output_text == "a 0000000000100000 0000000001100010"
+
+
+async def test_unexpected_constructor_type_error_returns_500_async(upload_service: ConverterService) -> None:
+    class BrokenBinary(BinaryConverter):
+        def __init__(self) -> None:
+            raise TypeError("constructor bug")
+
+    upload_service._registry.register_class(BrokenBinary)
+    with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
+        with pytest.raises(HTTPException) as exc:
+            await converter_routes.create_converter(CreateConverterRequest(name="broken_binary", type="BrokenBinary"))
+    assert exc.value.status_code == 500
+    assert "constructor bug" in exc.value.detail
 
 
 class TestListConverters:
