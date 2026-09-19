@@ -30,9 +30,11 @@ These tests cover the new contract:
   persistence -> SQL filter -> objective-target filter -> outcome filter.
 """
 
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -47,6 +49,7 @@ from pyrit.models import (
     ComponentIdentifier,
     ObjectiveTargetEvaluationIdentifier,
     SeedObjective,
+    TargetIdentifier,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
@@ -54,7 +57,12 @@ from pyrit.registry.components.attack_technique_registry import AttackTechniqueR
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark, _build_benchmark_technique
+from pyrit.scenario.scenarios.benchmark.adversarial import (
+    AdversarialBenchmark,
+    _build_benchmark_technique,
+    _read_benchmark_store_rows,
+    resolve_objective_identity,
+)
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
@@ -317,6 +325,18 @@ class TestAdversarialBenchmarkInit:
             use_cached=True,
         )
         assert bench._use_cached is True
+
+    def test_benchmark_store_path_defaults_to_none(self):
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        assert bench._benchmark_store_path is None
+
+    def test_benchmark_store_path_can_be_set(self, tmp_path):
+        store_path = tmp_path / "adversarial_benchmark_metrics.jsonl"
+        bench = AdversarialBenchmark(
+            objective_scorer=MagicMock(spec=TrueFalseScorer),
+            benchmark_store_path=store_path,
+        )
+        assert bench._benchmark_store_path == store_path
 
     def test_construct_without_named_default_factory_falls_back_to_all(self):
         """A pool with none of the named defaults must still construct, defaulting to ``all``."""
@@ -940,6 +960,225 @@ class TestSkipCachedFilter:
             await _build_atomic_attacks(bench)
 
         assert bench._precomputed_cached_results == {"red_teaming__adv_a_harmbench": [matching]}
+
+
+# ---------------------------------------------------------------------------
+# resolve_objective_identity
+# ---------------------------------------------------------------------------
+
+
+class TestResolveObjectiveIdentity:
+    """Tests for the shared (objective_target, objective_scorer) identity helper."""
+
+    def test_both_none_returns_unknown_placeholders(self):
+        target, scorer = resolve_objective_identity(
+            objective_target_identifier=None,
+            objective_scorer_identifier=None,
+        )
+        assert (target, scorer) == ("<unknown>", "<unknown>")
+
+    def test_target_prefers_underlying_model_name(self):
+        identifier = TargetIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            model_name="gpt-4o-deployment",
+            underlying_model_name="gpt-4o",
+        )
+        target, _ = resolve_objective_identity(
+            objective_target_identifier=identifier,
+            objective_scorer_identifier=None,
+        )
+        assert target == "gpt-4o"
+
+    def test_target_falls_back_to_model_name(self):
+        identifier = TargetIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target.openai.openai_chat_target",
+            model_name="gpt-4o-deployment",
+        )
+        target, _ = resolve_objective_identity(
+            objective_target_identifier=identifier,
+            objective_scorer_identifier=None,
+        )
+        assert target == "gpt-4o-deployment"
+
+    def test_target_falls_back_to_class_name(self):
+        identifier = ComponentIdentifier(class_name="CustomTarget", class_module="pyrit.test")
+        target, _ = resolve_objective_identity(
+            objective_target_identifier=identifier,
+            objective_scorer_identifier=None,
+        )
+        assert target == "CustomTarget"
+
+    def test_scorer_uses_class_name(self):
+        identifier = ComponentIdentifier(class_name="CompositeScorer", class_module="pyrit.test")
+        _, scorer = resolve_objective_identity(
+            objective_target_identifier=None,
+            objective_scorer_identifier=identifier,
+        )
+        assert scorer == "CompositeScorer"
+
+
+# ---------------------------------------------------------------------------
+# _read_benchmark_store_rows
+# ---------------------------------------------------------------------------
+
+
+class TestReadBenchmarkStoreRows:
+    """Tests for the synchronous JSONL reader used by the ``benchmark_store_path`` filter."""
+
+    def test_missing_file_returns_empty_list(self, tmp_path):
+        assert _read_benchmark_store_rows(store_path=tmp_path / "missing.jsonl") == []
+
+    def test_parses_one_row_per_line(self, tmp_path):
+        store_path = tmp_path / "store.jsonl"
+        store_path.write_text('{"a": 1}\n{"a": 2}\n', encoding="utf-8")
+        assert _read_benchmark_store_rows(store_path=store_path) == [{"a": 1}, {"a": 2}]
+
+    def test_skips_blank_lines(self, tmp_path):
+        store_path = tmp_path / "store.jsonl"
+        store_path.write_text('\n{"a": 1}\n\n', encoding="utf-8")
+        assert _read_benchmark_store_rows(store_path=store_path) == [{"a": 1}]
+
+
+# ---------------------------------------------------------------------------
+# benchmark_store_path filter
+# ---------------------------------------------------------------------------
+
+
+class TestBenchmarkStorePathFilter:
+    """End-to-end tests for the ``benchmark_store_path`` filter applied in ``_build_atomic_attacks_async``."""
+
+    _OBJECTIVE_TARGET_IDENTIFIER = TargetIdentifier(
+        class_name="OpenAIChatTarget",
+        class_module="pyrit.prompt_target.openai.openai_chat_target",
+        underlying_model_name="gpt-4o",
+    )
+    _OBJECTIVE_SCORER_IDENTIFIER = ComponentIdentifier(
+        class_name="CompositeScorer",
+        class_module="pyrit.score.composite",
+    )
+
+    def _make_bench(self, *, benchmark_store_path=None, use_cached: bool = False) -> AdversarialBenchmark:
+        _register_adversarial_target(name="adv_a")
+        AttackTechniqueRegistry.reset_registry_singleton()
+        _build_benchmark_technique.cache_clear()
+        _register_mock_factory(name="red_teaming", tags=["core", "light"])
+
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        objective_scorer.get_identifier.return_value = self._OBJECTIVE_SCORER_IDENTIFIER
+
+        bench = AdversarialBenchmark(
+            objective_scorer=objective_scorer,
+            use_cached=use_cached,
+            benchmark_store_path=benchmark_store_path,
+        )
+        bench._objective_target = MagicMock(spec=PromptTarget)
+        bench._objective_target_identifier = self._OBJECTIVE_TARGET_IDENTIFIER
+        bench.params = {"adversarial_targets": ["adv_a"]}
+
+        red_teaming_technique = MagicMock()
+        red_teaming_technique.value = "red_teaming"
+        bench._scenario_techniques = [red_teaming_technique]
+
+        seed_group = AttackSeedGroup(seeds=[SeedObjective(value="benchmark_store_objective")])
+        bench._dataset_config = MagicMock()
+        bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
+
+        return bench
+
+    def _write_store(self, *, tmp_path, rows: list[dict]) -> Path:
+        store_path = tmp_path / "adversarial_benchmark_metrics.jsonl"
+        with store_path.open("w", encoding="utf-8") as fp:
+            for row in rows:
+                fp.write(json.dumps(row) + "\n")
+        return store_path
+
+    def _matching_row(self, **overrides) -> dict:
+        row = {
+            "technique": "red_teaming",
+            "adversarial_model": "adv_a",
+            "objective_target": "gpt-4o",
+            "objective_scorer": "CompositeScorer",
+            "dataset": "harmbench",
+        }
+        row.update(overrides)
+        return row
+
+    async def test_no_store_path_returns_all_candidates(self):
+        bench = self._make_bench(benchmark_store_path=None)
+        result = await _build_atomic_attacks(bench)
+        assert len(result) == 1
+
+    async def test_missing_store_file_returns_all_candidates(self, tmp_path):
+        bench = self._make_bench(benchmark_store_path=tmp_path / "does_not_exist.jsonl")
+        result = await _build_atomic_attacks(bench)
+        assert len(result) == 1
+
+    async def test_matching_row_filters_out_candidate(self, tmp_path):
+        store_path = self._write_store(tmp_path=tmp_path, rows=[self._matching_row()])
+        bench = self._make_bench(benchmark_store_path=store_path)
+        result = await _build_atomic_attacks(bench)
+        assert result == []
+
+    async def test_row_with_different_objective_target_is_kept(self, tmp_path):
+        store_path = self._write_store(tmp_path=tmp_path, rows=[self._matching_row(objective_target="gpt-4o-mini")])
+        bench = self._make_bench(benchmark_store_path=store_path)
+        result = await _build_atomic_attacks(bench)
+        assert len(result) == 1
+
+    async def test_row_with_different_objective_scorer_is_kept(self, tmp_path):
+        store_path = self._write_store(tmp_path=tmp_path, rows=[self._matching_row(objective_scorer="OtherScorer")])
+        bench = self._make_bench(benchmark_store_path=store_path)
+        result = await _build_atomic_attacks(bench)
+        assert len(result) == 1
+
+    async def test_row_with_different_technique_is_kept(self, tmp_path):
+        store_path = self._write_store(tmp_path=tmp_path, rows=[self._matching_row(technique="tap")])
+        bench = self._make_bench(benchmark_store_path=store_path)
+        result = await _build_atomic_attacks(bench)
+        assert len(result) == 1
+
+    async def test_malformed_row_is_skipped_without_crashing(self, tmp_path, caplog):
+        store_path = tmp_path / "adversarial_benchmark_metrics.jsonl"
+        store_path.write_text('{"technique": "red_teaming"}\n', encoding="utf-8")
+        bench = self._make_bench(benchmark_store_path=store_path)
+
+        with caplog.at_level(logging.WARNING):
+            result = await _build_atomic_attacks(bench)
+
+        assert len(result) == 1
+        assert "malformed row" in caplog.text
+
+    async def test_blank_lines_are_ignored(self, tmp_path):
+        store_path = tmp_path / "adversarial_benchmark_metrics.jsonl"
+        store_path.write_text("\n" + json.dumps(self._matching_row()) + "\n\n", encoding="utf-8")
+        bench = self._make_bench(benchmark_store_path=store_path)
+        result = await _build_atomic_attacks(bench)
+        assert result == []
+
+    async def test_composes_with_use_cached_true(self, tmp_path):
+        """A candidate already excluded by the store filter never reaches the use_cached filter."""
+        store_path = self._write_store(tmp_path=tmp_path, rows=[self._matching_row()])
+        bench = self._make_bench(benchmark_store_path=store_path, use_cached=True)
+
+        with patch("pyrit.scenario.scenarios.benchmark.adversarial.get_cached_results_for_technique") as analytics_mock:
+            result = await _build_atomic_attacks(bench)
+
+        assert result == []
+        analytics_mock.assert_not_called()
+
+    async def test_read_failure_returns_all_candidates(self, tmp_path):
+        store_path = self._write_store(tmp_path=tmp_path, rows=[self._matching_row()])
+        bench = self._make_bench(benchmark_store_path=store_path)
+
+        with patch(
+            "pyrit.scenario.scenarios.benchmark.adversarial._read_benchmark_store_rows",
+            side_effect=OSError("boom"),
+        ):
+            result = await _build_atomic_attacks(bench)
+
+        assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------

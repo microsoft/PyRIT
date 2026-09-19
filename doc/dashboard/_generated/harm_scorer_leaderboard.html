@@ -1,0 +1,50 @@
+<style>
+.pyrit-leaderboard-card {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  max-width: 900px;
+  overflow: hidden;
+}
+.pyrit-leaderboard-card .lb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+.pyrit-leaderboard-card .lb-head h4 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8b949e;
+  font-weight: 600;
+}
+.pyrit-leaderboard-card .lb-meta { font-size: 11px; color: #8b949e; white-space: nowrap; }
+.pyrit-leaderboard-card table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.pyrit-leaderboard-card th {
+  text-align: left;
+  padding: 8px 14px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #3fb950;
+  border-bottom: 1px solid #30363d;
+  white-space: nowrap;
+}
+.pyrit-leaderboard-card th.lb-rank { text-align: center; }
+.pyrit-leaderboard-card td { padding: 8px 14px; border-bottom: 1px solid #21262d; }
+.pyrit-leaderboard-card td.lb-rank { color: #6e7681; text-align: center; }
+.pyrit-leaderboard-card .lb-note {
+  font-size: 11px;
+  color: #8b949e;
+  padding: 8px 16px;
+  border-top: 1px solid #30363d;
+}
+</style>
+<div class="pyrit-leaderboard-card"><div class="lb-head"><h4>Harm Scorer Leaderboard</h4><span class="lb-meta">36 rows</span></div><table><thead><tr><th class="lb-rank">#</th><th>Name</th><th>Harm Category</th><th>MAE</th><th>Alpha Combined</th><th>Alpha Humans</th><th>Alpha Model</th><th>Samples</th></tr></thead><tbody><tr><td class='lb-rank'>1</td><td>SelfAskLikertScorer::32c60e51</td><td>exploits</td><td>0.28</td><td>0.67</td><td>None</td><td>0.96</td><td>80</td></tr><tr><td class='lb-rank'>2</td><td>SelfAskLikertScorer::d79a7e70</td><td>exploits</td><td>0.34</td><td>0.49</td><td>None</td><td>0.89</td><td>80</td></tr><tr><td class='lb-rank'>3</td><td>SelfAskLikertScorer::a69c552b</td><td>exploits</td><td>0.33</td><td>0.49</td><td>None</td><td>0.92</td><td>80</td></tr><tr><td class='lb-rank'>4</td><td>SelfAskLikertScorer::d48dfb38</td><td>exploits</td><td>0.34</td><td>0.49</td><td>None</td><td>0.88</td><td>80</td></tr><tr><td class='lb-rank'>5</td><td>AzureContentFilterScorer::1a9b9789</td><td>hate_speech</td><td>0.17</td><td>0.86</td><td>None</td><td>1.00</td><td>59</td></tr><tr><td class='lb-rank'>6</td><td>SelfAskLikertScorer::ce31ba14</td><td>hate_speech</td><td>0.17</td><td>0.85</td><td>None</td><td>0.95</td><td>59</td></tr><tr><td class='lb-rank'>7</td><td>SelfAskLikertScorer::1607ea13</td><td>hate_speech</td><td>0.17</td><td>0.85</td><td>None</td><td>0.95</td><td>59</td></tr><tr><td class='lb-rank'>8</td><td>SelfAskLikertScorer::8e9637f6</td><td>hate_speech</td><td>0.18</td><td>0.85</td><td>None</td><td>0.95</td><td>59</td></tr><tr><td class='lb-rank'>9</td><td>SelfAskLikertScorer::4e3e41ce</td><td>hate_speech</td><td>0.17</td><td>0.82</td><td>None</td><td>0.90</td><td>59</td></tr><tr><td class='lb-rank'>10</td><td>SelfAskLikertScorer::ab49f40e</td><td>information_integrity</td><td>0.27</td><td>0.62</td><td>None</td><td>0.88</td><td>76</td></tr><tr><td class='lb-rank'>11</td><td>SelfAskLikertScorer::5381888a</td><td>information_integrity</td><td>0.29</td><td>0.61</td><td>None</td><td>0.90</td><td>76</td></tr><tr><td class='lb-rank'>12</td><td>SelfAskLikertScorer::1d068582</td><td>information_integrity</td><td>0.29</td><td>0.61</td><td>None</td><td>0.89</td><td>76</td></tr><tr><td class='lb-rank'>13</td><td>SelfAskLikertScorer::4574a6f9</td><td>information_integrity</td><td>0.30</td><td>0.59</td><td>None</td><td>0.86</td><td>76</td></tr><tr><td class='lb-rank'>14</td><td>SelfAskLikertScorer::e6464803</td><td>privacy</td><td>0.37</td><td>0.45</td><td>None</td><td>0.89</td><td>93</td></tr><tr><td class='lb-rank'>15</td><td>SelfAskLikertScorer::bbbe93be</td><td>privacy</td><td>0.37</td><td>0.42</td><td>None</td><td>0.65</td><td>93</td></tr><tr><td class='lb-rank'>16</td><td>SelfAskLikertScorer::d43c4413</td><td>privacy</td><td>0.40</td><td>0.39</td><td>None</td><td>0.84</td><td>93</td></tr><tr><td class='lb-rank'>17</td><td>SelfAskLikertScorer::73eb64f9</td><td>privacy</td><td>0.38</td><td>0.38</td><td>None</td><td>0.81</td><td>93</td></tr><tr><td class='lb-rank'>18</td><td>SelfAskLikertScorer::0ac1f197</td><td>representational</td><td>0.32</td><td>0.58</td><td>None</td><td>0.96</td><td>29</td></tr><tr><td class='lb-rank'>19</td><td>SelfAskLikertScorer::f6470940</td><td>representational</td><td>0.33</td><td>0.56</td><td>None</td><td>0.94</td><td>29</td></tr><tr><td class='lb-rank'>20</td><td>SelfAskLikertScorer::146a2e44</td><td>representational</td><td>0.28</td><td>0.56</td><td>None</td><td>0.75</td><td>29</td></tr><tr><td class='lb-rank'>21</td><td>SelfAskLikertScorer::ac9997f6</td><td>representational</td><td>0.32</td><td>0.55</td><td>None</td><td>0.92</td><td>29</td></tr><tr><td class='lb-rank'>22</td><td>AzureContentFilterScorer::bfa15fad</td><td>self_harm</td><td>0.27</td><td>0.66</td><td>None</td><td>1.00</td><td>93</td></tr><tr><td class='lb-rank'>23</td><td>SelfAskLikertScorer::aa245673</td><td>self_harm</td><td>0.28</td><td>0.54</td><td>None</td><td>0.75</td><td>93</td></tr><tr><td class='lb-rank'>24</td><td>SelfAskLikertScorer::9df5a574</td><td>self_harm</td><td>0.35</td><td>0.43</td><td>None</td><td>0.85</td><td>93</td></tr><tr><td class='lb-rank'>25</td><td>SelfAskLikertScorer::af0ef7c7</td><td>self_harm</td><td>0.35</td><td>0.43</td><td>None</td><td>0.90</td><td>93</td></tr><tr><td class='lb-rank'>26</td><td>SelfAskLikertScorer::6896be1e</td><td>self_harm</td><td>0.36</td><td>0.42</td><td>None</td><td>0.84</td><td>93</td></tr><tr><td class='lb-rank'>27</td><td>AzureContentFilterScorer::9e2a1052</td><td>sexual</td><td>0.19</td><td>0.84</td><td>None</td><td>1.00</td><td>78</td></tr><tr><td class='lb-rank'>28</td><td>SelfAskLikertScorer::ce5da81b</td><td>sexual</td><td>0.13</td><td>0.90</td><td>None</td><td>0.98</td><td>78</td></tr><tr><td class='lb-rank'>29</td><td>SelfAskLikertScorer::0317dc04</td><td>sexual</td><td>0.15</td><td>0.82</td><td>None</td><td>0.87</td><td>78</td></tr><tr><td class='lb-rank'>30</td><td>SelfAskLikertScorer::e5d67218</td><td>sexual</td><td>0.18</td><td>0.82</td><td>None</td><td>0.90</td><td>78</td></tr><tr><td class='lb-rank'>31</td><td>SelfAskLikertScorer::62858f6e</td><td>sexual</td><td>0.18</td><td>0.80</td><td>None</td><td>0.86</td><td>78</td></tr><tr><td class='lb-rank'>32</td><td>AzureContentFilterScorer::c4552a47</td><td>violence</td><td>0.24</td><td>0.78</td><td>None</td><td>1.00</td><td>96</td></tr><tr><td class='lb-rank'>33</td><td>SelfAskLikertScorer::772e51c8</td><td>violence</td><td>0.16</td><td>0.85</td><td>None</td><td>0.93</td><td>96</td></tr><tr><td class='lb-rank'>34</td><td>SelfAskLikertScorer::118336dd</td><td>violence</td><td>0.17</td><td>0.85</td><td>None</td><td>0.96</td><td>96</td></tr><tr><td class='lb-rank'>35</td><td>SelfAskLikertScorer::67df3fb9</td><td>violence</td><td>0.18</td><td>0.84</td><td>None</td><td>0.97</td><td>96</td></tr><tr><td class='lb-rank'>36</td><td>SelfAskLikertScorer::5d757b74</td><td>violence</td><td>0.19</td><td>0.81</td><td>None</td><td>0.91</td><td>96</td></tr></tbody></table><div class="lb-note">MAE: lower is better (0-1 scale). Alpha = Krippendorff&#x27;s alpha: higher is better (agreement between scorer and ground truth). Grouped by harm category then scorer name — not comparable across harm categories.</div></div>
