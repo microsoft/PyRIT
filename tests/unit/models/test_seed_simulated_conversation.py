@@ -125,6 +125,13 @@ class TestSeedSimulatedConversationInit:
 
         assert conv1.value == conv2.value
 
+    def test_path_only_value_omits_prefix_key_for_backward_compatibility(self, tmp_path):
+        conv = SeedSimulatedConversation(
+            adversarial_chat_system_prompt_path=tmp_path / "adversarial.yaml",
+        )
+
+        assert "adversarial_chat_system_prompt_prefix" not in json.loads(conv.value)
+
     def test_init_default_sequence_is_zero(self, tmp_path):
         """Test that default sequence is 0."""
         adv_path = tmp_path / "adversarial.yaml"
@@ -172,6 +179,20 @@ class TestSeedSimulatedConversationInit:
         )
 
         assert conv.next_message_system_prompt_path == next_msg_path
+
+    def test_system_prompt_prefix_json_round_trip_preserves_content(self, tmp_path):
+        adv_path = tmp_path / "adversarial.yaml"
+        prefix = "Static guidance"
+        conv = SeedSimulatedConversation(
+            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt_prefix=prefix,
+        )
+
+        restored = SeedSimulatedConversation.model_validate_json(conv.model_dump_json())
+
+        assert restored.value == conv.value
+        assert restored.adversarial_chat_system_prompt_path == adv_path
+        assert restored.adversarial_chat_system_prompt_prefix == prefix
 
 
 class TestSeedSimulatedConversationFromMapping:
@@ -290,6 +311,18 @@ class TestSeedSimulatedConversationComputeHash:
         conv2 = SeedSimulatedConversation(
             adversarial_chat_system_prompt_path=adv_path,
             num_turns=5,
+        )
+
+        assert conv1.compute_hash() != conv2.compute_hash()
+
+    def test_compute_hash_includes_system_prompt_prefix_content(self, tmp_path):
+        conv1 = SeedSimulatedConversation(
+            adversarial_chat_system_prompt_path=tmp_path / "adversarial.yaml",
+            adversarial_chat_system_prompt_prefix="first",
+        )
+        conv2 = SeedSimulatedConversation(
+            adversarial_chat_system_prompt_path=tmp_path / "adversarial.yaml",
+            adversarial_chat_system_prompt_prefix="second",
         )
 
         assert conv1.compute_hash() != conv2.compute_hash()

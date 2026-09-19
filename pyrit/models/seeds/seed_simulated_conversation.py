@@ -46,7 +46,7 @@ class SeedSimulatedConversation(Seed):
     """
     Configuration for generating a simulated conversation dynamically.
 
-    This class holds the paths and parameters needed to generate prepended conversation
+    This class holds the prompts and parameters needed to generate prepended conversation
     content by running an adversarial chat against a simulated (compliant) target.
 
     This is a pure configuration class. The actual generation is performed by
@@ -59,6 +59,8 @@ class SeedSimulatedConversation(Seed):
     Attributes:
         num_turns: Number of conversation turns to generate.
         adversarial_chat_system_prompt_path: Path to the adversarial chat system prompt YAML.
+        adversarial_chat_system_prompt_prefix: Static guidance prepended to the
+            resolved adversarial chat system prompt.
         simulated_target_system_prompt_path: Path to the simulated target system prompt YAML.
             Defaults to the compliant prompt if not specified.
         next_message_system_prompt_path: Optional path to the system prompt for generating
@@ -86,6 +88,7 @@ class SeedSimulatedConversation(Seed):
     num_turns: int = 3
     sequence: int = 0
     adversarial_chat_system_prompt_path: Path
+    adversarial_chat_system_prompt_prefix: str | None = None
     simulated_target_system_prompt_path: Path = SimulatedTargetSystemPromptPaths.COMPLIANT.value
     next_message_system_prompt_path: Path | None = None
     pyrit_version: str | None = None
@@ -133,7 +136,7 @@ class SeedSimulatedConversation(Seed):
             str: Deterministic JSON representation of this configuration.
 
         """
-        config = {
+        config: dict[str, Any] = {
             "num_turns": self.num_turns,
             "sequence": self.sequence,
             "adversarial_chat_system_prompt_path": str(self.adversarial_chat_system_prompt_path),
@@ -143,6 +146,8 @@ class SeedSimulatedConversation(Seed):
             ),
             "pyrit_version": self.pyrit_version,
         }
+        if self.adversarial_chat_system_prompt_prefix is not None:
+            config["adversarial_chat_system_prompt_prefix"] = self.adversarial_chat_system_prompt_prefix
         return json.dumps(config, sort_keys=True, separators=(",", ":"))
 
     def get_identifier(self) -> dict[str, Any]:
@@ -153,7 +158,7 @@ class SeedSimulatedConversation(Seed):
             Dictionary with configuration details.
 
         """
-        return {
+        identifier: dict[str, Any] = {
             "__type__": "SeedSimulatedConversation",
             "num_turns": self.num_turns,
             "sequence": self.sequence,
@@ -164,6 +169,9 @@ class SeedSimulatedConversation(Seed):
             ),
             "pyrit_version": self.pyrit_version,
         }
+        if self.adversarial_chat_system_prompt_prefix is not None:
+            identifier["adversarial_chat_system_prompt_prefix"] = self.adversarial_chat_system_prompt_prefix
+        return identifier
 
     def compute_hash(self) -> str:
         """
