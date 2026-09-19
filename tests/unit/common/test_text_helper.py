@@ -5,7 +5,7 @@ from io import StringIO
 
 import pytest
 
-from pyrit.common.text_helper import escape_control_characters, read_txt
+from pyrit.common.text_helper import escape_control_characters, is_non_empty_string, read_txt
 
 
 def test_read_txt_ignores_blank_lines():
@@ -40,3 +40,11 @@ def test_escape_control_characters_makes_control_characters_visible(text: str, e
 )
 def test_escape_control_characters_leaves_other_text_unchanged(text: str):
     assert escape_control_characters(text) == text
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("valid", True), ("  valid  ", True), ("", False), (" \n\t", False), (None, False), (42, False), ([], False)],
+)
+def test_is_non_empty_string_preserves_runtime_validation(value, expected):
+    assert is_non_empty_string(value) is expected

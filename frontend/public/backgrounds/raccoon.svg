@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT license.
+Artwork newly authored for PyRIT with Copilot assistance, not adapted from third-party art.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" fill="none">
+  <g stroke-linecap="round">
+    <path d="M-150 867C150 783 400 961 721 889S1097 708 1280 628 1515 645 1730 388"
+      stroke="#a69a8d" stroke-width="70"/>
+    <path d="M-120 973C189 883 417 1063 755 989S1152 800 1318 739 1573 754 1770 500"
+      stroke="#51483e" stroke-width="76"/>
+    <path d="M317 1130C739 1147 1106 989 1363 851S1597 866 1789 638"
+      stroke="#a69a8d" stroke-width="80"/>
+    <path d="M845 1123C1129 1129 1302 1007 1431 966S1660 965 1820 803"
+      stroke="#51483e" stroke-width="84"/>
+  </g>
+  <g opacity="0.38">
+    <path d="M1490-90C1380 145 1661 257 1640 445" stroke="#a69a8d" stroke-width="46"/>
+    <path d="M1555-69C1457 148 1746 267 1690 477" stroke="#51483e" stroke-width="40"/>
+  </g>
+</svg>

@@ -1,6 +1,33 @@
+import type { Theme } from '@fluentui/react-components'
+
+import type { THEME_PRESETS } from '@/themes/themePresets'
+
 // ============================================================================
 // Frontend UI Types
 // ============================================================================
+
+export type ThemeMode = 'system' | keyof typeof THEME_PRESETS
+
+export type ResolvedTheme = 'light' | 'dark' | 'high-contrast'
+
+export interface ThemeBackground {
+  readonly imageUrl: string
+  readonly opacity: number
+}
+
+export interface ThemePreset {
+  readonly label: string
+  readonly resolved: 'light' | 'dark'
+  readonly theme: Theme
+  readonly background?: ThemeBackground
+}
+
+export interface ThemeContextValue {
+  readonly mode: ThemeMode
+  readonly resolved: ResolvedTheme
+  readonly background?: ThemeBackground
+  readonly setMode: (mode: ThemeMode) => void
+}
 
 export interface MessageAttachment {
   type: 'image' | 'audio' | 'video' | 'file'
@@ -242,10 +269,18 @@ export interface ConverterIdentifier {
 export interface ConverterInstance {
   converter_id: string
   identifier: ConverterIdentifier
+  is_llm_based?: boolean
+  description?: string | null
 }
 
 export interface ConverterListResponse {
   items: ConverterInstance[]
+}
+
+export interface CreateConverterRequest {
+  name?: string
+  type: string
+  params?: Record<string, unknown>
 }
 
 export interface Parameter {
@@ -256,10 +291,11 @@ export interface Parameter {
   default?: string | string[] | null
   choices?: string[] | null
   is_list?: boolean
+  reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
   description?: string | null
 }
 
-export interface ConverterCatalogEntry {
+export interface ConverterTypeEntry {
   converter_type: string
   supported_input_types: string[]
   supported_output_types: string[]
@@ -268,9 +304,13 @@ export interface ConverterCatalogEntry {
   description?: string | null
 }
 
-export interface ConverterCatalogResponse {
-  items: ConverterCatalogEntry[]
+export interface ConverterTypeListResponse {
+  items: ConverterTypeEntry[]
 }
+
+/** Temporary compatibility names used by the existing chat converter panel. */
+export type ConverterCatalogEntry = ConverterTypeEntry
+export type ConverterCatalogResponse = ConverterTypeListResponse
 
 export interface TargetCatalogEntry {
   target_type: string

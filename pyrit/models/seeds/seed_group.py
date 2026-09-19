@@ -125,7 +125,7 @@ class SeedGroup(BaseModel):
 
         objective = self._get_objective()
         simulated_conv = self._get_simulated_conversation()
-        sorted_prompts = sorted(self.prompts, key=lambda p: p.sequence if p.sequence is not None else 0)
+        sorted_prompts = sorted(self.prompts, key=lambda p: p.sequence)
 
         new_seeds: list[SeedUnion] = []
         if objective:

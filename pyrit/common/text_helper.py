@@ -2,7 +2,18 @@
 # Licensed under the MIT license.
 
 import re
-from typing import IO, Any
+from typing import IO, Any, TypeGuard
+
+
+def is_non_empty_string(value: object) -> TypeGuard[str]:
+    """
+    Check whether an untrusted value is a string containing non-whitespace text.
+
+    Returns:
+        bool: Whether the value is a non-empty string.
+    """
+    return isinstance(value, str) and bool(value.strip())
+
 
 # C0 control characters except tab and newline, DEL, and the C1 range. C1 includes the
 # single-character CSI (U+009B) and OSC (U+009D) introducers that some terminals honor.

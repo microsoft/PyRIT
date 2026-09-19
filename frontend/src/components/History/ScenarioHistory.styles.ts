@@ -6,6 +6,7 @@ import {
   mobileTouchTarget,
   mobileTouchTargetHeight,
 } from '@/styles/touchTargets'
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
 export const useScenarioHistoryStyles = makeStyles({
   root: {
@@ -13,7 +14,7 @@ export const useScenarioHistoryStyles = makeStyles({
     flexDirection: 'column',
     height: '100%',
     overflow: 'hidden',
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
   },
   header: {
     padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalXXL}`,
@@ -48,6 +49,7 @@ export const useScenarioHistoryStyles = makeStyles({
   },
   table: {
     minWidth: '1120px',
+    backgroundColor: tokens.colorNeutralBackground2,
   },
   clickableRow: {
     cursor: 'pointer',

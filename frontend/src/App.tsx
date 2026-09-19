@@ -8,6 +8,8 @@ import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
+import ConverterRegistry from './components/Registry/ConverterRegistry'
+import RegistryLayout from './components/Registry/RegistryLayout'
 import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
 import HistoryPage from './components/History/HistoryPage'
@@ -58,7 +60,8 @@ const VIEW_PATHS: Record<ViewName, string> = {
   home: '/',
   chat: '/chat',
   history: HISTORY_ATTACKS_PATH,
-  targets: '/targets',
+  registry: '/registry/targets',
+  targets: '/registry/targets',
   scenarios: '/scanner',
   configuration: '/config',
 }
@@ -72,6 +75,9 @@ const VIEW_PATHS: Record<ViewName, string> = {
 function viewFromPath(pathname: string): ViewName {
   if (pathname === '/history' || pathname.startsWith('/history/') || pathname.startsWith('/scanner-history/')) {
     return 'history'
+  }
+  if (pathname.startsWith('/registry')) {
+    return 'registry'
   }
   if (
     pathname === VIEW_PATHS.scenarios
@@ -605,15 +611,19 @@ function App() {
                 path="/attacks/:attackId/conversations/:conversationId"
                 element={chatElement}
               />
-              <Route
-                path="/targets"
-                element={
-                  <TargetConfig
-                    activeTarget={activeTarget}
-                    onSetActiveTarget={handleSetActiveTarget}
-                  />
-                }
-              />
+              <Route path="/registry" element={<RegistryLayout />}>
+                <Route index element={<Navigate to="/registry/targets" replace />} />
+                <Route
+                  path="targets"
+                  element={
+                    <TargetConfig
+                      activeTarget={activeTarget}
+                      onSetActiveTarget={handleSetActiveTarget}
+                    />
+                  }
+                />
+                <Route path="converters" element={<ConverterRegistry />} />
+              </Route>
               <Route path="/scanner" element={<ScenarioCatalog />} />
               <Route
                 path="/scanner/:scenarioName"

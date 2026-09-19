@@ -10,29 +10,14 @@ import type { ReactNode } from 'react'
 import {
   FluentProvider,
   createHighContrastTheme,
-  webDarkTheme,
-  webLightTheme,
 } from '@fluentui/react-components'
-import type { Theme } from '@fluentui/react-components'
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { isThemeMode, THEME_PRESETS } from '@/themes/themePresets'
+import type { ResolvedTheme, ThemeContextValue, ThemeMode, ThemePreset } from '@/types'
 
-/** The user's persisted preference. `'system'` defers to OS-level signals. */
-export type ThemeMode = 'system' | 'light' | 'dark'
+import { useThemeProviderStyles } from './ThemeProvider.styles'
 
-/** What is actually rendered. Includes `'high-contrast'` for forced-colors. */
-export type ResolvedTheme = 'light' | 'dark' | 'high-contrast'
-
-export interface ThemeContextValue {
-  /** The user's persisted preference. */
-  mode: ThemeMode
-  /** The theme actually being rendered after resolving system signals. */
-  resolved: ResolvedTheme
-  /** Update the user preference. Persisted to localStorage. */
-  setMode: (mode: ThemeMode) => void
-}
+export type { ResolvedTheme, ThemeContextValue, ThemeMode } from '@/types'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -42,25 +27,13 @@ const STORAGE_KEY = 'pyrit.themeMode'
 const FORCED_COLORS_QUERY = '(forced-colors: active)'
 const PREFERS_DARK_QUERY = '(prefers-color-scheme: dark)'
 
-const VALID_MODES: readonly ThemeMode[] = ['system', 'light', 'dark']
-
 // Build the high-contrast theme once at module load — `createHighContrastTheme`
 // returns a 459-key object and is purely derived from defaults.
 const HIGH_CONTRAST_THEME = createHighContrastTheme()
 
-const FLUENT_THEMES: Record<ResolvedTheme, Theme> = {
-  light: webLightTheme,
-  dark: webDarkTheme,
-  'high-contrast': HIGH_CONTRAST_THEME,
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function isThemeMode(value: unknown): value is ThemeMode {
-  return typeof value === 'string' && (VALID_MODES as readonly string[]).includes(value)
-}
 
 function readStoredMode(): ThemeMode {
   if (typeof window === 'undefined') return 'system'
@@ -114,7 +87,7 @@ function readSystemSignals(): SystemSignals {
 export function resolveTheme(mode: ThemeMode, signals: SystemSignals): ResolvedTheme {
   if (signals.forcedColors) return 'high-contrast'
   if (mode === 'system') return signals.prefersDark ? 'dark' : 'light'
-  return mode
+  return THEME_PRESETS[mode].resolved
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +113,7 @@ export function useTheme(): ThemeContextValue {
 // ---------------------------------------------------------------------------
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
+  const styles = useThemeProviderStyles()
   // Lazy initializer reads from localStorage exactly once, so the first paint
   // is correct (no flash of wrong theme) and StrictMode double-render is safe.
   const [mode, setModeState] = useState<ThemeMode>(() => readStoredMode())
@@ -175,6 +149,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const resolved = useMemo(() => resolveTheme(mode, signals), [mode, signals])
+  const preset: ThemePreset | undefined = resolved === 'high-contrast'
+    ? undefined
+    : THEME_PRESETS[mode === 'system' ? resolved : mode]
+  const background = preset?.background
 
   // Apply theme-related attributes to <html> so non-Fluent CSS (native
   // scrollbars, form controls, anything in global.css) follows the theme.
@@ -188,13 +166,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [resolved])
 
   const value = useMemo<ThemeContextValue>(
-    () => ({ mode, resolved, setMode }),
-    [mode, resolved, setMode],
+    () => ({ mode, resolved, background, setMode }),
+    [mode, resolved, background, setMode],
   )
 
   return (
     <ThemeContext.Provider value={value}>
-      <FluentProvider theme={FLUENT_THEMES[resolved]}>{children}</FluentProvider>
+      <FluentProvider
+        theme={preset?.theme ?? HIGH_CONTRAST_THEME}
+        className={background ? styles.decorated : undefined}
+      >
+        {children}
+      </FluentProvider>
     </ThemeContext.Provider>
   )
 }

@@ -265,7 +265,7 @@ export default function AttackHistory({
         text: 'Configure a target before starting an attack.',
         label: 'Configure target',
         icon: <SettingsRegular />,
-        view: 'targets' as const,
+        view: 'registry' as const,
       }
 
   return (
