@@ -262,6 +262,16 @@ class TestGetAttackGroupsByDatasetAsync:
         result = await config.get_attack_groups_by_dataset_async()
         assert sum(len(groups) for groups in result.values()) == 2
 
+    async def test_estimate_resolution_fetches_full_and_sampled_groups_once(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds.return_value = make_objectives("a", "b", "c")
+        config = DatasetAttackConfiguration(dataset_names=["d1"], max_dataset_size=1)
+
+        full, selected = await config.resolve_attack_groups_for_estimate_async()
+
+        assert len(full["d1"]) == 3
+        assert len(selected["d1"]) == 1
+        mock_memory.get_seeds.assert_called_once()
+
     async def test_loud_raise_when_a_dataset_is_empty(self, mock_memory: MagicMock) -> None:
         mock_memory.get_seeds.side_effect = [make_objectives("a"), []]
         config = DatasetAttackConfiguration(dataset_names=["d1", "d2"], auto_fetch=False)
@@ -506,6 +516,95 @@ class TestCompoundDatasetAttackConfiguration:
         assert len(config._configurations) == 2
         assert [child.dataset_names for child in config._configurations] == [["d1"], ["d2"]]
         assert all(child.max_dataset_size == 4 for child in config._configurations)
+
+    def test_with_dataset_names_preserves_per_dataset_defaults(self) -> None:
+        config = CompoundDatasetAttackConfiguration.per_dataset(
+            dataset_names=["d1", "d2"],
+            max_dataset_size=4,
+            filters={"harm_categories": ["original"]},
+        )
+
+        overridden = config.with_dataset_names(
+            dataset_names=["selected"],
+            filters={"data_types": ["text"]},
+        )
+
+        assert overridden.dataset_names == ["selected"]
+        assert len(overridden._configurations) == 1
+        assert overridden._configurations[0].max_dataset_size == 4
+        assert overridden._configurations[0].filters == {
+            "harm_categories": ["original"],
+            "data_types": ["text"],
+        }
+        assert overridden._configurations[0]._validators == config._configurations[0]._validators
+        assert overridden._validators == config._validators
+        assert config.dataset_names == ["d1", "d2"]
+
+    def test_with_dataset_names_rejects_shaped_children(self) -> None:
+        class _ShapedDatasetConfiguration(DatasetAttackConfiguration):
+            pass
+
+        config = CompoundDatasetAttackConfiguration(
+            configurations=[_ShapedDatasetConfiguration(dataset_names=["d1"])],
+        )
+
+        with pytest.raises(TypeError, match="homogeneous single-dataset"):
+            config.with_dataset_names(dataset_names=["selected"])
+
+    def test_with_dataset_names_rejects_duplicates(self) -> None:
+        config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"])
+
+        with pytest.raises(ValueError, match="cannot contain duplicates"):
+            config.with_dataset_names(dataset_names=["selected", "selected"])
+
+    def test_with_dataset_names_rejects_different_child_validators(self) -> None:
+        first_validator = require_min_size(1)
+        second_validator = require_min_size(2)
+        config = CompoundDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(dataset_names=["d1"], validators=[first_validator]),
+                DatasetAttackConfiguration(dataset_names=["d2"], validators=[second_validator]),
+            ],
+        )
+
+        with pytest.raises(TypeError, match="shared caps, filters, validators"):
+            config.with_dataset_names(dataset_names=["selected"])
+
+    def test_with_dataset_names_supports_shared_unhashable_validator(self) -> None:
+        class _UnhashableValidator:
+            __hash__ = None
+
+            def __call__(self, resolved: ResolvedDataset) -> None:
+                del resolved
+
+        validator = _UnhashableValidator()
+        config = CompoundDatasetAttackConfiguration.per_dataset(
+            dataset_names=["d1", "d2"],
+            validators=[validator],
+        )
+
+        overridden = config.with_dataset_names(dataset_names=["selected"])
+
+        assert overridden._configurations[0]._custom_validators == [validator]
+
+    def test_update_child_max_dataset_size_preserves_shaped_children(self) -> None:
+        class _ShapedDatasetConfiguration(DatasetAttackConfiguration):
+            pass
+
+        config = CompoundDatasetAttackConfiguration(
+            configurations=[
+                _ShapedDatasetConfiguration(dataset_names=["d1"], max_dataset_size=4),
+                _ShapedDatasetConfiguration(dataset_names=["d2"], max_dataset_size=4),
+            ],
+        )
+
+        config.update_child_max_dataset_size(max_dataset_size=2)
+
+        assert [type(child) for child in config._configurations] == [
+            _ShapedDatasetConfiguration,
+            _ShapedDatasetConfiguration,
+        ]
+        assert [child.max_dataset_size for child in config._configurations] == [2, 2]
 
     def test_size_caps_report_child_and_combined_limits(self) -> None:
         """Planning metadata explains independent child caps and the final compound cap."""

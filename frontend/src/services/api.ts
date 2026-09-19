@@ -28,10 +28,11 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   ChangeMainConversationResponse,
+  DatasetListResponse,
   ListRegisteredScenariosResponse,
   RegisteredScenario,
   RunScenarioRequest,
-  ScenarioRunSizeEstimateResponse,
+  ScenarioDefaultRunSizeEstimate,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSummary,
   ScenarioRunListResponse,
@@ -419,6 +420,13 @@ export const labelsApi = {
   },
 }
 
+export const datasetsApi = {
+  listDatasets: async (): Promise<DatasetListResponse> => {
+    const response = await apiClient.get('/datasets')
+    return response.data
+  },
+}
+
 export const scenariosApi = {
   /**
    * Lists one page of the scenario catalog. Callers that need the full
@@ -455,7 +463,7 @@ export const scenariosApi = {
     scenarioName: string,
     request: ScenarioRunSizeEstimateRequest,
     signal?: AbortSignal,
-  ): Promise<ScenarioRunSizeEstimateResponse> => {
+  ): Promise<ScenarioDefaultRunSizeEstimate> => {
     const response = await apiClient.post(
       `/scenarios/catalog/${encodeURIComponent(scenarioName)}/estimate`,
       request,

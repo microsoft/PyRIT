@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
     from pyrit.scenario.scenarios.adaptive.dispatcher import (
         ADAPTIVE_ATTEMPT_LABEL,
+        ADAPTIVE_TECHNIQUE_ID_LABEL,
+        ADAPTIVE_TECHNIQUE_NAME_LABEL,
         AdaptiveTechniqueDispatcher,
         TechniqueBundle,
     )
@@ -20,11 +22,15 @@ if TYPE_CHECKING:
         SelectorScope,
         TechniqueSelector,
     )
+    from pyrit.scenario.scenarios.adaptive.technique_identity import AdaptiveTechniqueIdentifier
     from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ADAPTIVE_ATTEMPT_LABEL": "pyrit.scenario.scenarios.adaptive.dispatcher",
+    "ADAPTIVE_TECHNIQUE_ID_LABEL": "pyrit.scenario.scenarios.adaptive.dispatcher",
+    "ADAPTIVE_TECHNIQUE_NAME_LABEL": "pyrit.scenario.scenarios.adaptive.dispatcher",
     "AdaptiveScenario": "pyrit.scenario.scenarios.adaptive.adaptive_scenario",
+    "AdaptiveTechniqueIdentifier": "pyrit.scenario.scenarios.adaptive.technique_identity",
     "AdaptiveTechniqueDispatcher": "pyrit.scenario.scenarios.adaptive.dispatcher",
     "EpsilonGreedyTechniqueSelector": "pyrit.scenario.scenarios.adaptive.selectors",
     "SelectorScope": "pyrit.scenario.scenarios.adaptive.selectors",

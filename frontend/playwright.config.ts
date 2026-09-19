@@ -87,7 +87,13 @@ export default defineConfig({
             `cd .. && uv run python -m pyrit.backend.pyrit_backend ` +
             `--host 127.0.0.1 --port ${E2E_BACKEND_PORT} --log-level warning ` +
             "--config-file tests/end_to_end/test_config.yaml",
-          env: { PYRIT_DEV_MODE: "true" },
+          env: {
+            PYRIT_DEV_MODE: "true",
+            // Catalog metadata constructs default scorer targets but never sends requests.
+            OPENAI_CHAT_ENDPOINT: "https://e2e-dummy.openai.azure.com/openai/v1",
+            OPENAI_CHAT_KEY: "e2e-dummy-key",
+            OPENAI_CHAT_MODEL: "gpt-4o-e2e-dummy",
+          },
           url: `${E2E_BACKEND_URL}/api/health`,
           reuseExistingServer: false,
           timeout: 120_000,

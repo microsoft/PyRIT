@@ -17,11 +17,11 @@ from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, Pr
 from pyrit.models import (
     AttackSeedGroup,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimate,
     Seed,
     SeedObjective,
     SeedPrompt,
 )
+from pyrit.models.catalog import ScenarioDefaultRunSizeEstimate, ScenarioRunSizeEstimateStatus
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -250,18 +250,19 @@ class ApiKey(Scenario):
             self._objective_scorer_identifier = self._objective_scorer.get_identifier()
         return groups
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
         """
         Count each synthesized request once rather than crossing techniques again.
 
         Returns:
-            ScenarioRunSizeEstimate: The selected request count.
+            ScenarioDefaultRunSizeEstimate: The selected request count.
         """
         groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
         for dataset in datasets:
             dataset.kind = "synthesized"
-        return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(len(population) for population in groups.values()),
+        return ScenarioDefaultRunSizeEstimate(
+            status=ScenarioRunSizeEstimateStatus.Exact,
+            total_attack_count=sum(len(population) for population in groups.values()),
             components=[
                 ScenarioRunSizeComponent(label=f"{name} prompts", count=len(population))
                 for name, population in groups.items()
