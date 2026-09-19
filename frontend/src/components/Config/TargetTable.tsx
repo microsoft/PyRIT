@@ -11,6 +11,8 @@ import {
   Text,
   Tooltip,
   Select,
+  Checkbox,
+  mergeClasses,
 } from '@fluentui/react-components'
 import {
   CheckmarkRegular,
@@ -28,15 +30,51 @@ import {
   ArrowHookUpLeftRegular,
   ChevronRightRegular,
   ChevronDownRegular,
+  EyeOffRegular,
+  EyeRegular,
 } from '@fluentui/react-icons'
-import type { TargetInstance } from '../../types'
-import { targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
+
+import type { TargetInstance } from '@/types'
+import {
+  targetEndpoint,
+  targetModelName,
+  targetType,
+  targetUnderlyingModelName,
+} from '@/utils/targetIdentity'
+
 import { useTargetTableStyles } from './TargetTable.styles'
+
+const HIDDEN_TARGETS_STORAGE_KEY = 'pyrit.hiddenTargetRegistryNames'
 
 interface TargetTableProps {
   targets: TargetInstance[]
   activeTarget: TargetInstance | null
   onSetActiveTarget: (target: TargetInstance) => void
+}
+
+function readStoredHiddenTargetRegistryNames(): Set<string> {
+  if (typeof window === 'undefined') return new Set()
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_TARGETS_STORAGE_KEY)
+    if (!raw) return new Set()
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter((value): value is string => typeof value === 'string'))
+  } catch {
+    return new Set()
+  }
+}
+
+function persistHiddenTargetRegistryNames(hiddenTargetRegistryNames: Set<string>): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(
+      HIDDEN_TARGETS_STORAGE_KEY,
+      JSON.stringify([...hiddenTargetRegistryNames].sort()),
+    )
+  } catch {
+    /* localStorage may be unavailable (private mode, quota, sandboxed iframe). */
+  }
 }
 
 /** Format target_specific_params into a short human-readable string. */
@@ -248,6 +286,10 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
   const styles = useTargetTableStyles()
   const typeFilterId = useId()
   const [typeFilter, setTypeFilter] = useState('')
+  const [hiddenTargetRegistryNames, setHiddenTargetRegistryNames] = useState<Set<string>>(
+    () => readStoredHiddenTargetRegistryNames(),
+  )
+  const [showHiddenTargets, setShowHiddenTargets] = useState(false)
   // Tracks which RoundRobinTarget rows are expanded to show inner targets.
   // We use a Set of target_registry_name strings — when a name is in the set,
   // that row's sub-rows are visible.
@@ -273,13 +315,38 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
     [targets],
   )
 
+  const hiddenTargetCount = useMemo(
+    () => targets.filter((target) => hiddenTargetRegistryNames.has(target.target_registry_name)).length,
+    [hiddenTargetRegistryNames, targets],
+  )
+
+  const displayedTargets = useMemo(
+    () => showHiddenTargets
+      ? targets
+      : targets.filter((target) => !hiddenTargetRegistryNames.has(target.target_registry_name)),
+    [hiddenTargetRegistryNames, showHiddenTargets, targets],
+  )
+
   const filteredTargets = useMemo(
-    () => typeFilter ? targets.filter(t => targetType(t) === typeFilter) : targets,
-    [targets, typeFilter],
+    () => typeFilter
+      ? displayedTargets.filter((target) => targetType(target) === typeFilter)
+      : displayedTargets,
+    [displayedTargets, typeFilter],
   )
 
   const isActive = (target: TargetInstance): boolean =>
     activeTarget?.target_registry_name === target.target_registry_name
+
+  const setTargetHidden = (target: TargetInstance, hidden: boolean): void => {
+    const nextHiddenTargetRegistryNames = new Set(hiddenTargetRegistryNames)
+    if (hidden) {
+      nextHiddenTargetRegistryNames.add(target.target_registry_name)
+    } else {
+      nextHiddenTargetRegistryNames.delete(target.target_registry_name)
+    }
+    setHiddenTargetRegistryNames(nextHiddenTargetRegistryNames)
+    persistHiddenTargetRegistryNames(nextHiddenTargetRegistryNames)
+  }
 
   return (
     <div className={styles.tableContainer} data-testid="target-table-scroll-region">
@@ -341,29 +408,38 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
         </Table>
       )}
 
-      {targetTypes.length > 1 && (
-        <div className={styles.filterRow}>
-          <label htmlFor={typeFilterId}>
-            <Text size={200}>Filter by type:</Text>
-          </label>
-          <Select
-            id={typeFilterId}
-            className={styles.filterSelect}
-            value={typeFilter}
-            onChange={(_, data) => setTypeFilter(data.value)}
-          >
-            <option value="">All types</option>
-            {targetTypes.map(t => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </Select>
-        </div>
-      )}
+      <div className={styles.filterRow}>
+        <Checkbox
+          checked={showHiddenTargets && hiddenTargetCount > 0}
+          disabled={hiddenTargetCount === 0}
+          label={`Show hidden targets (${hiddenTargetCount})`}
+          onChange={(_, data) => setShowHiddenTargets(data.checked === true)}
+          data-testid="show-hidden-targets"
+        />
+        {targetTypes.length > 1 && (
+          <>
+            <label htmlFor={typeFilterId}>
+              <Text size={200}>Filter by type:</Text>
+            </label>
+            <Select
+              id={typeFilterId}
+              className={styles.filterSelect}
+              value={typeFilter}
+              onChange={(_, data) => setTypeFilter(data.value)}
+            >
+              <option value="">All types</option>
+              {targetTypes.map((targetTypeName) => (
+                <option key={targetTypeName} value={targetTypeName}>{targetTypeName}</option>
+              ))}
+            </Select>
+          </>
+        )}
+      </div>
 
       <Table aria-label="Target instances" className={styles.table}>
         <TableHeader className={styles.stickyHeader}>
           <TableRow>
-            <TableHeaderCell style={{ width: '120px' }} />
+            <TableHeaderCell className={styles.actionCell}>Actions</TableHeaderCell>
             <TableHeaderCell style={{ width: '180px' }}>
               <Tooltip content={COLUMN_TOOLTIPS.registryName} relationship="description">
                 <span className={styles.helpHeader}>Registry Name</span>
@@ -412,30 +488,47 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
           {filteredTargets.map((target) => {
             const expanded = expandedRows.has(target.target_registry_name)
             const expandable = hasInnerTargets(target)
+            const hidden = hiddenTargetRegistryNames.has(target.target_registry_name)
             // Extract weights from target_specific_params so we can show per-inner-target weight
             const weights = target.target_specific_params?.weights as number[] | undefined
 
             return (
               <React.Fragment key={target.target_registry_name}>
                 <TableRow
-                  className={isActive(target) ? styles.activeRow : undefined}
+                  className={mergeClasses(
+                    isActive(target) && styles.activeRow,
+                    hidden && styles.hiddenRow,
+                  )}
                   data-testid={`target-row-${target.target_registry_name}`}
                 >
-                  <TableCell>
-                    {isActive(target) ? (
-                      <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
-                        Active
-                      </Badge>
-                    ) : (
+                  <TableCell className={styles.actionCell}>
+                    <div className={styles.rowActions}>
+                      {isActive(target) ? (
+                        <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
+                          Active
+                        </Badge>
+                      ) : (
+                        <Button
+                          className={styles.rowAction}
+                          appearance="primary"
+                          size="small"
+                          onClick={() => onSetActiveTarget(target)}
+                        >
+                          Set Active
+                        </Button>
+                      )}
                       <Button
                         className={styles.rowAction}
-                        appearance="primary"
+                        appearance="subtle"
                         size="small"
-                        onClick={() => onSetActiveTarget(target)}
+                        icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
+                        onClick={() => setTargetHidden(target, !hidden)}
+                        aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
+                        data-testid={`toggle-target-visibility-${target.target_registry_name}`}
                       >
-                        Set Active
+                        {hidden ? 'Show' : 'Hide'}
                       </Button>
-                    )}
+                    </div>
                   </TableCell>
                   <TableCell className={styles.registryNameCell}>
                     <Text size={200} className={styles.registryNameText}>{target.target_registry_name}</Text>

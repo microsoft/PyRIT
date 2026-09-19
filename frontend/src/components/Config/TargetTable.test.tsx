@@ -1,8 +1,11 @@
 import { render, screen, fireEvent, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+
 import { makeTarget } from '@/test-utils/targetFixtures'
+import type { TargetInstance } from '@/types'
+
 import TargetTable from './TargetTable'
-import type { TargetInstance } from '../../types'
 
 jest.mock('./TargetTable.styles', () => ({
   useTargetTableStyles: () => new Proxy({}, { get: () => '' }),
@@ -62,6 +65,7 @@ describe('TargetTable', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    window.localStorage.clear()
   })
 
   it('should render a flat table with all targets visible', () => {
@@ -338,6 +342,79 @@ describe('TargetTable', () => {
 
     fireEvent.change(select, { target: { value: '' } })
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+  })
+
+  it('should hide a target and persist the choice across remounts', async () => {
+    const user = userEvent.setup()
+    const firstRender = render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+
+    expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+
+    firstRender.unmount()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
+    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+  })
+
+  it('should show hidden targets and allow restoring them', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Hide azure_image_dalle' }))
+    expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Show azure_image_dalle' }))
+
+    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (0)' })).toBeDisabled()
+  })
+
+  it('should hide registry entries independently when they share an identifier', async () => {
+    const user = userEvent.setup()
+    const duplicateTargets = [
+      makeTarget({
+        target_registry_name: 'first_registry_name',
+        target_type: 'OpenAIChatTarget',
+        model_name: 'shared-model',
+        identifier_hash: 'shared-identifier-hash',
+      }),
+      makeTarget({
+        target_registry_name: 'second_registry_name',
+        target_type: 'OpenAIChatTarget',
+        model_name: 'shared-model',
+        identifier_hash: 'shared-identifier-hash',
+      }),
+    ]
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={duplicateTargets} />
+      </TestWrapper>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Hide first_registry_name' }))
+
+    expect(screen.queryByText('first_registry_name')).not.toBeInTheDocument()
+    expect(screen.getByText('second_registry_name')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
   })
 
   it('should not show filter when only one target type exists', () => {
