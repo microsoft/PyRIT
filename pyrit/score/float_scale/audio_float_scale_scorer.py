@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoringExpectation
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -68,6 +68,11 @@ class AudioFloatScaleScorer(MessageFloatScaleScorer):
             frozenset[type[Condition]]: The required condition types.
         """
         return self._audio_helper.text_scorer.required_conditions()
+
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """Validate transcript scorer criteria before transcription or target I/O."""
+        super()._validate_expectation(expectation=expectation)
+        self._audio_helper.text_scorer._validate_expectation(expectation=expectation)
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """

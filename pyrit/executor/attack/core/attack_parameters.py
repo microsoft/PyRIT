@@ -7,7 +7,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from pyrit.models import AttackSeedGroup, ConversationReference, Message, SeedGroup
+from pyrit.models import AttackSeedGroup, ConversationReference, Message, ScoringExpectation, SeedGroup
 
 if TYPE_CHECKING:
     from pyrit.models import SeedUnion
@@ -49,10 +49,15 @@ class AttackParameters:
     # Conversations used to prepare this attack before its context was created.
     source_conversations: frozenset[ConversationReference] = field(default_factory=frozenset)
 
+    # Per-execution scoring criteria, supplied directly or by seed preparation.
+    expectation: ScoringExpectation | None = None
+
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
         lines = [f"{self.__class__.__name__}:"]
         lines.append(f"  objective: {self.objective}")
+        if self.expectation is not None:
+            lines.append(f"  expectation: {self.expectation}")
 
         if self.next_message is not None:
             piece_count = len(self.next_message.message_pieces)

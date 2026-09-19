@@ -1,6 +1,8 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 import { mobileTouchTarget } from '../../styles/touchTargets'
 
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
+
 export const useChatWindowStyles = makeStyles({
   root: {
     display: 'flex',
@@ -24,7 +26,7 @@ export const useChatWindowStyles = makeStyles({
     flexDirection: 'column',
     flex: 1,
     minWidth: 0,
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
     overflow: 'hidden',
   },
   breadcrumbBar: {

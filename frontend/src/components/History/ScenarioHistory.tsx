@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -26,9 +26,10 @@ import {
   ScriptRegular,
 } from '@fluentui/react-icons'
 
+import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { labelsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ScenarioRunListItem, ScenarioRunState } from '@/types'
+import type { ScenarioQueueSnapshot, ScenarioRunListItem, ScenarioRunState } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import type { ViewName } from '../Sidebar/Navigation'
@@ -92,6 +93,8 @@ export default function ScenarioHistory({
   showTitle = true,
 }: ScenarioHistoryProps) {
   const styles = useScenarioHistoryStyles()
+  const queue = useScenarioQueue()
+  const lastQueueRevisionRef = useRef<number | null>(null)
   const [runs, setRuns] = useState<ScenarioRunListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -103,7 +106,7 @@ export default function ScenarioHistory({
   const [page, setPage] = useState(0)
   const [nextCursor, setNextCursor] = useState<string | undefined>()
   const [hasMore, setHasMore] = useState(false)
-  const [now, setNow] = useState(0)
+  const [now, setNow] = useState(() => Date.now())
   const filterKey = JSON.stringify([
     filters.scenarioNames,
     filters.statuses,
@@ -117,6 +120,7 @@ export default function ScenarioHistory({
     filterKey,
     nonce: 0,
   })
+  const queueRevision = queue.snapshot?.revision
 
   const requestPage = useCallback((cursor?: string) => {
     setLoading(true)
@@ -208,6 +212,15 @@ export default function ScenarioHistory({
     filters.operation,
     filters.otherLabels,
   ])
+
+  useEffect(() => {
+    if (queueRevision === undefined) return
+    const previousRevision = lastQueueRevisionRef.current
+    lastQueueRevisionRef.current = queueRevision
+    if (previousRevision === null || previousRevision === queueRevision) return
+    const currentCursor = fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined
+    requestPage(currentCursor)
+  }, [fetchToken.cursor, fetchToken.filterKey, filterKey, queueRevision, requestPage])
 
   const setFilter = <K extends keyof ScenarioHistoryFilters>(
     key: K,
@@ -326,7 +339,12 @@ export default function ScenarioHistory({
             )}
           </div>
         ) : (
-          <ScenarioHistoryTable runs={runs} onOpenRun={onOpenRun} now={now} />
+          <ScenarioHistoryTable
+            runs={runs}
+            queueSnapshot={queue.snapshot}
+            onOpenRun={onOpenRun}
+            now={now}
+          />
         )}
       </div>
 
@@ -365,11 +383,12 @@ export default function ScenarioHistory({
 
 interface ScenarioHistoryTableProps {
   runs: ScenarioRunListItem[]
+  queueSnapshot: ScenarioQueueSnapshot | null
   onOpenRun: (scenarioResultId: string) => void
   now: number
 }
 
-function ScenarioHistoryTable({ runs, onOpenRun, now }: ScenarioHistoryTableProps) {
+function ScenarioHistoryTable({ runs, queueSnapshot, onOpenRun, now }: ScenarioHistoryTableProps) {
   const styles = useScenarioHistoryStyles()
   return (
     <Table className={styles.table} aria-label="Scanner history" data-testid="scenario-history-table">
@@ -419,7 +438,7 @@ function ScenarioHistoryTable({ runs, onOpenRun, now }: ScenarioHistoryTableProp
                 </span>
               </a>
             </TableCell>
-            <TableCell><Badge appearance="outline">{formatState(run.status)}</Badge></TableCell>
+            <TableCell><Badge appearance="outline">{formatHistoryState(run, queueSnapshot)}</Badge></TableCell>
             <TableCell>
               {run.target ? (
                 <Tooltip content={run.target.endpoint ?? run.target.target_type} relationship="label">
@@ -463,6 +482,31 @@ function formatState(value: string): string {
   return value.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (letter: string) => letter.toUpperCase())
 }
 
+function formatHistoryState(run: ScenarioRunListItem, queueSnapshot: ScenarioQueueSnapshot | null): string {
+  if (isTerminal(run.status)) {
+    return formatState(run.status)
+  }
+  if (queueSnapshot?.active?.scenario_result_id === run.scenario_result_id) {
+    return 'In progress'
+  }
+  const position = queueSnapshot?.queued.find(
+    (entry) => entry.scenario_result_id === run.scenario_result_id,
+  )?.position
+  if (typeof position === 'number' && Number.isInteger(position) && position > 0) {
+    return `Queued ${formatOrdinal(position)}`
+  }
+  return formatState(run.status)
+}
+
+function formatOrdinal(value: number): string {
+  const lastTwoDigits = value % 100
+  if (lastTwoDigits >= 11 && lastTwoDigits <= 13) {
+    return `${value}th`
+  }
+  const suffix = value % 10 === 1 ? 'st' : value % 10 === 2 ? 'nd' : value % 10 === 3 ? 'rd' : 'th'
+  return `${value}${suffix}`
+}
+
 function formatTimestamp(value: string): string {
   return new Date(value).toLocaleString(undefined, {
     month: 'short',
@@ -473,11 +517,19 @@ function formatTimestamp(value: string): string {
 }
 
 function formatRuntime(run: ScenarioRunListItem, now: number): string {
-  const start = Date.parse(run.created_at)
+  if (!run.started_at) {
+    return run.status === 'CREATED' || run.status === 'QUEUED'
+      ? 'Not started'
+      : 'Execution time unavailable'
+  }
+  const start = Date.parse(run.started_at)
   const terminal = isTerminal(run.status)
   const end = terminal
     ? Date.parse(run.completed_at ?? run.updated_at)
     : now
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return 'Execution time unavailable'
+  }
   const seconds = Math.max(0, Math.floor((end - start) / 1000))
   const duration = seconds < 60
     ? `${seconds}s`

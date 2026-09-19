@@ -313,7 +313,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
 
         if source_type == "public_url":
             examples = self._fetch_from_public_url(source=source, file_type=file_type)
-        elif source_type == "file":
+        else:
             examples = self._fetch_from_file(source=source, file_type=file_type)
 
         if cache:

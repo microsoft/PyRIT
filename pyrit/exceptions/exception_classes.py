@@ -439,10 +439,10 @@ def pyrit_placeholder_retry(func: Callable[..., Any]) -> Callable[..., Any]:
     )(func)
 
 
-# Empirically-observed markers in OpenAI / Azure OpenAI / MAI error payloads that
+# Documented or empirically observed markers in OpenAI / Azure OpenAI / MAI error payloads that
 # indicate the response was blocked by a content filter or safety system.
 #
-# There is no canonical spec for these - providers expose the signal through
+# Providers expose the signal through
 # different field names (``error.code``, ``finish_reason``, ``incomplete_details.reason``,
 # free-form ``error.message``) and the exact wording evolves over time. Rather than
 # try to track every (provider, field) combination as an exact match, we scan the
@@ -456,12 +456,16 @@ def pyrit_placeholder_retry(func: Callable[..., Any]) -> Callable[..., Any]:
 #   - ``policy_violation``         - Substring of Azure's ``content_policy_violation``
 #                                    and OpenAI moderation's ``usage_policy_violation``.
 #   - ``moderation_blocked``       - OpenAI moderation ``error.code``.
+#   - ``bio_policy`` / ``cyber_policy`` - Biological / cybersecurity policy blocks;
+#                                    observed in HTTP 400s and handled by OpenAI Codex.
 CONTENT_FILTER_MARKERS = frozenset(
     {
         "content_filter",
         "content_safety_violation",
         "policy_violation",
         "moderation_blocked",
+        "bio_policy",
+        "cyber_policy",
     }
 )
 

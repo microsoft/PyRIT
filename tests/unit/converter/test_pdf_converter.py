@@ -16,6 +16,20 @@ from pyrit.memory import DataTypeSerializer
 from pyrit.models import SeedPrompt
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("prompt", [None, 123, {"prompt": "hello"}])
+def test_prepare_content_rejects_non_text_without_template(prompt):
+    with pytest.raises(ValueError, match="Prompt must be a string"):
+        PDFConverter()._prepare_content(prompt)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("prompt", [{"prompt": "hello"}, "{'prompt': 'hello'}"])
+def test_prepare_content_accepts_raw_and_serialized_template_data(prompt):
+    template = SeedPrompt(value="Input: {{ prompt }}", data_type="text", parameters=["prompt"])
+    assert PDFConverter(prompt_template=template)._prepare_content(prompt) == "Input: hello"
+
+
 @pytest.fixture
 def pdf_converter_no_template():
     """A PDFConverter with no template path provided."""

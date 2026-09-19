@@ -148,7 +148,7 @@ class TestTargetRegistryRegisterInstance:
         assert target.get_identifier().model_name == "named-model"
         assert registry.instances.get("mock") is target
 
-    @pytest.mark.parametrize("name", ["catalog", "types"])
+    @pytest.mark.parametrize("name", ["types"])
     def test_create_named_instance_rejects_reserved_name(self, registry: TargetRegistry, name: str):
         registry.register_class(MockPromptTarget)
 

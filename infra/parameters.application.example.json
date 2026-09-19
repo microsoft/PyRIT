@@ -1,0 +1,72 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "_envFileContents_warning": "Do not commit a real .env value. Pass it at deploy time with --parameters envFileContents=@./my.env after verifying that the file exists.",
+  "parameters": {
+    "appName": {
+      "value": "copyrit-INSTANCE_NAME"
+    },
+    "containerImage": {
+      "value": "REPLACE_ACR.azurecr.io/pyrit:REPLACE_COMMIT_SHA"
+    },
+    "entraTenantId": {
+      "value": "REPLACE_TENANT_ID"
+    },
+    "entraClientId": {
+      "value": "REPLACE_ENTRA_CLIENT_ID"
+    },
+    "allowedGroupObjectIds": {
+      "value": "REPLACE_GROUP_OBJECT_IDS"
+    },
+    "adminGroupObjectId": {
+      "value": "REPLACE_ADMIN_GROUP_OBJECT_ID"
+    },
+    "allowedCidr": {
+      "value": ""
+    },
+    "sqlServerFqdn": {
+      "value": "REPLACE_SQL_SERVER.database.windows.net"
+    },
+    "sqlDatabaseName": {
+      "value": "REPLACE_SQL_DATABASE"
+    },
+    "pyritInitializer": {
+      "value": "target,technique"
+    },
+    "pyritConfigFileUri": {
+      "value": ""
+    },
+    "envSecretName": {
+      "value": "env-global"
+    },
+    "envFileContents": {
+      "value": ""
+    },
+    "keyVaultResourceId": {
+      "value": "REPLACE_KEY_VAULT_RESOURCE_ID"
+    },
+    "acrName": {
+      "value": "REPLACE_ACR_NAME"
+    },
+    "acrResourceId": {
+      "value": ""
+    },
+    "existingManagedIdentityResourceId": {
+      "value": "REPLACE_MANAGED_IDENTITY_RESOURCE_ID"
+    },
+    "enableOtel": {
+      "value": false
+    },
+    "enableFrontDoor": {
+      "value": false
+    },
+    "tags": {
+      "value": {
+        "Service": "pyrit-gui",
+        "Owner": "AI Red Team",
+        "DataClass": "Confidential",
+        "Instance": "INSTANCE_NAME"
+      }
+    }
+  }
+}

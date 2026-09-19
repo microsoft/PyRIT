@@ -8,16 +8,15 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
-from tqdm.auto import tqdm
 
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     AttackPrompt,
-    ModelWorkerOperation,
     MultiPromptAttack,
     PromptManager,
     get_embedding_matrix,
     get_embeddings,
 )
+from pyrit.executor.promptgen.gcg.attack.gcg.candidate_evaluator import GCGCandidateEvaluator
 from pyrit.executor.promptgen.gcg.attack.gcg.candidate_proposer import GCGCandidateProposer
 from pyrit.executor.promptgen.gcg.default_implementations import (
     CrossEntropyLoss,
@@ -328,40 +327,25 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             filter_cand=filter_cand,
             current_control_str=self.control_str,
         )
-        control_cands = candidate_batch.control_candidates_by_group
+        evaluator = GCGCandidateEvaluator(
+            workers=self.workers,
+            prompts=self.prompts,
+            loss_function=loss_function,
+            main_device=main_device,
+        )
+        eval_batch = evaluator.evaluate_candidates(
+            control_candidates_by_group=candidate_batch.control_candidates_by_group,
+            batch_size=batch_size,
+            verbose=verbose,
+        )
 
-        # Search
-        loss = torch.zeros(len(control_cands) * batch_size).to(main_device)
         with torch.no_grad():
-            for j, cand in enumerate(control_cands):
-                # Looping through the prompts at this level is less elegant, but
-                # we can manage VRAM better this way
-                progress = tqdm(range(len(self.prompts[0])), total=len(self.prompts[0])) if verbose else None
-                prompt_indices = progress if progress is not None else range(len(self.prompts[0]))
-                for i in prompt_indices:
-                    for k, worker in enumerate(self.workers):
-                        worker(self.prompts[k][i], ModelWorkerOperation.LOGITS, cand, return_ids=True)
-                    logits, ids = zip(*[worker.results.get() for worker in self.workers], strict=True)
-                    loss[j * batch_size : (j + 1) * batch_size] += sum(
-                        loss_function.compute_loss(
-                            logits=logit,
-                            token_ids=token_ids,
-                            target_slice=self.prompts[k][i]._target_slice,
-                            control_slice=self.prompts[k][i]._control_slice,
-                        ).to(main_device)
-                        for k, (logit, token_ids) in enumerate(zip(logits, ids, strict=True))
-                    )
-                    del logits, ids
-
-                    if progress is not None:
-                        progress.set_description(
-                            f"loss={loss[j * batch_size : (j + 1) * batch_size].min().item() / (i + 1):.4f}"
-                        )
-
             next_control, cand_loss = self._select_best_candidate(
-                control_cands=control_cands, losses=loss, batch_size=batch_size
+                control_cands=eval_batch.control_candidates_by_group,
+                losses=eval_batch.losses,
+                batch_size=batch_size,
             )
-        del control_cands, loss
+        del candidate_batch, eval_batch
 
         current_length = self._get_control_length(control=next_control)
         if current_length is not None:
