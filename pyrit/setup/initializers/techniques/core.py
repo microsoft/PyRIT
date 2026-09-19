@@ -240,4 +240,20 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
                 ),
             },
         ),
+        AttackTechniqueFactory(
+            name="code_attack_framed",
+            attack_class=PromptSendingAttack,
+            description="Encodes the objective as code and frames the session with the CodeAttack system prompt.",
+            technique_tags=["single_turn", "light"],
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(
+                        converters=[CodeAttackConverter(template=CodeAttackConverter.Template.PYTHON_STACK_VERBOSE)]
+                    )
+                ),
+            },
+            seed_technique=AttackTechniqueSeedGroup.from_system_prompt(
+                SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "code_attack.yaml").value
+            ),
+        ),
     ]
