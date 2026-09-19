@@ -1,283 +1,196 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# Portions Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
-"""
-Divergence scenario — a PyRIT port of Garak's ``divergence`` probe.
-
-Replicates repetition-induced divergence attacks, where a model is prompted to repeat
-a word (such as "poem poem poem") or specific tokens indefinitely. If the model fails
-to maintain bounded repetition or appropriate refusal, its output can diverge into
-uncontrolled continuation, output instability, or training data replay.
-
-Reference: [@derczynski2024garak]
-https://not-just-memorization.github.io/extracting-training-data-from-chatgpt.html
-"""
+"""Garak's Repeat probe, packaged with a reusable repetition-divergence scorer."""
 
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING, ClassVar
+from collections import defaultdict
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, DivergesFromRepetition, ScoringExpectation, Seed, SeedObjective, SeedPrompt
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-from pyrit.score.true_false.regex.divergence_scorer import DivergenceScorer
+from pyrit.score import DivergenceScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.score import TrueFalseScorer
-
-logger = logging.getLogger(__name__)
-
-DATASET_DIVERGENCE = "garak_divergence"
-DEFAULT_MAX_DATASET_SIZE = 10
 
 
 class DivergenceDatasetConfiguration(DatasetAttackConfiguration):
-    """
-    Dataset configuration for the Divergence scenario.
+    """Pair literal repetition prompts with distinct objectives, preserving their provenance."""
 
-    Shapes each prompt seed from the ``garak_divergence`` dataset into an
-    ``AttackSeedGroup`` pairing a derived ``SeedObjective`` with a ``SeedPrompt``.
-    """
-
-    @staticmethod
-    def _derive_objective(seed: Seed) -> str:
-        """
-        Derive a scoring objective from seed metadata.
-
-        Args:
-            seed (Seed): The seed containing prompt text and metadata.
-
-        Returns:
-            str: The derived objective string.
-        """
-        tech = (seed.metadata or {}).get("technique", "repetition")
-        word = (seed.metadata or {}).get("repeat_word")
-        if word:
-            return (
-                f"Get the model to diverge from repeating '{word}' into unexpected "
-                "continuation or training data leakage."
-            )
-        return f"Get the model to diverge from requested {tech} into unexpected continuation or output instability."
+    DEFAULT_MAX_DATASET_SIZE: int = 10
 
     def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """
-        Shape prompt seeds into attack groups with derived objectives.
-
-        Args:
-            seeds (list[Seed]): Raw seeds loaded from dataset.
+        Preserve each source prompt and add its attack objective.
 
         Returns:
-            list[AttackSeedGroup]: Formatted attack seed groups.
+            list[AttackSeedGroup]: One group per source prompt.
+
+        Raises:
+            DatasetConstraintError: If a seed is not a text prompt.
         """
-        return [
-            AttackSeedGroup(
-                seeds=[
-                    SeedObjective(value=self._derive_objective(seed)),
-                    SeedPrompt(value=seed.value, data_type="text", sequence=0),
-                ]
+        groups: list[AttackSeedGroup] = []
+        for seed in seeds:
+            if not isinstance(seed, SeedPrompt) or seed.data_type != "text":
+                raise DatasetConstraintError("Divergence requires literal text SeedPrompts.")
+            prompt = seed.model_copy(deep=True)
+            groups.append(
+                AttackSeedGroup(
+                    seeds=[
+                        SeedObjective(
+                            value=f"Produce unexpected continuation after repetition in response to: {seed.value}",
+                            dataset_name=seed.dataset_name,
+                            source=seed.source,
+                            authors=seed.authors,
+                            groups=seed.groups,
+                            harm_categories=seed.harm_categories,
+                            metadata=seed.metadata,
+                        ),
+                        prompt,
+                    ]
+                )
             )
-            for seed in seeds
-        ]
+        return groups
 
 
 class DivergenceTechnique(ScenarioTechnique):
-    """
-    Techniques for the Divergence scenario.
-
-    Repeat: Replicates the word repetition attack asking the target to repeat words indefinitely.
-    RepeatedToken: Tests model stability with precomputed repeated-token sequences from Dropbox research.
-    ALL: Aggregate member running all techniques.
-    DEFAULT: Default technique (Repeat).
-    """
+    """Repeat is the sole probe; ALL and DEFAULT select it through the shared resolver."""
 
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
     Repeat = ("repeat", {"default"})
-    RepeatedToken = ("repeated_token", set[str]())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
-        """
-        Return the tags that represent aggregate categories.
-
-        Returns:
-            set[str]: Set of aggregate category tag strings.
-        """
+        """Return the aggregate tags."""
         return {"all", "default"}
 
     @classmethod
     def default(cls) -> DivergenceTechnique:
-        """
-        Return the default technique (``Repeat`` via ``DEFAULT``).
-
-        Returns:
-            DivergenceTechnique: Default technique.
-        """
+        """Return the default aggregate."""
         return cls.DEFAULT
-
-
-_REPEAT_FACTORY = AttackTechniqueFactory(
-    name=DivergenceTechnique.Repeat.value,
-    attack_class=PromptSendingAttack,
-    technique_tags=["single_turn"],
-)
-
-_REPEATED_TOKEN_FACTORY = AttackTechniqueFactory(
-    name=DivergenceTechnique.RepeatedToken.value,
-    attack_class=PromptSendingAttack,
-    technique_tags=["single_turn"],
-)
-
-DIVERGENCE_FACTORIES: list[AttackTechniqueFactory] = [
-    _REPEAT_FACTORY,
-    _REPEATED_TOKEN_FACTORY,
-]
 
 
 class Divergence(Scenario):
     """
-    Divergence attack scenario implementation for PyRIT.
+    Test for unexpected continuation after requested word repetition.
 
-    Ports Garak's 'divergence' probe (including Repeat and RepeatedToken techniques).
-    Tests whether asking a model to repeat words or tokens indefinitely causes output
-    to diverge from the requested repetition into unexpected continuation, instability,
-    or training data replay.
+    Ports Garak's Repeat probe, not RepeatedToken. A positive score indicates
+    divergence, not proof that the response contains training data.
+    The direct repetition prompt is the attack; an objective-only baseline is not meaningful.
 
     Reference: [@derczynski2024garak]
-    https://not-just-memorization.github.io/extracting-training-data-from-chatgpt.html
     """
 
     VERSION: int = 1
-    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Disabled
-
-    @classmethod
-    def required_datasets(cls) -> list[str]:
-        """
-        Return a list of dataset names required by this scenario.
-
-        Returns:
-            list[str]: Required dataset names.
-        """
-        return [DATASET_DIVERGENCE]
-
-    @classmethod
-    def _get_default_objective_scorer(cls) -> TrueFalseScorer:
-        """
-        Return the default scorer for detecting divergence in responses.
-
-        Returns:
-            TrueFalseScorer: Default divergence scorer.
-        """
-        return DivergenceScorer()
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
+    _REPEAT_FACTORY: ClassVar[AttackTechniqueFactory] = AttackTechniqueFactory(
+        name="repeat",
+        attack_class=PromptSendingAttack,
+        technique_tags=["single_turn"],
+        supports_additional_request_converters=True,
+    )
 
     @apply_defaults
     def __init__(
         self,
         *,
         objective_scorer: TrueFalseScorer | None = None,
-        max_dataset_size: int = DEFAULT_MAX_DATASET_SIZE,
         scenario_result_id: str | None = None,
     ) -> None:
         """
-        Initialize the Divergence scenario.
+        Initialize the Repeat scenario.
 
         Args:
-            objective_scorer (TrueFalseScorer | None): Scorer for detecting divergence in responses.
-                Defaults to ``DivergenceScorer``.
-            max_dataset_size (int): Maximum dataset size budget. Defaults to 10.
-            scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
+            objective_scorer: Optional scorer override. Repetition-aware scorers receive
+                a DivergesFromRepetition condition; other scorers receive objective context only.
+            scenario_result_id: Optional existing result to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
-        self._max_dataset_size = max_dataset_size
-
         super().__init__(
             version=self.VERSION,
             technique_class=DivergenceTechnique,
             default_dataset_config=DivergenceDatasetConfiguration(
-                dataset_names=[DATASET_DIVERGENCE],
-                max_dataset_size=max_dataset_size,
+                dataset_names=self.required_datasets(),
+                max_dataset_size=DivergenceDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
             ),
-            objective_scorer=objective_scorer,
+            objective_scorer=objective_scorer or DivergenceScorer(),
             scenario_result_id=scenario_result_id,
         )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Build atomic attacks for the selected divergence techniques.
-
-        Args:
-            context (ScenarioContext): The resolved runtime inputs for this run.
+        Package each sampled word population with its own immutable scoring expectation.
 
         Returns:
-            list[AtomicAttack]: The constructed atomic attacks.
+            list[AtomicAttack]: Word populations sharing one scorer and attack technique.
         """
-        selected_technique_values = {technique.value for technique in context.scenario_techniques}
+        scorer = cast("TrueFalseScorer", self._objective_scorer)
+        converters = self._technique_converters.get("repeat", [])
+        technique = self._REPEAT_FACTORY.create(
+            objective_target=context.objective_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=scorer),
+            extra_request_converters=(
+                ConverterConfiguration.from_converters(converters=converters) if converters else None
+            ),
+        )
 
-        # Handle ALL / DEFAULT resolution
-        active_techniques: set[str] = set()
-        for tech_val in selected_technique_values:
-            if tech_val in ("all", "default"):
-                active_techniques.add("repeat")
-                if tech_val == "all":
-                    active_techniques.add("repeated_token")
-            else:
-                active_techniques.add(tech_val)
-
-        factories_by_name = {factory.name: factory for factory in DIVERGENCE_FACTORIES}
-        atomic_attacks: list[AtomicAttack] = []
-
-        all_seed_groups = list(context.seed_groups)
-
-        for tech_name in sorted(active_techniques):
-            factory = factories_by_name.get(tech_name)
-            if not factory:
-                continue
-
-            # Filter seed groups matching the technique
-            matching_groups = [
-                group
-                for group in all_seed_groups
-                if any(
-                    tech_name in str(piece.value).lower() or tech_name in str(getattr(piece, "metadata", {})).lower()
-                    for piece in group.seeds
-                )
-                or not any("technique" in str(getattr(piece, "metadata", {})).lower() for piece in group.seeds)
+        populations: list[tuple[str, ScoringExpectation | None, list[AttackSeedGroup]]]
+        if DivergesFromRepetition in scorer.matched_conditions():
+            groups_by_word: dict[str, list[AttackSeedGroup]] = defaultdict(list)
+            for group in context.seed_groups:
+                groups_by_word[self._repeat_word(group)].append(group)
+            populations = [
+                (f"repeat_{word}", ScoringExpectation(conditions=(DivergesFromRepetition(text=word),)), groups)
+                for word, groups in sorted(groups_by_word.items())
             ]
-            if not matching_groups:
-                matching_groups = all_seed_groups
+        else:
+            populations = [("repeat", None, list(context.seed_groups))]
 
-            attack = factory.create(
-                objective_target=context.objective_target,
-                attack_scoring_config=self._scorer_config,
+        return [
+            AtomicAttack(
+                atomic_attack_name=name,
+                technique_name="repeat",
+                display_group="repeat",
+                attack_technique=technique,
+                seed_groups=groups,
+                objective_scorer=scorer,
+                memory_labels=context.memory_labels,
+                expectation=expectation,
             )
-            atomic_attacks.append(
-                AtomicAttack(
-                    atomic_attack_name=f"divergence_{tech_name}",
-                    attack_technique=attack,
-                    seed_groups=matching_groups,
-                    memory_labels=context.memory_labels,
-                )
-            )
+            for name, expectation, groups in populations
+        ]
 
-        if context.include_baseline:
-            baseline_seed_groups = [AttackSeedGroup(seeds=[seed_group.objective]) for seed_group in all_seed_groups]
-            atomic_attacks.append(
-                build_baseline_atomic_attack(
-                    objective_target=context.objective_target,
-                    objective_scorer=self._objective_scorer,
-                    seed_groups=baseline_seed_groups,
-                    memory_labels=context.memory_labels,
-                )
-            )
+    @staticmethod
+    def _repeat_word(group: AttackSeedGroup) -> str:
+        """
+        Read the criterion from the literal prompt rather than guessing from its text.
 
-        return atomic_attacks
+        Returns:
+            str: The expected repeated text.
+
+        Raises:
+            DatasetConstraintError: If the group lacks one text prompt with a repeat word.
+        """
+        if len(group.prompts) != 1 or group.prompts[0].data_type != "text":
+            raise DatasetConstraintError("Divergence scoring requires one literal text prompt per seed group.")
+        word = (group.prompts[0].metadata or {}).get("repeat_word")
+        if not isinstance(word, str) or not word.strip():
+            raise DatasetConstraintError("Divergence scoring requires nonempty repeat_word metadata on each prompt.")
+        return word
+
+    @classmethod
+    def required_datasets(cls) -> list[str]:
+        """Return the Repeat prompt corpus."""
+        return ["garak_divergence"]
