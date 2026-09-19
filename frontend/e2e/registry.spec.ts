@@ -336,6 +336,24 @@ test.describe("Converter Registry", () => {
     await expect(page.getByRole("button", { name: "New Converter" })).toBeFocused();
   });
 
+  test("keeps a stale submission failure out of a reopened add dialog", async ({ page }) => {
+    const release = await submitDuplicateName(page);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
+
+    await page.getByRole("button", { name: "New Converter" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("combobox", { name: "Converter type" })).toBeVisible();
+
+    release();
+
+    // The request settles either way; only its failure is dropped, so the
+    // reopened dialog keeps the empty form the user opened.
+    await expect(dialog.getByRole("button", { name: "Add Converter" })).toBeEnabled();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(dialog.getByLabel("Registry name")).toHaveValue("");
+  });
+
   test("uses the available viewport height for the converter type list", async ({ page }) => {
     await page.getByRole("button", { name: "New Converter" }).click();
     await page.getByRole("combobox", { name: "Converter type" }).click();

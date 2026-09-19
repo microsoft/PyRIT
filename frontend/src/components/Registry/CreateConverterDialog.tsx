@@ -44,6 +44,14 @@ function getModalityLabel(converterType: ConverterTypeEntry): string {
   return `${inputs} to ${outputs}`
 }
 
+// Where a message came from decides whether it takes the keyboard: a failed
+// submission answers something the user just did, while a metadata-loading
+// failure arrives unprompted and must not pull focus out of the form.
+interface DialogError {
+  message: string
+  fromSubmit: boolean
+}
+
 interface CreateConverterDialogProps {
   open: boolean
   onClose: () => void
@@ -169,10 +177,15 @@ export default function CreateConverterDialog({
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<DialogError | null>(null)
   const errorRef = useRef<HTMLDivElement>(null)
+  // The dialog instance is reused across openings, so a create response can
+  // land after the opening that started it has gone.
+  const openEpochRef = useRef(0)
 
   useEffect(() => {
+    // Every change of `open` ends the opening before it.
+    openEpochRef.current += 1
     if (!open) return
     let cancelled = false
     Promise.resolve()
@@ -202,7 +215,7 @@ export default function CreateConverterDialog({
           setConverterTypes([])
           setTargets([])
           setConverters([])
-          setError(toApiError(err).detail)
+          setError({ message: toApiError(err).detail, fromSubmit: false })
         }
       })
       .finally(() => {
@@ -210,6 +223,15 @@ export default function CreateConverterDialog({
       })
     return () => { cancelled = true }
   }, [open])
+
+  // Hand the keyboard to the failure once React has committed it. A frame
+  // callback can run before the render that adds the message bar, and focusing
+  // from there finds no node and silently does nothing, leaving the keyboard on
+  // the primary action where the request left it.
+  useEffect(() => {
+    if (!error?.fromSubmit) return
+    errorRef.current?.focus()
+  }, [error])
 
   const selectedConverterType = useMemo(
     () => converterTypes.find((item) => item.converter_type === selectedType),
@@ -304,6 +326,7 @@ export default function CreateConverterDialog({
       return
     }
 
+    const epoch = openEpochRef.current
     setSubmitting(true)
     setError(null)
     try {
@@ -315,10 +338,11 @@ export default function CreateConverterDialog({
       reset()
       onCreated(response.converter_id)
     } catch (err) {
-      setError(toApiError(err).detail)
-      // Put focus on the failure so it is announced and so the keyboard is not
-      // left on the primary action, which is where the request left it.
-      requestAnimationFrame(() => errorRef.current?.focus())
+      // A failure from an opening the user has already left stays out of the
+      // one in front of them, and out of its focus.
+      if (openEpochRef.current === epoch) {
+        setError({ message: toApiError(err).detail, fromSubmit: true })
+      }
     } finally {
       setSubmitting(false)
     }
@@ -346,7 +370,7 @@ export default function CreateConverterDialog({
             >
               {error && (
                 <MessageBar intent="error">
-                  <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error}</MessageBarBody>
+                  <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error.message}</MessageBarBody>
                 </MessageBar>
               )}
               {loading && <Spinner label="Loading converter types..." />}

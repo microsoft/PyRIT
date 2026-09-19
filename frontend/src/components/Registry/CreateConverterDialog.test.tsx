@@ -48,10 +48,10 @@ async function selectConverterType(converterType: string) {
   await user.click(screen.getByTestId(`converter-type-option-${converterType}`))
 }
 
-function renderDialog(
+function dialogTree(
   props: Partial<React.ComponentProps<typeof CreateConverterDialog>> = {},
 ) {
-  return render(
+  return (
     <FluentProvider theme={webLightTheme}>
       <CreateConverterDialog
         open
@@ -59,8 +59,20 @@ function renderDialog(
         onCreated={jest.fn()}
         {...props}
       />
-    </FluentProvider>,
+    </FluentProvider>
   )
+}
+
+function renderDialog(
+  props: Partial<React.ComponentProps<typeof CreateConverterDialog>> = {},
+) {
+  return render(dialogTree(props))
+}
+
+async function submitCaesarConverter(user: ReturnType<typeof userEvent.setup>) {
+  await selectConverterType('CaesarConverter')
+  await user.type(screen.getByLabelText(/caesar_offset/i), '5')
+  await user.click(screen.getByRole('button', { name: 'Add Converter' }))
 }
 
 describe('CreateConverterDialog', () => {
@@ -72,6 +84,10 @@ describe('CreateConverterDialog', () => {
       items: [],
       pagination: { limit: 200, has_more: false },
     })
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
   })
 
   it('loads converter classes from registry type metadata', async () => {
@@ -279,5 +295,49 @@ describe('CreateConverterDialog', () => {
 
     await user.keyboard('{Escape}')
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('should focus a submission error even when a frame runs before React renders it', async () => {
+    // A frame callback can run before React commits the message bar, which is
+    // when focusing from one finds no node and silently does nothing.
+    jest.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(performance.now())
+      return 0
+    })
+    mockedConvertersApi.createConverter.mockRejectedValue(
+      new Error("Converter instance 'CaesarConverter' already exists"),
+    )
+    const user = userEvent.setup()
+    renderDialog()
+    await submitCaesarConverter(user)
+
+    const alert = await screen.findByRole('alert')
+    await waitFor(() => expect(alert).toHaveFocus())
+  })
+
+  it('should not surface a submission error in a later opening of the dialog', async () => {
+    let rejectCreate: ((reason: Error) => void) | undefined
+    mockedConvertersApi.createConverter.mockImplementation(
+      () => new Promise((_, reject) => { rejectCreate = reject }),
+    )
+    const onClose = jest.fn()
+    const user = userEvent.setup()
+    const { rerender } = renderDialog({ onClose })
+    await submitCaesarConverter(user)
+    await waitFor(() => expect(mockedConvertersApi.createConverter).toHaveBeenCalled())
+
+    // Dismissed while the request was in flight, then opened again.
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalled()
+    rerender(dialogTree({ open: false, onClose }))
+    rerender(dialogTree({ open: true, onClose }))
+    await screen.findByRole('combobox', { name: /^converter type$/i })
+
+    await act(async () => {
+      rejectCreate?.(new Error("Converter instance 'CaesarConverter' already exists"))
+    })
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/registry name/i)).toHaveValue('')
   })
 })
