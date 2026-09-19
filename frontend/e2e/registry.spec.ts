@@ -197,6 +197,39 @@ async function submitDuplicateName(page: Page): Promise<() => void> {
   return () => releaseCreate?.();
 }
 
+async function createCaesarConverter(page: Page, name: string): Promise<void> {
+  await page.getByRole("combobox", { name: "Converter type" }).click();
+  await page.getByTestId("converter-type-option-CaesarConverter").click();
+  await page.getByLabel("Registry name").fill(name);
+  await page.getByLabel("caesar_offset *").fill("5");
+  await page.getByRole("button", { name: "Add Converter" }).click();
+}
+
+async function submitSlowCreate(page: Page, name: string): Promise<() => void> {
+  let releaseCreate: (() => void) | undefined;
+  await page.route(/\/api\/converters$/, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    // Hand the request to the registry mock so the refresh the response
+    // triggers has the new converter to show.
+    await route.fallback();
+  });
+
+  await page.getByRole("button", { name: "New Converter" }).click();
+  await createCaesarConverter(page, name);
+  await expect(page.getByRole("button", { name: "Adding..." })).toBeVisible();
+  // Chromium runs the unfocusing steps for the disabled primary action a tick
+  // after it is disabled, so give it time to land before pressing Escape.
+  await page.waitForTimeout(250);
+
+  return () => releaseCreate?.();
+}
+
 test.describe("Converter Registry", () => {
   test.beforeEach(async ({ page }) => {
     await installRegistryMocks(page);
@@ -273,6 +306,34 @@ test.describe("Converter Registry", () => {
     // Escape only reaches the dialog surface while focus is still inside it.
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toBeHidden();
+  });
+
+  test("leaves the removal dialog in place when a dismissed creation succeeds", async ({ page }) => {
+    await page.getByRole("button", { name: "Create First Converter" }).click();
+    await createCaesarConverter(page, "caesar-first");
+    await expect(page.getByText("caesar-first")).toBeVisible();
+
+    const release = await submitSlowCreate(page, "caesar-late");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
+
+    const removeTrigger = page.getByRole("button", { name: "Remove caesar-first" });
+    await removeTrigger.click();
+    const removeDialog = page.getByRole("dialog");
+    await expect(removeDialog).toBeVisible();
+
+    release();
+    await expect(page.getByText("caesar-late")).toBeVisible();
+
+    // Moving focus out makes Tabster mark the still-visible dialog aria-hidden,
+    // and Escape then stops dismissing it, so the late response has to leave
+    // both the removal dialog's state and its focus alone.
+    await expect(removeDialog.locator(":focus")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(removeDialog).toBeHidden();
+    // The row that opened the dialog was replaced by the refresh, so focus
+    // falls back to the always-mounted header action.
+    await expect(page.getByRole("button", { name: "New Converter" })).toBeFocused();
   });
 
   test("uses the available viewport height for the converter type list", async ({ page }) => {

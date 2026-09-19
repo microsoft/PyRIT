@@ -48,6 +48,14 @@ function formatParameters(identifier: ConverterIdentifier): string {
   return parameters.join('\n') || '—'
 }
 
+// One token per dialog opening. A create response can land after the dialog it
+// was submitted from is gone, and by then another dialog may be open, so the
+// response is matched by token identity; a single "a dialog is open" boolean
+// cannot tell the dialog in front of the user from the one it belongs to.
+interface DialogToken {
+  dialog: 'create' | 'remove'
+}
+
 interface DataTypeBadgesProps {
   dataTypes: string[] | null | undefined
 }
@@ -69,7 +77,7 @@ export default function ConverterRegistry() {
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [createOpen, setCreateOpen] = useState(false)
+  const [createToken, setCreateToken] = useState<DialogToken | null>(null)
   const [converterToRemove, setConverterToRemove] = useState<ConverterInstance | null>(null)
   const [removing, setRemoving] = useState(false)
   // Both dialogs open from state rather than from a DialogTrigger, so mark the
@@ -81,8 +89,16 @@ export default function ConverterRegistry() {
   const newConverterRef = useRef<HTMLButtonElement>(null)
   const createTriggerRef = useRef<HTMLElement | null>(null)
   const removeTriggerRef = useRef<HTMLElement | null>(null)
-  // Kept in a ref because a queued restore outlives the render that scheduled it.
-  const dialogOpenRef = useRef(false)
+  // The token of the dialog on screen, or null when none is. Kept in a ref
+  // because a queued restore and an in-flight create request both outlive the
+  // render that started them.
+  const openDialogRef = useRef<DialogToken | null>(null)
+
+  const openDialog = (dialog: DialogToken['dialog']): DialogToken => {
+    const token: DialogToken = { dialog }
+    openDialogRef.current = token
+    return token
+  }
 
   // New Converter is always mounted, so it is the fallback whenever the control
   // that opened the dialog is gone: a removed row, or the empty-state button
@@ -90,7 +106,7 @@ export default function ConverterRegistry() {
   // dialog opens is dropped, so a slow refresh cannot pull focus out of it.
   const restoreFocus = (trigger: HTMLElement | null) => {
     requestAnimationFrame(() => {
-      if (dialogOpenRef.current) return
+      if (openDialogRef.current) return
       const target = trigger?.isConnected ? trigger : newConverterRef.current
       target?.focus()
     })
@@ -117,24 +133,23 @@ export default function ConverterRegistry() {
 
   const openCreateDialog = (event: MouseEvent<HTMLButtonElement>) => {
     createTriggerRef.current = event.currentTarget
-    dialogOpenRef.current = true
-    setCreateOpen(true)
+    setCreateToken(openDialog('create'))
   }
 
   const closeCreateDialog = () => {
-    dialogOpenRef.current = false
-    setCreateOpen(false)
+    openDialogRef.current = null
+    setCreateToken(null)
     restoreFocus(createTriggerRef.current)
   }
 
   const openRemoveDialog = (event: MouseEvent<HTMLButtonElement>, converter: ConverterInstance) => {
     removeTriggerRef.current = event.currentTarget
-    dialogOpenRef.current = true
+    openDialog('remove')
     setConverterToRemove(converter)
   }
 
   const dismissRemoveDialog = () => {
-    dialogOpenRef.current = false
+    openDialogRef.current = null
     setConverterToRemove(null)
     restoreFocus(removeTriggerRef.current)
   }
@@ -147,7 +162,9 @@ export default function ConverterRegistry() {
       await convertersApi.deleteConverter(converterToRemove.converter_id)
       // The row that opened the dialog is about to unmount, so this restores to
       // New Converter. Doing it before the refresh keeps focus off <body> while
-      // the list reloads.
+      // the list reloads. No token check is needed: Cancel is disabled and the
+      // Escape handler is ignored while `removing`, so this dialog is still the
+      // one on screen.
       dismissRemoveDialog()
       await loadConverters()
     } catch (err) {
@@ -261,10 +278,15 @@ export default function ConverterRegistry() {
       )}
 
       <CreateConverterDialog
-        open={createOpen}
+        open={createToken !== null}
         onClose={closeCreateDialog}
         onCreated={() => {
-          closeCreateDialog()
+          // This closure holds the token the create request was submitted
+          // under. A response that outlived its own dialog still refreshes the
+          // list, but only the opening it belongs to may clear the dialog state
+          // and move focus, so it cannot pull focus out of a dialog the user
+          // opened in the meantime or close one they reopened.
+          if (createToken && openDialogRef.current === createToken) closeCreateDialog()
           void loadConverters()
         }}
       />
