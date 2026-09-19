@@ -201,3 +201,17 @@ def test_category_can_belong_to_multiple_pillars() -> None:
 
     suicide_pillars = set(HarmCategory.SUICIDE.pillars())
     assert {HarmCategoryPillar.CHILD_SAFETY, HarmCategoryPillar.SELF_INJURY} <= suicide_pillars
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("HateSpeech", HarmCategory.HATE_SPEECH),
+        ("hate-speech", HarmCategory.HATE_SPEECH),
+        ("hate_speech", HarmCategory.HATE_SPEECH),
+        ("hate speech", HarmCategory.HATE_SPEECH),
+        ("SelfHarm", HarmCategory.SELF_HARM),
+    ],
+)
+def test_parse_resolves_separator_variants(raw: str, expected: HarmCategory) -> None:
+    assert HarmCategory.parse(raw) == expected

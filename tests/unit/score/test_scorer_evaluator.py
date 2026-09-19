@@ -748,6 +748,7 @@ async def test_run_evaluation_async_combines_dataset_versions_with_duplicates(
     assert metrics.dataset_version == "1.0_1.0_1.0"
     # harm_definition_version is unique (all same, so just "1.0")
     assert metrics.harm_definition_version == "1.0"
+    assert metrics.harm_category == "hate_speech"
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
@@ -815,6 +816,7 @@ async def test_run_evaluation_async_combines_mixed_dataset_versions(
     assert metrics.dataset_version == "1.0_2.0"
     # harm_definition_version is unique (both same)
     assert metrics.harm_definition_version == "1.0"
+    assert metrics.harm_category == "violence"
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
@@ -1014,6 +1016,37 @@ class TestSelectEvaluationScore:
     def test_accepts_case_insensitive_unrecognized_category(self):
         score = self._score(category=["Jailbreak"])
         assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="jailbreak") is score
+
+    @pytest.mark.parametrize(
+        ("emitted", "labeled"),
+        [
+            ("HateSpeech", "hate_speech"),
+            ("hate-speech", "hate_speech"),
+            ("hate speech", "hate_speech"),
+            ("ProtectedMaterial", "protected_material"),
+            ("protected-material", "protected_material"),
+            ("PromptInjection", "prompt_injection"),
+            ("jailbreak-attempt", "jailbreak_attempt"),
+        ],
+    )
+    def test_accepts_separator_insensitive_category(self, emitted: str, labeled: str):
+        score = self._score(category=[emitted])
+        assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category=labeled) is score
+
+    @pytest.mark.parametrize(
+        ("emitted", "labeled"),
+        [
+            ("harm", "self_harm"),
+            ("self", "self_harm"),
+            ("speech", "hate_speech"),
+            ("code", "insecure_code"),
+            ("cyber", "cyberattack"),
+        ],
+    )
+    def test_rejects_unrelated_separator_substrings(self, emitted: str, labeled: str):
+        score = self._score(category=[emitted])
+        with pytest.raises(ValueError, match=f"requires a score for harm category '{labeled}'"):
+            ScorerEvaluator._select_evaluation_score(scores=[score], harm_category=labeled)
 
     def test_returns_none_when_the_scorer_returned_nothing(self):
         assert ScorerEvaluator._select_evaluation_score(scores=[], harm_category="hate_speech") is None
