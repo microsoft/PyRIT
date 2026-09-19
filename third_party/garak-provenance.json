@@ -166,6 +166,14 @@
       ]
     },
     {
+      "path": "pyrit/score/true_false/regex/ansi_escape_output_scorer.py",
+      "sources": ["garak/detectors/ansiescape.py", "garak/resources/ansi.py"]
+    },
+    {
+      "path": "pyrit/score/true_false/regex/escaped_ansi_output_scorer.py",
+      "sources": ["garak/detectors/ansiescape.py", "garak/resources/ansi.py"]
+    },
+    {
       "path": "pyrit/score/true_false/regex/package_hallucination_scorer.py",
       "sources": [
         "garak/detectors/packagehallucination.py"

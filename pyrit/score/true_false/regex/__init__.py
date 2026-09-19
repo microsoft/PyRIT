@@ -5,8 +5,8 @@
 """
 Regex-based true/false scorers for detecting credential leaks, OWASP LLM02
 insecure-output payloads (XSS, SQL injection, shell commands, path traversal,
-SSRF, SSTI, XXE, open redirect, and LDAP injection), prompt injection,
-markdown injection, and CBRN/illicit-substance keywords.
+SSRF, SSTI, XXE, open redirect, LDAP injection, and raw or escaped ANSI escape
+sequences), prompt injection, markdown injection, and CBRN/illicit-substance keywords.
 """
 
 from typing import TYPE_CHECKING
@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.score.true_false.regex.ansi_escape_output_scorer import AnsiEscapeOutputScorer
     from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
     from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
+    from pyrit.score.true_false.regex.escaped_ansi_output_scorer import EscapedAnsiOutputScorer
     from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
     from pyrit.score.true_false.regex.ldap_injection_output_scorer import LDAPInjectionOutputScorer
     from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
@@ -34,8 +36,10 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.regex.xxe_output_scorer import XXEOutputScorer
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AnsiEscapeOutputScorer": "pyrit.score.true_false.regex.ansi_escape_output_scorer",
     "AnthraxKeywordScorer": "pyrit.score.true_false.regex.anthrax_keyword_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
+    "EscapedAnsiOutputScorer": "pyrit.score.true_false.regex.escaped_ansi_output_scorer",
     "FentanylKeywordScorer": "pyrit.score.true_false.regex.fentanyl_keyword_scorer",
     "LDAPInjectionOutputScorer": "pyrit.score.true_false.regex.ldap_injection_output_scorer",
     "MarkdownInjectionScorer": "pyrit.score.true_false.regex.markdown_injection",
