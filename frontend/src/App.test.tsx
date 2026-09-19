@@ -99,13 +99,16 @@ jest.mock("./components/Layout/MainLayout", () => {
     children,
     currentView,
     onNavigate,
+    labels,
   }: {
     children: React.ReactNode;
     currentView: string;
     onNavigate: (view: string) => void;
+    labels: Record<string, string>;
   }) => {
     return (
       <div data-testid="main-layout" data-current-view={currentView}>
+        <span data-testid="global-labels-json">{JSON.stringify(labels)}</span>
         <button onClick={() => onNavigate("home")} data-testid="nav-home">
           Home
         </button>
@@ -314,17 +317,14 @@ jest.mock("./components/Home/Home", () => {
     activeTarget,
     onNavigate,
     onOpenAttack,
-    labels,
   }: {
     activeTarget: unknown;
     onNavigate: (view: string) => void;
     onOpenAttack: (attackResultId: string) => void;
-    labels: Record<string, string>;
   }) => {
     return (
       <div data-testid="home-view">
         <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
-        <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
         <button onClick={() => onNavigate("registry")} data-testid="home-go-config">
           Go to registry
         </button>
@@ -939,10 +939,8 @@ describe("App", () => {
 
     renderApp();
 
-    // Home receives the same labels prop — assert there to avoid racing the
-    // async initLabels effect against a view-change re-render.
     await waitFor(() => {
-      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
       expect(labels).toContain('"operator":"test.user"');
       expect(labels).toContain('"custom":"value"');
     });
@@ -958,7 +956,7 @@ describe("App", () => {
     renderApp();
 
     await waitFor(() => {
-      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
       expect(labels).toContain('"operator":"override_user"');
       expect(labels).toContain('"custom":"value"');
     });
@@ -977,10 +975,10 @@ describe("App", () => {
     renderApp();
 
     await waitFor(() => {
-      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
       expect(labels).toContain('"custom":"value"');
     });
-    const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+    const labels = screen.getByTestId("global-labels-json").textContent ?? "";
     expect(labels).toContain('"operation":"op_i_picked"');
   });
 
@@ -998,10 +996,10 @@ describe("App", () => {
     renderApp();
 
     await waitFor(() => {
-      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
       expect(labels).toContain('"custom":"value"');
     });
-    const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+    const labels = screen.getByTestId("global-labels-json").textContent ?? "";
     expect(labels).toContain('"operator":"real.user"');
     expect(labels).toContain('"operation":"op_i_picked"');
   });
