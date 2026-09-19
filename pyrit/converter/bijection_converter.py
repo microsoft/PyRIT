@@ -268,6 +268,12 @@ class DigitBijectionConverter(BijectionConverter):
     # the marker and restores the uppercase letter. Without this, capitalization is
     # silently destroyed at encode time (`"25".upper() == "25"`), not just mishandled
     # at decode.
+    #
+    # _CASE_MARKER is also a plain character that can appear in the plaintext itself
+    # (contractions, possessives: "it's", "don't"). Since every letter always encodes
+    # to a digit token, a passed-through marker immediately followed by an encoded
+    # letter is indistinguishable from a real case marker, so a literal marker is
+    # doubled on encode and collapsed back on decode.
     _CASE_MARKER = "'"
 
     def encode(self, *, prompt: str) -> str:
@@ -285,6 +291,8 @@ class DigitBijectionConverter(BijectionConverter):
             if char.lower() in self._mapping:
                 token = self._mapping[char.lower()]
                 encoded += (self._CASE_MARKER + token) if char.isupper() else token
+            elif char == self._CASE_MARKER:
+                encoded += self._CASE_MARKER * 2
             else:
                 encoded += char
         return encoded
@@ -321,6 +329,10 @@ class DigitBijectionConverter(BijectionConverter):
         decoded = ""
         i = 0
         while i < len(encoded_text):
+            if encoded_text[i] == self._CASE_MARKER and encoded_text[i + 1 : i + 2] == self._CASE_MARKER:
+                decoded += self._CASE_MARKER
+                i += 2
+                continue
             is_upper = encoded_text[i] == self._CASE_MARKER
             start = i + 1 if is_upper else i
             candidate = encoded_text[start : start + self._num_digits]

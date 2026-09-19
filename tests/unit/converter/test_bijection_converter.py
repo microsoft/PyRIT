@@ -118,6 +118,26 @@ async def test_digit_converter_explicit_mapping_round_trip():
     assert converter.decode(encoded.output_text) == "abc xyz!"
 
 
+async def test_digit_converter_literal_apostrophe_round_trip():
+    custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
+    converter = DigitBijectionConverter(mapping=custom_mapping)
+
+    encoded = await converter.convert_async(prompt="it's")
+
+    assert encoded.output_text == "1829''28"
+    assert converter.decode(encoded.output_text) == "it's"
+
+
+async def test_digit_converter_uppercase_letter_after_apostrophe_round_trip():
+    custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
+    converter = DigitBijectionConverter(mapping=custom_mapping)
+
+    encoded = await converter.convert_async(prompt="I'm")
+
+    assert encoded.output_text == "'18''22"
+    assert converter.decode(encoded.output_text) == "I'm"
+
+
 def test_digit_converter_encodes_letters():
     converter = DigitBijectionConverter(num_digits=2)
     # encoding "hello" should produce digit strings
