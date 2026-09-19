@@ -871,10 +871,8 @@ async def test_score_response_async_auxiliary_only():
         expectation=ScoringExpectation(objective="test task"),
     )
 
-    # Should have auxiliary scores but no objective scores
-    assert len(result["auxiliary_scores"]) == 2
-    assert aux_score1 in result["auxiliary_scores"]
-    assert aux_score2 in result["auxiliary_scores"]
+    # Should preserve scorer order while returning auxiliary scores
+    assert result["auxiliary_scores"] == [aux_score1, aux_score2]
     assert result["objective_scores"] == []
 
 
@@ -1231,6 +1229,172 @@ async def test_score_response_async_concurrent_execution():
     # Both should start before either finishes (concurrent execution)
     assert call_order.index("aux_start") < call_order.index("obj_end")
     assert call_order.index("obj_start") < call_order.index("aux_end")
+
+
+async def test_score_response_multiple_scorers_failure_cancels_and_drains_siblings():
+    response = Message(message_pieces=[MessagePiece(role="assistant", original_value="response")])
+    slow_started = asyncio.Event()
+    allow_slow_completion = asyncio.Event()
+    events: list[str] = []
+    slow_task: asyncio.Task[list[Score]] | None = None
+
+    async def slow_score_async(**kwargs) -> list[Score]:
+        nonlocal slow_task
+        slow_task = asyncio.current_task()
+        events.append("slow_started")
+        slow_started.set()
+        try:
+            await allow_slow_completion.wait()
+            events.append("slow_completed")
+            return [MagicMock(spec=Score)]
+        except asyncio.CancelledError as cancellation:
+            events.append("slow_cancelled")
+            raise RuntimeError("sibling cleanup failure") from cancellation
+        finally:
+            events.append("slow_finalized")
+
+    async def failing_score_async(**kwargs) -> list[Score]:
+        await slow_started.wait()
+        events.append("failing_raised")
+        raise RuntimeError("deterministic scorer failure")
+
+    slow_scorer = MockScorer()
+    slow_scorer.score_async = slow_score_async
+    failing_scorer = MockScorer()
+    failing_scorer.score_async = failing_score_async
+
+    with pytest.raises(RuntimeError, match="deterministic scorer failure"):
+        await MessageScorer.score_response_multiple_scorers_async(
+            response=response,
+            scorers=[slow_scorer, failing_scorer],
+            objective="test task",
+        )
+
+    assert events == ["slow_started", "failing_raised", "slow_cancelled", "slow_finalized"]
+    assert slow_task is not None
+    assert slow_task.done()
+    assert isinstance(slow_task.exception(), RuntimeError)
+    assert str(slow_task.exception()) == "sibling cleanup failure"
+
+    allow_slow_completion.set()
+    assert events == ["slow_started", "failing_raised", "slow_cancelled", "slow_finalized"]
+
+
+async def test_score_response_multiple_scorers_outer_cancellation_during_drain_waits_for_cleanup():
+    response = Message(message_pieces=[MessagePiece(role="assistant", original_value="response")])
+    slow_started = asyncio.Event()
+    slow_cleanup_started = asyncio.Event()
+    allow_slow_cleanup = asyncio.Event()
+    events: list[str] = []
+    slow_task: asyncio.Task[list[Score]] | None = None
+
+    async def slow_score_async(**kwargs) -> list[Score]:
+        nonlocal slow_task
+        slow_task = asyncio.current_task()
+        events.append("slow_started")
+        slow_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            events.append("slow_cancelled")
+            slow_cleanup_started.set()
+            await allow_slow_cleanup.wait()
+            events.append("slow_cleanup_finished")
+            raise
+        finally:
+            events.append("slow_finalized")
+
+    async def failing_score_async(**kwargs) -> list[Score]:
+        await slow_started.wait()
+        events.append("failing_raised")
+        raise RuntimeError("deterministic scorer failure")
+
+    slow_scorer = MockScorer()
+    slow_scorer.score_async = slow_score_async
+    failing_scorer = MockScorer()
+    failing_scorer.score_async = failing_score_async
+
+    scoring_task = asyncio.create_task(
+        MessageScorer.score_response_multiple_scorers_async(
+            response=response,
+            scorers=[slow_scorer, failing_scorer],
+            objective="test task",
+        )
+    )
+    await slow_cleanup_started.wait()
+    scoring_task.cancel()
+    events.append("outer_cancel_requested")
+    allow_slow_cleanup.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await scoring_task
+    events.append("caller_cancelled")
+
+    assert events == [
+        "slow_started",
+        "failing_raised",
+        "slow_cancelled",
+        "outer_cancel_requested",
+        "slow_cleanup_finished",
+        "slow_finalized",
+        "caller_cancelled",
+    ]
+    assert slow_task is not None
+    assert slow_task.done()
+    assert slow_task.cancelled()
+
+
+async def test_score_response_async_parent_cancellation_drains_all_scorers():
+    response = Message(message_pieces=[MessagePiece(role="assistant", original_value="response")])
+    all_started = asyncio.Event()
+    allow_completion = asyncio.Event()
+    started_count = 0
+    finalized: set[str] = set()
+    scorer_tasks: list[asyncio.Task[list[Score]]] = []
+
+    async def blocking_score_async(*, scorer_name: str, **kwargs) -> list[Score]:
+        nonlocal started_count
+        current_task = asyncio.current_task()
+        assert current_task is not None
+        scorer_tasks.append(current_task)
+        started_count += 1
+        if started_count == 2:
+            all_started.set()
+        try:
+            await allow_completion.wait()
+            return [MagicMock(spec=Score)]
+        finally:
+            finalized.add(scorer_name)
+
+    async def auxiliary_score_async(**kwargs) -> list[Score]:
+        return await blocking_score_async(scorer_name="auxiliary", **kwargs)
+
+    async def objective_score_async(**kwargs) -> list[Score]:
+        return await blocking_score_async(scorer_name="objective", **kwargs)
+
+    auxiliary_scorer = MockScorer()
+    auxiliary_scorer.score_async = auxiliary_score_async
+    objective_scorer = MockScorer()
+    objective_scorer.score_async = objective_score_async
+
+    scoring_task = asyncio.create_task(
+        MessageScorer.score_response_async(
+            response=response,
+            auxiliary_scorers=[auxiliary_scorer],
+            objective_scorer=objective_scorer,
+            objective="test task",
+        )
+    )
+    await all_started.wait()
+    scoring_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await scoring_task
+
+    assert finalized == {"auxiliary", "objective"}
+    assert len(scorer_tasks) == 2
+    assert all(task.done() for task in scorer_tasks)
+    assert all(task.cancelled() for task in scorer_tasks)
 
 
 async def test_score_response_async_empty_lists():
