@@ -629,6 +629,25 @@ function ScenarioLaunchForm({
   // Synchronous guard against a double-submit racing ahead of the state update.
   const isSubmittingRef = useRef(false)
   const estimateSequenceRef = useRef(0)
+  const launchButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  const restoreLaunchFocus = (): void => {
+    const focus = () => {
+      launchButtonRef.current?.focus()
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(focus)
+    } else {
+      setTimeout(focus, 0)
+    }
+  }
+
+  const handleDismissPreview = (): void => {
+    if (!submitting) {
+      setPreviewOpen(false)
+      restoreLaunchFocus()
+    }
+  }
 
   const selectableTechniques = useMemo<SelectableTechnique[]>(
     () => [
@@ -1214,6 +1233,7 @@ function ScenarioLaunchForm({
 
             <section className={styles.launchSection} aria-label="Launch scan">
               <Button
+                ref={launchButtonRef}
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
@@ -1230,6 +1250,9 @@ function ScenarioLaunchForm({
             onOpenChange={(_, data) => {
               if (!submitting) {
                 setPreviewOpen(data.open)
+                if (!data.open) {
+                  restoreLaunchFocus()
+                }
               }
             }}
           >
@@ -1322,7 +1345,7 @@ function ScenarioLaunchForm({
                   <Button
                     appearance="secondary"
                     disabled={submitting}
-                    onClick={() => setPreviewOpen(false)}
+                    onClick={handleDismissPreview}
                   >
                     Cancel
                   </Button>

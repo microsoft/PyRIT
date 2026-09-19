@@ -316,6 +316,36 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
   })
 
+  it('restores focus to Launch scan button when preview dialog is cancelled', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/foundry.red_team_agent')
+
+    const launchButton = await screen.findByTestId('launch-scenario-btn')
+    const preview = await openRunPreview(user)
+    expect(preview).toBeInTheDocument()
+
+    await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(launchButton).toHaveFocus()
+    })
+  })
+
+  it('restores focus to Launch scan button when preview dialog is dismissed via Escape', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/foundry.red_team_agent')
+
+    const launchButton = await screen.findByTestId('launch-scenario-btn')
+    const preview = await openRunPreview(user)
+    expect(preview).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(launchButton).toHaveFocus()
+    })
+  })
+
   it('debounces preview requests and aborts the superseded request', async () => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
