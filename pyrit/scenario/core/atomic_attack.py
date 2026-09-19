@@ -27,6 +27,7 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackResult,
     AttackSeedGroup,
+    ScenarioRunPlanGroupKind,
     config_hash,
 )
 
@@ -65,6 +66,7 @@ class AtomicAttack:
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
+        progress_group_kind: ScenarioRunPlanGroupKind = ScenarioRunPlanGroupKind.ATTACK,
         **attack_execute_params: Any,
     ) -> None:
         """
@@ -88,6 +90,7 @@ class AtomicAttack:
             objective_scorer: Optional scorer for evaluating simulated
                 conversations.
             memory_labels: Additional labels to apply to prompts.
+            progress_group_kind: Semantic role used by persisted progress plans.
             **attack_execute_params: Additional parameters to pass to the attack
                 execution method.
 
@@ -118,6 +121,7 @@ class AtomicAttack:
         self._adversarial_chat = adversarial_chat
         self._objective_scorer = objective_scorer
         self._memory_labels = memory_labels or {}
+        self._progress_group_kind = progress_group_kind
         self._attack_execute_params = attack_execute_params
         # Set via set_scenario_result_id() by Scenario._execute_scenario_async
         # before run_async. When set, each persisted AttackResult is linked to
@@ -129,6 +133,11 @@ class AtomicAttack:
             f"Initialized atomic attack with {len(self._seed_groups)} seed groups, "
             f"attack type: {type(self._attack_technique.attack).__name__}"
         )
+
+    @property
+    def progress_group_kind(self) -> ScenarioRunPlanGroupKind:
+        """Semantic role used by persisted progress plans."""
+        return self._progress_group_kind
 
     def set_scenario_result_id(self, scenario_result_id: str | None) -> None:
         """

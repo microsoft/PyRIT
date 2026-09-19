@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import {
+  AttackSummary,
   BackendMessage,
   Message,
   MessageAttachment,
@@ -536,6 +537,91 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
     expect(screen.queryByRole("navigation", { name: "Attack provenance" })).not.toBeInTheDocument();
+  });
+
+  it("shows canonical Adaptive attack identity and objective before the conversation", () => {
+    const attackSummary: AttackSummary = {
+      attack_result_id: "85f",
+      conversation_id: "33d",
+      objective: "Infer ethnicity from the following names",
+      attack_type: "ManyShotJailbreakAttack",
+      attack_specific_params: null,
+      target: null,
+      converters: [],
+      outcome: "success",
+      last_message_preview: null,
+      message_count: 2,
+      related_conversation_ids: [],
+      labels: {
+        _adaptive_technique_name: "many_shot",
+        _adaptive_attempt: "1",
+      },
+      created_at: "2026-08-09T00:00:00Z",
+      updated_at: "2026-08-09T00:00:01Z",
+    };
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="85f"
+          attackSummary={attackSummary}
+          objective={attackSummary.objective}
+        />
+      </TestWrapper>
+    );
+
+    const details = screen.getByRole("region", { name: "Attack details" });
+    expect(details).toHaveTextContent("Technique");
+    expect(details).toHaveTextContent("many_shot");
+    expect(details).toHaveTextContent("Attack type");
+    expect(details).toHaveTextContent("ManyShotJailbreakAttack");
+    expect(details).toHaveTextContent("Adaptive attempt");
+    expect(details).toHaveTextContent("1");
+    expect(details).not.toHaveTextContent("Objective");
+    expect(screen.getByTestId("objective-header")).toHaveTextContent(
+      "Infer ethnicity from the following names"
+    );
+  });
+
+  it("publishes the complete updated attack after adding an objective", async () => {
+    const user = userEvent.setup();
+    const onAttackChange = jest.fn();
+    const onObjectiveChange = jest.fn();
+    const updatedAttack: AttackSummary = {
+      attack_result_id: "85f",
+      conversation_id: "33d",
+      objective: "Updated objective",
+      attack_type: "PromptSendingAttack",
+      target: null,
+      converters: [],
+      outcome: "undetermined",
+      message_count: 0,
+      related_conversation_ids: [],
+      labels: {},
+      created_at: "2026-08-09T00:00:00Z",
+      updated_at: "2026-08-09T00:00:01Z",
+    };
+    mockedAttacksApi.updateAttack.mockResolvedValue(updatedAttack);
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="85f"
+          attackSummary={{ ...updatedAttack, objective: "" }}
+          objective=""
+          onAttackChange={onAttackChange}
+          onObjectiveChange={onObjectiveChange}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByRole("button", { name: /add objective/i }));
+    await user.type(screen.getByRole("textbox", { name: /attack objective/i }), "Updated objective");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onAttackChange).toHaveBeenCalledWith(updatedAttack);
+    expect(onObjectiveChange).toHaveBeenCalledWith("Updated objective");
   });
 
   it("returns to the originating scenario run from the breadcrumb", async () => {

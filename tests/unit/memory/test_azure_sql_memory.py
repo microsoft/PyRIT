@@ -16,7 +16,7 @@ from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
-from pyrit.models import Conversation, MessagePiece
+from pyrit.models import SEQUENTIAL_ATTACK_CLASS_NAME, Conversation, MessagePiece
 from pyrit.prompt_target.text_target import TextTarget
 from unit.mocks import get_azure_sql_memory, get_sample_conversation_entries
 
@@ -539,6 +539,28 @@ def test_scenario_plan_unit_subqueries_expand_plan_json_server_side(memory_inter
     assert "CROSS APPLY OPENJSON" in str(compiled)
     assert "JOIN LATERAL" not in str(compiled)
     assert str(scenario_result_id) in str(compiled.params)
+
+
+def test_scenario_history_aggregate_filters_sequential_envelopes_server_side(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    """The SQL Server aggregate filters orchestration envelopes before grouping."""
+    statement = memory_interface._build_scenario_history_aggregate_statement(
+        entry_ids=[uuid.uuid4()],
+        plan_entry_ids=[],
+    )
+
+    compiled = statement.compile(dialect=mssql.dialect())
+    sql = str(compiled)
+    string_parameters = {value for value in compiled.params.values() if isinstance(value, str)}
+
+    assert "history_attempts" in sql
+    assert "history_units" in sql
+    assert "history_ranked_units" in sql
+    assert "JSON_VALUE" in sql
+    assert "$.children.attack_technique.children.attack.class_name" in string_parameters
+    assert "$.children.attack.class_name" in string_parameters
+    assert SEQUENTIAL_ATTACK_CLASS_NAME in string_parameters
 
 
 @pytest.mark.parametrize(

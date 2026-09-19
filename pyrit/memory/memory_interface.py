@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select
+from sqlalchemy import MetaData, String, and_, case, cast, exists, func, literal, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -63,6 +63,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
+    SEQUENTIAL_ATTACK_CLASS_NAME,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackOutcome,
@@ -1807,6 +1808,45 @@ class MemoryInterface(abc.ABC):
             f"{type(self).__name__} must implement _get_scenario_attempt_unit_expressions "
             "to support Scenario history queries."
         )
+
+    def _get_scenario_logical_attempt_condition(self) -> Any:
+        """
+        Exclude typed and identifier-less legacy ``SequentialAttack`` envelopes.
+
+        Returns:
+            Any: A SQL condition matching only target-facing logical attempts.
+        """
+        typed_envelope = (
+            case(
+                (
+                    or_(
+                        self._get_condition_json_property_match(
+                            json_column=AttackResultEntry.atomic_attack_identifier,
+                            property_path="$.children.attack_technique.children.attack.class_name",
+                            value=SEQUENTIAL_ATTACK_CLASS_NAME,
+                            case_sensitive=True,
+                        ).unique_params(),
+                        self._get_condition_json_property_match(
+                            json_column=AttackResultEntry.atomic_attack_identifier,
+                            property_path="$.children.attack.class_name",
+                            value=SEQUENTIAL_ATTACK_CLASS_NAME,
+                            case_sensitive=True,
+                        ).unique_params(),
+                    ),
+                    1,
+                ),
+                else_=0,
+            )
+            == 1
+        )
+        legacy_envelope = and_(
+            or_(
+                AttackResultEntry.atomic_attack_identifier.is_(None),
+                func.lower(func.trim(cast(AttackResultEntry.atomic_attack_identifier, String))) == "null",
+            ),
+            func.trim(AttackResultEntry.conversation_id) == "",
+        )
+        return not_(or_(typed_envelope, legacy_envelope))
 
     def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
         """
@@ -4996,7 +5036,10 @@ class MemoryInterface(abc.ABC):
             ).all()
             name_rows = session.execute(
                 select(AttackResultEntry.attribution_parent_id, self._get_scenario_attempt_unit_expressions()[0])
-                .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
+                .where(
+                    AttackResultEntry.attribution_parent_id.in_(entry_ids),
+                    self._get_scenario_logical_attempt_condition(),
+                )
                 .distinct()
             ).all()
 
@@ -5052,7 +5095,10 @@ class MemoryInterface(abc.ABC):
                     else_=0,
                 ).label("total_retries"),
             )
-            .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
+            .where(
+                AttackResultEntry.attribution_parent_id.in_(entry_ids),
+                self._get_scenario_logical_attempt_condition(),
+            )
             .subquery("history_attempts")
         )
         units = self._build_scenario_history_unit_statement(attempts=attempts, plan_entry_ids=plan_entry_ids).subquery(
@@ -5288,6 +5334,7 @@ class MemoryInterface(abc.ABC):
                 AttackResultEntry.error_type,
                 AttackResultEntry.error_message,
                 AttackResultEntry.attribution_data,
+                AttackResultEntry.labels,
                 ScoreEntry.id.label("score_id"),
                 ScoreEntry.score_value,
                 ScoreEntry.score_type,
@@ -5348,6 +5395,7 @@ class MemoryInterface(abc.ABC):
                     error_message=row.error_message,
                     attribution_data=row.attribution_data or {},
                     score=score,
+                    labels=row.labels or {},
                 )
             )
         return deltas, has_more

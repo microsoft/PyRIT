@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, cast
 
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackSeedGroup
+from pyrit.models import AttackSeedGroup, ScenarioRunPlanGroupKind
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -139,6 +139,7 @@ def build_baseline_atomic_attack(
         objective_scorer=cast("TrueFalseScorer", objective_scorer),
         memory_labels=memory_labels or {},
         display_group=display_group,
+        progress_group_kind=ScenarioRunPlanGroupKind.DIRECT_BASELINE,
     )
 
 

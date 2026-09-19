@@ -33,7 +33,7 @@ from pydantic import Field
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
-from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, ScoringExpectation
+from pyrit.models import AtomicAttackIdentifier, AttackOutcome, AttackResult, AttackSeedGroup, ScoringExpectation
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -271,6 +271,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         return SequentialAttackResult(
             conversation_id="",
             objective=context.objective,
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             attack_result_id=str(uuid.uuid4()),
             timestamp=datetime.now(UTC),
             last_response=None,

@@ -58,12 +58,14 @@ from pyrit.models import (
     ScenarioRunProgress,
     ScenarioRunState,
     TargetIdentifier,
+    is_sequential_attack_envelope,
 )
-from pyrit.models.catalog.scenario import (
+from pyrit.models.catalog import (
     AttackErrorSummary,
     AttackRetrySummary,
     RunScenarioRequest,
     ScenarioOverloadSummary,
+    ScenarioRunHeader,
     ScenarioRunListItem,
     ScenarioRunSummary,
     ScenarioTargetSummary,
@@ -75,6 +77,7 @@ from pyrit.scenario import Scenario
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_CONCURRENT_RUNS = 1
+_MAX_ATTACK_DETAIL_ENTRIES = 100
 _MAX_OVERLOAD_EVENTS = 500
 _MAX_OVERLOAD_ROLES = 16
 _MAX_TERMINAL_ERRORS = 100
@@ -134,6 +137,18 @@ class _ActiveRunSnapshot:
     active_group_ids: tuple[str, ...] = ()
     queue_position: int | None = None
     active_scenario_result_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RunDiagnostics:
+    """Per-attempt diagnostics summarized for a scenario run."""
+
+    failed_attacks: list[AttackErrorSummary]
+    attack_retries: list[AttackRetrySummary]
+    total_retries: int
+    error_attempts: int
+    attack_details_truncated: bool
+    overload_summaries: list[ScenarioOverloadSummary]
 
 
 class ScenarioRunService:
@@ -756,37 +771,9 @@ class ScenarioRunService:
                 if queued:
                     self._queue_revision += 1
                 for run in queued:
-                    try:
-                        await asyncio.to_thread(
-                            self._memory.update_scenario_run_state,
-                            scenario_result_id=run.scenario_result_id,
-                            scenario_run_state=ScenarioRunState.FAILED,
-                            error_message=_SHUTDOWN_INTERRUPTION_REASON,
-                            error_type=_INTERRUPTED_ERROR_TYPE,
-                        )
-                    except Exception as exc:
-                        errors.append(exc)
-                if self._active_scenario_result_id is not None:
-                    active = self._active_tasks[self._active_scenario_result_id]
-                    active.cancellation_state = ScenarioRunState.FAILED
-                    active.cancellation_reason = _SHUTDOWN_INTERRUPTION_REASON
-                    active.cancellation_error_type = _INTERRUPTED_ERROR_TYPE
-                    task = active.task
-                    if task is None or task.done():
-                        try:
-                            await asyncio.to_thread(
-                                self._memory.update_scenario_run_state,
-                                scenario_result_id=active.scenario_result_id,
-                                scenario_run_state=ScenarioRunState.FAILED,
-                                error_message=_SHUTDOWN_INTERRUPTION_REASON,
-                                error_type=_INTERRUPTED_ERROR_TYPE,
-                            )
-                        except Exception as exc:
-                            errors.append(exc)
-                        self._active_scenario_result_id = None
-                        self._release_completed_task(scenario_result_id=active.scenario_result_id)
-                        self._queue_revision += 1
-        await asyncio.to_thread(self._prepare_executor.shutdown, wait=True)
+                    await self._persist_shutdown_failure_async(run=run, errors=errors)
+                task = await self._prepare_active_shutdown_locked_async(errors=errors)
+            await asyncio.to_thread(self._prepare_executor.shutdown, wait=True)
         if task is not None and not task.done():
             task.cancel()
             try:
@@ -801,6 +788,42 @@ class ScenarioRunService:
             await asyncio.gather(*retry_tasks, return_exceptions=True)
         if errors:
             raise ExceptionGroup("Failed to persist one or more scenario shutdown transitions.", errors)
+
+    async def _prepare_active_shutdown_locked_async(self, *, errors: list[Exception]) -> asyncio.Task[None] | None:
+        """
+        Mark the active run for shutdown.
+
+        Returns:
+            The active run task when it is still running; otherwise, None.
+        """
+        if self._active_scenario_result_id is None:
+            return None
+
+        active = self._active_tasks[self._active_scenario_result_id]
+        active.cancellation_state = ScenarioRunState.FAILED
+        active.cancellation_reason = _SHUTDOWN_INTERRUPTION_REASON
+        active.cancellation_error_type = _INTERRUPTED_ERROR_TYPE
+        if active.task is not None and not active.task.done():
+            return active.task
+
+        await self._persist_shutdown_failure_async(run=active, errors=errors)
+        self._active_scenario_result_id = None
+        self._release_completed_task(scenario_result_id=active.scenario_result_id)
+        self._queue_revision += 1
+        return None
+
+    async def _persist_shutdown_failure_async(self, *, run: _ActiveTask, errors: list[Exception]) -> None:
+        """Persist one interrupted run while retaining failures for an ExceptionGroup."""
+        try:
+            await asyncio.to_thread(
+                self._memory.update_scenario_run_state,
+                scenario_result_id=run.scenario_result_id,
+                scenario_run_state=ScenarioRunState.FAILED,
+                error_message=_SHUTDOWN_INTERRUPTION_REASON,
+                error_type=_INTERRUPTED_ERROR_TYPE,
+            )
+        except Exception as exc:
+            errors.append(exc)
 
     async def _enqueue_run_async(self, *, scheduled: _ActiveTask) -> None:
         """Atomically enqueue a persisted initialized run or start it immediately."""
@@ -1177,11 +1200,7 @@ class ScenarioRunService:
             error = active_error
 
         status = scenario_result.scenario_run_state
-        terminal = status in (
-            ScenarioRunState.COMPLETED,
-            ScenarioRunState.FAILED,
-            ScenarioRunState.CANCELLED,
-        )
+        terminal = self._is_terminal_state(status)
         try:
             plan = self._load_run_plan(scenario_result=scenario_result)
         except (ValidationError, ValueError):
@@ -1200,99 +1219,204 @@ class ScenarioRunService:
                 plan_lookup=plan_lookup,
             )
         )
-        techniques_used = (
-            list(dict.fromkeys(group.display_group for group in plan.atomic_groups))
-            if plan is not None
-            else scenario_result.get_techniques_used()
+        techniques_used = self._resolve_techniques_used(
+            scenario_identifier=scenario_result.scenario_identifier,
+            atomic_groups=plan.atomic_groups if plan is not None else None,
+            fallback_names=scenario_result.get_techniques_used(),
         )
         target, datasets_used, scenario_parameters = self._safe_run_metadata(
             scenario_identifier=getattr(scenario_result, "scenario_identifier", None)
         )
-
-        # Surface per-attack errors and retry pressure regardless of overall run status:
-        # a COMPLETED scenario can still hide errored objectives or rate-limit retries.
-        failed_attacks: list[AttackErrorSummary] = []
-        attack_retries: list[AttackRetrySummary] = []
-        persisted_retries: list[int] = []
-        overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
-        attempts_by_unit: dict[ResultUnitIdentity, int] = {}
-        for atomic_attack_name, results in scenario_result.attack_results.items():
-            for attack_result in results:
-                unit_identity = self._progress_read_model.resolve_result_unit_identity(
-                    atomic_attack_name=atomic_attack_name,
-                    attack_result=attack_result,
-                    plan_lookup=plan_lookup,
-                )
-                attempts_by_unit[unit_identity] = attempts_by_unit.get(unit_identity, 0) + 1
-                retries = getattr(attack_result, "total_retries", 0)
-                if isinstance(retries, int):
-                    persisted_retries.append(retries)
-
-                retry_events = getattr(attack_result, "retry_events", None)
-                if isinstance(retry_events, list) and retry_events:
-                    overload_events.extend(retry_events)
-                    attack_retries.append(
-                        AttackRetrySummary(
-                            attack_result_id=str(attack_result.attack_result_id),
-                            atomic_attack_name=atomic_attack_name,
-                            retries=retry_events,
-                        )
-                    )
-
-                if attack_result.outcome == AttackOutcome.ERROR:
-                    failed_attacks.append(
-                        AttackErrorSummary(
-                            atomic_attack_name=atomic_attack_name,
-                            objective=attack_result.objective,
-                            error_type=attack_result.error_type,
-                            error_message=attack_result.error_message,
-                            total_retries=max(0, retries) if isinstance(retries, int) else 0,
-                        )
-                    )
-        total_retries = self._progress_read_model.total_retry_pressure(
-            attempts_per_unit=attempts_by_unit.values(),
-            persisted_retries=persisted_retries,
+        diagnostics = self._collect_run_diagnostics(scenario_result=scenario_result, plan=plan)
+        header = self._build_run_header(
+            scenario_result=scenario_result,
+            scenario_registry_name=plan.scenario_registry_name if plan else None,
+            techniques_used=techniques_used,
+            target=target,
+            datasets_used=datasets_used,
+            scenario_parameters=scenario_parameters,
+            queue_position=queue_position,
+            active_scenario_result_id=active_scenario_result_id,
+            overload_summaries=diagnostics.overload_summaries,
         )
-
         updated_at = scenario_result.creation_time
         if terminal and scenario_result.completion_time is not None:
             updated_at = scenario_result.completion_time
 
         return ScenarioRunSummary(
-            scenario_result_id=scenario_result_id,
+            **header.model_dump(),
+            updated_at=updated_at,
+            error=error,
+            error_type=error_type,
+            total_attacks=total_attacks,
+            completed_attacks=completed_attacks,
+            objective_achieved_rate=objective_achieved_rate,
+            failed_attacks=diagnostics.failed_attacks,
+            attack_retries=diagnostics.attack_retries,
+            total_retries=diagnostics.total_retries,
+            planned_total_available=plan is not None,
+            successful_attacks=successful_attacks,
+            error_attacks=diagnostics.error_attempts,
+            attack_details_truncated=diagnostics.attack_details_truncated,
+        )
+
+    def _collect_run_diagnostics(
+        self,
+        *,
+        scenario_result: ScenarioResult,
+        plan: ScenarioRunPlan | None,
+    ) -> _RunDiagnostics:
+        """
+        Summarize persisted errors, retries, and overload evidence.
+
+        Returns:
+            _RunDiagnostics: Aggregated diagnostics for the run.
+        """
+        failed_attacks: deque[AttackErrorSummary] = deque(maxlen=_MAX_ATTACK_DETAIL_ENTRIES)
+        attack_retries: deque[AttackRetrySummary] = deque(maxlen=_MAX_ATTACK_DETAIL_ENTRIES)
+        overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
+        plan_lookup = self._progress_read_model.build_plan_lookup(plan=plan)
+        inner_retries_by_unit: dict[ResultUnitIdentity, int] = {}
+        attempts_by_unit: dict[ResultUnitIdentity, int] = {}
+        error_attempts = 0
+        failed_attack_details = 0
+        retry_details = 0
+        indexed_results = [
+            (index, atomic_attack_name, attack_result)
+            for index, (atomic_attack_name, attack_result) in enumerate(
+                (name, result) for name, results in scenario_result.attack_results.items() for result in results
+            )
+        ]
+        indexed_results.sort(key=self._diagnostic_result_sort_key)
+        for _, atomic_attack_name, attack_result in indexed_results:
+            if is_sequential_attack_envelope(
+                conversation_id=str(getattr(attack_result, "conversation_id", "")),
+                atomic_attack_identifier=getattr(attack_result, "atomic_attack_identifier", None),
+            ):
+                continue
+            unit_identity = self._progress_read_model.resolve_result_unit_identity(
+                atomic_attack_name=atomic_attack_name,
+                attack_result=attack_result,
+                plan_lookup=plan_lookup,
+            )
+            attempts_by_unit[unit_identity] = attempts_by_unit.get(unit_identity, 0) + 1
+            retries = getattr(attack_result, "total_retries", 0)
+            safe_retries = max(0, retries) if isinstance(retries, int) else 0
+            inner_retries_by_unit[unit_identity] = inner_retries_by_unit.get(unit_identity, 0) + safe_retries
+
+            retry_events = getattr(attack_result, "retry_events", None)
+            if isinstance(retry_events, list) and retry_events:
+                retry_details += 1
+                overload_events.extend(retry_events)
+                attack_retries.append(
+                    AttackRetrySummary(
+                        attack_result_id=str(attack_result.attack_result_id),
+                        atomic_attack_name=atomic_attack_name,
+                        retries=retry_events,
+                    )
+                )
+            if attack_result.outcome == AttackOutcome.ERROR:
+                error_attempts += 1
+                failed_attack_details += 1
+                failed_attacks.append(
+                    AttackErrorSummary(
+                        atomic_attack_name=atomic_attack_name,
+                        objective=attack_result.objective,
+                        error_type=attack_result.error_type,
+                        error_message=attack_result.error_message,
+                        total_retries=safe_retries,
+                    )
+                )
+        total_retries = sum(
+            self._total_retry_work(
+                inner_retries=inner_retries_by_unit.get(unit_identity, 0),
+                attempt_count=attempt_count,
+            )
+            for unit_identity, attempt_count in attempts_by_unit.items()
+        )
+        return _RunDiagnostics(
+            failed_attacks=list(failed_attacks),
+            attack_retries=list(attack_retries),
+            total_retries=total_retries,
+            error_attempts=error_attempts,
+            attack_details_truncated=(
+                failed_attack_details > _MAX_ATTACK_DETAIL_ENTRIES or retry_details > _MAX_ATTACK_DETAIL_ENTRIES
+            ),
+            overload_summaries=self._build_overload_summaries(retry_events=overload_events),
+        )
+
+    @staticmethod
+    def _diagnostic_result_sort_key(indexed_result: tuple[int, str, Any]) -> tuple[int, float, int]:
+        """Return a stable chronological key for bounded diagnostic details."""
+        index, _, attack_result = indexed_result
+        timestamp = getattr(attack_result, "timestamp", None)
+        if isinstance(timestamp, datetime):
+            return 1, timestamp.timestamp(), index
+        return 0, float(index), index
+
+    def _build_run_header(
+        self,
+        *,
+        scenario_result: ScenarioResult,
+        scenario_registry_name: str | None,
+        techniques_used: Sequence[str],
+        target: ScenarioTargetSummary | None,
+        datasets_used: Sequence[str],
+        scenario_parameters: Mapping[str, Any],
+        queue_position: int | None = None,
+        active_scenario_result_id: str | None = None,
+        overload_summaries: Sequence[ScenarioOverloadSummary] = (),
+    ) -> ScenarioRunHeader:
+        """
+        Build fields shared by full summaries and progress responses.
+
+        Returns:
+            ScenarioRunHeader: Canonical shared run fields.
+        """
+        status = scenario_result.scenario_run_state
+        return ScenarioRunHeader(
+            scenario_result_id=str(scenario_result.id),
             scenario_name=scenario_result.scenario_name,
-            scenario_registry_name=plan.scenario_registry_name if plan else None,
+            scenario_registry_name=scenario_registry_name,
             scenario_version=scenario_result.scenario_version,
             status=status,
             created_at=scenario_result.creation_time,
             started_at=self._load_started_at(scenario_result=scenario_result),
-            updated_at=updated_at,
-            error=error,
-            error_type=error_type,
-            techniques_used=techniques_used,
-            total_attacks=total_attacks,
-            completed_attacks=completed_attacks,
-            objective_achieved_rate=objective_achieved_rate,
-            failed_attacks=failed_attacks,
-            attack_retries=attack_retries,
-            total_retries=total_retries,
-            labels=scenario_result.labels,
-            completed_at=scenario_result.completion_time if terminal else None,
-            pyrit_version=(
-                scenario_result.pyrit_version
-                if isinstance(getattr(scenario_result, "pyrit_version", None), str)
-                else None
-            ),
+            completed_at=scenario_result.completion_time if self._is_terminal_state(status) else None,
+            pyrit_version=scenario_result.pyrit_version,
             target=target,
-            datasets_used=datasets_used,
-            scenario_parameters=scenario_parameters,
-            planned_total_available=plan is not None,
-            successful_attacks=successful_attacks,
-            error_attacks=len(failed_attacks),
+            techniques_used=list(techniques_used),
+            datasets_used=list(datasets_used),
+            scenario_parameters=dict(scenario_parameters),
+            labels=scenario_result.labels,
             queue_position=queue_position,
             active_scenario_result_id=active_scenario_result_id,
-            overload_summaries=self._build_overload_summaries(retry_events=overload_events),
+            overload_summaries=list(overload_summaries),
         )
+
+    @staticmethod
+    def _resolve_techniques_used(
+        *,
+        scenario_identifier: ScenarioIdentifier | None,
+        atomic_groups: Sequence[ScenarioRunPlanAtomicGroup] | None,
+        fallback_names: Sequence[str],
+    ) -> list[str]:
+        """
+        Resolve configured, planned, or legacy technique display names.
+
+        Returns:
+            list[str]: De-duplicated technique display names.
+        """
+        configured = list(
+            dict.fromkeys(
+                str(technique) for technique in ScenarioRunService._identifier_techniques(scenario_identifier)
+            )
+        )
+        if configured:
+            return configured
+        if atomic_groups is not None:
+            return list(dict.fromkeys(group.display_group for group in atomic_groups))
+        return list(dict.fromkeys(fallback_names))
 
     @staticmethod
     def _parse_history_plan(*, record: ScenarioHistoryRunRecord) -> list[ScenarioRunPlanAtomicGroup] | None:
@@ -1433,6 +1557,16 @@ class ScenarioRunService:
             error_attacks=aggregate.error_attempts,
             attack_details_available=False,
         )
+
+    @staticmethod
+    def _total_retry_work(*, inner_retries: int, attempt_count: int) -> int:
+        """
+        Count retry work beyond the first logical attempt.
+
+        Returns:
+            int: Inner retries plus additional scenario attempts.
+        """
+        return max(0, inner_retries) + max(0, attempt_count - 1)
 
     @staticmethod
     def _load_started_at(*, scenario_result: ScenarioResult) -> datetime | None:
@@ -1805,30 +1939,24 @@ class ScenarioRunService:
         )
         scenario_identifier = header_result.scenario_identifier
         target, datasets_used, scenario_parameters = self._safe_run_metadata(scenario_identifier=scenario_identifier)
-        if plan is not None:
-            techniques_used = list(dict.fromkeys(group.display_group for group in plan.atomic_groups))
-        else:
-            techniques_used = self._identifier_techniques(scenario_identifier)
+        techniques_used = self._resolve_techniques_used(
+            scenario_identifier=scenario_identifier,
+            atomic_groups=plan.atomic_groups if plan is not None else None,
+            fallback_names=(),
+        )
+        header = self._build_run_header(
+            scenario_result=header_result,
+            scenario_registry_name=plan.scenario_registry_name if plan else None,
+            techniques_used=techniques_used,
+            target=target,
+            datasets_used=datasets_used,
+            scenario_parameters=scenario_parameters,
+            queue_position=queue_position,
+            active_scenario_result_id=active_scenario_result_id,
+            overload_summaries=self._build_overload_summaries(retry_events=overload_events),
+        )
         return ScenarioRunProgress(
-            run=ScenarioProgressHeader(
-                scenario_result_id=scenario_result_id,
-                scenario_name=header_result.scenario_name,
-                scenario_registry_name=plan.scenario_registry_name if plan else None,
-                scenario_version=header_result.scenario_version,
-                status=header_result.scenario_run_state,
-                created_at=header_result.creation_time,
-                started_at=self._load_started_at(scenario_result=header_result),
-                completed_at=header_result.completion_time if terminal else None,
-                pyrit_version=header_result.pyrit_version,
-                target=target,
-                techniques_used=techniques_used,
-                datasets_used=datasets_used,
-                scenario_parameters=scenario_parameters,
-                labels=header_result.labels,
-                queue_position=queue_position,
-                active_scenario_result_id=active_scenario_result_id,
-                overload_summaries=self._build_overload_summaries(retry_events=overload_events),
-            ),
+            run=ScenarioProgressHeader(**header.model_dump()),
             plan=response_plan,
             results=results,
             summary=progress_snapshot.summary,

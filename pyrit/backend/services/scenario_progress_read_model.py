@@ -15,6 +15,8 @@ from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
+    ADAPTIVE_ATTEMPT_LABEL,
+    ADAPTIVE_TECHNIQUE_NAME_LABEL,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
@@ -29,10 +31,12 @@ from pyrit.models import (
     ScenarioObjectiveScorerMetrics,
     ScenarioProgressCounts,
     ScenarioProgressResult,
+    ScenarioProgressResultKind,
     ScenarioProgressSummary,
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     ScenarioScorerIdentity,
     ScenarioSeedGroupProgress,
@@ -40,6 +44,7 @@ from pyrit.models import (
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
     config_hash,
+    is_sequential_attack_envelope,
     project_behavioral_identity,
 )
 from pyrit.score.scorer_evaluation.scorer_metrics_io import find_objective_metrics_by_eval_hash
@@ -51,6 +56,13 @@ logger = logging.getLogger(__name__)
 # applied by ``project_behavioral_identity``.
 _TECHNIQUE_SEEDS_CHILD = "technique_seeds"
 _TECHNIQUE_SEED_DISPLAY_PARAMS = ("value", "data_type")
+_EXECUTABLE_RESULT_KINDS = frozenset(
+    {
+        ScenarioProgressResultKind.ATTACK,
+        ScenarioProgressResultKind.DIRECT_BASELINE,
+        ScenarioProgressResultKind.ADAPTIVE_TECHNIQUE,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,6 +356,11 @@ class ScenarioProgressReadModel:
         latest_result_by_unit: dict[ResultUnitIdentity, AttackResult] = {}
         for atomic_attack_name, results in scenario_result.attack_results.items():
             for attack_result in results:
+                if is_sequential_attack_envelope(
+                    conversation_id=str(getattr(attack_result, "conversation_id", "")),
+                    atomic_attack_identifier=getattr(attack_result, "atomic_attack_identifier", None),
+                ):
+                    continue
                 unit_identity = cls.resolve_result_unit_identity(
                     atomic_attack_name=atomic_attack_name,
                     attack_result=attack_result,
@@ -448,7 +465,11 @@ class ScenarioProgressReadModel:
             errors = 0
             retries = 0
             for unit in units:
-                attempts = attempts_by_unit.get(unit, [])
+                attempts = [
+                    attempt
+                    for attempt in attempts_by_unit.get(unit, [])
+                    if attempt.result_kind in _EXECUTABLE_RESULT_KINDS
+                ]
                 if attempts:
                     completed += 1
                     succeeded += int(attempts[-1].outcome == AttackOutcome.SUCCESS)
@@ -482,7 +503,9 @@ class ScenarioProgressReadModel:
         )
         planned_units = set(overall_units)
         unattributed_attempts = sum(
-            len(attempts) for unit, attempts in attempts_by_unit.items() if unit not in planned_units
+            sum(attempt.result_kind in _EXECUTABLE_RESULT_KINDS for attempt in attempts)
+            for unit, attempts in attempts_by_unit.items()
+            if unit not in planned_units
         )
         if unattributed_attempts:
             logger.warning(
@@ -490,7 +513,13 @@ class ScenarioProgressReadModel:
                 "scenario progress rollups.",
                 unattributed_attempts,
             )
-        latest_results = [attempts_by_unit[unit][-1] for unit in overall_units if attempts_by_unit.get(unit)]
+        latest_results = []
+        for unit in overall_units:
+            attempts = [
+                attempt for attempt in attempts_by_unit.get(unit, []) if attempt.result_kind in _EXECUTABLE_RESULT_KINDS
+            ]
+            if attempts:
+                latest_results.append(attempts[-1])
         objective_scorer = ScenarioProgressReadModel._build_objective_scorer(
             scorer_identifier=objective_scorer_identifier,
             results=latest_results,
@@ -795,6 +824,11 @@ class ScenarioProgressReadModel:
                 seed_group_id = matching_seed_ids[0]
         if not seed_group_id:
             seed_group_id = config_hash({"objective": delta.objective})
+        result_kind, technique_name, attempt_index = ScenarioProgressReadModel._progress_result_semantics(
+            delta=delta,
+            group_kind=planned_group.group_kind if planned_group is not None else None,
+            atomic_attack_name=atomic_attack_name,
+        )
         return ScenarioProgressResult(
             attack_result_id=delta.attack_result_id,
             conversation_id=delta.conversation_id,
@@ -809,7 +843,52 @@ class ScenarioProgressReadModel:
             error_type=delta.error_type,
             error_message=delta.error_message,
             score=delta.score,
+            result_kind=result_kind,
+            technique_name=technique_name,
+            attempt_index=attempt_index,
         )
+
+    @staticmethod
+    def _progress_result_semantics(
+        *,
+        delta: ScenarioAttackResultDelta,
+        group_kind: ScenarioRunPlanGroupKind | None,
+        atomic_attack_name: str,
+    ) -> tuple[ScenarioProgressResultKind, str | None, int | None]:
+        """
+        Resolve typed progress semantics from persisted plan and child labels.
+
+        Returns:
+            tuple[ScenarioProgressResultKind, str | None, int | None]:
+                Result role, registered technique name, and 1-based Adaptive attempt index.
+        """
+        technique_name = delta.labels.get(ADAPTIVE_TECHNIQUE_NAME_LABEL) or None
+        raw_attempt_index = delta.labels.get(ADAPTIVE_ATTEMPT_LABEL)
+        parsed_attempt_index = int(raw_attempt_index) if raw_attempt_index and raw_attempt_index.isdigit() else None
+        attempt_index = parsed_attempt_index if parsed_attempt_index and parsed_attempt_index >= 1 else None
+        if technique_name:
+            return ScenarioProgressResultKind.ADAPTIVE_TECHNIQUE, technique_name, attempt_index
+
+        is_sequential_envelope = is_sequential_attack_envelope(
+            conversation_id=delta.conversation_id,
+            atomic_attack_identifier=delta.atomic_attack_identifier,
+        )
+        if group_kind is not None:
+            if group_kind is ScenarioRunPlanGroupKind.DIRECT_BASELINE:
+                return ScenarioProgressResultKind.DIRECT_BASELINE, None, None
+            if group_kind is ScenarioRunPlanGroupKind.ADAPTIVE:
+                return ScenarioProgressResultKind.ADAPTIVE_ORCHESTRATION, None, None
+            if is_sequential_envelope:
+                return ScenarioProgressResultKind.AGGREGATE_PARENT, None, None
+            return ScenarioProgressResultKind.ATTACK, None, None
+
+        if atomic_attack_name == "baseline":
+            return ScenarioProgressResultKind.DIRECT_BASELINE, None, None
+        if is_sequential_envelope:
+            return ScenarioProgressResultKind.AGGREGATE_PARENT, None, None
+        if delta.conversation_id.strip():
+            return ScenarioProgressResultKind.ATTACK, None, None
+        return ScenarioProgressResultKind.UNKNOWN, None, None
 
     @staticmethod
     def _synthesize_legacy_plan(*, deltas: list[ScenarioAttackResultDelta]) -> ScenarioRunPlan:

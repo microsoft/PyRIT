@@ -18,7 +18,14 @@ from pyrit.executor.attack.compound import (
 from pyrit.executor.attack.core.attack_executor import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext
-from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, ScoringExpectation, SeedObjective
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    AttackSeedGroup,
+    ScoringExpectation,
+    SeedObjective,
+    TargetIdentifier,
+)
 
 
 def _make_strategy(*, outcomes: list[AttackOutcome], name: str = "attack") -> MagicMock:
@@ -79,7 +86,12 @@ def _patch_run_child_attack(*, strategies_by_id: dict[int, MagicMock]):
 
 @pytest.fixture
 def target() -> MagicMock:
-    return MagicMock(name="objective_target")
+    target = MagicMock(name="objective_target")
+    target.get_identifier.return_value = TargetIdentifier(
+        class_name="MockTarget",
+        class_module="tests.unit.executor.attack.compound.test_sequential_attack",
+    )
+    return target
 
 
 @pytest.fixture
@@ -574,6 +586,9 @@ class TestResultShape:
             result = await compound._perform_async(context=_make_context())
 
         assert isinstance(result, SequentialAttackResult)
+        attack_identifier = result.get_attack_strategy_identifier()
+        assert attack_identifier is not None
+        assert attack_identifier.class_name == "SequentialAttack"
 
     async def test_child_attack_result_ids_in_order(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")

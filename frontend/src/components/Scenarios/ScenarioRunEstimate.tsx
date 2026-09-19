@@ -99,27 +99,23 @@ function formatCount(value: number): string {
   return value.toLocaleString()
 }
 
-function formatEstimateValue(value: number): string {
-  return value.toLocaleString()
-}
-
 function countLabel(value: number, singular: string, plural: string): string {
-  return `${formatEstimateValue(value)} ${value === 1 ? singular : plural}`
+  return `${formatCount(value)} ${value === 1 ? singular : plural}`
 }
 
 function formatPlannedAttackSummary(estimate: ScenarioRunEstimate): string {
   if (estimate.total !== null) {
     return countLabel(estimate.total, 'planned attack', 'planned attacks')
   }
-  if (estimate.minimum != null && estimate.maximum != null) {
+  if (estimate.minimum !== null && estimate.maximum !== null) {
     return estimate.minimum === estimate.maximum
       ? countLabel(estimate.minimum, 'planned attack', 'planned attacks')
-      : `${formatEstimateValue(estimate.minimum)}–${formatEstimateValue(estimate.maximum)} planned attacks`
+      : `${formatCount(estimate.minimum)}–${formatCount(estimate.maximum)} planned attacks`
   }
-  if (estimate.maximum != null) {
+  if (estimate.maximum !== null) {
     return `Up to ${countLabel(estimate.maximum, 'planned attack', 'planned attacks')}`
   }
-  if (estimate.minimum != null) {
+  if (estimate.minimum !== null) {
     return `At least ${countLabel(estimate.minimum, 'planned attack', 'planned attacks')}`
   }
   return estimate.scope === 'default'
@@ -135,20 +131,39 @@ function baselineCount(estimate: ScenarioRunEstimate): number {
 
 function formatEstimateSummary(estimate: ScenarioRunEstimate): string {
   if (estimate.adaptiveDetails) {
-    const { objectiveCount, techniqueAttemptCountUpperBound } = estimate.adaptiveDetails
+    const attackAttemptUpperBound = estimate.adaptiveDetails.techniqueAttemptCountUpperBound
+      + baselineCount(estimate)
     const attemptSummary = `up to ${countLabel(
-      techniqueAttemptCountUpperBound,
-      'technique attempt',
-      'technique attempts',
+      attackAttemptUpperBound,
+      'attack attempt',
+      'attack attempts',
     )}`
     const hasPlannedAttackBound = estimate.total !== null
-      || estimate.minimum != null
-      || estimate.maximum != null
+      || estimate.minimum !== null
+      || estimate.maximum !== null
     return hasPlannedAttackBound
-      ? `${formatPlannedAttackSummary(estimate)} · ${attemptSummary}`
-      : `${countLabel(objectiveCount, 'objective', 'objectives')} · ${attemptSummary}`
+      ? `${attemptSummary} · ${formatProgressUnitSummary(estimate)}`
+      : `${countLabel(estimate.adaptiveDetails.objectiveCount, 'objective', 'objectives')} · ${attemptSummary}`
   }
   return formatPlannedAttackSummary(estimate)
+}
+
+function formatProgressUnitSummary(estimate: ScenarioRunEstimate): string {
+  if (estimate.total !== null) {
+    return countLabel(estimate.total, 'progress unit', 'progress units')
+  }
+  if (estimate.minimum !== null && estimate.maximum !== null) {
+    return estimate.minimum === estimate.maximum
+      ? countLabel(estimate.minimum, 'progress unit', 'progress units')
+      : `${formatCount(estimate.minimum)}–${formatCount(estimate.maximum)} progress units`
+  }
+  if (estimate.maximum !== null) {
+    return `Up to ${countLabel(estimate.maximum, 'progress unit', 'progress units')}`
+  }
+  if (estimate.minimum !== null) {
+    return `At least ${countLabel(estimate.minimum, 'progress unit', 'progress units')}`
+  }
+  return 'Progress units are confirmed at launch.'
 }
 
 function operand(id: string, value: string, label: string, result = false, detail?: string): CalculationPart {
@@ -208,7 +223,7 @@ function resultOperand(estimate: ScenarioRunEstimate): CalculationOperand {
       result: true,
     }
   }
-  if (estimate.minimum != null && estimate.maximum != null) {
+  if (estimate.minimum !== null && estimate.maximum !== null) {
     return {
       id: 'result',
       value: estimate.minimum === estimate.maximum
@@ -218,7 +233,7 @@ function resultOperand(estimate: ScenarioRunEstimate): CalculationOperand {
       result: true,
     }
   }
-  if (estimate.maximum != null) {
+  if (estimate.maximum !== null) {
     return {
       id: 'result',
       value: `up to ${formatCount(estimate.maximum)}`,
@@ -226,7 +241,7 @@ function resultOperand(estimate: ScenarioRunEstimate): CalculationOperand {
       result: true,
     }
   }
-  if (estimate.minimum != null) {
+  if (estimate.minimum !== null) {
     return {
       id: 'result',
       value: `at least ${formatCount(estimate.minimum)}`,
@@ -239,84 +254,17 @@ function resultOperand(estimate: ScenarioRunEstimate): CalculationOperand {
     : { id: 'result', value: 'Confirmed', label: 'at launch', result: true }
 }
 
-function adaptivePlannedCalculation(estimate: ScenarioRunEstimate): RunCalculation {
+function adaptiveAttemptCalculation(estimate: ScenarioRunEstimate): RunCalculation {
   const details = estimate.adaptiveDetails
   if (!details) {
-    throw new Error('Adaptive planned calculation requires adaptive details.')
+    throw new Error('Adaptive attempt calculation requires adaptive details.')
   }
   const directBaselineCount = baselineCount(estimate)
-  const hasExactTotal = estimate.total !== null
-    || (
-      estimate.minimum != null
-      && estimate.maximum != null
-      && estimate.minimum === estimate.maximum
-    )
-  const hasPlannedTotal = estimate.total !== null
-    || estimate.minimum != null
-    || estimate.maximum != null
-  const adaptiveAttackCount = hasExactTotal
-    ? Math.max((estimate.total ?? estimate.maximum ?? 0) - directBaselineCount, 0)
-    : estimate.maximum != null
-      ? Math.max(estimate.maximum - directBaselineCount, 0)
-      : estimate.minimum != null
-        ? Math.max(estimate.minimum - directBaselineCount, 0)
-        : details.objectiveCount
-  const hasAdaptiveRange = directBaselineCount === 0
-    && estimate.minimum != null
-    && estimate.minimum > 0
-    && estimate.maximum != null
-    && estimate.minimum !== estimate.maximum
-  const adaptiveValue = hasExactTotal
-    ? formatCount(adaptiveAttackCount)
-    : hasAdaptiveRange
-      ? `${formatCount(estimate.minimum ?? 0)}–${formatCount(estimate.maximum ?? 0)}`
-      : estimate.maximum != null || estimate.minimum == null
-        ? `up to ${formatCount(adaptiveAttackCount)}`
-        : `at least ${formatCount(adaptiveAttackCount)}`
-  const adaptiveLabel = adaptiveAttackCount === 1 ? 'Adaptive attack' : 'Adaptive attacks'
-  const result = resultOperand(estimate)
-  const parts: CalculationPart[] = []
-  if (directBaselineCount > 0) {
-    parts.push(operand(
-      'baseline',
-      formatCount(directBaselineCount),
-      directBaselineCount === 1 ? 'direct baseline attack' : 'direct baseline attacks',
-    ))
-    parts.push(operator('baseline-plus', '+'))
-  }
-  parts.push(operand('adaptive-attacks', adaptiveValue, adaptiveLabel))
-  if (hasPlannedTotal) {
-    parts.push(operator('planned-equals', '='))
-    parts.push({ kind: 'operand', operand: result })
-  }
-
-  const adaptivePhrase = `${adaptiveValue} ${adaptiveLabel}`
-  const resultPhrase = `${result.value} ${result.label}`
-  const plannedResultPhrase = hasPlannedTotal
-    ? ` equals ${resultPhrase}.`
-    : '. Planned total is confirmed at launch.'
-  const accessibleLabel = directBaselineCount > 0
-    ? `Direct baseline comparison is included: ${countLabel(
-      directBaselineCount,
-      'direct baseline attack',
-      'direct baseline attacks',
-    )} plus ${adaptivePhrase}${plannedResultPhrase}`
-    : `Direct baseline comparison is not included: ${adaptivePhrase}${plannedResultPhrase}`
-  return { parts, accessibleLabel }
-}
-
-function adaptiveWorkCalculation(estimate: ScenarioRunEstimate): RunCalculation {
-  const details = estimate.adaptiveDetails
-  if (!details) {
-    throw new Error('Adaptive work calculation requires adaptive details.')
-  }
+  const attemptUpperBound = details.techniqueAttemptCountUpperBound + directBaselineCount
   const objectiveLabel = details.objectiveCount === 1 ? 'objective' : 'objectives'
   const techniqueLabel = details.techniquesPerObjectiveUpperBound === 1
-    ? 'technique per objective'
-    : 'techniques per objective'
-  const attemptLabel = details.techniqueAttemptCountUpperBound === 1
-    ? 'technique attempt'
-    : 'technique attempts'
+    ? 'Adaptive technique per objective'
+    : 'Adaptive techniques per objective'
   const capProvenance = {
     selectedCandidateCount: details.selectedCandidateTechniqueCount,
     compatibleCandidateCount: details.candidateTechniqueCount,
@@ -325,30 +273,84 @@ function adaptiveWorkCalculation(estimate: ScenarioRunEstimate): RunCalculation 
   }
   const effectiveCapRule = formatAdaptiveCapMetadata(capProvenance)
   const accessibleCapRule = formatAdaptiveCapAccessibleRule(capProvenance)
+  const baselinePerObjective = details.objectiveCount > 0
+    && directBaselineCount === details.objectiveCount
+  const parts: CalculationPart[] = [
+    operand('attack-objectives', formatCount(details.objectiveCount), objectiveLabel),
+    operator('attack-multiply', '×'),
+  ]
+  if (baselinePerObjective) {
+    parts.push(operator('attempt-open', '('))
+    parts.push(operand('baseline-factor', '1', 'direct baseline per objective'))
+    parts.push(operator('attempt-plus', '+'))
+  }
+  parts.push(operand(
+    'adaptive-techniques',
+    `up to ${formatCount(details.techniquesPerObjectiveUpperBound)}`,
+    techniqueLabel,
+    false,
+    effectiveCapRule,
+  ))
+  if (baselinePerObjective) {
+    parts.push(operator('attempt-close', ')'))
+  }
+  if (directBaselineCount > 0 && !baselinePerObjective) {
+    parts.push(operator('partial-baseline-plus', '+'))
+    parts.push(operand(
+      'partial-baseline',
+      formatCount(directBaselineCount),
+      directBaselineCount === 1 ? 'direct baseline attempt' : 'direct baseline attempts',
+    ))
+  }
+  parts.push(operator('attack-equals', '='))
+  parts.push(operand(
+    'attack-result',
+    `up to ${formatCount(attemptUpperBound)}`,
+    attemptUpperBound === 1 ? 'attack attempt' : 'attack attempts',
+    true,
+  ))
+
+  const baselinePhrase = baselinePerObjective
+    ? '1 direct baseline plus '
+    : ''
+  const partialBaselinePhrase = directBaselineCount > 0 && !baselinePerObjective
+    ? ` plus ${countLabel(directBaselineCount, 'direct baseline attempt', 'direct baseline attempts')}`
+    : ''
+  const baselineContext = directBaselineCount === 0
+    ? ' Direct baseline comparison is not included.'
+    : ' Direct baseline comparison is included.'
+  return {
+    parts,
+    accessibleLabel: `${countLabel(details.objectiveCount, 'objective', 'objectives')} multiplied by ${
+      baselinePhrase
+    }up to ${countLabel(
+      details.techniquesPerObjectiveUpperBound,
+      'Adaptive technique per objective',
+      'Adaptive techniques per objective',
+    )}, ${accessibleCapRule}${partialBaselinePhrase}, equals up to ${
+      countLabel(attemptUpperBound, 'attack attempt', 'attack attempts')
+    }.${baselineContext}`,
+  }
+}
+
+function adaptiveProgressCalculation(estimate: ScenarioRunEstimate): RunCalculation {
+  const summary = formatProgressUnitSummary(estimate)
+  const summarySentence = summary.endsWith('.') ? summary : `${summary}.`
+  const hasBound = estimate.total !== null || estimate.minimum !== null || estimate.maximum !== null
+  const value = hasBound ? summary.replace(/ progress units?$/, '') : 'Confirmed at launch'
   return {
     parts: [
-      operand('adaptive-objectives', formatCount(details.objectiveCount), objectiveLabel),
-      operator('adaptive-multiply', '×'),
       operand(
-        'adaptive-techniques',
-        `up to ${formatCount(details.techniquesPerObjectiveUpperBound)}`,
-        techniqueLabel,
-        false,
-        effectiveCapRule,
-      ),
-      operator('adaptive-equals', '='),
-      operand(
-        'adaptive-result',
-        `up to ${formatCount(details.techniqueAttemptCountUpperBound)}`,
-        attemptLabel,
+        'progress-result',
+        value,
+        estimate.total === 1 || (estimate.minimum === 1 && estimate.maximum === 1)
+          ? 'progress unit'
+          : 'progress units',
         true,
       ),
     ],
-    accessibleLabel: `${countLabel(details.objectiveCount, 'objective', 'objectives')} multiplied by up to ${
-      countLabel(details.techniquesPerObjectiveUpperBound, 'technique per objective', 'techniques per objective')
-    }, ${accessibleCapRule}, equals up to ${
-      countLabel(details.techniqueAttemptCountUpperBound, 'technique attempt', 'technique attempts')
-    }.`,
+    accessibleLabel: `${summarySentence} Progress units track resumable evaluation groups, not every persisted attack attempt.`,
+    context: 'Progress units track resumable evaluation groups, not every persisted attack attempt.',
   }
 }
 
@@ -360,7 +362,7 @@ function adaptiveWorkContext(estimate: ScenarioRunEstimate): string {
   const compatibilityContext = details.compatibilityMayReduceAttempts
     ? ' Compatibility may reduce how many candidates each objective can try.'
     : ''
-  return `Technique-attempt totals exclude multi-turn target exchanges and retries. Adaptive stops each objective after the first successful technique.${compatibilityContext}`
+  return `Attack-attempt totals exclude multi-turn target exchanges and retries. Adaptive techniques run sequentially and stop each objective after the first successful technique.${compatibilityContext}`
 }
 
 function homogeneousTechniqueCalculation(
@@ -469,7 +471,7 @@ function ordinaryCalculation(estimate: ScenarioRunEstimate): RunCalculation {
       .replace(/×/g, 'multiplied by')
       .replace(/\+/g, 'plus')
       .replace(/=/g, 'equals')}.`,
-    context: estimate.total === null && estimate.minimum == null && estimate.maximum == null
+    context: estimate.total === null && estimate.minimum === null && estimate.maximum === null
       ? formatEstimateSummary(estimate)
       : undefined,
   }
@@ -478,11 +480,12 @@ function ordinaryCalculation(estimate: ScenarioRunEstimate): RunCalculation {
 export function ScenarioRunEstimateSummary({ state }: ScenarioRunEstimateSummaryProps) {
   const styles = useScenarioRunEstimateStyles()
   const estimate = stateEstimate(state)
+  const label = statusLabel(state)
 
   return (
     <div className={styles.summary} aria-live="polite">
       <div className={styles.summaryHeader}>
-        <Badge appearance="tint" color={statusColor(state)}>{statusLabel(state)}</Badge>
+        {label && <Badge appearance="tint" color={statusColor(state)}>{label}</Badge>}
         {estimate && (
           <Text className={styles.total} weight="semibold">
             {formatEstimateSummary(estimate)}
@@ -627,16 +630,16 @@ export function ScenarioRunEstimateDetails({
       {hasAdaptiveDetails ? (
         <>
           <RunCalculationView
-            calculation={adaptivePlannedCalculation(estimate)}
-            heading="Planned attacks"
-            idPrefix={`${idPrefix}-planned`}
+            calculation={adaptiveAttemptCalculation(estimate)}
+            heading="Attack attempts"
+            idPrefix={`${idPrefix}-attempts`}
             testId="run-calculation"
           />
           <RunCalculationView
-            calculation={adaptiveWorkCalculation(estimate)}
-            heading="Adaptive work"
-            idPrefix={`${idPrefix}-adaptive-work`}
-            testId="adaptive-work-calculation"
+            calculation={adaptiveProgressCalculation(estimate)}
+            heading="Progress planning"
+            idPrefix={`${idPrefix}-progress`}
+            testId="progress-unit-calculation"
           />
         </>
       ) : (

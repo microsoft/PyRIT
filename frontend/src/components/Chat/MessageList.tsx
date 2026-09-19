@@ -27,6 +27,8 @@ import {
   ArrowReplyRegular,
   BranchForkRegular,
   ChatAddRegular,
+  CheckmarkRegular,
+  CopyRegular,
   EditRegular,
   MoreHorizontalRegular,
   OpenRegular,
@@ -71,9 +73,13 @@ interface MessageListProps {
   noTargetSelected?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
+  /** Collapse long user prompts when rendering persisted attack history. */
+  collapseLongPrompts?: boolean
   /** Recovery action for the processing error caused by the most recent send. */
   processingErrorRecovery?: ProcessingErrorRecovery
 }
+
+const LONG_PROMPT_CHARACTER_THRESHOLD = 4_000
 
 /** Image that shows a spinner while loading. */
 function ImageWithSpinner({ src, alt, className, hiddenClassName, containerClassName, spinnerClassName }: {
@@ -496,6 +502,61 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
   )
 }
 
+interface CollapsedPromptProps {
+  readonly content: string
+  readonly globalMarkdown: boolean
+  readonly index: number
+}
+
+function CollapsedPrompt({
+  content,
+  globalMarkdown,
+  index,
+}: CollapsedPromptProps) {
+  const styles = useMessageListStyles()
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
+
+  const handleCopy = useCallback(async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopyStatus('copied')
+    } catch {
+      setCopyStatus('error')
+    }
+  }, [content])
+
+  const characterSummary = `Long prompt · ${content.length.toLocaleString()} characters`
+
+  return (
+    <div className={styles.collapsedPrompt} data-testid={`collapsed-prompt-${index}`}>
+      <Text weight="semibold">{characterSummary}</Text>
+      <div className={styles.promptActions}>
+        <Button
+          appearance="subtle"
+          icon={copyStatus === 'copied' ? <CheckmarkRegular /> : <CopyRegular />}
+          onClick={handleCopy}
+          aria-label={copyStatus === 'copied' ? 'Full prompt copied' : 'Copy full prompt'}
+        >
+          {copyStatus === 'copied' ? 'Copied' : 'Copy full prompt'}
+        </Button>
+      </div>
+      {copyStatus === 'error' && (
+        <MessageBar intent="error">
+          <MessageBarBody>Could not copy the full prompt. Expand it and copy the text manually.</MessageBarBody>
+        </MessageBar>
+      )}
+      <details className={styles.promptDetails}>
+        <summary>Show full prompt</summary>
+        <div className={styles.fullPrompt}>
+          {globalMarkdown
+            ? <MarkdownContent content={content} testId={`message-markdown-${index}`} />
+            : <pre className={styles.fullPromptText}>{content}</pre>}
+        </div>
+      </details>
+    </div>
+  )
+}
+
 /**
  * If the trimmed text is a JSON object or array, return a 2-space pretty-printed
  * version of it; otherwise return null. Used to render structured assistant
@@ -565,7 +626,21 @@ function getRenderMessagePieces(message: Message, messageIndex: number): RenderM
   return pieces
 }
 
-export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected, globalMarkdown = false, processingErrorRecovery }: MessageListProps) {
+export default function MessageList({
+  messages,
+  onCopyToInput,
+  onCopyToNewConversation,
+  onBranchConversation,
+  onBranchAttack,
+  isLoading,
+  isSingleTurn,
+  isOperatorLocked,
+  isCrossTarget,
+  noTargetSelected,
+  globalMarkdown = false,
+  collapseLongPrompts = false,
+  processingErrorRecovery,
+}: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -684,9 +759,20 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
               {(message.originalContent || message.originalAttachments) && (
                 <div className={styles.originalSection} data-testid="original-section">
                   <div className={styles.sectionLabel}>Original</div>
-                  {message.originalContent && (
-                    <Text className={styles.originalText}>{message.originalContent}</Text>
-                  )}
+                  {message.originalContent && (() => {
+                    const shouldCollapse = isUser
+                      && collapseLongPrompts
+                      && message.originalContent.length >= LONG_PROMPT_CHARACTER_THRESHOLD
+                    return shouldCollapse
+                      ? (
+                          <CollapsedPrompt
+                            content={message.originalContent}
+                            globalMarkdown={false}
+                            index={index}
+                          />
+                        )
+                      : <Text className={styles.originalText}>{message.originalContent}</Text>
+                  })()}
                   {message.originalAttachments && message.originalAttachments.length > 0 && (
                     <div className={styles.attachmentsContainer}>
                       {message.originalAttachments.map((att, i) => (
@@ -717,6 +803,9 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                 <div className={styles.displayPiecesContainer}>
                   {renderPieces.map(({ piece, groupId, markdownTestId }) => {
                     if (piece.type === 'text') {
+                      const shouldCollapse = isUser
+                        && collapseLongPrompts
+                        && piece.content.length >= LONG_PROMPT_CHARACTER_THRESHOLD
                       const formatted = !message.isLoading && !globalMarkdown && !isUser
                         ? tryFormatJson(piece.content)
                         : null
@@ -728,6 +817,12 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                         >
                           {message.isLoading ? (
                             <Text className={styles.loadingEllipsis}>{piece.content}</Text>
+                          ) : shouldCollapse ? (
+                            <CollapsedPrompt
+                              content={piece.content}
+                              globalMarkdown={globalMarkdown}
+                              index={index}
+                            />
                           ) : globalMarkdown ? (
                             <MarkdownContent content={piece.content} testId={markdownTestId} />
                           ) : formatted !== null ? (
