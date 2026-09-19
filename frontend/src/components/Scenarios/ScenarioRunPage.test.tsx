@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import {
@@ -17,6 +17,9 @@ import type {
   ScenarioProgressSummary,
   ScenarioProgressResult,
   ScenarioRunPlan,
+  ScenarioRunState,
+  ScenarioRunSummary,
+  ScenarioResumeRequirements,
 } from '@/types'
 import {
   INITIAL_SCENARIO_RUN_PROGRESS_STATE,
@@ -36,12 +39,17 @@ jest.mock('@/hooks/useScenarioQueue', () => ({
 jest.mock('@/services/api', () => ({
   scenariosApi: {
     cancelRun: jest.fn(),
+    resumeRun: jest.fn(),
+    getResumeRequirements: jest.fn(),
   },
 }))
 
 const mockUseScenarioRunProgress = useScenarioRunProgress as jest.Mock
 const mockUseScenarioQueue = useScenarioQueue as jest.Mock
 const mockCancelRun = scenariosApi.cancelRun as jest.Mock
+const mockResumeRun = scenariosApi.resumeRun as jest.Mock
+const mockGetResumeRequirements = scenariosApi.getResumeRequirements as jest.Mock
+const mockQueueRetry = jest.fn()
 const mockRetry = jest.fn()
 const mockApplyRunSummary = jest.fn()
 const SCENARIO_RESULT_ID = '123e4567-e89b-12d3-a456-426614174000'
@@ -289,12 +297,13 @@ function renderPage(
 describe('ScenarioRunPage', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockGetResumeRequirements.mockResolvedValue({ requires_execution_options: false })
     mockUseScenarioQueue.mockReturnValue({
       snapshot: { revision: 0, snapshot_at: '2026-01-01T00:00:00Z', active: null, queued: [] },
       loading: false,
       stale: false,
       error: null,
-      retry: jest.fn(),
+      retry: mockQueueRetry,
     })
     mockHookState(makeState())
   })
@@ -490,6 +499,258 @@ describe('ScenarioRunPage', () => {
 
     expect(await within(dialog).findByText('Cannot cancel a completed run.')).toBeInTheDocument()
     expect(mockApplyRunSummary).not.toHaveBeenCalled()
+  })
+
+  it('resumes the same failed run explicitly, retaining progress while pending and rejecting synchronous duplicates', async () => {
+    const user = userEvent.setup()
+    const failedState = makeState({
+      run: { ...makeState().run, scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
+        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
+      summary: { ...SUMMARY, overall: { ...SUMMARY.overall, planned: 2 } },
+    })
+    const resumedRun: ScenarioRunSummary = {
+      scenario_result_id: SCENARIO_RESULT_ID,
+      scenario_name: 'TestScenario',
+      scenario_version: 1,
+      status: 'QUEUED',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:01:00Z',
+      completed_at: null,
+      techniques_used: ['role_play'],
+      total_attacks: 2,
+      completed_attacks: 1,
+      objective_achieved_rate: 100,
+      failed_attacks: [],
+      attack_retries: [],
+      total_retries: 1,
+      labels: {},
+    }
+    let resolveResume: ((run: ScenarioRunSummary) => void) | undefined
+    mockResumeRun.mockImplementationOnce(() => new Promise<ScenarioRunSummary>((resolve) => {
+      resolveResume = resolve
+    }))
+    mockHookState(failedState)
+    mockApplyRunSummary.mockImplementationOnce(() => {
+      mockHookState({ ...failedState, run: resumedRun })
+    })
+    renderPage()
+    expect(mockResumeRun).not.toHaveBeenCalled()
+    const resumeButton = screen.getByRole('button', { name: 'Resume run' })
+    // Two events in the same render exercise the ref guard before disabled state commits.
+    act(() => {
+      resumeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      resumeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(screen.getByRole('button', { name: 'Resuming...' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Resuming...' }))
+    expect(mockResumeRun).toHaveBeenCalledTimes(1)
+    expect(mockGetResumeRequirements).toHaveBeenCalledTimes(1)
+    expect(mockGetResumeRequirements).toHaveBeenCalledWith(SCENARIO_RESULT_ID)
+    expect(mockResumeRun).toHaveBeenCalledWith(SCENARIO_RESULT_ID)
+    expect(screen.getByRole('progressbar', { name: 'Overall scenario run progress' }))
+      .toHaveAttribute('aria-valuetext', '1 of 2 executable units completed')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await act(async () => { resolveResume?.(resumedRun) })
+
+    expect(mockApplyRunSummary).toHaveBeenCalledWith(resumedRun)
+    expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('run-state-badge')).toHaveTextContent('Queued')
+    expect(screen.getByText(SCENARIO_RESULT_ID)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Resume run' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('scanner-route')).toHaveAttribute('data-location', `/scanner-history/${SCENARIO_RESULT_ID}`)
+  })
+
+  it.each<[number, string]>([
+    [404, 'Scenario run not found.'],
+    [409, 'This run is already queued or cannot be safely resumed.'],
+    [400, 'Saved configuration no longer matches the registered scenario.'],
+    [500, 'Unable to resume this run.'],
+  ])('shows HTTP %s resume errors even after refreshing run and queue state', async (status: number, detail: string) => {
+    const user = userEvent.setup()
+    const activeState = makeState()
+    mockHookState(makeState({
+      run: { ...activeState.run, scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
+        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
+    }))
+    mockResumeRun.mockRejectedValueOnce({ isAxiosError: true, response: { status, data: { detail } } })
+    mockRetry.mockImplementationOnce(() => { mockHookState(activeState) })
+    renderPage()
+
+    await user.click(screen.getByRole('button', { name: 'Resume run' }))
+
+    expect(await screen.findByText(detail)).toBeInTheDocument()
+    expect(mockRetry).toHaveBeenCalledTimes(1)
+    expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+    expect(mockApplyRunSummary).not.toHaveBeenCalled()
+    expect(screen.getByTestId('run-state-badge')).toHaveTextContent('In progress')
+    expect(mockResumeRun).toHaveBeenCalledTimes(1)
+  })
+
+  it.each<ScenarioRunState>(['CREATED', 'QUEUED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'])(
+    'does not offer resume for %s runs',
+    (status: ScenarioRunState) => {
+      mockHookState(makeState({
+        run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
+          scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status },
+      }))
+      renderPage()
+      expect(screen.queryByRole('button', { name: 'Resume run' })).not.toBeInTheDocument()
+      expect(mockResumeRun).not.toHaveBeenCalled()
+      expect(mockGetResumeRequirements).not.toHaveBeenCalled()
+    },
+  )
+
+  it('requires explicit legacy limit confirmation and sends only the chosen limits', async () => {
+    const user = userEvent.setup()
+    mockHookState(makeState({
+      run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
+        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
+    }))
+    mockGetResumeRequirements.mockResolvedValueOnce({ requires_execution_options: true })
+    let resolveResume: ((run: ScenarioRunSummary) => void) | undefined
+    mockResumeRun.mockImplementationOnce(() => new Promise<ScenarioRunSummary>((resolve) => {
+      resolveResume = resolve
+    }))
+    renderPage()
+    expect(mockGetResumeRequirements).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Resume run' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Resume run with execution options' })
+    expect(within(dialog).getByText(/did not save its concurrency and retry limits/i)).toBeInTheDocument()
+    expect(within(dialog).getByText(/restored by the server/i)).toBeInTheDocument()
+    const concurrency = within(dialog).getByRole('spinbutton', { name: 'Max concurrency' })
+    const retries = within(dialog).getByRole('spinbutton', { name: 'Max retries' })
+    expect(concurrency).toHaveValue('1')
+    expect(retries).toHaveValue('0')
+    expect(mockResumeRun).not.toHaveBeenCalled()
+    expect(mockQueueRetry).not.toHaveBeenCalled()
+    await user.clear(concurrency)
+    await user.type(concurrency, '3')
+    await user.tab()
+    await user.clear(retries)
+    await user.type(retries, '2')
+    await user.tab()
+    const confirmButton = within(dialog).getByRole('button', { name: 'Resume', exact: true })
+    act(() => {
+      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(mockResumeRun).toHaveBeenCalledTimes(1)
+    expect(mockResumeRun).toHaveBeenCalledWith(SCENARIO_RESULT_ID, { max_concurrency: 3, max_retries: 2 })
+    expect(within(dialog).getByRole('button', { name: 'Resuming...' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    expect(concurrency).toBeDisabled()
+    await act(async () => {
+      resolveResume?.({
+        scenario_result_id: SCENARIO_RESULT_ID,
+        scenario_name: 'TestScenario',
+        scenario_version: 1,
+        status: 'QUEUED',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:01:00Z',
+        techniques_used: [],
+        total_attacks: 2,
+        completed_attacks: 1,
+        objective_achieved_rate: 100,
+        failed_attacks: [],
+        attack_retries: [],
+        total_retries: 0,
+        labels: {},
+      })
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(mockApplyRunSummary).toHaveBeenCalledWith(expect.objectContaining({
+      scenario_result_id: SCENARIO_RESULT_ID, completed_attacks: 1,
+    }))
+    expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels legacy confirmation without submitting and resets the limits on reopening', async () => {
+    const user = userEvent.setup()
+    mockHookState(makeState({
+      run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
+        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
+    }))
+    mockGetResumeRequirements.mockResolvedValue({ requires_execution_options: true })
+    renderPage()
+    await user.click(screen.getByRole('button', { name: 'Resume run' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Resume run with execution options' })
+    const concurrency = within(dialog).getByRole('spinbutton', { name: 'Max concurrency' })
+    await user.clear(concurrency)
+    await user.type(concurrency, '10')
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await user.click(await screen.findByRole('button', { name: 'Resume run' }))
+
+    const reopened = await screen.findByRole('dialog', { name: 'Resume run with execution options' })
+    expect(within(reopened).getByRole('spinbutton', { name: 'Max concurrency' })).toHaveValue('1')
+    expect(mockGetResumeRequirements).toHaveBeenCalledTimes(2)
+    expect(mockResumeRun).not.toHaveBeenCalled()
+    expect(mockQueueRetry).not.toHaveBeenCalled()
+  })
+
+  it.each([400, 404, 409])('refreshes and displays a preflight HTTP %s error without submitting', async (status: number) => {
+    const user = userEvent.setup()
+    mockHookState(makeState({
+      run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
+        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
+    }))
+    mockGetResumeRequirements.mockRejectedValueOnce({
+      isAxiosError: true, response: { status, data: { detail: 'This run cannot be restored safely.' } },
+    })
+    renderPage()
+    await user.click(screen.getByRole('button', { name: 'Resume run' }))
+
+    expect(await screen.findByText('This run cannot be restored safely.')).toBeInTheDocument()
+    expect(mockResumeRun).not.toHaveBeenCalled()
+    expect(mockRetry).toHaveBeenCalledTimes(1)
+    expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not start a run if the user leaves while the read-only preflight is pending', async () => {
+    const user = userEvent.setup()
+    mockHookState(makeState({
+      run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
+        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
+    }))
+    let resolvePreflight: ((requirements: ScenarioResumeRequirements) => void) | undefined
+    mockGetResumeRequirements.mockImplementationOnce(() => new Promise<ScenarioResumeRequirements>((resolve) => {
+      resolvePreflight = resolve
+    }))
+    const { unmount } = renderPage()
+    await user.click(screen.getByRole('button', { name: 'Resume run' }))
+    expect(screen.getByRole('button', { name: 'Resuming...' })).toBeDisabled()
+    unmount()
+    await act(async () => { resolvePreflight?.({ requires_execution_options: false }) })
+
+    expect(mockResumeRun).not.toHaveBeenCalled()
+    expect(mockApplyRunSummary).not.toHaveBeenCalled()
+    expect(mockQueueRetry).not.toHaveBeenCalled()
+  })
+
+  it('applies an immediately failed resume response, shows its error, and never resubmits automatically', async () => {
+    const user = userEvent.setup()
+    mockHookState(makeState({
+      run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
+        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
+    }))
+    mockResumeRun.mockResolvedValueOnce({
+      scenario_result_id: SCENARIO_RESULT_ID,
+      status: 'FAILED',
+      error: 'The saved target rejected execution.',
+    })
+    renderPage()
+    await user.click(screen.getByRole('button', { name: 'Resume run' }))
+
+    expect(await screen.findByText('The saved target rejected execution.')).toBeInTheDocument()
+    expect(screen.getByTestId('run-state-badge')).toHaveTextContent('Failed')
+    expect(screen.getByRole('button', { name: 'Resume run' })).toBeEnabled()
+    expect(mockApplyRunSummary).toHaveBeenCalledWith(expect.objectContaining({ status: 'FAILED' }))
+    expect(mockRetry).not.toHaveBeenCalled()
+    expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+    expect(mockGetResumeRequirements).toHaveBeenCalledTimes(1)
+    expect(mockResumeRun).toHaveBeenCalledTimes(1)
   })
 
   it('shows full objective details', async () => {

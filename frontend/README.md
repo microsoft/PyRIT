@@ -13,6 +13,28 @@ Your choice is saved in this browser. System follows the operating system's
 light/dark preference. High-contrast mode overrides every palette and hides
 decorations without forgetting the selected preset.
 
+## Resuming a scenario run
+
+Failed runs offer **Resume run** on the run page and **Resume** in Scanner
+History. Resume continues unfinished work under the same run ID, preserving
+finished results. It uses the server's saved configuration; it does not open
+the launch dialog, use current defaults, or start automatically.
+
+The frontend first checks `GET /api/scenarios/runs/{scenario_result_id}/resume`.
+When execution limits were saved, it sends POST to the same URL without a body.
+Older runs without saved concurrency and retry limits require an explicit
+confirmation dialog. Choose concurrency (1–100) and retries (0–20); the safe
+prefilled values are 1 and 0, not historical values or current launch defaults.
+Only these two limits are sent in the legacy POST body. The server restores
+the original target, scenario, techniques, datasets, parameters, and labels.
+
+A successful response restarts progress updates and
+refreshes queue/history state. If the run is missing, already active, or cannot
+be restored safely (including configuration drift), the error remains visible
+while the latest state is refreshed.
+If resumed execution immediately fails, the returned failure is shown and final
+results are refreshed once; execution is never retried automatically.
+
 ## Development
 
 ```bash

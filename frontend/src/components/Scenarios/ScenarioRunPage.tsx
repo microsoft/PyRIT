@@ -32,6 +32,7 @@ import {
   ChevronRightRegular,
   DismissCircleRegular,
   ErrorCircleRegular,
+  PlayRegular,
   StopRegular,
 } from '@fluentui/react-icons'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
@@ -44,6 +45,7 @@ import {
   objectivePreview,
 } from '@/components/AttackResults/attackAttemptFormatting'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
+import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -71,6 +73,7 @@ import AttackExecutionTable from './AttackExecutionTable'
 import { ObjectiveDetailsDialog, TechniqueDetailsDialog } from './ScenarioRunDialogs'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 import ScenarioQueue from './ScenarioQueue'
+import ScenarioResumeDialog from './ScenarioResumeDialog'
 
 const CLOCK_REFRESH_INTERVAL_MS = 1_000
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
@@ -112,6 +115,13 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState<string | null>(null)
+  const resume = useScenarioRunResume({
+    onResumed: applyRunSummary,
+    onRefresh: (succeeded: boolean): void => {
+      queue.retry()
+      if (!succeeded) retry()
+    },
+  })
   const [selectedTechnique, setSelectedTechnique] = useState<ScenarioTechniqueProgress | null>(null)
   const [selectedObjective, setSelectedObjective] = useState<ScenarioRunPlanSeedGroup | null>(null)
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set())
@@ -334,7 +344,37 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
               </Button>
             </div>
           )}
+          {run.status === 'FAILED' && (
+            <div className={styles.headerActions}>
+              <Button
+                appearance="primary"
+                className={mergeClasses(styles.touchTarget, styles.wideButton)}
+                icon={<PlayRegular />}
+                disabled={resume.pendingRunId !== null}
+                onClick={() => { resume.requestResume(scenarioResultId) }}
+                data-testid="scenario-run-resume"
+              >
+                {resume.pendingRunId !== null ? 'Resuming...' : 'Resume run'}
+              </Button>
+            </div>
+          )}
         </header>
+
+        {resume.error && (
+          <MessageBar intent="error">
+            <MessageBarBody>{resume.error}</MessageBarBody>
+          </MessageBar>
+        )}
+        {resume.legacyRunId !== null && (
+          <ScenarioResumeDialog
+            key={resume.legacyRunId}
+            scenarioResultId={resume.legacyRunId}
+            pending={resume.pendingRunId !== null}
+            error={resume.error}
+            onCancel={resume.cancel}
+            onConfirm={resume.confirmResume}
+          />
+        )}
 
         <div className={styles.metadata} aria-label="Run metadata">
           <div className={styles.metadataItem}>
@@ -432,6 +472,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
           <MessageBar intent="error">
             <MessageBarBody>
               This run ended before all planned executable units completed. Finished executions remain available below.
+              {' '}Resume continues the remaining work with the original configuration and the same run ID.
             </MessageBarBody>
           </MessageBar>
         )}

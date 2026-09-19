@@ -16,8 +16,9 @@ from fastapi.testclient import TestClient
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.backend.models.scenarios import ScenarioResumeOptions, ScenarioRunListResponse
 from pyrit.backend.routes.scenarios import get_scenario_run_progress, list_scenario_runs
+from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
@@ -167,6 +168,75 @@ class TestStartScenarioRunRoute:
             "num_jailbreaks": 2,
             "num_jailbreak_attempts": 1,
         }
+
+
+class TestResumeScenarioRunRoute:
+    """The resume routes never accept replacement scenario, target, or label selections."""
+
+    @pytest.mark.parametrize("legacy", [False, True])
+    def test_resume_returns_same_run_id(self, client: TestClient, legacy: bool) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as get_service:
+            service = get_service.return_value
+            service.resume_run_async = AsyncMock(
+                return_value=_mock_run_response(run_id="saved-id", run_status=ScenarioRunState.QUEUED)
+            )
+            options = {"max_concurrency": 2, "max_retries": 1} if legacy else None
+            response = client.post("/api/scenarios/runs/saved-id/resume", json=options)
+        assert response.status_code == 202
+        assert response.json()["scenario_result_id"] == "saved-id"
+        assert response.json()["status"] == "QUEUED"
+        arguments = service.resume_run_async.await_args.kwargs
+        assert arguments["scenario_result_id"] == "saved-id"
+        assert (arguments["execution_options"].model_dump() if legacy else arguments["execution_options"]) == options
+
+    @pytest.mark.parametrize("legacy", [False, True])
+    def test_resume_options_does_not_start_run(self, client: TestClient, legacy: bool) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as get_service:
+            service = get_service.return_value
+            service.get_resume_options_async = AsyncMock(
+                return_value=ScenarioResumeOptions(requires_execution_options=legacy)
+            )
+            response = client.get("/api/scenarios/runs/saved-id/resume")
+            service.resume_run_async.assert_not_called()
+        assert response.status_code == 200
+        assert response.json() == {"requires_execution_options": legacy}
+
+    @pytest.mark.parametrize("method", ["get", "post"])
+    @pytest.mark.parametrize(
+        ("error", "expected_status"),
+        [
+            (ScenarioRunNotFoundError("Run not found"), 404),
+            (ScenarioRunConflictError("Already scheduled"), 409),
+            (ValueError("Target configuration changed"), 400),
+        ],
+    )
+    def test_resume_errors_are_explicit(
+        self, *, client: TestClient, method: str, error: Exception, expected_status: int
+    ) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as get_service:
+            service = get_service.return_value
+            service.resume_run_async = AsyncMock(side_effect=error)
+            service.get_resume_options_async = AsyncMock(side_effect=error)
+            response = getattr(client, method)("/api/scenarios/runs/saved-id/resume")
+        assert response.status_code == expected_status
+        assert response.json()["detail"] == str(error)
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {},
+            {"max_concurrency": 0, "max_retries": 0},
+            {"max_concurrency": 101, "max_retries": 0},
+            {"max_concurrency": 1, "max_retries": -1},
+            {"max_concurrency": 1, "max_retries": 21},
+            {"max_concurrency": 1, "max_retries": 0, "target_name": "replacement"},
+        ],
+    )
+    def test_resume_rejects_invalid_execution_options(self, client: TestClient, body: dict[str, object]) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as get_service:
+            response = client.post("/api/scenarios/runs/saved-id/resume", json=body)
+            get_service.assert_not_called()
+        assert response.status_code == 422
 
 
 class TestListScenarioRunsRoute:

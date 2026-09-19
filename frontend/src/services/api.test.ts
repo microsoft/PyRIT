@@ -908,5 +908,35 @@ describe("api service", () => {
       );
       expect(result.status).toBe("CANCELLED");
     });
+
+    it("resumes the same scenario run without sending configuration or a request body", async () => {
+      const summary = { scenario_result_id: "sr/1", status: "QUEUED", completed_attacks: 2 };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ status: 202, data: summary });
+
+      await expect(scenariosApi.resumeRun("sr/1")).resolves.toEqual(summary);
+
+      expect(apiClient.post).toHaveBeenCalledTimes(1);
+      expect(apiClient.post).toHaveBeenCalledWith("/scenarios/runs/sr%2F1/resume");
+    });
+
+    it("checks whether a run needs legacy execution options without starting it", async () => {
+      const requirements = { requires_execution_options: true };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: requirements });
+
+      await expect(scenariosApi.getResumeRequirements("sr/1")).resolves.toEqual(requirements);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs/sr%2F1/resume");
+      expect(apiClient.post).not.toHaveBeenCalled();
+    });
+
+    it("sends only explicitly confirmed legacy execution options when resuming", async () => {
+      const options = { max_concurrency: 1, max_retries: 0 };
+      const summary = { scenario_result_id: "sr-1", status: "QUEUED" };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: summary });
+
+      await expect(scenariosApi.resumeRun("sr-1", options)).resolves.toEqual(summary);
+
+      expect(apiClient.post).toHaveBeenCalledWith("/scenarios/runs/sr-1/resume", options);
+    });
   });
 });

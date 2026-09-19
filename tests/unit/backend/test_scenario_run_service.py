@@ -13,7 +13,7 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -425,7 +425,10 @@ class TestScenarioRunServiceStartRun:
             "airt.jailbreak",
             scenario_params=scenario_params,
             scenario_result_id=None,
-            initial_metadata={_svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE},
+            initial_metadata={
+                _svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE,
+                _svc_mod._LAUNCH_REQUEST_METADATA_KEY: ANY,
+            },
             objective_target=objective_target,
             max_concurrency=10,
             max_retries=0,
@@ -854,12 +857,20 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         mock_sr = mock_all_registries["scenario_registry"]
 
+        mock_all_registries["scenario_instance"]._scenario_result_id = "existing-result-uuid"
+        mock_all_registries["memory"].get_scenario_results.return_value = [
+            _make_db_scenario_result(result_id="existing-result-uuid")
+        ]
+        mock_all_registries["memory"].get_scenario_result_header.return_value = _make_db_scenario_result(
+            result_id="existing-result-uuid", run_state=ScenarioRunState.FAILED
+        )
         response = await service.start_run_async(request=_make_request(scenario_result_id="existing-result-uuid"))
 
         assert response.status == ScenarioRunState.IN_PROGRESS
         call = mock_sr.create_and_initialize_async.await_args
         assert call.args[0] == "foundry.red_team_agent"
         assert call.kwargs["scenario_result_id"] == "existing-result-uuid"
+        assert response.scenario_result_id == "existing-result-uuid"
 
     async def test_start_run_omits_scenario_result_id_when_none(self, mock_all_registries) -> None:
         """Test that scenario_result_id is None when not provided in the request."""
@@ -1018,7 +1029,7 @@ class TestScenarioRunServiceStartRun:
         # that the resume was not mistaken for a cancellation and actually started.
         assert response.scenario_result_id == "resumed-cancelled"
 
-    async def test_start_run_honours_a_cancel_that_lands_while_a_live_run_initializes(
+    async def test_start_run_honours_a_cancel_that_lands_while_a_failed_run_initializes(
         self, mock_all_registries
     ) -> None:
         """A run that was not already cancelled must still respect a cancel during preparation."""
@@ -1030,10 +1041,10 @@ class TestScenarioRunServiceStartRun:
             return scenario_instance
 
         cancelled = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.CANCELLED)
-        in_progress = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.IN_PROGRESS)
+        failed = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.FAILED)
         mock_all_registries["memory"].get_scenario_results.return_value = [cancelled]
         # The pre-preparation read sees a live run; the cancel lands while the worker prepares.
-        mock_all_registries["memory"].get_scenario_result_header.return_value = in_progress
+        mock_all_registries["memory"].get_scenario_result_header.return_value = failed
 
         with patch.object(service, "_prepare_run_blocking", _prepare):
             with patch.object(service, "_execute_run_async") as execute:

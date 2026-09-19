@@ -34,6 +34,8 @@ import type {
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSummary,
+  ScenarioResumeRequirements,
+  ScenarioResumeExecutionOptions,
   ScenarioRunListResponse,
   ScenarioRunProgress,
   ScenarioQueueSnapshot,
@@ -508,6 +510,23 @@ export const scenariosApi = {
       undefined,
       { signal },
     )
+    return response.data
+  },
+
+  getResumeRequirements: async (scenarioResultId: string): Promise<ScenarioResumeRequirements> => {
+    const response = await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/resume`)
+    return response.data
+  },
+
+  /** Only legacy runs need explicit execution limits; all other configuration stays server-owned. */
+  resumeRun: async (
+    scenarioResultId: string,
+    executionOptions?: ScenarioResumeExecutionOptions,
+  ): Promise<ScenarioRunSummary> => {
+    const path = `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/resume`
+    const response = executionOptions
+      ? await apiClient.post(path, executionOptions)
+      : await apiClient.post(path)
     return response.data
   },
 }

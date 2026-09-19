@@ -173,6 +173,51 @@ Click any row to open the attack in the Chat view.
 
 Results are paginated (25 per page) with "First" and "Next" navigation buttons.
 
+### Resuming a Failed Scanner Run
+
+Select **Resume** on a failed run's detail page or in **Scanner History**.
+The backend resumes the same saved scenario result in the same configured
+database. Completed non-error objectives are not sent again; unfinished and
+errored objectives are retried. This continues at the objective level, not
+necessarily at the last turn of an interrupted conversation. Previous results
+and errors remain available for inspection.
+
+Resume restores the original scenario parameters, target, techniques, datasets,
+sampled execution plan, and labels. It does not use the current launch form,
+active chat target, or current user labels. New runs also save non-secret launch
+selections and execution settings. Initializer arguments and credentials are not
+copied into this metadata, and Resume does not rerun initializers.
+
+Older runs can resume using their existing canonical scenario identity and
+execution plan. They did not save concurrency and retry limits, so the GUI asks
+you to choose those two execution controls explicitly before continuing. The
+suggested values are one concurrent operation and zero automatic retries; they
+are **not** recovered original settings. Target recovery requires exactly one
+registered target matching the saved identity.
+
+Restore missing registrations or datasets before trying again. If a scenario,
+target, technique, parameter, or planned objective can no longer be reconstructed,
+Resume reports the configuration error without discarding progress or starting a
+replacement run. Older results without a valid execution plan or sufficient
+identity cannot be recovered automatically; the existing run API or framework
+can still accept the original configuration with `scenario_result_id`.
+
+Resumed runs use the normal single-active FIFO queue. Resume is unavailable for
+created, queued, running, completed, and cancelled runs in the GUI. Duplicate
+requests are rejected, and accepted resumes restart progress polling. Restarting
+or refreshing the GUI never automatically resumes a run. As with other launches,
+the scheduler is process-local: use one backend replica for serialized execution.
+
+**API:** `GET /api/scenarios/runs/{id}/resume` checks whether execution settings
+are needed, without initializing or running a scenario.
+`POST /api/scenarios/runs/{id}/resume` restores a failed run's saved configuration.
+For older runs, its body must supply `max_concurrency` and `max_retries`; otherwise
+omit the body. The existing `POST /api/scenarios/runs` also supports explicitly
+configured resume via `scenario_result_id` (including cancelled runs), and rejects
+already-active or completed runs. The scanner CLI currently does not forward a
+saved result ID: `pyrit_scan scenario-results` inspects results but does not resume
+execution, and there is no scanner `--resume` or `--scenario-result-id` option.
+
 ### Target Configuration
 
 The Configuration view manages the targets available for attacks.
