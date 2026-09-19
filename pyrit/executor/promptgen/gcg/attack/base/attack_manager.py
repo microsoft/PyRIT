@@ -24,6 +24,11 @@ from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 from transformers.models.gpt_neox.modeling_gpt_neox import GPTNeoXForCausalLM
 from transformers.models.gptj.modeling_gptj import GPTJForCausalLM
 
+from pyrit.executor.promptgen.gcg.attack.base.progressive_schedule import (
+    ProgressiveScheduleController,
+    ProgressiveScheduleState,
+    ScheduleTransitionAction,
+)
 from pyrit.executor.promptgen.gcg.experiments.log import (
     log_gpu_memory,
     log_loss,
@@ -1507,23 +1512,25 @@ class ProgressiveMultiPromptAttack:
             },
         )
 
-        schedule = ProgressiveScheduleState(
-            goals_admitted=1 if self.progressive_goals else len(self.goals),
-            workers_admitted=1 if self.progressive_models else len(self.workers),
-            stop_inner_on_success=self.progressive_goals,
+        controller = ProgressiveScheduleController(
+            total_goals=len(self.goals),
+            total_workers=len(self.workers),
+            progressive_goals=self.progressive_goals,
+            progressive_models=self.progressive_models,
+            n_steps=n_steps,
+            control_weight=control_weight,
+            incr_control=incr_control,
+            stop_on_success=stop_on_success,
+            verbose=verbose,
         )
-        # Whether ``schedule.loss`` currently reflects an inner run's measured
-        # loss, as opposed to the ``inf`` sentinel written when a new round is
-        # admitted. Tracked explicitly so a legitimately non-finite inner loss
-        # (non-finite model loss or numeric overflow) is not mistaken for an
-        # unupdated sentinel value.
-        loss_is_measured = False
 
-        while schedule.steps_completed < n_steps:
+        while not controller.is_complete:
+            controller.before_inner_run()
+            schedule = controller.state
             attack = self.managers["MPA"](
-                self.goals[: schedule.goals_admitted],
-                self.targets[: schedule.goals_admitted],
-                self.workers[: schedule.workers_admitted],
+                self.goals[: controller.active_goal_count],
+                self.targets[: controller.active_goal_count],
+                self.workers[: controller.active_worker_count],
                 self.control,
                 self.test_prefixes,
                 self.logfile,
@@ -1532,17 +1539,15 @@ class ProgressiveMultiPromptAttack:
                 self.test_targets,
                 self.test_workers,
             )
-            if schedule.goals_admitted == len(self.goals) and schedule.workers_admitted == len(self.workers):
-                schedule.stop_inner_on_success = False
             attack._rng_bundle = rng_bundle
             inner_result: tuple[str, float, int] = attack.run(
-                n_steps=n_steps - schedule.steps_completed,
+                n_steps=controller.remaining_steps,
                 batch_size=batch_size,
                 topk=topk,
                 temp=temp,
                 allow_non_ascii=allow_non_ascii,
                 target_weight=target_weight,
-                control_weight=control_weight,
+                control_weight=controller.control_weight,
                 anneal=anneal,
                 anneal_from=schedule.steps_completed,
                 prev_loss=schedule.loss,
@@ -1553,28 +1558,13 @@ class ProgressiveMultiPromptAttack:
                 random_seed=random_seed,
             )
             control, inner_loss, inner_steps = inner_result
-            schedule.loss = inner_loss
-            loss_is_measured = True
-
-            schedule.steps_completed += inner_steps
             self.control = control
 
-            # Once the step budget is spent, stop preparing further rounds:
-            # admissions and their sentinel resets would strand ``inf`` on
-            # ``schedule.loss`` for a run that legitimately ends right here.
-            prepare_next_round = schedule.steps_completed < n_steps
-
-            if schedule.goals_admitted < len(self.goals):
-                if prepare_next_round:
-                    schedule.goals_admitted += 1
-                    schedule.loss = np.inf
-                    loss_is_measured = False
-            elif schedule.workers_admitted < len(self.workers):
-                if prepare_next_round:
-                    schedule.workers_admitted += 1
-                    schedule.loss = np.inf
-                    loss_is_measured = False
-            elif schedule.workers_admitted == len(self.workers) and stop_on_success:
+            action = controller.advance_after_inner_run(
+                inner_loss=inner_loss,
+                inner_steps=inner_steps,
+            )
+            if action == ScheduleTransitionAction.FINALIZE_AND_STOP:
                 self._finalize_progressive_run(
                     attack=attack,
                     step=schedule.steps_completed,
@@ -1583,27 +1573,11 @@ class ProgressiveMultiPromptAttack:
                     verbose=verbose,
                 )
                 break
-            elif prepare_next_round and isinstance(control_weight, (int, float)) and incr_control:
-                if control_weight <= 0.09:
-                    control_weight += 0.01
-                    schedule.loss = np.inf
-                    loss_is_measured = False
-                    if verbose:
-                        logger.info(f"Control weight increased to {control_weight:.5}")
-                else:
-                    schedule.stop_inner_on_success = False
 
-        # The inner run must have produced a measured loss whenever any
-        # optimization happened; guards against silent carry-over regressions.
-        # Whether the loss was measured is tracked explicitly (a completed
-        # inner run may legitimately report a non-finite loss), never inferred
-        # from the numeric value.
-        if schedule.steps_completed > 0:
-            assert loss_is_measured, "schedule.loss was never updated by the inner run"
+        controller.validate_post_run()
+        self.last_schedule_state = controller.state
 
-        self.last_schedule_state = schedule
-
-        return self.control, schedule.steps_completed
+        return self.control, controller.state.steps_completed
 
 
 class IndividualPromptAttack:
