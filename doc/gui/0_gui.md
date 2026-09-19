@@ -173,6 +173,12 @@ Click any row to open the attack in the Chat view.
 
 Results are paginated (25 per page) with "First" and "Next" navigation buttons.
 
+### Scenario Run Results
+
+In active runs and saved scenario results, **Atomic attack groups** starts collapsed, with group and execution counts still visible. Select **Expand** to show all group summaries, then expand an individual group to inspect its executions and open attack details or conversation links. **Collapse** hides the whole list again.
+
+The section keeps your choice during progress updates for the same run. Opening a different run starts with the section collapsed.
+
 ### Target Configuration
 
 The Configuration view manages the targets available for attacks.
