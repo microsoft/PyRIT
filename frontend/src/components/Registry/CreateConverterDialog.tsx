@@ -34,7 +34,6 @@ import {
 
 import { useCreateConverterDialogStyles } from './Registry.styles'
 
-const HIDDEN_CONVERTER_TYPES = new Set(['SelectiveTextConverter'])
 const EDITABLE_PARAMETER_TYPES = new Set([
   'str', 'int', 'float', 'bool', 'Path', 'list[str]', 'list[int]', 'list[float]', 'list[bool]',
 ])
@@ -70,7 +69,10 @@ interface ParameterInputProps {
 }
 
 function isEditableParameter(parameter: Parameter): boolean {
-  if (parameter.reference_type || parameter.choices?.length) return true
+  if (parameter.reference_type) {
+    return parameter.reference_type === 'target' || parameter.reference_type === 'converter'
+  }
+  if (parameter.choices?.length) return true
 
   const members: string[] = []
   let member = ''
@@ -89,6 +91,22 @@ function isEditableParameter(parameter: Parameter): boolean {
 
   // Mixed unions can use the text input only when they explicitly accept strings.
   return members.some((type) => EDITABLE_PARAMETER_TYPES.has(type) && (members.length === 1 || type === 'str'))
+}
+
+function canConfigureParameter(parameter: Parameter): boolean {
+  if (parameter.variants) {
+    const variants = Object.values(parameter.variants)
+    return variants.length > 0
+      && variants.every((parameters) =>
+        parameters.every((nested) => !nested.required || canConfigureParameter(nested)))
+  }
+  return isEditableParameter(parameter)
+}
+
+function canConfigureConverterType(converterType: ConverterTypeEntry): boolean {
+  return converterType.parameters.every(
+    (parameter) => !parameter.required || canConfigureParameter(parameter),
+  )
 }
 
 function parameterDefaultValue(parameter: Parameter): string {
@@ -246,7 +264,7 @@ export default function CreateConverterDialog({
         const [response, targetResponse, converterResponse] = responses
         if (!cancelled) {
           setConverterTypes(
-            response.items.filter((item) => !HIDDEN_CONVERTER_TYPES.has(item.converter_type)),
+            response.items.filter(canConfigureConverterType),
           )
           setTargets(targetResponse.items)
           setConverters(converterResponse.items)
