@@ -28,7 +28,7 @@ from pyrit.prompt_target.common.target_send_context import TargetSendContext
 
 logger = logging.getLogger(__name__)
 
-# Authentication modes a target can expose to the create-target catalog / API.
+# Authentication modes a target can expose to target type discovery and creation APIs.
 # ``api_key`` passes a key (from params or the target's env var); ``identity``
 # omits the key so the target authenticates itself via an ambient Azure identity
 # (e.g. minting a Microsoft Entra ID token for its own endpoint, or falling back

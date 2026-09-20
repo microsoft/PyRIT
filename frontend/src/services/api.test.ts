@@ -246,6 +246,15 @@ describe("api service", () => {
   });
 
   describe("targetsApi", () => {
+    it("should list target types from registry metadata", async () => {
+      const response = { data: { items: [] } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(targetsApi.listTargetTypes()).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/targets/types");
+    });
+
     it("should list targets with default params", async () => {
       const mockResponse = {
         data: {
@@ -334,15 +343,6 @@ describe("api service", () => {
       await expect(convertersApi.listConverterTypes()).resolves.toEqual(response.data);
 
       expect(apiClient.get).toHaveBeenCalledWith("/converters/types");
-    });
-
-    it("should keep the converter catalog compatibility endpoint", async () => {
-      const response = { data: { items: [] } };
-      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
-
-      await expect(convertersApi.listConverterCatalog()).resolves.toEqual(response.data);
-
-      expect(apiClient.get).toHaveBeenCalledWith("/converters/catalog");
     });
 
     it("should list configured converter instances", async () => {

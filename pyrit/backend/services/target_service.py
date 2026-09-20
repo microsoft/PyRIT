@@ -22,7 +22,6 @@ from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
-    TargetCatalogResponse,
     TargetListResponse,
     TargetTypeEntry,
     TargetTypeResponse,
@@ -128,26 +127,26 @@ class TargetService:
         return self._registry.instances.get(target_registry_name)
 
     @staticmethod
-    def _get_catalog_auth_modes(auth_modes: tuple[str, ...]) -> list[Literal["api_key", "identity"]]:
+    def _get_supported_auth_modes(auth_modes: tuple[str, ...]) -> list[Literal["api_key", "identity"]]:
         """
-        Validate and narrow registry authentication modes for the catalog response.
+        Validate and narrow registry authentication modes for the type response.
 
         Args:
             auth_modes (tuple[str, ...]): Authentication modes declared by a target class.
 
         Returns:
-            list[Literal["api_key", "identity"]]: Validated catalog authentication modes.
+            list[Literal["api_key", "identity"]]: Validated authentication modes.
 
         Raises:
             ValueError: If a target class declares an unsupported authentication mode.
         """
-        catalog_auth_modes: list[Literal["api_key", "identity"]] = []
+        supported_auth_modes: list[Literal["api_key", "identity"]] = []
         for auth_mode in auth_modes:
             if auth_mode == "api_key" or auth_mode == "identity":
-                catalog_auth_modes.append(auth_mode)
+                supported_auth_modes.append(auth_mode)
                 continue
             raise ValueError(f"Unsupported target authentication mode: {auth_mode!r}")
-        return catalog_auth_modes
+        return supported_auth_modes
 
     async def list_target_types_async(self) -> TargetTypeResponse:
         """
@@ -167,34 +166,12 @@ class TargetService:
             TargetTypeEntry(
                 target_type=metadata.class_name,
                 parameters=list(metadata.parameters),
-                supported_auth_modes=self._get_catalog_auth_modes(metadata.supported_auth_modes),
+                supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
                 description=metadata.class_description or None,
             )
             for metadata in metadata_items
         ]
         return TargetTypeResponse(items=items)
-
-    async def list_target_catalog_async(self) -> TargetCatalogResponse:
-        """
-        Return the legacy projection used by the current configuration UI.
-
-        LEGACY COMPATIBILITY: ``catalog`` is the pre-registry name for ``types``, and
-        the whole concept goes away -- there is no ``TargetCatalog`` class and nothing
-        new should use this. It keeps only string-coercible parameters; registry
-        references and structured parameters are excluded because the un-migrated
-        configuration UI cannot render them. Delete this method, the ``/catalog`` route, and
-        the ``TargetCatalog*`` aliases together when that UI switches to
-        ``/targets/types``.
-
-        Returns:
-            TargetCatalogResponse: The scalar-only legacy projection.
-        """
-        types_response = await self.list_target_types_async()
-        items = [
-            entry.model_copy(update={"parameters": [p for p in entry.parameters if p.is_string_coercible]})
-            for entry in types_response.items
-        ]
-        return TargetCatalogResponse(items=items)
 
     async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
         """

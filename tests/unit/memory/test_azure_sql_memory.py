@@ -460,7 +460,7 @@ def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
     memory_interface: AzureSQLMemory,
 ) -> None:
     """Scenario-history SQL Server conditions bind repeated values without interpolation."""
-    label_condition = memory_interface._get_scenario_result_label_condition(
+    label_condition = memory_interface._get_scenario_result_labels_condition(
         labels={"team.name": ["alice", "bob"], "operation": "nightly"}
     )
     registry_condition = memory_interface._get_scenario_registry_name_condition(
@@ -487,6 +487,32 @@ def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
         )
     )
     assert "scenario_registry_name_1" in combined_statement.compile().params
+
+
+def test_scenario_history_legacy_label_condition_binds_each_value(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    condition = memory_interface._get_scenario_result_label_condition(
+        labels={"team.name": "alice", "operation": "nightly"}
+    )
+
+    assert condition.compile().params == {
+        "scenario_label_path_0": '$."team.name"',
+        "scenario_label_value_0": "alice",
+        "scenario_label_path_1": '$."operation"',
+        "scenario_label_value_1": "nightly",
+    }
+    assert " AND " in str(condition)
+
+
+def test_scenario_history_started_at_uses_sql_server_json_value(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    expression = memory_interface._get_scenario_started_at_expression()
+
+    compiled = select(expression).compile()
+    assert "json_value" in str(compiled).lower()
+    assert "$.started_at" in compiled.params.values()
 
 
 def test_scenario_history_seed_projection_defaults_to_empty_json(memory_interface: AzureSQLMemory) -> None:

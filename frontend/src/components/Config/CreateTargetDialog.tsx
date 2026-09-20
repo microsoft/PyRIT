@@ -27,7 +27,7 @@ import {
 import { DeleteRegular } from '@fluentui/react-icons'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { TargetInstance, TargetCatalogEntry } from '@/types'
+import type { TargetInstance, TargetTypeEntry } from '@/types'
 import {
   targetIdentifierHash,
   targetModelName,
@@ -43,11 +43,11 @@ import { MAX_WEIGHT, parseWeight } from './weightValidation'
  * The dialog renders bespoke, type-specific forms (endpoint/model for OpenAI,
  * extra sampling params for Azure ML, an inner-target picker for RoundRobin),
  * so this map declares *which* types are renderable and *how*. The list of
- * available types and their auth flags come from the backend catalog
- * (`/targets/catalog`); this map only governs the form layout. Types the
+ * available types and their auth flags come from TargetRegistry metadata
+ * (`/targets/types`); this map only governs the form layout. Types the
  * backend offers but that aren't in this map are simply not shown, and types in
  * this map that the backend doesn't offer fall back to being listed anyway
- * (e.g. when the catalog fetch fails).
+ * (e.g. when the type metadata fetch fails).
  */
 type TargetFormShape = 'openai' | 'azureml' | 'roundrobin'
 
@@ -75,7 +75,7 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
   RoundRobinTarget: 'Weighted round robin',
 }
 
-const FALLBACK_TARGET_CATALOG_ENTRIES: TargetCatalogEntry[] = RENDERABLE_TARGET_TYPES.map((targetType) => ({
+const FALLBACK_TARGET_TYPE_ENTRIES: TargetTypeEntry[] = RENDERABLE_TARGET_TYPES.map((targetType) => ({
   target_type: targetType,
   parameters: [],
   supported_auth_modes: [],
@@ -83,13 +83,13 @@ const FALLBACK_TARGET_CATALOG_ENTRIES: TargetCatalogEntry[] = RENDERABLE_TARGET_
 }))
 
 type AuthMode = 'api_key' | 'identity'
-type CatalogStatus = 'loading' | 'loaded' | 'error'
+type TypeMetadataStatus = 'loading' | 'loaded' | 'error'
 
 function getTargetDisplayName(targetType: string): string {
   return TARGET_DISPLAY_NAMES[targetType] ?? targetType
 }
 
-function getAuthDescription(authModes: TargetCatalogEntry['supported_auth_modes']): string | null {
+function getAuthDescription(authModes: TargetTypeEntry['supported_auth_modes']): string | null {
   if (authModes.length === 0) return null
 
   const labels = authModes.map((mode) => (
@@ -100,7 +100,7 @@ function getAuthDescription(authModes: TargetCatalogEntry['supported_auth_modes'
 
 /**
  * Fallback for whether a target type supports identity-based auth when the
- * backend catalog hasn't loaded (or the fetch failed). Once the catalog is
+ * registry metadata hasn't loaded (or the fetch failed). Once the metadata is
  * available it is authoritative; this only keeps the form usable offline / mid-load.
  */
 function defaultSupportsIdentity(shape: TargetFormShape | undefined): boolean {
@@ -221,69 +221,69 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   // Targets the user has picked for the RoundRobinTarget, with their weights.
   const [selectedInnerTargets, setSelectedInnerTargets] = useState<SelectedInnerTarget[]>([])
 
-  // --- Catalog state ---
+  // --- Target type metadata state ---
   // Available target types + their auth facts, fetched from the backend registry.
-  const [catalogEntries, setCatalogEntries] = useState<TargetCatalogEntry[]>([])
-  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>('loading')
-  const catalogByType = useMemo(
-    () => new Map(catalogEntries.map((entry) => [entry.target_type, entry])),
-    [catalogEntries],
+  const [targetTypeEntries, setTargetTypeEntries] = useState<TargetTypeEntry[]>([])
+  const [typeMetadataStatus, setTypeMetadataStatus] = useState<TypeMetadataStatus>('loading')
+  const targetTypeByName = useMemo(
+    () => new Map(targetTypeEntries.map((entry) => [entry.target_type, entry])),
+    [targetTypeEntries],
   )
 
-  // Reset the catalog back to its loading state whenever the dialog is opened,
-  // so a stale error/entries from a previous session isn't shown while the
-  // refetch is in flight. Adjusted during render (rather than in the effect
+  // Reset the type metadata back to its loading state whenever the dialog is
+  // opened, so a stale error/entries from a previous session isn't shown while
+  // the refetch is in flight. Adjusted during render (rather than in the effect
   // below) to avoid a cascading render.
   const [seenOpen, setSeenOpen] = useState(open)
   if (open !== seenOpen) {
     setSeenOpen(open)
     if (open) {
-      setCatalogEntries([])
-      setCatalogStatus('loading')
+      setTargetTypeEntries([])
+      setTypeMetadataStatus('loading')
     }
   }
 
-  // Fetch the target catalog once when the dialog opens. The backend is the
-  // authority on which types exist and which auth modes they support.
+  // Fetch the target type metadata once when the dialog opens. The registry is
+  // the authority on which types exist and which auth modes they support.
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    targetsApi.listTargetCatalog()
+    targetsApi.listTargetTypes()
       .then((res) => {
         if (!cancelled) {
-          setCatalogEntries(res.items)
-          setCatalogStatus('loaded')
+          setTargetTypeEntries(res.items)
+          setTypeMetadataStatus('loaded')
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setCatalogEntries([])
-          setCatalogStatus('error')
+          setTargetTypeEntries([])
+          setTypeMetadataStatus('error')
         }
       })
     return () => { cancelled = true }
   }, [open])
 
-  const catalogTargetTypeOptions = useMemo(() => {
-    return catalogEntries.filter((entry) => entry.target_type in TARGET_FORM_SHAPES)
-  }, [catalogEntries])
-  const catalogMetadataAvailable = catalogTargetTypeOptions.length > 0
-  const catalogUnavailable = catalogStatus !== 'loading' && !catalogMetadataAvailable
-  const targetTypeOptions = catalogMetadataAvailable
-    ? catalogTargetTypeOptions
-    : FALLBACK_TARGET_CATALOG_ENTRIES
+  const registeredTargetTypeOptions = useMemo(() => {
+    return targetTypeEntries.filter((entry) => entry.target_type in TARGET_FORM_SHAPES)
+  }, [targetTypeEntries])
+  const typeMetadataAvailable = registeredTargetTypeOptions.length > 0
+  const typeMetadataUnavailable = typeMetadataStatus !== 'loading' && !typeMetadataAvailable
+  const targetTypeOptions = typeMetadataAvailable
+    ? registeredTargetTypeOptions
+    : FALLBACK_TARGET_TYPE_ENTRIES
 
   const formShape = TARGET_FORM_SHAPES[targetType]
   const isRoundRobin = formShape === 'roundrobin'
   const isAzureML = formShape === 'azureml'
   const isOpenAi = formShape === 'openai'
-  const catalogEntry = catalogByType.get(targetType)
+  const targetTypeEntry = targetTypeByName.get(targetType)
   const selectedTargetDisplayName = getTargetDisplayName(targetType)
-  const selectedTargetAuthDescription = catalogEntry
-    ? getAuthDescription(catalogEntry.supported_auth_modes)
+  const selectedTargetAuthDescription = targetTypeEntry
+    ? getAuthDescription(targetTypeEntry.supported_auth_modes)
     : null
-  const supportsIdentity = catalogEntry
-    ? catalogEntry.supported_auth_modes.includes('identity')
+  const supportsIdentity = targetTypeEntry
+    ? targetTypeEntry.supported_auth_modes.includes('identity')
     : defaultSupportsIdentity(formShape)
   const showAuthField = targetType !== '' && supportsIdentity
   const isIdentity = showAuthField && authMode === 'identity'
@@ -505,15 +505,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 </MessageBar>
               )}
 
-              {catalogStatus === 'loading' && (
+              {typeMetadataStatus === 'loading' && (
                 <Spinner size="tiny" label="Loading target details..." labelPosition="after" />
               )}
 
-              {catalogUnavailable && (
+              {typeMetadataUnavailable && (
                 <MessageBar intent="warning">
                   <MessageBarBody>
                     Target details could not be loaded. You can still select a supported target type,
-                    but its catalog description and authentication options are unavailable.
+                    but its registry description and authentication options are unavailable.
                   </MessageBarBody>
                 </MessageBar>
               )}
@@ -538,7 +538,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     const next = data.optionValue
                     if (!next) return
                     setTargetType(next)
-                    const nextEntry = catalogByType.get(next)
+                    const nextEntry = targetTypeByName.get(next)
                     const nextSupportsIdentity = nextEntry
                       ? nextEntry.supported_auth_modes.includes('identity')
                       : defaultSupportsIdentity(TARGET_FORM_SHAPES[next])
@@ -596,13 +596,13 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     <Text weight="semibold">{selectedTargetDisplayName}</Text>
                     <code className={styles.targetTypeIdentifier}>{targetType}</code>
                   </div>
-                  {catalogEntry?.description ? (
+                  {targetTypeEntry?.description ? (
                     <Text size={200} className={styles.targetTypeDescription}>
-                      {catalogEntry.description}
+                      {targetTypeEntry.description}
                     </Text>
                   ) : (
                     <Text size={200} className={styles.targetTypeDescription}>
-                      Catalog details are unavailable for this target.
+                      Registry details are unavailable for this target.
                     </Text>
                   )}
                   {selectedTargetAuthDescription && (

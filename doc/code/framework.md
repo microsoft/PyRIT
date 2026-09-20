@@ -200,6 +200,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Any branching decision (e.g. the next thing(s) to do is based on a previous result) should be an attack/executor.
 - Executors should always make use of other component's responsibilities. An executor should always branch based on a scorer and NOT a direct response. (e.g. was this prompt blocked? is a scorer responsibility, not an executor responsibility)
 - Executors should use scoring and target capabilities implicitly. Executors should support multi-modal.
+- Seeds author goals and criteria; execution parameters carry an optional `ScoringExpectation`
+  beside the attack objective. Attacks forward its conditions; scorers interpret them.
 - Compound attacks are possible, combining different attacks in different ways.
 - **Does not own**: packaging the attack. Those are passed in as configuration by the **attack technique**, not assembled here:
   - prepended / system prompts, role-play framing, the converter stack, or dataset selection (e.g. if an executor assembles its own prompt scaffolding for a simulated conversation, that is attack-technique work bleeding into the executor)

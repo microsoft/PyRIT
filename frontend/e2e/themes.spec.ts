@@ -40,6 +40,12 @@ const API_RESPONSES: Record<string, unknown> = {
   '/api/converters/catalog': { items: [] },
   '/api/scenarios/catalog': EMPTY_PAGE,
   '/api/scenarios/runs': EMPTY_PAGE,
+  '/api/scenarios/runs/queue': {
+    revision: 0,
+    snapshot_at: '2026-01-01T00:00:00Z',
+    active: null,
+    queued: [],
+  },
   '/api/config': { content: 'initializers: []\n', source: 'theme-preview', version: '1' },
   '/api/config/env-files': { items: [] },
   '/api/initializers': EMPTY_PAGE,
