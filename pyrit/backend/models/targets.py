@@ -4,7 +4,7 @@
 """
 REST envelopes and write-request types for the target endpoints.
 
-Canonical target catalog types (``TargetInstance``) live in
+The canonical target instance type (``TargetInstance``) lives in
 ``pyrit.models.catalog.target`` and should be imported from there directly.
 """
 
@@ -18,8 +18,6 @@ from pyrit.models.catalog.target import TargetInstance
 
 __all__ = [
     "CreateTargetRequest",
-    "TargetCatalogEntry",
-    "TargetCatalogResponse",
     "TargetListResponse",
     "TargetTypeEntry",
     "TargetTypeResponse",
@@ -49,13 +47,6 @@ class TargetTypeResponse(BaseModel):
     """Response for listing available target types from the registry."""
 
     items: list[TargetTypeEntry] = Field(..., description="List of available target types")
-
-
-# LEGACY COMPATIBILITY: ``Catalog`` is the pre-registry name for ``Type``. These
-# aliases exist only so the un-migrated configuration UI keeps working; delete them
-# with the /catalog route when that UI switches to the /types API.
-TargetCatalogEntry = TargetTypeEntry
-TargetCatalogResponse = TargetTypeResponse
 
 
 class TargetListResponse(BaseModel):

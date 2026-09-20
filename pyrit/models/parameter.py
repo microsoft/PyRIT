@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import types
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -59,6 +60,21 @@ class RegistryReference:
     annotation: Any | None = None
 
 
+class StructuredParameterValue(ABC):
+    """A parameter value with explicitly allowed structured variants."""
+
+    @classmethod
+    @abstractmethod
+    def get_registry_input_variants(cls) -> dict[str, type[StructuredParameterValue]]:
+        """
+        Declare the implementations available for registry construction.
+
+        Returns:
+            dict[str, type[StructuredParameterValue]]: Input names mapped to subclasses of the declaring type.
+        """
+        ...
+
+
 class Parameter(BaseModel):
     """
     Describes a parameter that a PyRIT component accepts.
@@ -103,6 +119,10 @@ class Parameter(BaseModel):
         default=None,
         exclude=True,
         description="Set when the parameter references another registry component (resolved by name); not serialized.",
+    )
+    variants: dict[str, list[Parameter]] | None = Field(
+        default=None,
+        description="Named structured-input variants and their constructor parameters, supplied by the registry.",
     )
     destination: ParameterDestination = Field(
         default=ParameterDestination.CONSTRUCTOR,
@@ -162,7 +182,7 @@ class Parameter(BaseModel):
     def _display_type(self) -> Any:
         """Wire type, where registry references are supplied as names."""
         if self.reference is None:
-            return self.param_type
+            return _unwrap_optional(self.param_type)
         annotation = _unwrap_optional(self.reference.annotation)
         return list[str] if get_origin(annotation) is list else str
 
@@ -311,9 +331,9 @@ class Parameter(BaseModel):
         Raises:
             ValueError: If ``param_type`` is unsupported and no default is declared.
         """
-        if self.reference is not None or self.opaque:
+        if self.reference is not None or self.opaque or self.variants is not None:
             return
-        param_type = self.param_type
+        param_type = _unwrap_optional(self.param_type)
         if param_type is None or _is_scalar_param_type(param_type):
             return
         if get_origin(param_type) is list:

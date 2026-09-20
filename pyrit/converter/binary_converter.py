@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 
 # Deprecation support: remove in 1.4.0.
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.converter.text_selection_strategy import WordSelectionStrategy  # noqa: TC001 - registry annotation resolution
 from pyrit.converter.word_level_converter import WordLevelConverter
 
 if TYPE_CHECKING:
-    from pyrit.converter.text_selection_strategy import WordSelectionStrategy
     from pyrit.models import ComponentIdentifier
 
 
@@ -58,13 +58,8 @@ class BinaryConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        return self._create_identifier(
-            params={
-                "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
-                "word_split_separator": self._word_split_separator,
-                "bits_per_char": self.bits_per_char.value,
-            }
-        )
+        base_identifier = super()._build_identifier()
+        return self._create_identifier(params={**base_identifier.params, "bits_per_char": self.bits_per_char.value})
 
     # Deprecation shim: remove in 1.4.0 with both hooks; keep _validate_word.
     def validate_input(self, prompt: str) -> None:

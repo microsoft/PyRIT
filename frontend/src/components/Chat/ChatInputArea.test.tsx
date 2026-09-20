@@ -5,7 +5,7 @@ import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatInputArea from "./ChatInputArea";
 import type { ChatInputAreaHandle } from "./ChatInputArea";
 import { makeTarget } from "@/test-utils/targetFixtures";
-import type { TargetCapabilities } from "../../types";
+import type { MessageAttachment, TargetCapabilities } from "@/types";
 
 // Wrapper component for Fluent UI context
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -372,6 +372,7 @@ describe("ChatInputArea", () => {
 
   it("should preserve the complete draft after a retryable send failure", async () => {
     const user = userEvent.setup();
+    const ref = React.createRef<ChatInputAreaHandle>();
     const onSend = jest.fn().mockResolvedValue(retryableOutcome);
     const onClearConversion = jest.fn();
     const onClearAllConversions = jest.fn();
@@ -381,6 +382,7 @@ describe("ChatInputArea", () => {
     render(
       <TestWrapper>
         <ChatInputArea
+          ref={ref}
           {...defaultProps}
           onSend={onSend}
           onClearConversion={onClearConversion}
@@ -400,8 +402,8 @@ describe("ChatInputArea", () => {
           converterOutputDataTypes={["text", "image_path"]}
           mediaConversions={[
             {
-              pieceType: "image",
-              convertedValue: "/tmp/converted.png",
+              pieceId: "restored-photo",
+              convertedValue: "/media/converted.png",
               convertedDataType: "image_path",
             },
           ]}
@@ -410,10 +412,16 @@ describe("ChatInputArea", () => {
     );
 
     const input = screen.getByPlaceholderText("Type prompt here");
-    await user.type(input, "original prompt");
-    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await user.upload(fileInput, file);
-    await screen.findByText("photo.png", { exact: false });
+    React.act(() => {
+      ref.current?.restoreDraft("original prompt", [{
+        draftId: "restored-photo",
+        type: "image",
+        name: file.name,
+        url: "blob:photo",
+        file,
+        mimeType: file.type,
+      }]);
+    });
 
     await user.click(getSendButton());
 
@@ -774,9 +782,10 @@ describe("ChatInputArea", () => {
     expect(screen.getByRole("button", { name: /send message/i })).toBeEnabled();
   });
 
-  it("should use the first recovered media reference instead of a later uploaded attachment for converters", async () => {
+  it("should synchronously report each recovered and uploaded attachment with a distinct draft identity", () => {
     const ref = React.createRef<ChatInputAreaHandle>();
     const onAttachmentsChange = jest.fn();
+    const file = new File(["new image"], "uploaded.png", { type: "image/png" });
     render(
       <TestWrapper>
         <ChatInputArea ref={ref} {...defaultProps} onAttachmentsChange={onAttachmentsChange} />
@@ -796,19 +805,103 @@ describe("ChatInputArea", () => {
         type: "image",
         name: "uploaded.png",
         url: "blob:uploaded-image",
-        file: new File(["new image"], "uploaded.png", { type: "image/png" }),
+        file,
         mimeType: "image/png",
       });
     });
 
-    await waitFor(() => {
-      expect(onAttachmentsChange).toHaveBeenLastCalledWith(
-        ["image"],
-        { image: "/original/restored.png" }
-      );
-    });
+    expect(onAttachmentsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({
+        draftId: expect.any(String),
+        type: "image",
+        sourceValue: "/original/restored.png",
+        sourceDataType: "image_path",
+        url: "/api/media?path=display-only.png",
+      }),
+      expect.objectContaining({
+        draftId: expect.any(String),
+        type: "image",
+        url: "blob:uploaded-image",
+        file,
+      }),
+    ]);
+    const [attachments]: [MessageAttachment[]] = onAttachmentsChange.mock.lastCall;
+    expect(attachments[0].draftId).not.toBe(attachments[1].draftId);
     expect(screen.getByText(/restored\.png/)).toBeInTheDocument();
     expect(screen.getByText(/uploaded\.png/)).toBeInTheDocument();
+  });
+
+  it("should preserve restored draft identities and generate missing identities", () => {
+    const ref = React.createRef<ChatInputAreaHandle>();
+    const onAttachmentsChange = jest.fn();
+    const attachments: MessageAttachment[] = [
+      { draftId: "saved-image", type: "image", name: "photo.png", url: "blob:first" },
+      { type: "image", name: "photo.png", url: "blob:second" },
+    ];
+    render(
+      <TestWrapper>
+        <ChatInputArea ref={ref} {...defaultProps} onAttachmentsChange={onAttachmentsChange} />
+      </TestWrapper>
+    );
+
+    React.act(() => {
+      ref.current?.restoreDraft("Recovered prompt", attachments);
+    });
+
+    expect(screen.getByRole("textbox")).toHaveValue("Recovered prompt");
+    expect(onAttachmentsChange).toHaveBeenLastCalledWith([
+      attachments[0],
+      { ...attachments[1], draftId: expect.any(String) },
+    ]);
+    const [restored]: [MessageAttachment[]] = onAttachmentsChange.mock.lastCall;
+    expect(restored[1].draftId).not.toBe("saved-image");
+    expect(attachments[1].draftId).toBeUndefined();
+
+    React.act(() => {
+      ref.current?.restoreDraft("Restored again", restored);
+    });
+    expect(onAttachmentsChange).toHaveBeenLastCalledWith(restored);
+
+    React.act(() => {
+      ref.current?.addAttachment(restored[0]);
+    });
+    const [withNewCopy]: [MessageAttachment[]] = onAttachmentsChange.mock.lastCall;
+    expect(withNewCopy.slice(0, 2)).toEqual(restored);
+    expect(withNewCopy[2]).toEqual({ ...restored[0], draftId: expect.any(String) });
+    expect(new Set(withNewCopy.map((attachment: MessageAttachment) => attachment.draftId)).size).toBe(3);
+  });
+
+  it("should keep uploaded duplicate filenames distinct and preserve remaining identity on removal and send", async () => {
+    const user = userEvent.setup();
+    const onAttachmentsChange = jest.fn();
+    const onSend = jest.fn().mockResolvedValue(sentOutcome);
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          onAttachmentsChange={onAttachmentsChange}
+          onSend={onSend}
+        />
+      </TestWrapper>
+    );
+    const files = [
+      new File(["first image"], "photo.png", { type: "image/png" }),
+      new File(["second image"], "photo.png", { type: "image/png" }),
+    ];
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, files);
+
+    const [uploaded]: [MessageAttachment[]] = onAttachmentsChange.mock.lastCall;
+    expect(uploaded).toHaveLength(2);
+    expect(uploaded[0]).toEqual(expect.objectContaining({ draftId: expect.any(String), file: files[0] }));
+    expect(uploaded[1]).toEqual(expect.objectContaining({ draftId: expect.any(String), file: files[1] }));
+    expect(uploaded[0].draftId).not.toBe(uploaded[1].draftId);
+
+    await user.click(screen.getByTestId("remove-attachment-0"));
+    expect(onAttachmentsChange).toHaveBeenLastCalledWith([uploaded[1]]);
+    await user.click(getSendButton());
+    expect(onSend).toHaveBeenCalledWith("", undefined, [uploaded[1]]);
+    expect(onAttachmentsChange).toHaveBeenLastCalledWith([]);
   });
 
   it("should render attachment chip without size label when size is undefined", async () => {
@@ -910,59 +1003,86 @@ describe("ChatInputArea", () => {
   // Converter integration: attachment with media conversions
   // ---------------------------------------------------------------------------
 
-  it("should show converted indicator for media attachments when mediaConversions provided", async () => {
-    const file = new File(["img"], "photo.png", { type: "image/png" });
+  it("should show a media conversion only on its matching draft piece even with duplicate filenames", async () => {
+    const ref = React.createRef<ChatInputAreaHandle>();
     const user = userEvent.setup();
 
     render(
       <TestWrapper>
         <ChatInputArea
+          ref={ref}
           {...defaultProps}
           activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
-          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png", convertedDataType: "image_path" }]}
+          mediaConversions={[{ pieceId: "second-image", convertedValue: "/media/converted.png", convertedDataType: "image_path" }]}
         />
       </TestWrapper>
     );
 
-    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await user.upload(fileInput, file);
-
-    await waitFor(() => {
-      expect(screen.getByText("photo.png", { exact: false })).toBeInTheDocument();
+    React.act(() => {
+      ref.current?.restoreDraft("", [
+        { draftId: "first-image", type: "image", name: "photo.png", url: "blob:first" },
+        { draftId: "second-image", type: "image", name: "photo.png", url: "blob:second" },
+      ]);
     });
 
-    // Should show Original and Converted badges
+    expect(screen.getAllByText(/photo\.png/)).toHaveLength(2);
     expect(screen.getByText("Original")).toBeInTheDocument();
     expect(screen.getByText("Converted")).toBeInTheDocument();
     expect(screen.getByText("converted.png")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("remove-attachment-0"));
+    expect(screen.getByText("converted.png")).toBeInTheDocument();
+    await user.click(screen.getByTestId("remove-attachment-0"));
+    expect(screen.queryByText("converted.png")).not.toBeInTheDocument();
+    expect(screen.queryByText("Converted")).not.toBeInTheDocument();
   });
 
-  it("should call onClearMediaConversion when dismiss is clicked on converted attachment", async () => {
-    const file = new File(["img"], "photo.png", { type: "image/png" });
+  it("should clear only the selected media piece when attachments have the same type and filename", async () => {
+    const ref = React.createRef<ChatInputAreaHandle>();
     const user = userEvent.setup();
     const onClearMediaConversion = jest.fn();
+    const conversions = [
+      { pieceId: "second-image", convertedValue: "/media/second-converted.png", convertedDataType: "image_path" },
+      { pieceId: "first-image", convertedValue: "/media/first-converted.png", convertedDataType: "image_path" },
+    ];
+    const props = {
+      ...defaultProps,
+      onClearMediaConversion,
+    };
 
-    render(
+    const rendered = render(
       <TestWrapper>
         <ChatInputArea
-          {...defaultProps}
-          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
-          mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png", convertedDataType: "image_path" }]}
-          onClearMediaConversion={onClearMediaConversion}
+          ref={ref}
+          {...props}
+          mediaConversions={conversions}
         />
       </TestWrapper>
     );
 
-    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await user.upload(fileInput, file);
-
-    await waitFor(() => {
-      expect(screen.getByText("Converted")).toBeInTheDocument();
+    React.act(() => {
+      ref.current?.restoreDraft("", [
+        { draftId: "first-image", type: "image", name: "photo.png", url: "blob:first" },
+        { draftId: "second-image", type: "image", name: "photo.png", url: "blob:second" },
+      ]);
     });
 
-    // Click the dismiss button for the converted media
+    expect(screen.getByText("first-converted.png")).toBeInTheDocument();
+    expect(screen.getByText("second-converted.png")).toBeInTheDocument();
+    await user.click(screen.getAllByTestId("clear-media-conversion-image")[1]);
+    expect(onClearMediaConversion).toHaveBeenCalledTimes(1);
+    expect(onClearMediaConversion).toHaveBeenLastCalledWith("second-image");
+
+    rendered.rerender(
+      <TestWrapper>
+        <ChatInputArea ref={ref} {...props} mediaConversions={[conversions[1]]} />
+      </TestWrapper>
+    );
+    expect(screen.queryByText("second-converted.png")).not.toBeInTheDocument();
+    expect(screen.getByText("first-converted.png")).toBeInTheDocument();
+    expect(screen.getAllByText(/photo\.png/)).toHaveLength(2);
     await user.click(screen.getByTestId("clear-media-conversion-image"));
-    expect(onClearMediaConversion).toHaveBeenCalledWith("image");
+    expect(onClearMediaConversion).toHaveBeenLastCalledWith("first-image");
   });
 
   it("should show converted value textarea and call onConvertedValueChange", async () => {

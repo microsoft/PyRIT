@@ -28,7 +28,6 @@ import aiofiles.os
 
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.models.converters import (
-    ConverterCatalogResponse,
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
@@ -137,28 +136,6 @@ class ConverterService:
 
         return ConverterTypeResponse(items=items)
 
-    async def list_converter_catalog_async(self) -> ConverterCatalogResponse:
-        """
-        Return the legacy projection used by the current chat UI.
-
-        LEGACY COMPATIBILITY: ``catalog`` is the pre-registry name for ``types``, and
-        the whole concept goes away -- there is no ``ConverterCatalog`` class and
-        nothing new should use this. It keeps only string-coercible parameters;
-        registry references and structured parameters are excluded because the
-        un-migrated chat UI cannot render them. Delete this method, the ``/catalog`` route, and the
-        ``ConverterCatalog*`` aliases together when the chat-migration layer of this
-        stack switches to ``/converters/types``.
-
-        Returns:
-            ConverterCatalogResponse: The scalar-only legacy projection.
-        """
-        types_response = await self.list_converter_types_async()
-        items = [
-            entry.model_copy(update={"parameters": [p for p in entry.parameters if p.is_string_coercible]})
-            for entry in types_response.items
-        ]
-        return ConverterCatalogResponse(items=items)
-
     async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
         """
         Get a converter instance by ID.
@@ -214,17 +191,14 @@ class ConverterService:
         """
         if request.type not in self._registry:
             raise ValueError(f"Converter type '{request.type}' not found")
-        # LEGACY COMPATIBILITY: The current chat UI omits the name. Remove this
-        # generated fallback when that UI sends an explicit registry name.
-        converter_id = request.name or f"compat_{uuid.uuid4().hex}"
-        self._registry.instances.validate_name_available(converter_id)
+        self._registry.instances.validate_name_available(request.name)
         params, owned_paths = await self._persist_data_uri_params_async(
             converter_type=request.type,
             params=request.params,
         )
         try:
             converter_obj = self._registry.create_named_instance(
-                name=converter_id,
+                name=request.name,
                 type_name=request.type,
                 params=params,
                 registry_metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
@@ -234,7 +208,7 @@ class ConverterService:
             raise
 
         return self._build_instance_from_object(
-            converter_id=converter_id,
+            converter_id=request.name,
             converter_obj=converter_obj,
         )
 

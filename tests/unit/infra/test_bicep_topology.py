@@ -154,6 +154,7 @@ class TestBicepTopology(unittest.TestCase):
         for name in ("containerImage", "existingManagedIdentityResourceId"):
             assert template["parameters"][name]["minLength"] == 1
             assert "defaultValue" not in template["parameters"][name]
+        assert template["parameters"]["maxReplicas"]["allowedValues"] == [1]
         assert "fail(" in template["variables"]["validatedAllowedGroupObjectIds"]
         assert "fail(" in template["variables"]["validatedAdminGroupObjectId"]
         assert "trim(" in template["variables"]["normalizedAllowedGroupObjectIds"]
