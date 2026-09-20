@@ -144,6 +144,11 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 # `DecodingScorer` checks whether the request text (its `original_value`, `converted_value`, or
 # decoded metadata) appears in the response — the fast, deterministic way to tell whether a target
 # decoded an encoded prompt. It backs the Garak encoding scenario.
+#
+# ### DivergenceScorer
+#
+# `DivergenceScorer` detects meaningful continuation following the repetition named by an expectation
+# (adapted from Garak's repetition-induced divergence checks). It backs the Garak divergence scenario.
 # %% [markdown]
 # ## Slow scorers (LLM self-ask)
 #
