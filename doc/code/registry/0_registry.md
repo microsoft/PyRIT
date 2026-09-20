@@ -67,7 +67,12 @@ only when replacement is intended. Converter and target registries also reject
 reserved route names such as `catalog` and `types`. Use `.instances.unregister(name)`
 to remove an instance.
 
-Constructor annotations define parameter metadata and coercion. Use `Path` for a
+Constructor annotations define parameter metadata and coercion. Enum parameters
+accept member names or values. Types that inherit `StructuredParameterValue` declare their
+allowed variants through `get_registry_input_variants()`; the registry
+derives each variant's constructor fields and accepts `{ "type": "<name>",
+"parameters": { ... } }`. Word-selection strategies use this shared mechanism.
+Both enums and structured inputs also accept existing Python objects. Use `Path` for a
 local file input. Use `Path | str` when a component also supports a remote URL.
 For this union, the registry preserves the supplied type: a `Path` stays a `Path`,
 and a string stays a string. It never passes a URL through `Path`. Both union

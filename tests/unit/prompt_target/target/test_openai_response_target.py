@@ -136,6 +136,15 @@ def target(patch_central_database) -> OpenAIResponseTarget:
     )
 
 
+def test_parse_response_message_content_rejects_unknown_provider_part(target, dummy_text_message_piece):
+    with pytest.raises(PyritException, match="Unsupported Responses API message content type"):
+        target._parse_response_message_content(
+            content=[object()],
+            message_piece=dummy_text_message_piece,
+            error=None,
+        )
+
+
 @pytest.fixture
 def openai_response_json() -> dict:
     return openai_response_json_dict()

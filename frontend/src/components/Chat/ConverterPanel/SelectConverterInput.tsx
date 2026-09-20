@@ -1,53 +1,106 @@
-import React from 'react'
-import { Combobox, Field, Option } from '@fluentui/react-components'
+import { Dropdown, Option, OptionGroup, Text } from '@fluentui/react-components'
+import { AddRegular } from '@fluentui/react-icons'
+
+import type { ConverterInstance } from '@/types'
+
 import { useConverterPanelStyles } from './ConverterPanel.styles'
+
+const CREATE_CONVERTER_OPTION = '__create_new_converter__'
 
 interface ConverterGroup {
   type: string
-  converters: { converter_type: string; is_llm_based?: boolean }[]
+  converters: ConverterInstance[]
 }
 
 export interface SelectConverterInputProps {
-  query: string
-  selectedConverterType: string
   groupedConverters: ConverterGroup[]
-  onOptionSelect: (type: string, text: string) => void
-  onQueryChange: (value: string) => void
+  onOptionSelect: (converterId: string) => void
+  onCreateNew: () => void
 }
 
-export default function SelectConverterInput({ query, selectedConverterType, groupedConverters, onOptionSelect, onQueryChange }: SelectConverterInputProps) {
+function formatDataType(dataType: string): string {
+  return dataType.replace('_path', '').replace(/_/g, ' ')
+}
+
+export default function SelectConverterInput({
+  groupedConverters,
+  onOptionSelect,
+  onCreateNew,
+}: SelectConverterInputProps) {
   const styles = useConverterPanelStyles()
 
   return (
-    <Field label="Converter">
-      <Combobox
-        value={query}
-        selectedOptions={selectedConverterType ? [selectedConverterType] : []}
-        onOptionSelect={(_, data) => {
-          onOptionSelect(data.optionValue ?? '', data.optionText ?? '')
-        }}
-        onChange={(e) => onQueryChange((e.target as HTMLInputElement).value)}
-        placeholder="Search converters..."
-        data-testid="converter-panel-select"
+    <Dropdown
+      aria-label="Add converter"
+      className={styles.converterPicker}
+      inlinePopup
+      listbox={{ className: styles.converterPickerListbox }}
+      placeholder="Add converter..."
+      positioning={{ matchTargetSize: 'width' }}
+      selectedOptions={[]}
+      value=""
+      onOptionSelect={(_, data) => {
+        if (data.optionValue === CREATE_CONVERTER_OPTION) {
+          onCreateNew()
+        } else if (data.optionValue) {
+          onOptionSelect(data.optionValue)
+        }
+      }}
+      data-testid="converter-panel-select"
+    >
+      <Option
+        text="New converter"
+        value={CREATE_CONVERTER_OPTION}
+        data-testid="create-converter-option"
       >
-        {groupedConverters.map((group) => (
-          <React.Fragment key={group.type}>
-            <Option key={`__header_${group.type}`} text="" disabled value="">
-              <span className={`${styles.groupHeader} ${styles[`header_${group.type}` as keyof typeof styles] ?? ''}`}>
-                — {group.type.replace('_path', '')} output —
-              </span>
-            </Option>
-            {group.converters.map((converter) => (
-              <Option key={converter.converter_type} value={converter.converter_type} text={converter.converter_type} data-testid={`converter-option-${converter.converter_type}`}>
-                <span className={styles.optionContent}>
-                  {converter.converter_type}
-                  {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
-                </span>
+        <div className={styles.createOption}>
+          <AddRegular />
+          <div className={styles.optionText}>
+            <Text weight="semibold">New converter</Text>
+            <Text size={200} className={styles.hintText}>
+              Configure a converter and add it to the registry.
+            </Text>
+          </div>
+        </div>
+      </Option>
+      {groupedConverters.map((group) => (
+        <OptionGroup key={group.type} label={`${formatDataType(group.type)} output`}>
+          {group.converters.map((converter) => {
+            const description = converter.description || 'No description is available.'
+            const accessibleDescription = [
+              converter.converter_id,
+              converter.identifier.class_name,
+              description,
+              converter.is_llm_based ? 'LLM' : undefined,
+            ].filter((value): value is string => Boolean(value)).join('. ')
+
+            return (
+              <Option
+                aria-label={accessibleDescription}
+                key={converter.converter_id}
+                value={converter.converter_id}
+                text={converter.converter_id}
+                data-testid={`converter-option-${converter.converter_id}`}
+              >
+                <div className={styles.registeredOption}>
+                  <div className={styles.optionHeader}>
+                    <Text weight="semibold">{converter.converter_id}</Text>
+                    <div className={styles.optionBadges}>
+                      <Text size={200} className={styles.optionType}>
+                        {converter.identifier.class_name}
+                      </Text>
+                      {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
+                    </div>
+                  </div>
+                  <Text size={200} className={styles.hintText}>
+                    {description}
+                  </Text>
+                </div>
               </Option>
-            ))}
-          </React.Fragment>
-        ))}
-      </Combobox>
-    </Field>
+            )
+          })}
+        </OptionGroup>
+      ))}
+    </Dropdown>
   )
 }

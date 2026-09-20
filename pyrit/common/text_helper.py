@@ -1,7 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import IO, Any
+from typing import IO, Any, TypeGuard
+
+
+def is_non_empty_string(value: object) -> TypeGuard[str]:
+    """
+    Check whether an untrusted value is a string containing non-whitespace text.
+
+    Returns:
+        bool: Whether the value is a non-empty string.
+    """
+    return isinstance(value, str) and bool(value.strip())
 
 
 def read_txt(file: IO[Any]) -> list[dict[str, str]]:

@@ -38,11 +38,13 @@ from pyrit.models import (
     Message,
     Score,
     ScorerIdentifier,
+    ScoringExpectation,
     SeedPrompt,
     TargetIdentifier,
     UndeterminedScoreError,
 )
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.score import Scorer
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -200,11 +202,31 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     # for ad-hoc/direct attack execution outside any orchestrator.
     _attribution: AttackResultAttribution | None = None
 
+    _expectation: ScoringExpectation = field(init=False, repr=False)
+
     def __post_init__(self) -> None:
-        """Copy preparation-time conversation references into mutable execution state."""
+        """
+        Resolve scoring context and copy preparation-time conversation references.
+
+        Raises:
+            TypeError: If the expectation is not a ScoringExpectation or None.
+        """
+        expectation = getattr(self.params, "expectation", None)
+        ScoringExpectation.validate_type(expectation)
+        if expectation is None:
+            self._expectation = ScoringExpectation(objective=self.params.objective)
+        elif expectation.objective is None:
+            self._expectation = expectation.model_copy(update={"objective": self.params.objective})
+        else:
+            self._expectation = expectation
         self.related_conversations.update(getattr(self.params, "source_conversations", ()))
 
     # Convenience properties that delegate to params or overrides
+    @property
+    def expectation(self) -> ScoringExpectation:
+        """The effective scoring question for this execution."""
+        return self._expectation
+
     @property
     def objective(self) -> str:
         """Natural-language description of what the attack tries to achieve."""
@@ -545,6 +567,10 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
+    #: Compound attacks set this when children own outcome scoring and expectation validation.
+    #: No scoring configuration alone does not imply delegation.
+    DELEGATES_SCORING: ClassVar[bool] = False
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
         Enforce the keyword-only constructor contract on subclasses.
@@ -807,6 +833,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Raises:
             ExceptionGroup: If attack execution and recording its error result both fail.
         """
+        self._validate_scoring_expectation(context=context)
         context._error_result_persistence_error = None
         lifecycle = _ObjectiveTargetConversationLifecycle(
             objective_target=self._objective_target,
@@ -832,11 +859,24 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             self._default_event_handler._persist_result(result=result)
         return result
 
+    def _validate_scoring_expectation(self, *, context: AttackStrategyContextT) -> None:
+        """Check execution criteria before setup unless child attacks own scoring."""
+        if self.DELEGATES_SCORING:
+            return
+        scoring_config = self.get_attack_scoring_config()
+        scorers: list[Scorer] = []
+        if scoring_config is not None:
+            scorers.extend(scoring_config.auxiliary_scorers)
+            if scoring_config.objective_scorer is not None:
+                scorers.append(scoring_config.objective_scorer)
+        Scorer.validate_expectation_for_scorers(scorers=scorers, expectation=context.expectation)
+
     @overload
     async def execute_async(
         self,
         *,
         objective: str,
+        expectation: ScoringExpectation | None = None,
         next_message: Message | None = None,
         prepended_conversation: list[Message] | None = None,
         memory_labels: dict[str, str] | None = None,
@@ -858,12 +898,14 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Execute the attack strategy asynchronously with the provided parameters.
 
         This method provides a stable contract for all attacks. The signature includes
-        all standard parameters (objective, next_message, prepended_conversation, memory_labels).
+        all standard parameters (objective, expectation, next_message, prepended_conversation, memory_labels).
         Attacks that don't accept certain parameters will raise ValueError if those
         parameters are provided.
 
         Args:
             objective (str): The objective of the attack.
+            expectation (ScoringExpectation | None): Per-execution scoring criteria. Missing scoring
+                context defaults to the attack objective without changing supplied conditions.
             next_message (Message | None): Message to send to the target.
             prepended_conversation (list[Message] | None): Conversation to prepend.
             memory_labels (dict[str, str] | None): Memory labels for the attack context.

@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -146,6 +146,11 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 # `DecodingScorer` checks whether the request text (its `original_value`, `converted_value`, or
 # decoded metadata) appears in the response — the fast, deterministic way to tell whether a target
 # decoded an encoded prompt. It backs the Garak encoding scenario.
+#
+# ### DivergenceScorer
+#
+# `DivergenceScorer` detects meaningful continuation following the repetition named by an expectation
+# (adapted from Garak's repetition-induced divergence checks). It backs the Garak divergence scenario.
 # %% [markdown]
 # ## Slow scorers (LLM self-ask)
 #
@@ -237,7 +242,7 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #
 # ## External classifier integrations
 #
-# Four true/false scorers wrap hosted services rather than reasoning with a generative LLM:
+# Five true/false scorers wrap hosted services rather than reasoning with a generative LLM:
 #
 # - **`PromptShieldScorer`** — wraps `PromptShieldTarget` (Azure Prompt Shield jailbreak
 #   classifier); returns True if an attack is detected in the prompt or any document.
@@ -251,8 +256,40 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #   `TrueFalseCompositeScorer` to cover a whole policy. Prompt classification judges a user turn,
 #   while the default response classification judges a model turn on its own so prompt content
 #   cannot bias the verdict.
+# - **`WildGuardScorer`** — sends a prompt and response pair to a `PromptTarget` serving
+#   WildGuard, which judges in one call whether the request is harmful, whether the response is
+#   a refusal, and whether the response is harmful. `WildGuardLabel` selects which judgement
+#   becomes the boolean; the other two are kept in the score metadata, so reading them costs no
+#   extra request. The prompt is read from the latest earlier user turn of the scored conversation.
+#   Only assistant turns are scored by default. For response-side labels, blank text pieces are
+#   skipped when other supported pieces have content; an entirely blank response raises an error.
+#   `HARMFUL_REQUEST` also accepts an empty response.
 #
-# All four need their respective endpoints/credentials even though they are not "self-ask".
+# WildGuard's bundled prompt includes the full
+# [AI2 completion wrapper](https://github.com/allenai/wildguard/blob/main/wildguard/utils.py).
+# Serve `allenai/wildguard` through an OpenAI-compatible **completions** endpoint, then configure:
+#
+# ```python
+# from pyrit.prompt_target import OpenAICompletionTarget
+# from pyrit.score import WildGuardScorer
+#
+# target = OpenAICompletionTarget(
+#     model_name="allenai/wildguard",
+#     endpoint="http://localhost:8000/v1",  # Your WildGuard completion server
+#     api_key="your-server-key",  # Use the authentication required by your server
+#     max_tokens=128,
+#     temperature=0,
+# )
+# scorer = WildGuardScorer(chat_target=target, user_prompt="The original user request")
+# scores = await scorer.score_text_async("The model response")
+# ```
+#
+# The checkpoint does not supply a tokenizer chat template, so
+# `HuggingFaceChatTarget(model_id="allenai/wildguard")` is not a drop-in alternative.
+# Do not apply a second chat wrapper to the bundled prompt. If using a chat server that
+# supplies its own formatting, pass a matching `prompt_template` explicitly.
+#
+# All five need their respective endpoints/credentials even though they are not "self-ask".
 # %% [markdown]
 # ## Multimodal scorers
 #

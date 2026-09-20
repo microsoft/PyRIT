@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.regex.ansi_escape_output_scorer import AnsiEscapeOutputScorer
     from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
     from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
+    from pyrit.score.true_false.regex.divergence_scorer import DivergenceScorer
     from pyrit.score.true_false.regex.escaped_ansi_output_scorer import EscapedAnsiOutputScorer
     from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
     from pyrit.score.true_false.regex.ldap_injection_output_scorer import LDAPInjectionOutputScorer
@@ -39,6 +40,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AnsiEscapeOutputScorer": "pyrit.score.true_false.regex.ansi_escape_output_scorer",
     "AnthraxKeywordScorer": "pyrit.score.true_false.regex.anthrax_keyword_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
+    "DivergenceScorer": "pyrit.score.true_false.regex.divergence_scorer",
     "EscapedAnsiOutputScorer": "pyrit.score.true_false.regex.escaped_ansi_output_scorer",
     "FentanylKeywordScorer": "pyrit.score.true_false.regex.fentanyl_keyword_scorer",
     "LDAPInjectionOutputScorer": "pyrit.score.true_false.regex.ldap_injection_output_scorer",
