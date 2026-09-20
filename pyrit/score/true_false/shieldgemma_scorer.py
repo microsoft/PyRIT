@@ -7,9 +7,19 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Observation, Score, ScoringExpectation, SeedPrompt
+from pyrit.models import (
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    Observation,
+    Score,
+    ScorerTargetResponsePayload,
+    ScoringExpectation,
+    SeedPrompt,
+)
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
+from pyrit.score.observation import NonReplayableObservationError
 from pyrit.score.response_handler import CallableResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -270,7 +280,12 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
 
         Returns:
             list[Score]: The replayed ShieldGemma score.
+
+        Raises:
+            NonReplayableObservationError: If the payload is not a retained judgment.
         """
+        if not isinstance(observation.payload, ScorerTargetResponsePayload):
+            raise NonReplayableObservationError("ShieldGemma requires a judgment observation.")
         scope = observation.metadata.get("shieldgemma_scope", str(observation.payload.scored_piece_id))
         response_handler = CallableResponseHandler(
             parser=partial(

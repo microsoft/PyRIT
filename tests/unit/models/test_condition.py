@@ -6,7 +6,8 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import Condition, MatchesObjective
+from pyrit.models import Condition, MatchesObjective, ScoringExpectation, ToolCall, ToolCallRequirement, ToolsCalled
+from pyrit.models.messages.chat_message import ToolCall as MessageToolCall
 from pyrit.models.score.condition import _CONDITION_TYPES
 
 
@@ -99,3 +100,52 @@ def test_duplicate_discriminator_is_rejected():
 
         class _Second(Condition):
             condition_type: Literal["test_duplicate_discriminator"] = "test_duplicate_discriminator"
+
+
+def test_tool_call_requirement_does_not_replace_message_protocol() -> None:
+    assert ToolCall is MessageToolCall
+    assert ToolCallRequirement is not ToolCall
+
+
+def test_tools_called_round_trip_retains_exact_names() -> None:
+    condition = ToolsCalled(
+        tools=(
+            ToolCallRequirement(name="lookup"),
+            ToolCallRequirement(name="Lookup"),
+            ToolCallRequirement(name=" lookup"),
+        )
+    )
+    expectation = ScoringExpectation(conditions=(condition,))
+
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+    restored = ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json"))
+    assert restored == expectation
+    assert [tool.name for tool in condition.tools] == ["lookup", "Lookup", " lookup"]
+    assert _CONDITION_TYPES["tools_called"] is ToolsCalled
+
+
+@pytest.mark.parametrize("name", ["", " ", "\n\t", None, 42])
+def test_tool_call_requirement_rejects_empty_or_non_string_name(name: object) -> None:
+    with pytest.raises(ValidationError):
+        ToolCallRequirement.model_validate({"name": name})
+
+
+@pytest.mark.parametrize("names", [[], ["lookup", "lookup"]])
+def test_tools_called_requires_nonempty_unique_names(names: list[str]) -> None:
+    with pytest.raises(ValidationError, match="at least one tool|each tool name once"):
+        ToolsCalled(tools=tuple(ToolCallRequirement(name=name) for name in names))
+
+
+@pytest.mark.parametrize("field", ["arguments", "count", "order", "success"])
+def test_tool_call_requirement_rejects_unsupported_matching_fields(field: str) -> None:
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        ToolCallRequirement.model_validate({"name": "lookup", field: True})
+
+
+def test_tool_conditions_are_immutable() -> None:
+    requirement = ToolCallRequirement(name="lookup")
+    condition = ToolsCalled(tools=(requirement,))
+    with pytest.raises(ValidationError, match="frozen"):
+        requirement.name = "other"
+    with pytest.raises(ValidationError, match="frozen"):
+        condition.tools = ()

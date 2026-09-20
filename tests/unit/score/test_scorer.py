@@ -20,6 +20,7 @@ from pyrit.models import (
     Scorable,
     Score,
     ScoreStatus,
+    ScoreType,
     ScoringExpectation,
 )
 from pyrit.prompt_target import PromptTarget
@@ -39,6 +40,38 @@ from pyrit.score import (
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.message_scorer import extract_objective_from_previous_turn
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("family", "score_type", "value"),
+    [(TrueFalseScorer, "true_false", "true"), (FloatScaleScorer, "float_scale", "0.5")],
+)
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"score_value": None},
+        {"status": ScoreStatus.UNDETERMINED},
+        {"score_value": "invalid"},
+    ],
+)
+def test_family_rejects_mutated_invalid_score(
+    *,
+    family: type[TrueFalseScorer] | type[FloatScaleScorer],
+    score_type: ScoreType,
+    value: str,
+    updates: dict[str, object],
+) -> None:
+    score = Score(score_type=score_type, score_value=value).model_copy(update=updates)
+    with pytest.raises(ValueError):
+        family.validate_return_scores(MagicMock(spec=family), [score])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("family", [TrueFalseScorer, FloatScaleScorer])
+def test_family_accepts_valid_undetermined_score(family: type[TrueFalseScorer] | type[FloatScaleScorer]) -> None:
+    score = Score(score_type="true_false", status=ScoreStatus.UNDETERMINED, score_value=None)
+    family.validate_return_scores(MagicMock(spec=family), [score])
 
 
 @pytest.fixture

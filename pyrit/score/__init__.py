@@ -41,6 +41,9 @@ if TYPE_CHECKING:
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.message_scorer import MessageScorer
     from pyrit.score.observation import NonReplayableObservationError
+    from pyrit.score.observation_source import ObservationSource
+    from pyrit.score.otel_span_exporter import InMemoryTraceExporter
+    from pyrit.score.otel_trace_source import OtelTraceSource
     from pyrit.score.response_handler import CallableResponseHandler, JsonSchemaResponseHandler, ResponseHandler
     from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
     from pyrit.score.scorer import Scorer
@@ -70,6 +73,7 @@ if TYPE_CHECKING:
     )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+    from pyrit.score.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
@@ -82,6 +86,7 @@ if TYPE_CHECKING:
         render_llamaguard_prompt,
     )
     from pyrit.score.true_false.manual_scorer import ManualScorer
+    from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
     from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
@@ -165,6 +170,13 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "HumanLabeledDataset": "pyrit.score.scorer_evaluation.human_labeled_dataset",
     "HumanLabeledEntry": "pyrit.score.scorer_evaluation.human_labeled_dataset",
     "InsecureCodeScorer": "pyrit.score.float_scale.insecure_code_scorer",
+    "InMemoryTraceClient": "pyrit.score.trace_client",
+    "InMemoryTraceExporter": "pyrit.score.otel_span_exporter",
+    "ObservationSource": "pyrit.score.observation_source",
+    "OtelTraceSource": "pyrit.score.otel_trace_source",
+    "OtelToolCallScorer": "pyrit.score.true_false.otel_tool_call_scorer",
+    "TraceAcquisitionError": "pyrit.score.trace_client",
+    "TraceClient": "pyrit.score.trace_client",
     "JsonSchemaResponseHandler": "pyrit.score.response_handler",
     "LDAPInjectionOutputScorer": "pyrit.score.true_false.regex.ldap_injection_output_scorer",
     "LikertScaleEvalFiles": "pyrit.score.float_scale.self_ask_likert_scorer",

@@ -192,65 +192,20 @@ class Score(BaseModel):
         """
         return {} if value is None else value
 
-    @field_validator("observation_ids")
-    @classmethod
-    def _validate_observation_ids(cls, observation_ids: list[uuid.UUID]) -> list[uuid.UUID]:
-        """
-        Reject duplicate observation links while preserving their order.
-
-        Returns:
-            list[uuid.UUID]: The validated observation IDs.
-
-        Raises:
-            ValueError: If an observation ID is repeated.
-        """
-        normalized = [str(observation_id) for observation_id in observation_ids]
-        if len(set(normalized)) != len(normalized):
-            raise ValueError("A score must reference each observation once.")
-        return observation_ids
-
     @model_validator(mode="after")
-    def _validate_score_value(self) -> Score:
+    def _validate_invariants(self) -> Score:
         """
-        Enforce that ``score_value`` is present iff the score is complete, and type-consistent.
+        Derive the legacy message ID, then validate the score.
 
         Returns:
             ``self`` when validation passes.
 
         Raises:
-            ValueError: If the value contradicts the status, or is incompatible with the
-                score-type constraints.
+            ValueError: If the score violates its value or reference constraints.
         """
-        self._check_score_value()
-        if self.observation_ids and self.scorable is None:
-            raise ValueError("A score with observations requires a scorable anchor.")
-        return self
-
-    @model_validator(mode="after")
-    def _reconcile_message_piece_id(self) -> Score:
-        """
-        Keep ``message_piece_id`` consistent with a message anchor.
-
-        ``scorable`` is the anchor and ``message_piece_id`` is the legacy view of it, so the
-        two must not name different pieces. An unset id is derived from the anchor.
-
-        Returns:
-            ``self`` when the two anchors agree.
-
-        Raises:
-            ValueError: If ``message_piece_id`` names a piece the scorable does not cover.
-        """
-        scorable = getattr(self, "scorable", None)
-        if not isinstance(scorable, MessageScorable):
-            return self
-
-        piece_ids = [str(piece_id) for piece_id in scorable.message_piece_ids]
-        if self.message_piece_id is None:
-            self.message_piece_id = scorable.message_piece_ids[0]
-        elif str(self.message_piece_id) not in piece_ids:
-            raise ValueError(
-                f"message_piece_id {self.message_piece_id} is not covered by the scorable, which names {piece_ids}."
-            )
+        if isinstance(self.scorable, MessageScorable) and self.message_piece_id is None:
+            self.message_piece_id = self.scorable.message_piece_ids[0]
+        self.validate()
         return self
 
     @model_validator(mode="after")
@@ -264,14 +219,24 @@ class Score(BaseModel):
         object.__setattr__(self, "objective", self.scored_expectation.objective if self.scored_expectation else None)
         return self
 
-    def _check_score_value(self) -> None:
+    def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
         """
-        Validate ``score_value`` against ``status`` and ``score_type`` constraints.
+        Validate value and reference invariants, including after mutation.
 
         Raises:
-            ValueError: If the value contradicts the status, or is incompatible with the
-                score-type constraints.
+            ValueError: If the score violates its value or reference constraints.
         """
+        observation_ids = [str(observation_id) for observation_id in self.observation_ids]
+        if len(set(observation_ids)) != len(observation_ids):
+            raise ValueError("A score must reference each observation once.")
+        if self.observation_ids and self.scorable is None:
+            raise ValueError("A score with observations requires a scorable anchor.")
+        if isinstance(self.scorable, MessageScorable) and self.message_piece_id is not None:
+            piece_ids = [str(piece_id) for piece_id in self.scorable.message_piece_ids]
+            if str(self.message_piece_id) not in piece_ids:
+                raise ValueError(
+                    f"message_piece_id {self.message_piece_id} is not covered by the scorable, which names {piece_ids}."
+                )
         if self.status is ScoreStatus.UNDETERMINED:
             if self.score_value is not None:
                 raise ValueError(f"An undetermined score carries no value, got {self.score_value!r}.")

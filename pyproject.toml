@@ -81,6 +81,7 @@ dev = [
     "jupyter-book>=2.0.0",
     "jupytext>=1.17.1",
     "matplotlib>=3.10.0",
+    "opentelemetry-sdk>=1.36,<2",
     "ty>=0.0.32",
     "pandas>=2.2.0",
     "pre-commit>=4.2.0",
@@ -134,6 +135,10 @@ litellm = [
     "litellm>=1.84.0",
 ]
 
+otel = [
+    "opentelemetry-sdk>=1.36,<2",
+]
+
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
     "accelerate>=1.7.0",
@@ -145,6 +150,7 @@ all = [
     "litellm>=1.84.0",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
+    "opentelemetry-sdk>=1.36,<2",
     "playwright>=1.49.0",
     "pyarrow>=22.0.0; python_version >= '3.14'",
     "sentencepiece>=0.2.0",

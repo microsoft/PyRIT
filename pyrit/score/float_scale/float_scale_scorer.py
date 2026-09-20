@@ -5,11 +5,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import Message, Score, UndeterminedScoreError
 from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.scorer import Scorer
 
 if TYPE_CHECKING:
+    from pyrit.models import Message, Score
     from pyrit.prompt_target.common.prompt_target import PromptTarget
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
@@ -34,13 +34,9 @@ class FloatScaleScorer(Scorer):
             ValueError: If any score is not between 0 and 1.
         """
         for score in scores:
-            try:
-                value = score.get_value()
-            except UndeterminedScoreError:
-                # An undetermined score carries no value, so there is nothing to range-check.
-                continue
-            if not (0 <= value <= 1):
-                raise ValueError("FloatScaleScorer score value must be between 0 and 1.")
+            score.validate()
+            if not score.is_undetermined:
+                score.get_value()
 
     def get_scorer_metrics(self) -> HarmScorerMetrics | None:
         """

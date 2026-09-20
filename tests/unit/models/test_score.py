@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import ComponentIdentifier, MatchesObjective, MessageScorable, Score, ScoringExpectation
+from pyrit.models import ComponentIdentifier, MatchesObjective, MessageScorable, Score, ScoreStatus, ScoringExpectation
 from pyrit.models.score import UnvalidatedScore
 
 
@@ -106,6 +106,25 @@ def test_assignment_is_not_revalidated():
     score = _make_score(score_type="true_false", score_value="true")
     score.score_value = "maybe"
     assert score.score_value == "maybe"
+
+
+@pytest.mark.parametrize(
+    ("updates", "error"),
+    [
+        ({"score_value": None}, "complete score requires"),
+        ({"score_value": "maybe"}, "True False scorers"),
+        ({"status": ScoreStatus.UNDETERMINED}, "undetermined score carries no value"),
+        ({"observation_ids": [uuid.UUID(int=1)] * 2}, "each observation once"),
+        ({"observation_ids": [uuid.uuid4()], "scorable": None}, "requires a scorable anchor"),
+        ({"scorable": MessageScorable(message_piece_ids=(uuid.uuid4(),))}, "not covered by the scorable"),
+    ],
+)
+def test_score_revalidates_unchecked_changes(*, updates: dict[str, object], error: str) -> None:
+    score = _make_score().model_copy(update=updates)
+    with pytest.raises(ValueError, match=error):
+        score.validate()
+    with pytest.raises(ValidationError, match=error):
+        Score.model_validate(score.model_dump(exclude={"objective"}))
 
 
 def test_message_scorable_derives_message_piece_id():

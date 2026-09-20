@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import Message, Score, ScoreStatus, UndeterminedScoreError
+from pyrit.models import Message, Score, ScoreStatus
 from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.observation import _merge_observation_ids
 from pyrit.score.scorer import Scorer
@@ -74,15 +74,8 @@ class TrueFalseScorer(Scorer):
             raise ValueError("TrueFalseScorer should return exactly one score.")
 
         score = scores[0]
-        try:
-            score.get_value()
-        except UndeterminedScoreError:
-            return
-
-        if score.score_value is None:
-            raise ValueError("A complete TrueFalseScorer score must carry a value. Mark it undetermined instead.")
-
-        if str(score.score_value).lower() not in ["true", "false"]:
+        score.validate()
+        if not score.is_undetermined and not isinstance(score.get_value(), bool):
             raise ValueError("TrueFalseScorer score value must be True or False.")
 
     def get_scorer_metrics(self) -> ObjectiveScorerMetrics | None:
