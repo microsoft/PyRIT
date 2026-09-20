@@ -5,6 +5,7 @@ import string
 
 import pytest
 
+from pyrit.common.random_context import configure_random_seed
 from pyrit.converter import DigitBijectionConverter, LetterBijectionConverter, TokenBijectionConverter
 from pyrit.converter.bijection_converter import BijectionConverter
 
@@ -499,3 +500,46 @@ def test_token_converter_excludes_wordpiece_continuation_fragments():
     for token in converter.mapping.values():
         assert not token.startswith("##")
         assert token in _PLAIN_VOCAB_WORDS
+
+
+def test_mapping_is_reproducible_under_configured_root_seed():
+    """
+    The mapping is drawn at construction time. With no explicit seed it must inherit the
+    root configured by initialize_pyrit_async, not fresh entropy.
+    """
+    try:
+        configure_random_seed(seed=42)
+        first = LetterBijectionConverter().mapping
+        configure_random_seed(seed=42)
+        second = LetterBijectionConverter().mapping
+        assert first == second
+    finally:
+        configure_random_seed(seed=None)
+
+
+def test_mapping_varies_with_root_seed():
+    try:
+        configure_random_seed(seed=42)
+        first = LetterBijectionConverter().mapping
+        configure_random_seed(seed=99)
+        second = LetterBijectionConverter().mapping
+        assert first != second
+    finally:
+        configure_random_seed(seed=None)
+
+
+def test_explicit_seed_overrides_configured_root_seed():
+    try:
+        configure_random_seed(seed=1)
+        first = LetterBijectionConverter(seed=7).mapping
+        configure_random_seed(seed=99)
+        second = LetterBijectionConverter(seed=7).mapping
+        assert first == second
+    finally:
+        configure_random_seed(seed=None)
+
+
+def test_mapping_is_unseeded_without_a_configured_root():
+    configure_random_seed(seed=None)
+    mappings = {tuple(sorted(LetterBijectionConverter().mapping.items())) for _ in range(5)}
+    assert len(mappings) > 1

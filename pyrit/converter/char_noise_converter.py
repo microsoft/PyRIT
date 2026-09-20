@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import random
-
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
 
@@ -13,7 +11,8 @@ class CharNoiseConverter(Converter):
 
     Each character is shifted one step up or down with probability ``noise_probability``,
     kept inside the printable ASCII range. Non-ASCII characters are left alone. Unlike
-    ``NoiseConverter`` this uses no LLM, and each call draws fresh randomness.
+    ``NoiseConverter`` this uses no LLM. Randomness is drawn from the converter's own
+    stream, so a configured root seed makes the output reproducible.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -36,13 +35,14 @@ class CharNoiseConverter(Converter):
         return self._create_identifier(params={"noise_probability": self.noise_probability})
 
     def _noise(self, text: str) -> str:
+        rng = self._get_random_generator(stream="character-noise")
         out = []
         for ch in text:
-            if not " " <= ch <= "~" or random.random() >= self.noise_probability:
+            if not " " <= ch <= "~" or rng.random() >= self.noise_probability:
                 out.append(ch)
                 continue
 
-            offset = 1 if ch == " " else -1 if ch == "~" else random.choice((-1, 1))
+            offset = 1 if ch == " " else -1 if ch == "~" else rng.choice((-1, 1))
             ch = chr(ord(ch) + offset)
             out.append(ch)
         return "".join(out)
