@@ -4,7 +4,6 @@ import {
   Caption1,
   Tooltip,
   Text,
-  tokens,
   mergeClasses,
 } from '@fluentui/react-components'
 import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular, OpenRegular, ArrowSyncRegular } from '@fluentui/react-icons'
@@ -429,7 +428,6 @@ interface ChatInputAreaProps {
   onRetryTargetResolution?: () => void
   onUseAsTemplate: () => void
   attackOperator?: string
-  noTargetSelected?: boolean
   onConfigureTarget: () => void
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
@@ -454,7 +452,7 @@ interface ChatInputAreaProps {
   onSystemPromptChange?: (value: string) => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, conversionRevisionKey = '', disabled = false, sendDisabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onClearAllConversions = () => {}, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, conversionRevisionKey = '', disabled = false, sendDisabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onClearAllConversions = () => {}, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -640,20 +638,6 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onConfigureTarget={onConfigureTarget}
             onUseAsTemplate={onUseAsTemplate}
             styles={styles}
-          />
-        ) : noTargetSelected ? (
-          <StatusBanner
-            className={styles.noTargetBanner}
-            textClassName={styles.noTargetText}
-            icon={<WarningRegular fontSize={18} style={{ color: tokens.colorPaletteRedForeground1 }} />}
-            text="No target selected"
-            buttonText="Configure Target"
-            buttonIcon={<SettingsRegular />}
-            onButtonClick={onConfigureTarget}
-            testId="no-target-banner"
-            buttonTestId="configure-target-input-btn"
-            buttonClassName={styles.touchTarget}
-            tourTarget="chat-prerequisite"
           />
         ) : operatorLocked ? (
           <StatusBanner

@@ -36,9 +36,12 @@ import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
+import ChatTargetPicker from './ChatTargetPicker'
+import { sameTarget } from '@/utils/targetIdentity'
 import ObjectiveHeader from './ObjectiveHeader'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
+import { useUserPreferences } from '@/hooks/useUserPreferences'
 import TargetSelect from '@/components/Config/TargetSelect'
 import {
   basenameFromValue,
@@ -82,7 +85,6 @@ import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
 const NARROW_SCREEN_QUERY = '(max-width: 600px)'
-const MARKDOWN_PREFERENCE_STORAGE_KEY = 'pyrit.chatMarkdownMode'
 const RETRYABLE_TARGET_RESPONSE_ERROR = 'processing'
 const CLEAN_CONVERSATION_MESSAGE =
   'Continue in a clean conversation so the stored error is not sent back to the target.'
@@ -184,25 +186,6 @@ function getPersistedProcessingRecovery(
   }
 }
 
-function readStoredMarkdownPreference(): boolean {
-  if (typeof window === 'undefined') return false
-  try {
-    const storedPreference = window.localStorage.getItem(MARKDOWN_PREFERENCE_STORAGE_KEY)
-    return storedPreference === 'markdown'
-  } catch {
-    return false
-  }
-}
-
-function persistMarkdownPreference(enabled: boolean): void {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(MARKDOWN_PREFERENCE_STORAGE_KEY, enabled ? 'markdown' : 'raw')
-  } catch {
-    /* localStorage may be unavailable (private mode, quota, sandboxed iframe). */
-  }
-}
-
 function matchesNarrowScreen(): boolean {
   return typeof window !== 'undefined'
     && typeof window.matchMedia === 'function'
@@ -212,12 +195,12 @@ function matchesNarrowScreen(): boolean {
 interface ChatWindowProps {
   onNewAttack: () => void
   activeTarget: TargetInstance | null
-  availableTargets?: TargetInstance[]
-  targetsLoading?: boolean
-  targetsError?: string | null
-  onRefreshTargets?: () => void
-  onSelectTarget?: (target: TargetInstance | null) => void
-  defaultBranchTarget?: TargetInstance | null
+  availableTargets: TargetInstance[]
+  targetsLoading: boolean
+  targetsError: string | null
+  onRefreshTargets: () => void
+  onSelectTarget: (target: TargetInstance | null) => void
+  defaultBranchTarget: TargetInstance | null
   attackResultId: string | null
   conversationId: string | null
   activeConversationId: string | null
@@ -233,6 +216,7 @@ interface ChatWindowProps {
   onAttackChange?: (attack: AttackSummary) => void
   labels?: Record<string, string>
   onLabelsChange?: (labels: Record<string, string>) => void
+  operatorReadOnly?: boolean
   onNavigate?: (view: ViewName) => void
   /** Operator from the loaded attack (for operator locking). Null for new attacks. */
   attackOperator?: string | null
@@ -261,7 +245,7 @@ export default function ChatWindow({
   onNewAttack,
   activeTarget,
   availableTargets,
-  targetsLoading = false,
+  targetsLoading,
   targetsError,
   onRefreshTargets,
   onSelectTarget,
@@ -276,6 +260,7 @@ export default function ChatWindow({
   onAttackChange,
   labels,
   onLabelsChange,
+  operatorReadOnly,
   onNavigate,
   attackOperator,
   attackTarget,
@@ -300,7 +285,7 @@ export default function ChatWindow({
   const [branchError, setBranchError] = useState<string | null>(null)
   const [isBranching, setIsBranching] = useState(false)
   const branchingRef = useRef(false)
-  const selectableTargets = availableTargets ?? (activeTarget ? [activeTarget] : [])
+  const isBranchTargetAvailable = availableTargets.some((target: TargetInstance) => sameTarget(target, branchTarget))
   // Track sending state per conversation so parallel conversations can send independently
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
   /** True while an async message fetch is in-flight */
@@ -318,7 +303,8 @@ export default function ChatWindow({
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   // Conversation-wide preference for rendering message text as Markdown.
-  const [globalMarkdown, setGlobalMarkdown] = useState(() => readStoredMarkdownPreference())
+  const { preferences, updatePreferences } = useUserPreferences()
+  const globalMarkdown = preferences.chatMarkdown
   const [chatInputText, setChatInputText] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([])
@@ -355,9 +341,8 @@ export default function ChatWindow({
     _event: ChangeEvent<HTMLInputElement>,
     data: SwitchOnChangeData,
   ): void => {
-    setGlobalMarkdown(data.checked)
-    persistMarkdownPreference(data.checked)
-  }, [])
+    updatePreferences((current) => ({ ...current, chatMarkdown: data.checked }))
+  }, [updatePreferences])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -401,6 +386,7 @@ export default function ChatWindow({
   const viewedConvRef = useRef(activeConversationId ?? conversationId)
   useLayoutEffect(() => {
     viewedConvRef.current = activeConversationId ?? conversationId
+    return () => { viewedConvRef.current = null }
   }, [activeConversationId, conversationId])
   // Synchronous ref tracking which conversations have an in-flight send.
   const sendingConvIdsRef = useRef<Set<string>>(new Set())
@@ -1040,7 +1026,7 @@ export default function ChatWindow({
     setBranchRequest({ conversationId: activeConversationId, cutoff: messageIndex })
     setBranchTarget(defaultBranchTarget ?? activeTarget)
     setBranchError(null)
-    onRefreshTargets?.()
+    onRefreshTargets()
   }, [
     activeConversationId, activeTarget, awaitingConversationLoad, defaultBranchTarget,
     isLoadingAttack, isLoadingMessages, onRefreshTargets,
@@ -1048,10 +1034,7 @@ export default function ChatWindow({
 
   const confirmBranch = async (): Promise<void> => {
     if (!branchRequest || !branchTarget || branchingRef.current || targetsLoading || targetsError) return
-    if (!selectableTargets.some((target: TargetInstance) => (
-      target.target_registry_name === branchTarget.target_registry_name
-      && target.identifier.hash === branchTarget.identifier.hash
-    ))) {
+    if (!isBranchTargetAvailable) {
       setBranchError('The destination target changed or is no longer registered. Select a target again.')
       return
     }
@@ -1065,8 +1048,8 @@ export default function ChatWindow({
         source_conversation_id: branchRequest.conversationId,
         cutoff_index: branchRequest.cutoff,
       })
-      if (viewedConvRef.current !== branchRequest.conversationId) return
       setBranchRequest(null)
+      if (viewedConvRef.current !== branchRequest.conversationId) return
       onConversationCreated(createResponse.attack_result_id, createResponse.conversation_id, undefined, branchTarget)
       const messagesResp = await attacksApi.getMessages(createResponse.attack_result_id, createResponse.conversation_id)
       if (
@@ -1232,7 +1215,7 @@ export default function ChatWindow({
             <DialogContent>
               <TargetSelect
                 label="Destination target"
-                targets={selectableTargets}
+                targets={availableTargets}
                 value={branchTarget?.target_registry_name ?? ''}
                 onChange={setBranchTarget}
                 disabled={targetsLoading || isBranching}
@@ -1240,21 +1223,17 @@ export default function ChatWindow({
               {(branchError || targetsError) && (
                 <MessageBar intent="error"><MessageBarBody>{branchError || targetsError}</MessageBarBody></MessageBar>
               )}
-              {!targetsLoading && selectableTargets.length === 0 && (
+              {!targetsLoading && availableTargets.length === 0 && (
                 <Text>No targets are registered. Add a target in the registry.</Text>
               )}
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setBranchRequest(null)} disabled={isBranching}>Cancel</Button>
-              <Button onClick={onRefreshTargets} disabled={targetsLoading || isBranching}>Refresh targets</Button>
               <Button
                 appearance="primary"
                 onClick={confirmBranch}
                 disabled={!branchTarget || targetsLoading || Boolean(targetsError) || isBranching
-                  || !selectableTargets.some((target: TargetInstance) => (
-                    target.target_registry_name === branchTarget.target_registry_name
-                    && target.identifier.hash === branchTarget.identifier.hash
-                  ))}
+                  || !isBranchTargetAvailable}
               >
                 Create attack
               </Button>
@@ -1290,7 +1269,16 @@ export default function ChatWindow({
         )}
         <div className={styles.ribbon}>
           <div className={styles.conversationInfo}>
-            {activeTarget ? (
+            {!attackResultId && !isLoadingAttack ? (
+              <ChatTargetPicker
+                target={activeTarget}
+                targets={availableTargets}
+                loading={targetsLoading}
+                error={targetsError}
+                disabled={isSending}
+                onSelect={onSelectTarget}
+              />
+            ) : activeTarget ? (
               <TargetBadge target={activeTarget} />
             ) : (
               <Text size={200} className={styles.noTarget}>
@@ -1298,30 +1286,9 @@ export default function ChatWindow({
               </Text>
             )}
             {labels && onLabelsChange && (
-              <LabelsBar labels={labels} onLabelsChange={onLabelsChange} />
+              <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly} />
             )}
           </div>
-          {!attackResultId && !isLoadingAttack && onSelectTarget && (
-            <div className={styles.targetSelection}>
-              <TargetSelect
-                label="Chat target"
-                targets={selectableTargets}
-                value={activeTarget?.target_registry_name ?? ''}
-                onChange={onSelectTarget}
-                disabled={targetsLoading || isSending}
-              />
-              <Button className={styles.ribbonAction} onClick={onRefreshTargets} disabled={targetsLoading || isSending}>
-                Refresh targets
-              </Button>
-              {targetsLoading && <Spinner size="tiny" label="Loading targets..." />}
-              {targetsError && (
-                <MessageBar intent="error"><MessageBarBody>{targetsError}</MessageBarBody></MessageBar>
-              )}
-              {!targetsLoading && !targetsError && selectableTargets.length === 0 && (
-                <Text>No targets are registered. Add a target in the registry.</Text>
-              )}
-            </div>
-          )}
           <div className={styles.ribbonActions}>
             <Tooltip content="Render all messages as Markdown by default" relationship="label">
               <Switch
@@ -1471,7 +1438,6 @@ export default function ChatWindow({
           onRetryTargetResolution={onRetryTargetResolution}
           onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
-          noTargetSelected={!activeTarget}
           onConfigureTarget={() => onNavigate?.('registry')}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}

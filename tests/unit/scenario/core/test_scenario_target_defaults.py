@@ -53,28 +53,59 @@ class TestScopedAdversarialDefault:
                 raise error()
             assert get_default_adversarial_target() is outer
 
-    async def test_concurrent_tasks_keep_distinct_defaults_async(self) -> None:
+    @pytest.mark.parametrize("inherit_outer", [False, True])
+    async def test_concurrent_tasks_keep_distinct_defaults_async(self, inherit_outer: bool) -> None:
         outer, first, second = (MockPromptTarget() for _ in range(3))
         ready = asyncio.Event()
         arrived = 0
 
-        async def resolve_async(target: PromptTarget) -> PromptTarget:
+        async def resolve_async(target: PromptTarget | None) -> PromptTarget:
             nonlocal arrived
+            expected = outer if target is None else target
             with override_default_adversarial_target(target):
                 arrived += 1
                 if arrived == 2:
                     ready.set()
                 await ready.wait()
                 await asyncio.sleep(0)
-                assert get_default_adversarial_target() is target
+                assert get_default_adversarial_target() is expected
             assert get_default_adversarial_target() is outer
-            return target
+            return expected
 
         with override_default_adversarial_target(outer):
-            assert await asyncio.gather(resolve_async(first), resolve_async(second)) == [first, second]
+            assert await asyncio.gather(resolve_async(first), resolve_async(None if inherit_outer else second)) == [
+                first,
+                outer if inherit_outer else second,
+            ]
             assert get_default_adversarial_target() is outer
 
-    @pytest.mark.parametrize("invalid", [None, object(), "registered_name"])
+    def test_none_preserves_outer_scope_and_nested_override(self) -> None:
+        outer, inner = MockPromptTarget(), MockPromptTarget()
+        with override_default_adversarial_target(outer):
+            with override_default_adversarial_target(None):
+                assert get_default_adversarial_target() is outer
+                with override_default_adversarial_target(inner):
+                    assert get_default_adversarial_target() is inner
+                assert get_default_adversarial_target() is outer
+            assert get_default_adversarial_target() is outer
+
+    @pytest.mark.parametrize("registered", [False, True])
+    def test_none_preserves_registry_and_openai_fallbacks(self, registered: bool) -> None:
+        target = MockPromptTarget()
+        registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        registry.instances.get.return_value = target if registered else None
+        with (
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(scenario_target_defaults, "OpenAIChatTarget", return_value=target) as fallback,
+            override_default_adversarial_target(None),
+        ):
+            assert get_default_adversarial_target() is target
+            if registered:
+                fallback.assert_not_called()
+            else:
+                fallback.assert_called_once_with(temperature=1.2)
+
+    @pytest.mark.parametrize("invalid", [object(), "registered_name"])
     def test_invalid_types_rejected_without_replacing_outer_scope(self, invalid: object) -> None:
         target = MockPromptTarget()
         with override_default_adversarial_target(target):
@@ -90,6 +121,11 @@ class TestScopedAdversarialDefault:
         target.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=False))
         with pytest.raises(ValueError, match="must support multi_turn"), override_default_adversarial_target(target):
             pytest.fail("Single-turn target entered the scope")
+
+    @pytest.mark.parametrize("invalid", [None, object(), "registered_name"])
+    def test_validator_requires_a_target_even_when_none_scope_is_allowed(self, invalid: object) -> None:
+        with pytest.raises(ValueError, match="must be a PromptTarget"):
+            scenario_target_defaults.validate_default_adversarial_target(invalid)
 
     def test_openai_fallback_retained_outside_scope(self) -> None:
         registry = MagicMock(spec=TargetRegistry.get_registry_singleton())

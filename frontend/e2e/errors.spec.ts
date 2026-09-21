@@ -224,15 +224,15 @@ async function mockAllAPIs(
   });
 }
 
-/** Navigate to the target registry, set mock target active, return to chat. */
+/** Navigate to the target registry, set the objective default, return to chat. */
 async function activateMockTarget(page: Page) {
   await page.getByTitle("Registry").click();
   await expect(page.getByText("Target Registry")).toBeVisible({
     timeout: 10000,
   });
-  const setActiveBtn = page.getByRole("button", { name: /set default objective target/i });
-  await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
-  await setActiveBtn.click();
+  const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
+  await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
+  await objectiveDefault.selectOption({ index: 1 });
   await page.getByTitle("Chat").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }

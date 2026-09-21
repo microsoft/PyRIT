@@ -213,6 +213,13 @@ export interface TargetPreferences {
   readonly adversarial: TargetReference | null
 }
 
+export interface UserPreferences {
+  readonly targets: TargetPreferences
+  readonly labels: Record<string, string | null>
+  readonly theme: ThemeMode
+  readonly chatMarkdown: boolean
+}
+
 export interface TargetCapabilities {
   supports_multi_turn: boolean
   supports_multi_message_pieces?: boolean
@@ -657,6 +664,7 @@ export interface RegisteredScenario {
   default_datasets: string[]
   baseline_policy: 'enabled' | 'disabled' | 'forbidden'
   include_baseline_by_default: boolean
+  uses_default_adversarial_target: boolean
   supported_parameters: Parameter[]
   default_run_size: ScenarioRunSizeEstimateResponse
 }

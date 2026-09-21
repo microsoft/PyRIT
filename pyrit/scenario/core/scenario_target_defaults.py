@@ -15,7 +15,7 @@ _adversarial_target_override: ContextVar[PromptTarget | None] = ContextVar("adve
 
 
 @contextmanager
-def override_default_adversarial_target(target: PromptTarget) -> Iterator[None]:
+def override_default_adversarial_target(target: PromptTarget | None) -> Iterator[None]:
     """
     Override the adversarial fallback for this execution scope.
 
@@ -25,10 +25,33 @@ def override_default_adversarial_target(target: PromptTarget) -> Iterator[None]:
     separate asyncio tasks remain isolated. Scorer defaults are unchanged.
 
     Args:
-        target (PromptTarget): The multi-turn target to use before registry and OpenAI fallbacks.
+        target (PromptTarget | None): The multi-turn target to use before registry and OpenAI fallbacks.
+            None leaves the current scope unchanged, including any outer override.
 
     Yields:
         None: While the scoped default is active.
+
+    Raises:
+        ValueError: If a non-None target is not a PromptTarget or does not support multi-turn.
+    """
+    if target is None:
+        yield
+        return
+    validate_default_adversarial_target(target)
+    token = _adversarial_target_override.set(target)
+    try:
+        yield
+    finally:
+        _adversarial_target_override.reset(token)
+
+
+def validate_default_adversarial_target(target: PromptTarget) -> None:
+    """
+    Validate a selected adversarial default without changing the current scope.
+
+    Args:
+        target (PromptTarget): The selected target, which must support multi-turn.
+            None is not a selection and must be handled by the caller.
 
     Raises:
         ValueError: If target is not a PromptTarget or does not support multi-turn.
@@ -37,11 +60,6 @@ def override_default_adversarial_target(target: PromptTarget) -> Iterator[None]:
         raise ValueError(f"Default adversarial target must be a PromptTarget, but got {type(target).__name__}.")
     if not target.capabilities.includes(capability=CapabilityName.MULTI_TURN):
         raise ValueError("Default adversarial target must support multi_turn.")
-    token = _adversarial_target_override.set(target)
-    try:
-        yield
-    finally:
-        _adversarial_target_override.reset(token)
 
 
 def get_default_scorer_target() -> PromptTarget:

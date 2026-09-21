@@ -185,20 +185,6 @@ export const useChatInputAreaStyles = makeStyles({
   statusBannerText: {
     color: tokens.colorNeutralForeground2,
   },
-  noTargetBanner: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: tokens.spacingHorizontalM,
-    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
-    backgroundColor: tokens.colorPaletteRedBackground1,
-    borderRadius: '28px',
-    border: `1px solid ${tokens.colorPaletteRedBorder1}`,
-  },
-  noTargetText: {
-    color: tokens.colorPaletteRedForeground1,
-    fontWeight: tokens.fontWeightSemibold as unknown as string,
-  },
   conversionLabel: {
     display: 'flex',
     alignItems: 'center',

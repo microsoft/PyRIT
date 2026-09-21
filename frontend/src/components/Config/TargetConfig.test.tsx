@@ -122,7 +122,7 @@ describe("TargetConfig", () => {
     render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
     expect(await screen.findByText("openai_image_dalle")).toBeInTheDocument();
     expect(mockedTargetsApi.listTargets).toHaveBeenCalledWith(200, "second-page");
-    await user.click(screen.getAllByRole("button", { name: "Set default objective target" })[1]);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Default objective target" }), sampleTargets[1].target_registry_name);
     expect(defaultProps.onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[1]);
   });
 
@@ -197,8 +197,7 @@ describe("TargetConfig", () => {
       expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
 
-    const buttons = screen.getAllByRole("button", { name: "Set default objective target" });
-    await user.click(buttons[0]);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Default objective target" }), sampleTargets[0].target_registry_name);
 
     expect(onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[0]);
   });
@@ -219,7 +218,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Default objective target")).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Default objective target" })).toHaveValue(sampleTargets[0].target_registry_name);
     });
   });
 

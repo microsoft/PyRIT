@@ -8,12 +8,12 @@ import {
   TableCell,
   Badge,
   Button,
+  Divider,
   Text,
   Tooltip,
   Select,
 } from '@fluentui/react-components'
 import {
-  CheckmarkRegular,
   CheckmarkCircleFilled,
   DismissCircleFilled,
   TextTRegular,
@@ -30,8 +30,9 @@ import {
   ChevronDownRegular,
 } from '@fluentui/react-icons'
 import type { TargetInstance } from '../../types'
-import { targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
+import { sameTarget, targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
 import { useTargetTableStyles } from './TargetTable.styles'
+import TargetSelect from './TargetSelect'
 
 interface TargetTableProps {
   targets: TargetInstance[]
@@ -210,11 +211,8 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
     <>
       {innerTargets.map((inner, idx) => (
         <TableRow key={`${parentKey}-inner-${idx}`} className={styles.innerTargetRow}>
-          <TableCell>
-            <Text size={200} style={{ paddingLeft: '28px' }}>#{idx + 1}</Text>
-          </TableCell>
           <TableCell className={styles.registryNameCell}>
-            <Text size={200} className={styles.registryNameText}>{inner.target_registry_name}</Text>
+            <Text size={200} className={styles.registryNameText}>#{idx + 1} {inner.target_registry_name}</Text>
           </TableCell>
           <TableCell>
             <Text size={200}>{targetType(inner)}</Text>
@@ -286,14 +284,29 @@ export default function TargetTable({
   )
 
   const isDefaultObjective = (target: TargetInstance): boolean =>
-    defaultObjectiveTarget?.target_registry_name === target.target_registry_name
-    && defaultObjectiveTarget.identifier.hash === target.identifier.hash
+    sameTarget(defaultObjectiveTarget, target)
   const isDefaultAdversarial = (target: TargetInstance): boolean =>
-    defaultAdversarialTarget?.target_registry_name === target.target_registry_name
-    && defaultAdversarialTarget.identifier.hash === target.identifier.hash
+    sameTarget(defaultAdversarialTarget, target)
 
   return (
     <div className={styles.tableContainer} data-testid="target-table-scroll-region">
+      <section aria-label="Target defaults" className={styles.defaultsSummary}>
+        <TargetSelect
+          label="Default objective target"
+          targets={targets}
+          value={defaultObjectiveTarget?.target_registry_name ?? ''}
+          onChange={onSetDefaultObjectiveTarget}
+          placeholder="Not set"
+        />
+        <TargetSelect
+          label="Default adversarial target"
+          targets={targets.filter((target: TargetInstance) => target.capabilities?.supports_multi_turn === true)}
+          value={defaultAdversarialTarget?.target_registry_name ?? ''}
+          onChange={onSetDefaultAdversarialTarget}
+          placeholder="Use server default"
+        />
+      </section>
+      <Divider appearance="strong" className={styles.defaultsDivider} />
       {targetTypes.length > 1 && (
         <div className={styles.filterRow}>
           <label htmlFor={typeFilterId}>
@@ -316,7 +329,6 @@ export default function TargetTable({
       <Table aria-label="Target instances" className={styles.table}>
         <TableHeader className={styles.stickyHeader}>
           <TableRow>
-            <TableHeaderCell className={styles.defaultsCell}>Defaults</TableHeaderCell>
             <TableHeaderCell style={{ width: '180px' }}>
               <Tooltip content={COLUMN_TOOLTIPS.registryName} relationship="description">
                 <span className={styles.helpHeader}>Registry Name</span>
@@ -374,44 +386,25 @@ export default function TargetTable({
                   className={isDefaultObjective(target) || isDefaultAdversarial(target) ? styles.defaultRow : undefined}
                   data-testid={`target-row-${target.target_registry_name}`}
                 >
-                  <TableCell>
-                    <div className={styles.defaultActions}>
-                      {isDefaultObjective(target) && (
-                        <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
-                          Default objective target
-                        </Badge>
-                      )}
-                      <Button
-                        className={styles.rowAction}
-                        appearance="secondary"
-                        size="small"
-                        onClick={() => onSetDefaultObjectiveTarget(isDefaultObjective(target) ? null : target)}
-                      >
-                        {isDefaultObjective(target) ? 'Clear objective default' : 'Set default objective target'}
-                      </Button>
-                      {isDefaultAdversarial(target) && (
-                        <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
-                          Default adversarial target
-                        </Badge>
-                      )}
-                      <Button
-                        className={styles.rowAction}
-                        appearance="secondary"
-                        size="small"
-                        disabled={!isDefaultAdversarial(target) && target.capabilities?.supports_multi_turn !== true}
-                        title={target.capabilities?.supports_multi_turn === true ? undefined : 'Adversarial targets require multi-turn support'}
-                        onClick={() => onSetDefaultAdversarialTarget(isDefaultAdversarial(target) ? null : target)}
-                      >
-                        {isDefaultAdversarial(target) ? 'Clear adversarial default' : 'Set default adversarial target'}
-                      </Button>
-                    </div>
-                  </TableCell>
                   <TableCell className={styles.registryNameCell}>
                     <Text size={200} className={styles.registryNameText}>{target.target_registry_name}</Text>
+                    {(isDefaultObjective(target) || isDefaultAdversarial(target)) && (
+                      <div className={styles.defaultIndicators}>
+                        {isDefaultObjective(target) && (
+                          <Badge appearance="tint" color="brand" size="small" aria-label="Default objective target">
+                            Objective
+                          </Badge>
+                        )}
+                        {isDefaultAdversarial(target) && (
+                          <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
+                            Adversarial
+                          </Badge>
+                        )}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      {/* Chevron in the Type column keeps the action column aligned */}
                       {expandable && (
                         <Button
                           className={styles.rowAction}

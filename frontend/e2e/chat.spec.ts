@@ -140,9 +140,9 @@ async function activateMockTarget(page: Page) {
   await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 
   // Set the objective default for this browser profile.
-  const setActiveBtn = page.getByRole("button", { name: /set default objective target/i });
-  await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
-  await setActiveBtn.click();
+  const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
+  await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
+  await objectiveDefault.selectOption({ index: 1 });
 
   // Return to Chat view
   await page.getByTitle("Chat").click();
@@ -173,9 +173,10 @@ test.describe("Application Smoke Tests", () => {
     await expect(page.getByRole("button", { name: /new attack/i })).toBeVisible();
   });
 
-  test("should show 'no target' hint when no target is selected", async ({ page }) => {
+  test("should offer the target picker without a bottom warning", async ({ page }) => {
     await page.getByTitle("Chat").click();
-    await expect(page.getByTestId("no-target-banner")).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Chat target" })).toBeVisible();
+    await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
 });
 
@@ -368,8 +369,8 @@ test.describe("Chat without target", () => {
     await page.goto("/");
     await page.getByTitle("Chat").click();
 
-    // The no-target-banner should be visible because no target is active
-    await expect(page.getByTestId("no-target-banner")).toBeVisible();
+    await expect(page.getByRole("textbox")).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
   });
 });
 
@@ -883,11 +884,11 @@ test.describe("Target type scenarios", () => {
 
     await page.goto("/");
     await page.getByTitle("Registry").click();
-    await expect(page.getByText("dall-e-3")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("dall-e-3", { exact: true })).toBeVisible({ timeout: 10000 });
 
-    // Save the DALL-E target (second row) as the objective default.
-    const setActiveBtns = page.getByRole("button", { name: /set default objective target/i });
-    await setActiveBtns.nth(1).click();
+    // Save the DALL-E target as the objective default.
+    await page.getByRole("combobox", { name: "Default objective target", exact: true })
+      .selectOption("dall-e-image-gen");
 
     // Navigate to chat
     await page.getByTitle("Chat").click();

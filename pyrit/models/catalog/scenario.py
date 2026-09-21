@@ -190,6 +190,9 @@ class RegisteredScenario(BaseModel):
         "enabled", description="Whether baseline execution is enabled, disabled, or forbidden"
     )
     include_baseline_by_default: bool = Field(True, description="Whether an omitted baseline flag includes it")
+    uses_default_adversarial_target: bool = Field(
+        False, description="Whether any available technique uses the shared adversarial target"
+    )
     supported_parameters: list[Parameter] = Field(
         default_factory=list, description="Scenario-declared custom parameters"
     )

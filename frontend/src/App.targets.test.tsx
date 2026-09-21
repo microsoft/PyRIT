@@ -4,11 +4,10 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
-import { ThemeProvider } from '@/hooks/useTheme'
 import { attacksApi, targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { AttackSummary, ConversationMessagesResponse } from '@/types'
-import { readTargetPreferences, writeTargetPreferences } from '@/utils/targetPreferences'
+import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
 
@@ -93,18 +92,19 @@ const savedMessages: ConversationMessagesResponse = {
 
 function TestWrapper({ children }: { children: ReactNode }) {
   return (
-    <ThemeProvider>
-      <FluentProvider theme={webLightTheme}>
-        <MemoryRouter initialEntries={['/chat']}>{children}</MemoryRouter>
-      </FluentProvider>
-    </ThemeProvider>
+    <FluentProvider theme={webLightTheme}>
+      <MemoryRouter initialEntries={['/chat']}>{children}</MemoryRouter>
+    </FluentProvider>
   )
 }
 
 function saveDefault(account: string, target: typeof targetA): void {
-  writeTargetPreferences(`tenant:${account}`, {
-    objective: { registryName: target.target_registry_name, identifierHash: target.identifier.hash },
-    adversarial: null,
+  writeUserPreferences(`tenant:${account}`, {
+    ...DEFAULT_USER_PREFERENCES,
+    targets: {
+      objective: { registryName: target.target_registry_name, identifierHash: target.identifier.hash },
+      adversarial: null,
+    },
   })
 }
 
@@ -147,22 +147,22 @@ describe('App target selection with the chat composer', () => {
       }),
     ))
     expect(attacksApi.createAttack).not.toHaveBeenCalled()
-    expect(readTargetPreferences('tenant:alice').objective?.registryName).toBe('target-a')
+    expect(screen.queryByRole('combobox', { name: 'Chat target' })).not.toBeInTheDocument()
+    expect(readUserPreferences('tenant:alice').targets.objective?.registryName).toBe('target-a')
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
   })
 
-  it('selects a new-chat target without a default and keeps the choice across a registry refresh', async () => {
+  it('selects a new-chat target from the badge without changing the default', async () => {
     const user = userEvent.setup()
     render(<App />, { wrapper: TestWrapper })
     const selector = screen.getByRole('combobox', { name: 'Chat target' })
     await waitFor(() => expect(selector).toBeEnabled())
     await user.selectOptions(selector, 'target-b')
     expect(selector).toHaveValue('target-b')
-    await user.click(screen.getByRole('button', { name: 'Refresh targets' }))
-    await waitFor(() => expect(selector).toBeEnabled())
-    expect(selector).toHaveValue('target-b')
-    expect(readTargetPreferences('tenant:alice').objective).toBeNull()
+    expect(screen.getByTestId('target-badge')).toHaveAccessibleName('Active target: target-b')
+    expect(screen.queryByRole('button', { name: 'Refresh targets' })).not.toBeInTheDocument()
+    expect(readUserPreferences('tenant:alice').targets.objective).toBeNull()
   })
 
   it('clears the draft and loads the next account defaults when the signed-in account changes', async () => {
@@ -178,6 +178,6 @@ describe('App target selection with the chat composer', () => {
     rerender(<App />)
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-b'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
-    expect(readTargetPreferences('tenant:alice').objective?.registryName).toBe('target-a')
+    expect(readUserPreferences('tenant:alice').targets.objective?.registryName).toBe('target-a')
   })
 })

@@ -9,6 +9,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -22,6 +23,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
@@ -29,6 +31,7 @@ from pyrit.scenario import (
     ScenarioResult,
 )
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import Scorer
@@ -218,6 +221,34 @@ def test_subclass_implementing_build_atomic_attacks_async_is_concrete():
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioInitialization:
     """Tests for Scenario class initialization."""
+
+    @pytest.mark.parametrize(
+        ("uses_adversarial", "explicit_target", "factory_name", "expected"),
+        [
+            (False, False, "test", False),
+            (True, False, "test", True),
+            (True, True, "test", False),
+            (True, False, "unrelated", False),
+        ],
+    )
+    def test_default_adversarial_usage_from_factories(
+        self, *, uses_adversarial: bool, explicit_target: bool, factory_name: str, expected: bool
+    ) -> None:
+        factory = AttackTechniqueFactory(
+            name=factory_name,
+            attack_class=RedTeamingAttack if uses_adversarial else PromptSendingAttack,
+            adversarial_chat=MagicMock(spec=PromptTarget) if explicit_target else None,
+        )
+        registry = MagicMock(spec=AttackTechniqueRegistry)
+        registry.get_factories.return_value = {factory_name: factory}
+        with patch.object(AttackTechniqueRegistry, "get_registry_singleton", return_value=registry):
+            scenario = ConcreteScenario(version=1)
+            assert scenario.uses_default_adversarial_target is expected
+
+    @pytest.mark.parametrize("uses_default", [False, True])
+    def test_scenario_can_declare_adversarial_usage(self, uses_default: bool) -> None:
+        scenario = ConcreteScenario(version=1, uses_default_adversarial_target=uses_default)
+        assert scenario.uses_default_adversarial_target is uses_default
 
     def test_init_with_valid_params(self, mock_objective_target):
         """Test successful initialization with valid parameters."""

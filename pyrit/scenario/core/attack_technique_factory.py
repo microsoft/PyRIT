@@ -513,6 +513,14 @@ class AttackTechniqueFactory(Identifiable):
         return self._uses_adversarial
 
     @property
+    def uses_default_adversarial_target(self) -> bool:
+        """Whether this factory resolves the shared adversarial target."""
+        return self._adversarial_chat is None and (
+            self._uses_adversarial
+            or (self._seed_technique is not None and self._seed_technique.has_simulated_conversation)
+        )
+
+    @property
     def supports_additional_request_converters(self) -> bool:
         """Whether callers may safely append request converters to this technique."""
         return self._supports_additional_request_converters

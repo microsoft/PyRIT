@@ -41,7 +41,6 @@ import {
 import type { ViewName } from '@/components/Sidebar/Navigation'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import { listRegisteredTargets } from '@/services/targetRegistry'
 import type {
   Parameter,
   RegisteredScenario,
@@ -54,7 +53,7 @@ import type {
   TargetInstance,
 } from '@/types'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
-import { targetModelName } from '@/utils/targetIdentity'
+import { sameTarget, targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { ScenarioRunEstimateDetails } from './ScenarioRunEstimate'
@@ -298,6 +297,7 @@ type EstimateRequestState =
     }
 
 function buildEstimateRequest({
+  scenario,
   targetName,
   adversarialTargetName,
   techniques,
@@ -339,7 +339,7 @@ function buildEstimateRequest({
   if (targetName) {
     request.target_name = targetName
   }
-  if (adversarialTargetName) {
+  if (scenario.uses_default_adversarial_target && adversarialTargetName) {
     request.adversarial_target_name = adversarialTargetName
   }
   if (datasetNames.length > 0) {
@@ -420,6 +420,7 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
 }
 
 interface ScenarioDetailProps {
+  targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
@@ -440,6 +441,7 @@ interface ScenarioDetailContentProps extends ScenarioDetailProps {
 
 function ScenarioDetailContent({
   encodedScenarioName,
+  targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   labels,
@@ -451,8 +453,6 @@ function ScenarioDetailContent({
   const [scenario, setScenario] = useState<RegisteredScenario | null>(null)
   const [scenarioStatus, setScenarioStatus] = useState<LoadStatus>('loading')
   const [scenarioError, setScenarioError] = useState<string | null>(null)
-  const [targets, setTargets] = useState<TargetInstance[] | null>(null)
-  const [targetsError, setTargetsError] = useState<string | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
 
   useEffect(() => {
@@ -477,33 +477,13 @@ function ScenarioDetailContent({
     }
   }, [decodedScenarioName, refetchCount])
 
-  useEffect(() => {
-    let cancelled = false
-    listRegisteredTargets()
-      .then((items) => {
-        if (cancelled) return
-        setTargets(items)
-        setTargetsError(null)
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setTargets([])
-        setTargetsError(toApiError(err).detail)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [refetchCount])
-
   const handleRetry = (): void => {
     setScenarioStatus('loading')
     setScenarioError(null)
-    setTargets(null)
-    setTargetsError(null)
     setRefetchCount((count) => count + 1)
   }
 
-  if (scenarioStatus === 'loading' || targets === null) {
+  if (scenarioStatus === 'loading') {
     return (
       <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
         <div className={styles.centeredState}>
@@ -529,7 +509,7 @@ function ScenarioDetailContent({
     )
   }
 
-  if (scenarioStatus === 'error' || targetsError) {
+  if (scenarioStatus === 'error') {
     return (
       <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
         <div className={styles.content}>
@@ -538,7 +518,7 @@ function ScenarioDetailContent({
           </Link>
           <div className={styles.centeredState} data-testid="scenario-error">
             <MessageBar intent="error">
-              <MessageBarBody>{scenarioError ?? targetsError}</MessageBarBody>
+              <MessageBarBody>{scenarioError}</MessageBarBody>
             </MessageBar>
             <Button
               className={styles.touchTarget}
@@ -608,8 +588,7 @@ function ScenarioLaunchForm({
 
   const [targetName, setTargetName] = useState(() => {
     if (defaultObjectiveTarget && targets.some((target: TargetInstance) =>
-      target.target_registry_name === defaultObjectiveTarget.target_registry_name
-      && target.identifier.hash === defaultObjectiveTarget.identifier.hash)) {
+      sameTarget(target, defaultObjectiveTarget))) {
       return defaultObjectiveTarget.target_registry_name
     }
     return ''
@@ -619,8 +598,7 @@ function ScenarioLaunchForm({
   )
   const [adversarialTargetName, setAdversarialTargetName] = useState(() => {
     if (defaultAdversarialTarget && adversarialTargets.some((target: TargetInstance) =>
-      target.target_registry_name === defaultAdversarialTarget.target_registry_name
-      && target.identifier.hash === defaultAdversarialTarget.identifier.hash)) {
+      sameTarget(target, defaultAdversarialTarget))) {
       return defaultAdversarialTarget.target_registry_name
     }
     return ''
@@ -980,7 +958,7 @@ function ScenarioLaunchForm({
             </section>
 
             <section className={styles.section} aria-labelledby="target-section-title">
-              <Text id="target-section-title" as="h2" size={400} weight="semibold">Target</Text>
+              <Text id="target-section-title" as="h2" size={400} weight="semibold">Objective Target</Text>
               <Field hint="The registered target this scenario will run against.">
                 <Select
                   className={styles.control}
@@ -988,7 +966,7 @@ function ScenarioLaunchForm({
                   disabled={submitting}
                   onChange={(_, data) => setTargetName(data.value)}
                   data-testid="scenario-target-select"
-                  aria-label="Target"
+                  aria-label="Objective Target"
                 >
                   <option value="">{targets.length === 0 ? 'No targets configured' : 'Select an objective target'}</option>
                   {targets.map((target) => (
@@ -998,20 +976,6 @@ function ScenarioLaunchForm({
                   ))}
                 </Select>
               </Field>
-              <TargetSelect
-                targets={adversarialTargets}
-                value={adversarialTargetName}
-                onChange={(target: TargetInstance | null) => {
-                  setAdversarialTargetName(target?.target_registry_name ?? '')
-                }}
-                label="Adversarial fallback target"
-                placeholder="Use server default"
-                disabled={submitting}
-              />
-              <Text size={200} className={styles.hint}>
-                Used when a technique has no explicit adversarial target. This choice applies only to this run;
-                explicit benchmark adversarial target lists are unchanged.
-              </Text>
               {targets.length === 0 && (
                 <Button
                   className={styles.touchTarget}
@@ -1105,6 +1069,19 @@ function ScenarioLaunchForm({
                     testIdPrefix="scenario-param"
                   />
                 ))}
+                {scenario.uses_default_adversarial_target && (
+                  <TargetSelect
+                    targets={adversarialTargets}
+                    value={adversarialTargetName}
+                    onChange={(target: TargetInstance | null) => {
+                      setAdversarialTargetName(target?.target_registry_name ?? '')
+                    }}
+                    label="Adversarial Target"
+                    hint="The registered target this scenario uses to generate attacks."
+                    placeholder="Use server default"
+                    disabled={submitting}
+                  />
+                )}
                 <Field
                   label="Dataset override"
                   hint="Comma-separated dataset names. Leave blank to use the scenario's default datasets."
@@ -1279,10 +1256,14 @@ function ScenarioLaunchForm({
                 <DialogContent className={styles.dialogContent}>
                   <dl className={styles.previewList}>
                     <div className={styles.previewGroup}>
-                      <dt>Target</dt>
+                      <dt>Objective Target</dt>
                       <dd>{targetName}</dd>
-                      <dt>Adversarial fallback target</dt>
-                      <dd>{adversarialTargetName || 'Use server default'}</dd>
+                      {scenario.uses_default_adversarial_target && (
+                        <>
+                          <dt>Adversarial Target</dt>
+                          <dd>{adversarialTargetName || 'Use server default'}</dd>
+                        </>
+                      )}
                     </div>
                     <div className={styles.previewGroup}>
                       <dt>Techniques</dt>

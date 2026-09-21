@@ -49,18 +49,18 @@ test.describe("Onboarding tour", () => {
 
     await expect(page).toHaveURL(/\/chat$/);
     await expect(dialog).toContainText(
-      "Select a target from the Chat target dropdown to enable the message composer"
+      "Click Select a target in the chat ribbon to enable the message composer"
     );
     await expect(dialog).toContainText(
-      "choose Configure Target to create one"
+      "open the Target Registry to create one"
     );
     await expect(dialog).toContainText(
       "Saved chats automatically select their original registered target"
     );
     await expect(
-      page.locator('[data-tour="chat-prerequisite"]')
-    ).toHaveAttribute("data-testid", "no-target-banner");
-    await expect(page.locator('[data-tour="converter-toggle"]')).toHaveCount(0);
+      page.locator('[data-tour="chat-prerequisite"]').getByRole("combobox", { name: "Chat target" })
+    ).toBeVisible();
+    await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
 
   test("guides a user with an objective default to the visible converter control", async ({
@@ -96,7 +96,7 @@ test.describe("Onboarding tour", () => {
     await expect(
       page.getByRole("heading", { name: "Target Registry" })
     ).toBeVisible();
-    await page.getByRole("button", { name: "Set default objective target", exact: true }).click();
+    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption("tour-target");
     await page.getByRole("button", { name: "Home", exact: true }).click();
     await expect(page.getByTestId("home-target-active")).toContainText("gpt-4o");
 
@@ -170,8 +170,8 @@ test.describe("Onboarding tour", () => {
 
     await expect(page).toHaveURL(/\/registry\/targets$/);
     await expect(dialog).toBeVisible();
-    await page.getByRole("button", { name: "Set default objective target", exact: true }).click();
-    await expect(page.getByText("Default objective target", { exact: true }).first()).toBeVisible();
+    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption("tour-target");
+    await expect(page.locator("table").getByText("Objective", { exact: true })).toBeVisible();
     await expect(dialog).toContainText("default objective target for new chats and scanner runs");
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();

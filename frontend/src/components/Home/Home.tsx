@@ -40,6 +40,7 @@ const OUTCOME_ICONS: Record<string, React.ReactElement> = {
 interface HomeProps {
   labels: Record<string, string>
   onLabelsChange: (labels: Record<string, string>) => void
+  operatorReadOnly?: boolean
   activeTarget: TargetInstance | null
   onNavigate: (view: ViewName) => void
   onOpenAttack: (attackResultId: string) => void
@@ -102,6 +103,7 @@ function targetDisplayName(target: TargetInstance): string {
 export default function Home({
   labels,
   onLabelsChange,
+  operatorReadOnly,
   activeTarget,
   onNavigate,
   onOpenAttack,
@@ -160,7 +162,7 @@ export default function Home({
                 every attack so you can find them later. Update the placeholders before you run anything real.
               </Text>
               <div className={styles.labelsRow}>
-                <LabelsBar labels={labels} onLabelsChange={onLabelsChange} />
+                <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly} />
               </div>
             </div>
           </section>

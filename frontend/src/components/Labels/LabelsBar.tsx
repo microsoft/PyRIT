@@ -40,6 +40,7 @@ const MAX_LISTED = 200
 interface LabelsBarProps {
   labels: Record<string, string>
   onLabelsChange: (labels: Record<string, string>) => void
+  operatorReadOnly?: boolean
 }
 
 interface OperationPickerProps {
@@ -169,7 +170,7 @@ function OperationPicker({
   )
 }
 
-export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
+export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = false }: LabelsBarProps) {
   const styles = useLabelsBarStyles()
   const [isPopoverOpen, setIsPopoverOpen] = useState(false)
   const [newKey, setNewKey] = useState('')
@@ -270,6 +271,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   }
 
   const handleStartEdit = (key: string) => {
+    if (key === 'operator' && operatorReadOnly) return
     editSession.current += 1
     setEditingLabel(key)
     setEditValue(labels[key])
@@ -486,6 +488,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
 
   const renderLabelBadge = (key: string, value: string, idx: number) => {
     const isDummy = isDummyValue(key, value)
+    const isReadOnly = key === 'operator' && operatorReadOnly
     const isRequired = key === 'operator' || key === 'operation'
     // The popover renders its own editor, so only one is mounted at a time.
     const isEditing = editingLabel === key && !isPopoverOpen
@@ -523,7 +526,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
       >
         <Tooltip
-          content={isDummy ? `Placeholder value — click to change` : `Click to edit`}
+          content={isReadOnly ? 'Derived from your signed-in account' : isDummy ? `Placeholder value — click to change` : `Click to edit`}
           relationship="description"
         >
           <div
@@ -531,8 +534,9 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             onClick={() => handleStartEdit(key)}
             onKeyDown={e => handleStartEditKeyDown(e, key)}
             role="button"
-            tabIndex={0}
-            aria-label={`Edit ${key} label, currently ${value}`}
+            tabIndex={isReadOnly ? -1 : 0}
+            aria-disabled={isReadOnly}
+            aria-label={isReadOnly ? `Signed-in operator: ${value}` : `Edit ${key} label, currently ${value}`}
             data-testid={`label-${key}`}
           >
             <Text size={200} weight="semibold">{key}:</Text>
@@ -558,6 +562,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
       {labelEntries.map(([key, value]) => {
         const isDummy = isDummyValue(key, value)
+        const isReadOnly = key === 'operator' && operatorReadOnly
         const isRequired = key === 'operator' || key === 'operation'
         if (editingLabel === key) {
           return (
@@ -578,8 +583,9 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
               onClick={() => handleStartEdit(key)}
               onKeyDown={e => handleStartEditKeyDown(e, key)}
               role="button"
-              tabIndex={0}
-              aria-label={`Edit ${key} label, currently ${value}`}
+              tabIndex={isReadOnly ? -1 : 0}
+              aria-disabled={isReadOnly}
+              aria-label={isReadOnly ? `Signed-in operator: ${value}` : `Edit ${key} label, currently ${value}`}
               data-testid={`popover-label-${key}`}
             >
               <Text size={200} weight="semibold">{key}:</Text>

@@ -351,7 +351,7 @@ test.describe("operation picker persistence", () => {
     // What is on screen is also what a refresh would restore.
     expect(
       await page.evaluate(() =>
-        window.localStorage.getItem("pyrit.globalLabels"),
+        window.localStorage.getItem("pyrit.userPreferences.v1.local"),
       ),
     ).toContain("op_picked_early");
   });

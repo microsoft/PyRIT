@@ -205,10 +205,8 @@ async function activateTarget(
   await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10_000 });
   const row = page.getByTestId(`target-row-${targetRegistryName}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
-  const setActiveButton = row.getByRole("button", { name: /set default objective target/i });
-  if (await setActiveButton.isVisible()) {
-    await setActiveButton.click();
-  }
+  await page.getByRole("combobox", { name: "Default objective target", exact: true })
+    .selectOption(targetRegistryName);
   await page.getByTitle("Chat").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
 }

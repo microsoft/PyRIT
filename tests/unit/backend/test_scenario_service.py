@@ -21,6 +21,7 @@ from pyrit.backend.routes.scenarios import estimate_scenario_run_size
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_service import (
     ScenarioService,
+    _metadata_to_registered_scenario,
     get_scenario_service,
 )
 from pyrit.models import (
@@ -36,7 +37,12 @@ from pyrit.models.catalog.scenario import RegisteredScenario
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
-from pyrit.scenario.core import DatasetAttackConfiguration, ScenarioTechnique, get_default_adversarial_target
+from pyrit.scenario.core import (
+    DatasetAttackConfiguration,
+    ScenarioTechnique,
+    get_default_adversarial_target,
+    override_default_adversarial_target,
+)
 from unit.mocks import MockPromptTarget
 
 if TYPE_CHECKING:
@@ -102,6 +108,7 @@ def _make_scenario_metadata(
     default_datasets: tuple[str, ...] = ("test_dataset",),
     baseline_policy: str = "enabled",
     include_baseline_by_default: bool = True,
+    uses_default_adversarial_target: bool = False,
 ) -> ScenarioMetadata:
     """Create a ScenarioMetadata instance for testing."""
     return ScenarioMetadata(
@@ -120,7 +127,16 @@ def _make_scenario_metadata(
         default_datasets=default_datasets,
         baseline_policy=baseline_policy,
         include_baseline_by_default=include_baseline_by_default,
+        uses_default_adversarial_target=uses_default_adversarial_target,
     )
+
+
+@pytest.mark.parametrize("uses_default", [False, True])
+def test_catalog_preserves_adversarial_default_usage(uses_default: bool) -> None:
+    """The public catalog exposes usage from real registry metadata."""
+    metadata = _make_scenario_metadata(uses_default_adversarial_target=uses_default)
+    summary = _metadata_to_registered_scenario(metadata=metadata)
+    assert summary.model_dump()["uses_default_adversarial_target"] is uses_default
 
 
 # ============================================================================
@@ -130,6 +146,29 @@ def _make_scenario_metadata(
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAdversarialEstimateScope:
+    async def test_omitted_adversarial_selection_preserves_outer_scope_async(self) -> None:
+        outer = MockPromptTarget()
+        registry = MagicMock(spec=ScenarioRegistry)
+        registry.get_registered_class_metadata.return_value = _make_scenario_metadata()
+
+        async def estimate_async(**kwargs: object) -> ScenarioRunSizeEstimate:
+            assert get_default_adversarial_target() is outer
+            await asyncio.sleep(0)
+            assert get_default_adversarial_target() is outer
+            return ScenarioRunSizeEstimate(estimated_attack_count=0)
+
+        registry.create_and_estimate_async = AsyncMock(side_effect=estimate_async)
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            override_default_adversarial_target(outer),
+        ):
+            result = await ScenarioService().estimate_scenario_run_size_async(
+                scenario_name="test.scenario",
+                request=ScenarioRunSizeEstimateRequest(),
+            )
+            assert result.estimated_attack_count == 0
+            assert get_default_adversarial_target() is outer
+
     async def test_concurrent_estimates_scope_introspection_and_preserve_default_cache_async(self) -> None:
         first, second, fallback = (MockPromptTarget() for _ in range(3))
         targets = {"first": first, "second": second, "adversarial_chat": fallback}

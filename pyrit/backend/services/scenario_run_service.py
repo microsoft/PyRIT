@@ -444,11 +444,7 @@ class ScenarioRunService:
         adversarial_target = self._configuration_resolver.resolve_adversarial_target(
             target_name=request.adversarial_target_name
         )
-        with (
-            override_default_adversarial_target(adversarial_target)
-            if adversarial_target is not None
-            else contextlib.nullcontext()
-        ):
+        with override_default_adversarial_target(adversarial_target):
             init_kwargs = self._configuration_resolver.resolve_configuration(
                 scenario_name=request.scenario_name,
                 scenario_class=scenario_class,
@@ -1081,11 +1077,7 @@ class ScenarioRunService:
         handoff_ready = True
 
         try:
-            with (
-                override_default_adversarial_target(active.adversarial_target)
-                if active.adversarial_target is not None
-                else contextlib.nullcontext()
-            ):
+            with override_default_adversarial_target(active.adversarial_target):
                 await active.scenario.run_async()
 
         except asyncio.CancelledError:

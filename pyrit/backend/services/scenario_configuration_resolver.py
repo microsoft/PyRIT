@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyrit.registry import ConverterRegistry, ScenarioRegistry, TargetRegistry
-from pyrit.scenario.core import override_default_adversarial_target
+from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
@@ -35,8 +35,8 @@ class ScenarioConfigurationResolver:
         if target_name is None:
             return None
         target = cls.resolve_target(target_name=target_name)
-        with override_default_adversarial_target(target):
-            return target
+        validate_default_adversarial_target(target)
+        return target
 
     @staticmethod
     def resolve_scenario_class(*, scenario_name: str) -> type[Scenario]:

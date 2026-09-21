@@ -50,8 +50,8 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
       content: hasActiveTarget
         ? 'With a chat target selected, Chat shows the message composer. Use this Toggle converter panel button to transform text ' +
           'before sending, such as Base64 encoding or translation.'
-        : 'Select a target from the Chat target dropdown to enable the message composer. If no targets are registered, ' +
-          'choose Configure Target to create one. Saved chats automatically select their original registered target.',
+        : 'Click Select a target in the chat ribbon to enable the message composer. If no targets are registered, ' +
+          'open the Target Registry to create one. Saved chats automatically select their original registered target.',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'chat',

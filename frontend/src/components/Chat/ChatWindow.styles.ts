@@ -88,14 +88,6 @@ export const useChatWindowStyles = makeStyles({
     fontStyle: 'italic',
     flexShrink: 0,
   },
-  targetSelection: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignItems: 'end',
-    gap: tokens.spacingHorizontalM,
-    padding: tokens.spacingVerticalM,
-    flexShrink: 0,
-  },
   ribbonActions: {
     display: 'flex',
     alignItems: 'center',

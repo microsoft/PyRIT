@@ -12,22 +12,24 @@ interface TargetSelectProps {
   value: string
   onChange: (target: TargetInstance | null) => void
   label: string
+  hint?: string
   placeholder?: string
   disabled?: boolean
 }
 
-/** A controlled registry selector; clearing never changes saved defaults. */
+/** A controlled registry selector; the caller owns selection and persistence. */
 export default function TargetSelect({
   targets,
   value,
   onChange,
   label,
+  hint,
   placeholder = 'Select a target',
   disabled = false,
 }: TargetSelectProps) {
   const styles = useTargetSelectStyles()
   return (
-    <Field label={label}>
+    <Field label={label} hint={hint}>
       <Select
         className={styles.select}
         value={value}

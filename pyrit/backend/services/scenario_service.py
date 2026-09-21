@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
-from contextlib import nullcontext
 from functools import lru_cache
 from time import monotonic
 
@@ -68,6 +67,7 @@ def _metadata_to_registered_scenario(
         supported_parameters=list(metadata.supported_parameters),
         baseline_policy=metadata.baseline_policy,
         include_baseline_by_default=metadata.include_baseline_by_default,
+        uses_default_adversarial_target=metadata.uses_default_adversarial_target,
         default_run_size=estimate,
     )
 
@@ -299,9 +299,7 @@ class ScenarioService:
         resolver = ScenarioConfigurationResolver()
         objective_target = resolver.resolve_target(target_name=request.target_name) if request.target_name else None
         adversarial_target = resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
-        with (
-            override_default_adversarial_target(adversarial_target) if adversarial_target is not None else nullcontext()
-        ):
+        with override_default_adversarial_target(adversarial_target):
             estimate_kwargs = resolver.resolve_configuration(
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,

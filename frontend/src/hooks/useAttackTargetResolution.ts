@@ -25,7 +25,7 @@ interface UseAttackTargetResolutionOptions {
   attackId: string | null
   attackLoadSequence: number
   attackTarget: TargetInfo | null
-  attackTargetSource: 'persisted' | 'active-selection'
+  attackTargetSource: 'persisted' | 'created'
   createdTarget?: TargetInstance | null
 }
 
@@ -77,7 +77,7 @@ export function useAttackTargetResolution({
 
   useEffect(() => {
     if (!attackId || !hasCompleteIdentifier(attackTarget)) return
-    if (attackTargetSource === 'active-selection') return
+    if (attackTargetSource === 'created') return
 
     let cancelled = false
     const resolveTarget = async (): Promise<void> => {
@@ -110,7 +110,7 @@ export function useAttackTargetResolution({
   const getResolutionStatus = (): AttackTargetResolutionStatus => {
     if (!attackId) return 'idle'
     if (!hasCompleteIdentifier(attackTarget)) return 'legacy'
-    if (attackTargetSource === 'active-selection') {
+    if (attackTargetSource === 'created') {
       return createdTarget && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
         ? 'resolved' : 'unavailable'
     }
@@ -122,7 +122,7 @@ export function useAttackTargetResolution({
   }
   const resolutionStatus = getResolutionStatus()
   const activeTarget = resolutionStatus === 'resolved'
-    ? (attackTargetSource === 'active-selection' ? createdTarget : registryResolution.target) ?? null
+    ? (attackTargetSource === 'created' ? createdTarget : registryResolution.target) ?? null
     : null
 
   const retryResolution = useCallback((): void => {

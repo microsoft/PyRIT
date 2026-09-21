@@ -3,7 +3,8 @@ import { Routes, Route, Navigate, useNavigate, useLocation, useParams, useSearch
 import { useMsal } from '@azure/msal-react'
 import { Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
 import { Joyride } from 'react-joyride'
-import { useTheme } from './hooks/useTheme'
+import { ThemeProvider, useTheme } from './hooks/useTheme'
+import { UserPreferencesProvider, useUserPreferences } from './hooks/useUserPreferences'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
@@ -29,7 +30,6 @@ import { useTargetPreferences } from './hooks/useTargetPreferences'
 import { useTargetRegistry } from './hooks/useTargetRegistry'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
-import { readStoredGlobalLabels, persistGlobalLabels } from './components/Labels/labelStorage'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
 import {
   scenarioHistoryFiltersFromSearchParams,
@@ -37,8 +37,10 @@ import {
 } from './components/History/scenarioHistoryFilters'
 import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
-import type { AttackOutcome, AttackSummary, BackendScore, TargetInfo, TargetInstance, TargetPreferences } from './types'
+import type { AttackOutcome, AttackSummary, BackendScore, TargetInfo, TargetInstance, TargetPreferences, TargetReference, UserPreferences } from './types'
 import {
+  resolveTargetReference,
+  targetReference,
   targetEndpoint,
   targetIdentifierHash,
   targetModelName,
@@ -116,7 +118,7 @@ type AttackLoadStatus = 'loading' | 'success' | 'not-found' | 'error'
 interface LoadedAttack {
   id: string
   loadSequence: number
-  targetSource: 'persisted' | 'active-selection'
+  targetSource: 'persisted' | 'created'
   mainConversationId: string | null
   labels: Record<string, string> | null
   operator: string | null
@@ -153,23 +155,20 @@ function ConnectionBannerContainer() {
   return <ConnectionBanner status={status} />
 }
 
-function AppContent({ accountKey }: { accountKey: string | null }) {
-  const { instance } = useMsal()
+function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const navigate = useNavigate()
   const location = useLocation()
   const registry = useTargetRegistry()
-  const targetDefaults = useTargetPreferences(accountKey, registry.targets)
+  const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
+  const targetDefaults = useTargetPreferences(registry.targets)
   const [draftSelection, setDraftSelection] = useState<{
     pageKey: string
-    target: TargetInstance | null
+    target: TargetReference | null
   } | null>(null)
   const selectedDraftTarget = draftSelection?.pageKey === location.key
-    ? draftSelection.target : targetDefaults.objectiveTarget
+    ? draftSelection.target : targetDefaults.preferences.objective
   const draftTarget = !registry.loading && !registry.error && selectedDraftTarget
-    ? registry.targets.find((target: TargetInstance) => (
-        target.target_registry_name === selectedDraftTarget.target_registry_name
-        && target.identifier.hash === selectedDraftTarget.identifier.hash
-      )) ?? null : null
+    ? resolveTargetReference(selectedDraftTarget, registry.targets) : null
   const setDefaultTarget = (role: keyof TargetPreferences, target: TargetInstance | null): void => {
     if (target) registry.rememberTarget(target)
     targetDefaults.setDefault(role, target)
@@ -200,27 +199,28 @@ function AppContent({ accountKey }: { accountKey: string | null }) {
     }
   }, [])
 
-  // Read once, before the effect below can overwrite what the user picked.
-  const [storedLabels] = useState(readStoredGlobalLabels)
-  const [globalLabels, setGlobalLabels] = useState<Record<string, string>>(
-    () => ({ ...DEFAULT_GLOBAL_LABELS, ...storedLabels }),
+  const [defaultLabels, setDefaultLabels] = useState<Record<string, string>>(DEFAULT_GLOBAL_LABELS)
+  const globalLabels: Record<string, string> = Object.fromEntries(
+    Object.entries({
+      ...defaultLabels,
+      ...preferences.labels,
+      ...(operatorAlias ? { operator: operatorAlias } : {}),
+    }).filter((entry): entry is [string, string] => entry[1] !== null),
   )
 
-  // What the app would show if the user had never touched anything: the
-  // built-in placeholders, then whatever the backend hands out. Only labels
-  // that differ from this are the user's own, and only those are worth
-  // keeping — otherwise a value that merely came from the config gets stored
-  // as a choice and outranks that same config from then on.
-  const unchosenLabels = useRef<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
-
   const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
-    setGlobalLabels(labels)
-    persistGlobalLabels(
-      Object.fromEntries(
-        Object.entries(labels).filter(([key, value]) => value !== unchosenLabels.current[key]),
+    updatePreferences((current: UserPreferences) => ({
+      ...current,
+      labels: Object.fromEntries(
+        Object.keys({ ...current.labels, ...defaultLabels, ...labels })
+          .filter((key: string) => !(operatorAlias && key === 'operator') && (
+            labels[key] !== defaultLabels[key]
+            || (current.labels[key] === null && !(key in labels))
+          ))
+          .map((key: string) => [key, labels[key] ?? null]),
       ),
-    )
-  }, [])
+    }))
+  }, [defaultLabels, operatorAlias, updatePreferences])
 
   // History filters live in the URL query string so they are shareable and
   // survive refresh. The breadcrumb ref remembers the last /history query so
@@ -274,17 +274,15 @@ function AppContent({ accountKey }: { accountKey: string | null }) {
   // The attack whose deep-linked conversation id we have already validated.
   const validatedConversationForAttack = useRef<string | null>(null)
 
-  // Fetch default labels from backend, then override operator with active account if available
+  // User choices remain separate, so a late response cannot replace an edit.
   useEffect(() => {
     let ignore = false
 
     async function initLabels() {
-      let defaultLabels: Record<string, string> = {}
       try {
         const data = await versionApi.getVersion()
-        if (data.default_labels && Object.keys(data.default_labels).length > 0) {
-          defaultLabels = data.default_labels
-        }
+        if (ignore) return
+        setDefaultLabels({ ...DEFAULT_GLOBAL_LABELS, ...data.default_labels })
         if (data.display || data.version) {
           if (!ignore) setAppVersion(data.display ?? data.version ?? '')
         }
@@ -292,40 +290,11 @@ function AppContent({ accountKey }: { accountKey: string | null }) {
         /* version fetch handled elsewhere */
       }
 
-      if (ignore) return
-
-      const account = instance.getActiveAccount?.()
-      const alias = account?.username ? account.username.split('@')[0].toLowerCase() : null
-
-      unchosenLabels.current = {
-        ...DEFAULT_GLOBAL_LABELS,
-        ...defaultLabels,
-        ...(alias ? { operator: alias } : {}),
-      }
-
-      setGlobalLabels(prev => {
-        const next = { ...prev }
-        for (const [key, value] of Object.entries(defaultLabels)) {
-          // These defaults only fill in what you have not chosen. `prev`
-          // already carries what was stored and anything picked while this
-          // request was in flight, so neither gets overwritten by a late
-          // response.
-          const untouched = prev[key] === DEFAULT_GLOBAL_LABELS[key]
-          if (!(key in storedLabels) && untouched) {
-            next[key] = value
-          }
-        }
-        // The signed-in account still decides who the operator is.
-        if (alias) {
-          next.operator = alias
-        }
-        return next
-      })
     }
 
     initLabels()
     return () => { ignore = true }
-  }, [instance, storedLabels])
+  }, [])
 
   // Hydrate loadedAttack from the routed attack id. Depends on routeAttackId
   // ONLY, so switching conversations within an attack never refetches.
@@ -491,7 +460,7 @@ function AppContent({ accountKey }: { accountKey: string | null }) {
     setLoadedAttack({
       id: arId,
       loadSequence,
-      targetSource: 'active-selection',
+      targetSource: 'created',
       mainConversationId: convId,
       // New attack uses the current user's labels, so it is never operator-locked.
       labels: null,
@@ -567,7 +536,9 @@ function AppContent({ accountKey }: { accountKey: string | null }) {
       targetsLoading={registry.loading}
       targetsError={registry.error}
       onRefreshTargets={registry.refresh}
-      onSelectTarget={(target: TargetInstance | null) => setDraftSelection({ pageKey: location.key, target })}
+      onSelectTarget={(target: TargetInstance | null) => setDraftSelection({
+        pageKey: location.key, target: target ? targetReference(target) : null,
+      })}
       defaultBranchTarget={targetDefaults.objectiveTarget}
       attackResultId={readyAttack ? readyAttack.id : null}
       conversationId={readyAttack ? readyAttack.mainConversationId : null}
@@ -579,6 +550,7 @@ function AppContent({ accountKey }: { accountKey: string | null }) {
       onAttackChange={handleAttackChange}
       labels={globalLabels}
       onLabelsChange={handleGlobalLabelsChange}
+      operatorReadOnly={Boolean(operatorAlias)}
       onNavigate={handleNavigate}
       attackOperator={readyAttack ? readyAttack.operator : null}
       attackTarget={readyAttack ? readyAttack.target : null}
@@ -617,9 +589,9 @@ function AppContent({ accountKey }: { accountKey: string | null }) {
             canManageConfiguration={canManageConfiguration}
             onStartTour={startTour}
           >
-            {targetDefaults.error && (
+            {preferenceError && (
               <MessageBar intent="warning">
-                <MessageBarBody>{targetDefaults.error}</MessageBarBody>
+                <MessageBarBody>{preferenceError}</MessageBarBody>
               </MessageBar>
             )}
             {!registry.loading && !registry.error && (
@@ -645,6 +617,7 @@ function AppContent({ accountKey }: { accountKey: string | null }) {
                   <Home
                     labels={globalLabels}
                     onLabelsChange={handleGlobalLabelsChange}
+                    operatorReadOnly={Boolean(operatorAlias)}
                     activeTarget={targetDefaults.objectiveTarget}
                     onNavigate={handleNavigate}
                     onOpenAttack={handleOpenAttack}
@@ -691,6 +664,7 @@ function AppContent({ accountKey }: { accountKey: string | null }) {
                       </MessageBarBody>
                     </MessageBar>
                   ) : <ScenarioDetail
+                    targets={registry.targets}
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
                     defaultAdversarialTarget={targetDefaults.adversarialTarget}
                     labels={globalLabels}
@@ -760,7 +734,14 @@ function App() {
   const accountKey = account?.homeAccountId
     ? `${account.tenantId}:${account.homeAccountId}`
     : authConfig.clientId ? null : 'local'
-  return <AppContent key={accountKey ?? 'account-loading'} accountKey={accountKey} />
+  const operatorAlias = account?.username ? account.username.split('@')[0].toLowerCase() : null
+  return (
+    <UserPreferencesProvider key={accountKey ?? 'account-loading'} accountKey={accountKey}>
+      <ThemeProvider>
+        <AppContent operatorAlias={operatorAlias} />
+      </ThemeProvider>
+    </UserPreferencesProvider>
+  )
 }
 
 export default App

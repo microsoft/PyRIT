@@ -51,11 +51,45 @@ and workspace background:
 | Blueprint | Deep blue with a subtle technical drawing grid |
 | Night Sky | Indigo with sparse stars and constellation lines |
 
-Theme choices are saved in your browser and do not change your conversations
+Theme choices are saved for your account in this browser and do not change your conversations
 or configuration. System follows your operating system's light/dark setting;
 the named presets keep their own palettes. High-contrast mode takes precedence
 and hides decorative backgrounds, restoring your chosen preset when it ends.
 Select System, Light, or Dark to return to an undecorated workspace.
+
+### User Preferences
+
+CoPyRIT stores these six preferences in one account-scoped browser record:
+
+| Preference | Use |
+| --- | --- |
+| Default objective target | Initial target for new chats and scanner runs |
+| Default adversarial target | Shared adversarial target for supported scanner scenarios |
+| Operation name (`operation`) | Label for new attacks and scanner runs |
+| Custom run labels | Additional labels for new attacks and scanner runs |
+| Theme | System, Light, Dark, or a named preset |
+| Chat display mode | Raw text or rendered Markdown |
+
+The GUI uses `operation` and `operator` as its label names, not `op_name` and `username`.
+For signed-in users, `operator` is the lowercase username before `@`. It is derived
+from the account, cannot be edited, and is not saved as a user preference. With
+authentication disabled, the local profile can save an operator label.
+
+All six preferences use `pyrit.userPreferences.v1.<tenant>:<homeAccountId>` in
+browser local storage. Authentication-disabled use has a separate `local` profile.
+These settings do not follow you to another browser or device. Changes to labels
+apply to future runs, not stored attacks. Backend label defaults still apply when
+there is no user override. Removing a custom default label is also saved.
+
+Old account-specific target defaults are imported for the same account. Old
+browser-wide labels, theme, and chat display settings are imported only into the
+local profile because their account owner is unknown. The next preference change
+saves the imported values in the new record. Old keys are not deleted.
+
+If saved data cannot be read, CoPyRIT shows a warning and uses defaults. If a save
+fails, changes remain available in the current session and a warning states that
+they could not be saved. History filters remain in the URL; they are not user
+preferences. Authentication cache data remains under MSAL control.
 
 ### Chat View
 
@@ -65,7 +99,7 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 #### Sending Messages
 
-For a new chat, select a target from the **Chat target** dropdown. Your default objective target is preselected if it is available. You can select another target for this chat without changing the default.
+For a new chat, your default objective target is preselected if it is available. Click the target badge at the left of the ribbon to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target; their badge does not change the target.
 
 Type a message and press Enter (or click Send) to send it to the chat target. The response appears below. Shift+Enter inserts a newline without sending.
 
@@ -129,9 +163,9 @@ Clicking the `operation` label opens a picker listing the operations already rec
 
 CoPyRIT enforces several safety guards:
 
-- **No target selected:** Select a registered target from the new-chat dropdown. If the registry is empty, add a target first.
+- **No target selected:** The composer is disabled without a warning banner. Click **Select a target** in the chat ribbon. If the registry is empty, add a target first.
 - **Single-turn targets:** Some targets (e.g., image generators) don't track conversation history. CoPyRIT shows a warning indicator and blocks additional messages after the first turn, offering a "New Conversation" button instead.
-- **Operator locking:** If you open a historical attack created by a different operator, the conversation is read-only. You can use "Continue with your target" to branch into a new attack with your own target.
+- **Operator locking:** If you open a historical attack created by a different operator, the conversation is read-only. "Continue with your target" opens the same destination-target picker as "Branch into new attack", then copies the conversation into a new attack with your labels.
 - **Target identity:** A saved chat uses its original target, not your default. Sending is blocked while that target is being resolved, or if it is missing, changed, or ambiguous. Retry after restoring the target, or branch into a new attack and select a destination target.
 
 Human score changes do not require a registered objective target. The original operator can update or remove a human score even when the target is unavailable. The existing operator lock still applies.
@@ -187,16 +221,18 @@ The Configuration view manages the targets available for attacks.
 
 #### Target Table
 
-Lists all registered targets with their type, endpoint, and model name. Set or clear two independent defaults:
+Lists all registered targets with their type, endpoint, and model name. Two dropdowns above **Filter by type** select your defaults. Each option shows the registry name and model, when available:
 
 - **Default objective target:** Preselected for new chats and scanner runs.
-- **Default adversarial target:** Preselected as the adversarial fallback for scanner runs. The target must support multi-turn conversations.
+- **Default adversarial target:** Preselected for scanner runs that use the shared adversarial target. The target must support multi-turn conversations. Without a saved selection, the GUI preselects the registered `adversarial_chat` target, which the target initializer configures from `ADVERSARIAL_CHAT_*` environment variables. A saved user selection takes priority.
+
+The objective dropdown appears first, followed by the adversarial dropdown. Select **Not set** to clear the objective default. Select **Use server default** to remove a saved adversarial selection and return to the environment default. Small **Objective** and **Adversarial** badges identify the selected rows; the table has no separate defaults column. Filtering the table does not filter the default dropdowns or change your selections.
 
 Defaults are saved in this browser, separately for each signed-in account. They do not follow you to another browser or device. When authentication is disabled, the browser uses a separate local profile. Only target names and identity hashes are stored, not credentials or complete target configurations.
 
 A missing or changed default is shown as unavailable. Select a new default or clear it; CoPyRIT does not silently substitute a different target. If browser storage is unavailable, a warning states that the choice applies only in the current session.
 
-Scanner forms let you override either selection for one run. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique, including benchmark target lists, still take priority. Scorer targets are unchanged.
+Scanner forms let you override either selection for one run. **Objective Target** is the target the scenario runs against. **Adversarial Target**, under **Parameters** above **Dataset override**, is the target used to generate attacks. The adversarial selector appears only for scenarios whose available techniques use the shared default; scenarios with no such use, including the explicit-target adversarial benchmark, do not show it or send an override. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique still take priority. Scorer targets are unchanged.
 
 #### Core Adversarial Default Override
 
@@ -212,7 +248,7 @@ with override_default_adversarial_target(target):
 
 The override changes `get_default_adversarial_target()` for the current execution scope. Apply it before constructing a scenario because some scenarios resolve the target in their constructor. It does not change already-built scenarios.
 
-Resolution order is: explicit scenario/technique target, scoped override, registered `adversarial_chat`, then the existing OpenAI fallback. Nested scopes restore the previous choice when they exit. The override does not modify the shared registry or scorer defaults.
+Resolution order is: explicit scenario/technique target, scoped override, registered `adversarial_chat`, then the existing OpenAI fallback. Nested scopes restore the previous choice when they exit. Passing `None` leaves the current scope unchanged. The override does not modify the shared registry or scorer defaults.
 
 REST run and request-specific estimate payloads accept an optional `adversarial_target_name`. The backend resolves the registered target and applies the same core override during preparation and execution. Omitting the field preserves server behavior.
 

@@ -376,8 +376,8 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 
 async function startChatWithMessages(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Registry", exact: true }).click();
-  await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
-  await page.getByRole("button", { name: "Set default objective target" }).first().click();
+  await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
+  await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   await page.getByTestId("chat-input").fill(
     "Assess this deterministic mobile prompt"
@@ -401,8 +401,8 @@ test.describe("Mobile touch targets", () => {
     await page.setViewportSize({ width: 320, height: 568 });
     await page.goto("/");
     await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
-    await page.getByRole("button", { name: "Set default objective target" }).first().click();
+    await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
+    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
     await page.getByRole("button", { name: "Chat", exact: true }).click();
 
     await page.getByRole("button", { name: "Add objective" }).click();
@@ -446,7 +446,7 @@ test.describe("Mobile touch targets", () => {
     await page
       .getByRole("button", { name: "Registry", exact: true })
       .click();
-    await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
+    await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
 
     await expectMinimumTouchTarget(
       page.getByRole("button", { name: "Refresh", exact: true })
@@ -455,12 +455,12 @@ test.describe("Mobile touch targets", () => {
       page.getByRole("button", { name: "New Target", exact: true })
     );
     await expectMinimumTouchTargets(
-      page.getByRole("button", { name: "Set default objective target" })
+      page.getByRole("region", { name: "Target defaults" }).getByRole("combobox")
     );
     await expectMinimumTouchTarget(
       page.getByRole("button", { name: "Expand inner targets" })
     );
-    await expectMinimumTouchTarget(page.locator("select"));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
     await expectNoDocumentOverflow(page);
 
     await page.goto("/history");
@@ -521,8 +521,8 @@ test.describe("Mobile touch targets", () => {
     ).toBeVisible();
 
     await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
-    await page.getByRole("button", { name: "Set default objective target" }).first().click();
+    await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
+    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
     await page.goBack();
     await expect(
       page.getByTestId("toggle-objective-header-btn")
@@ -711,13 +711,16 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
   await page
     .getByRole("button", { name: "Registry", exact: true })
     .click();
-  await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
+  await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
   await expectCompactDesktopTarget(
     page.getByRole("button", { name: "Refresh", exact: true })
   );
-  await expectCompactDesktopTarget(page.locator("select"));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
   await expectCompactDesktopTarget(
-    page.getByRole("button", { name: "Set default objective target" }).first()
+    page.getByRole("combobox", { name: "Default objective target", exact: true })
+  );
+  await expectCompactDesktopTarget(
+    page.getByRole("combobox", { name: "Default adversarial target", exact: true })
   );
   await expectCompactDesktopTarget(
     page.getByRole("button", { name: "Expand inner targets" })
