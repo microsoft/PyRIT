@@ -572,12 +572,10 @@ describe("App", () => {
   it("redirects legacy /targets to the target registry without adding a history entry", async () => {
     const user = userEvent.setup();
     render(
-      <ThemeProvider>
-        <MemoryRouter initialEntries={["/chat", "/targets"]}>
-          <App />
-          <RouterProbe />
-        </MemoryRouter>
-      </ThemeProvider>
+      <MemoryRouter initialEntries={["/chat", "/targets"]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
     );
 
     expect(await screen.findByTestId("target-config")).toBeInTheDocument();
