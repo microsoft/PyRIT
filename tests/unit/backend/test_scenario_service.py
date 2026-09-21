@@ -1076,7 +1076,7 @@ class TestScenarioServiceListScenarios:
             assert len(result.items) == 3
             assert result.pagination.has_more is True
             assert result.pagination.next_cursor == "test.scenario_2"
-            assert sorted(call.args[0] for call in service._registry.create_instance.call_args_list) == [
+            assert [item.scenario_name for item in result.items] == [
                 "test.scenario_0",
                 "test.scenario_1",
                 "test.scenario_2",
