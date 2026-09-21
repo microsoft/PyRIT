@@ -41,6 +41,7 @@ from pyrit.backend.routes import (
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
+from pyrit.backend.services.scenario_run_service import get_scenario_run_service
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.registry import InitializerRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
@@ -106,6 +107,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if config.allow_custom_initializers:
         logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
 
+    scenario_run_service = get_scenario_run_service()
+    await scenario_run_service.reconcile_interrupted_runs_async()
+
     # Mount the bundled frontend (or print a dev/missing-frontend notice).
     # Done here rather than at module load so test imports of `pyrit.backend.main`
     # don't emit noise and don't perform filesystem side effects.
@@ -116,9 +120,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         yield
     finally:
         try:
-            await converter_service.close_async()
+            await scenario_run_service.shutdown_async()
         finally:
-            get_converter_service.cache_clear()
+            try:
+                await converter_service.close_async()
+            finally:
+                get_converter_service.cache_clear()
 
 
 app = FastAPI(

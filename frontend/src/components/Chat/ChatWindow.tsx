@@ -30,7 +30,16 @@ import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
 import ObjectiveHeader from './ObjectiveHeader'
 import type { PieceConversion } from './converterTypes'
-import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
+import { useChatConverters } from '@/hooks/useChatConverters'
+import {
+  basenameFromValue,
+  buildMediaUrl,
+  buildRequestConverterConfigurations,
+  buildDraftPieceIds,
+  dataTypeToAttachmentKind,
+  isPathDataType,
+  withDraftIdentity,
+} from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi, scoresApi } from '../../services/api'
@@ -280,9 +289,9 @@ export default function ChatWindow({
   const [globalMarkdown, setGlobalMarkdown] = useState(() => readStoredMarkdownPreference())
   const [chatInputText, setChatInputText] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
-  const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
-  const [attachmentData, setAttachmentData] = useState<Record<string, string>>({})
-  const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
+  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([])
+  const converters = useChatConverters(chatInputText, draftAttachments)
+  const { applied: activePieceConversions, restore: restoreConversions } = converters
   const [recoverableSends, setRecoverableSends] = useState<Record<string, RecoverableSendDraft>>({})
   const [isRecoveringProcessingError, setIsRecoveringProcessingError] = useState(false)
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
@@ -331,40 +340,9 @@ export default function ChatWindow({
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [])
 
-  const handleAttachmentsChange = useCallback((types: string[], data: Record<string, string>) => {
-    setAttachmentTypes(types)
-    setAttachmentData(data)
-  }, [])
-
-  // Auto-prune stale conversions whose original input no longer matches.
-  // For text: the typed text differs from the captured originalValue.
-  // For media: the uploaded base64 changed (or was removed).
-  // Deriving this rather than syncing via an effect avoids triggering
-  // react-hooks/set-state-in-effect and is the pattern recommended by React
-  // (see frontend-style-guide → "Prefer Derived Values Over Effects").
-  const activePieceConversions = useMemo(() => {
-    const entries = Object.entries(pieceConversions)
-    if (entries.length === 0) return pieceConversions
-    const next: Record<string, PieceConversion> = {}
-    let hasStale = false
-    for (const [key, conv] of entries) {
-      const stillValid = key === 'text'
-        ? conv.originalValue === chatInputText
-        : attachmentData[key] === conv.originalValue
-      if (stillValid) {
-        next[key] = conv
-      } else {
-        hasStale = true
-      }
-    }
-    return hasStale ? next : pieceConversions
-  }, [pieceConversions, chatInputText, attachmentData])
   const conversionRevisionKey = useMemo(
-    () => JSON.stringify(
-      Object.entries(activePieceConversions)
-        .sort(([left], [right]) => left.localeCompare(right)),
-    ),
-    [activePieceConversions],
+    () => JSON.stringify({ applied: activePieceConversions, pipelines: converters.pipelines }),
+    [activePieceConversions, converters.pipelines],
   )
 
   // Auto-open conversation sidebar when loading a historical attack with multiple
@@ -643,18 +621,13 @@ export default function ChatWindow({
       const pieces = await buildMessagePieces(originalValue, attachments)
 
       // Send converter selections to the backend and let it apply conversions per piece.
-      // Avoid setting converted_value client-side because one preview value does not
+      // Avoid setting converted_value client-side because one converted value does not
       // necessarily correspond to every piece of the same data type, and any locally
-      // preconverted piece may cause the backend to skip converter_ids entirely.
-      const allConverterIds: string[] = []
-      for (const [pieceType, conv] of Object.entries(conversions)) {
-        const dataType = PIECE_TYPE_TO_DATA_TYPE[pieceType]
-        if (!dataType) continue
-        const hasMatchingPiece = pieces.some(piece => piece.data_type === dataType)
-        if (hasMatchingPiece) {
-          allConverterIds.push(conv.converterInstanceId)
-        }
-      }
+      // preconverted piece may cause the backend to skip the configuration entirely.
+      const requestConverterConfigurations = buildRequestConverterConfigurations(
+        buildDraftPieceIds(originalValue, attachments),
+        conversions,
+      )
 
       // Create attack lazily on first message
       let currentAttackResultId = attackResultId
@@ -701,7 +674,6 @@ export default function ChatWindow({
       const effectiveConvId = currentActiveConversationId ?? currentConversationId
 
       // Send message to target
-      const converterIds = allConverterIds.length > 0 ? allConverterIds : undefined
       if (!currentAttackResultId || !effectiveConvId) {
         throw new Error('Message send is missing an attack or conversation ID.')
       }
@@ -711,7 +683,9 @@ export default function ChatWindow({
         send: true,
         target_registry_name: activeTarget.target_registry_name,
         target_conversation_id: effectiveConvId,
-        converter_ids: converterIds,
+        request_converter_configurations: requestConverterConfigurations.length > 0
+          ? requestConverterConfigurations
+          : undefined,
       }
       const response = await attacksApi.addMessage(currentAttackResultId, addMessageRequest)
       onAttackChange?.(response.attack)
@@ -875,24 +849,16 @@ export default function ChatWindow({
 
   const restoreRecoverableDraft = useCallback((): void => {
     if (!recoverableSend) { return }
-    const restoredMediaInputs: Record<string, string> = {}
-    for (const [pieceType, conversion] of Object.entries(recoverableSend.conversions)) {
-      if (pieceType !== 'text') {
-        restoredMediaInputs[pieceType] = conversion.originalValue
-      }
-    }
-    // Keep preserved converters valid while the restored Files are read asynchronously.
-    handleAttachmentsChange(
-      [...new Set(recoverableSend.attachments.map((attachment: MessageAttachment) => attachment.type))],
-      restoredMediaInputs,
-    )
-    setPieceConversions(recoverableSend.conversions)
+    const attachments = recoverableSend.attachments.map(withDraftIdentity)
+    setChatInputText(recoverableSend.originalValue)
+    setDraftAttachments(attachments)
+    restoreConversions(recoverableSend.originalValue, attachments, recoverableSend.conversions)
     inputBoxRef.current?.restoreDraft(
       recoverableSend.originalValue,
-      recoverableSend.attachments,
+      attachments,
     )
     inputBoxRef.current?.focus()
-  }, [handleAttachmentsChange, recoverableSend])
+  }, [restoreConversions, recoverableSend])
 
   const handleRecoverProcessingError = useCallback(async (): Promise<void> => {
     if (
@@ -1219,12 +1185,7 @@ export default function ChatWindow({
       {isConverterPanelOpen && (
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
-          previewText={chatInputText}
-          attachmentData={attachmentData}
-          activeInputTypes={chatInputText.trim() ? ['text', ...attachmentTypes] : attachmentTypes}
-          onUseConvertedValue={(conversion) => {
-            setPieceConversions((prev) => ({ ...prev, [conversion.pieceType]: conversion }))
-          }}
+          controller={converters}
         />
       )}
       <div className={styles.chatArea} data-testid="chat-area">
@@ -1409,22 +1370,16 @@ export default function ChatWindow({
           onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           noTargetSelected={!activeTarget}
-          onConfigureTarget={() => onNavigate?.('targets')}
+          onConfigureTarget={() => onNavigate?.('registry')}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}
-          onAttachmentsChange={handleAttachmentsChange}
+          onAttachmentsChange={setDraftAttachments}
           convertedValue={activePieceConversions['text']?.convertedDataType === 'text' ? (activePieceConversions['text']?.convertedValue ?? null) : null}
           originalValue={activePieceConversions['text']?.originalValue ?? null}
-          onClearConversion={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
-          onClearAllConversions={() => setPieceConversions((current) => (
-            current === pieceConversions ? {} : current
-          ))}
-          onConvertedValueChange={(val) => setPieceConversions((prev) => {
-            const existing = prev['text']
-            if (!existing) return prev
-            return { ...prev, text: { ...existing, convertedValue: val } }
-          })}
+          onClearConversion={() => converters.clear('text')}
+          onClearAllConversions={converters.clearAll}
+          onConvertedValueChange={(val: string) => converters.editConvertedValue('text', val)}
           convertedFileChip={(() => {
             const tc = activePieceConversions['text']
             if (!tc || tc.convertedDataType === 'text') return null
@@ -1435,16 +1390,12 @@ export default function ChatWindow({
               iconKind: dataTypeToAttachmentKind(tc.convertedDataType),
             }
           })()}
-          onClearConvertedFileChip={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
+          onClearConvertedFileChip={() => converters.clear('text')}
           converterOutputDataTypes={Object.values(activePieceConversions).map((c) => c.convertedDataType)}
           mediaConversions={Object.entries(activePieceConversions)
             .filter(([k]) => k !== 'text')
-            .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue, convertedDataType: v.convertedDataType }))}
-          onClearMediaConversion={(pieceType) => setPieceConversions((prev) => {
-            const next = { ...prev }
-            delete next[pieceType]
-            return next
-          })}
+            .map(([, conversion]) => conversion)}
+          onClearMediaConversion={converters.clear}
         />
       </div>
       <Drawer

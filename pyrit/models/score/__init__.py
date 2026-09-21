@@ -15,7 +15,13 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
-    from pyrit.models.score.condition import Condition, MatchesObjective, ToolCallRequirement, ToolsCalled
+    from pyrit.models.score.condition import (
+        Condition,
+        DivergesFromRepetition,
+        MatchesObjective,
+        ToolCallRequirement,
+        ToolsCalled,
+    )
     from pyrit.models.score.expectation import (
         ScoringExpectation,
         scoring_expectation_fingerprint,
@@ -59,6 +65,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Condition": "pyrit.models.score.condition",
     "ContentEntryScorable": "pyrit.models.score.scorable",
     "ContentScorable": "pyrit.models.score.scorable",
+    "DivergesFromRepetition": "pyrit.models.score.condition",
     "ScorerTargetResponsePayload": "pyrit.models.score.observation",
     "MatchesObjective": "pyrit.models.score.condition",
     "MessageScorable": "pyrit.models.score.scorable",

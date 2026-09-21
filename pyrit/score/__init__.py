@@ -89,8 +89,11 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
+    from pyrit.score.true_false.regex.ansi_escape_output_scorer import AnsiEscapeOutputScorer
     from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
     from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
+    from pyrit.score.true_false.regex.divergence_scorer import DivergenceScorer
+    from pyrit.score.true_false.regex.escaped_ansi_output_scorer import EscapedAnsiOutputScorer
     from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
     from pyrit.score.true_false.regex.ldap_injection_output_scorer import LDAPInjectionOutputScorer
     from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
@@ -141,6 +144,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AnsiEscapeOutputScorer": "pyrit.score.true_false.regex.ansi_escape_output_scorer",
     "AnthraxKeywordScorer": "pyrit.score.true_false.regex.anthrax_keyword_scorer",
     "AudioFloatScaleScorer": "pyrit.score.float_scale.audio_float_scale_scorer",
     "AudioTrueFalseScorer": "pyrit.score.true_false.audio_true_false_scorer",
@@ -154,6 +158,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ConversationScorer": "pyrit.score.conversation_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
     "DecodingScorer": "pyrit.score.true_false.decoding_scorer",
+    "DivergenceScorer": "pyrit.score.true_false.regex.divergence_scorer",
+    "EscapedAnsiOutputScorer": "pyrit.score.true_false.regex.escaped_ansi_output_scorer",
     "FentanylKeywordScorer": "pyrit.score.true_false.regex.fentanyl_keyword_scorer",
     "create_conversation_scorer": "pyrit.score.conversation_scorer",
     "FloatScaleScoreAggregator": "pyrit.score.float_scale.float_scale_score_aggregator",

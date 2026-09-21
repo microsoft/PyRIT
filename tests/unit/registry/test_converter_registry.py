@@ -206,7 +206,7 @@ class TestConverterRegistryRegisterInstance:
         assert entry.instance is converter
         assert entry.metadata == {"owned_artifact_paths": ["managed.dat"]}
 
-    @pytest.mark.parametrize("name", ["catalog", "preview", "types"])
+    @pytest.mark.parametrize("name", ["preview", "types"])
     def test_create_named_instance_rejects_reserved_name(self, registry: ConverterRegistry, name: str):
         with pytest.raises(ValueError, match="reserved"):
             registry.create_named_instance(name=name, type_name="Base64Converter")
@@ -448,12 +448,14 @@ class _OptionalLiteralConverter:
 class TestDeriveParameters:
     """Tests for the converter-parameter derivation into the ``Parameter`` contract."""
 
-    def test_unwraps_optional_into_param_type(self) -> None:
+    def test_preserves_optional_annotation_and_scalar_display(self) -> None:
         from pyrit.models.identifiers import ConverterIdentifier
 
         params = derive_parameters(cls=_UnionTargetConverter, identifier_type=ConverterIdentifier)
         offset_param = next(p for p in params if p.name == "offset")
-        assert offset_param.param_type is int
+        assert offset_param.param_type == int | None
+        assert offset_param.type_name == "int"
+        assert offset_param.coerce_value(None) is None
         assert offset_param.reference is None
         assert offset_param.is_string_coercible is True
 

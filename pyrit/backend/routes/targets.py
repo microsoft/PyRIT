@@ -13,7 +13,6 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
-    TargetCatalogResponse,
     TargetListResponse,
     TargetTypeResponse,
 )
@@ -62,28 +61,6 @@ async def list_target_types() -> TargetTypeResponse:  # pyrit-async-suffix-exemp
     """
     service = get_target_service()
     return await service.list_target_types_async()
-
-
-@router.get(
-    "/catalog",
-    response_model=TargetCatalogResponse,
-    responses={
-        500: {"model": ProblemDetail, "description": "Internal server error"},
-    },
-)
-async def list_target_catalog() -> TargetCatalogResponse:  # pyrit-async-suffix-exempt
-    """
-    Return the legacy catalog projection used by the current configuration UI.
-
-    LEGACY COMPATIBILITY: pre-registry alias for ``/targets/types`` that hides
-    registry-reference parameters. Deleted with the rest of the ``catalog`` concept
-    when the configuration UI switches to ``/targets/types``.
-
-    Returns:
-        TargetCatalogResponse: The scalar-only legacy catalog projection.
-    """
-    service = get_target_service()
-    return await service.list_target_catalog_async()
 
 
 @router.post(

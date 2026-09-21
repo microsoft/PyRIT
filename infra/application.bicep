@@ -56,7 +56,10 @@ param memoryGb string = '2.0'
 @description('Minimum number of replicas')
 param minReplicas int = 1
 
-@description('Maximum number of replicas')
+@description('Maximum number of replicas. Must remain 1 while scenario FIFO scheduling is process-local.')
+@allowed([
+  1
+])
 param maxReplicas int = 1
 
 @description('CIDR range allowed to reach ACA directly. Empty = unrestricted. Must be empty when Front Door is enabled because ACA sees Front Door backend IPs, not client IPs.')

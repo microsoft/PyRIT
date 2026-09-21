@@ -24,10 +24,19 @@ import {
 import { convertersApi, targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { ConverterInstance, ConverterTypeEntry, Parameter, TargetInstance } from '@/types'
+import ParameterField from '@/components/Parameters/ParameterField'
+import {
+  buildParametersFromForm,
+  getInitialFormValues,
+  isStructuredParameterFormValue,
+  type ParameterFormValue,
+} from '@/components/Parameters/parameterForm'
 
 import { useCreateConverterDialogStyles } from './Registry.styles'
 
-const HIDDEN_CONVERTER_TYPES = new Set(['SelectiveTextConverter'])
+const EDITABLE_PARAMETER_TYPES = new Set([
+  'str', 'int', 'float', 'bool', 'Path', 'list[str]', 'list[int]', 'list[float]', 'list[bool]',
+])
 
 function formatDataType(dataType: string): string {
   const value = dataType.replace('_path', '').replace(/_/g, ' ')
@@ -59,11 +68,63 @@ interface ParameterInputProps {
   onBrowse: () => void
 }
 
+function isEditableParameter(parameter: Parameter): boolean {
+  if (parameter.reference_type) {
+    return parameter.reference_type === 'target' || parameter.reference_type === 'converter'
+  }
+  if (parameter.choices?.length) return true
+
+  const members: string[] = []
+  let member = ''
+  let depth = 0
+  for (const character of parameter.type_name) {
+    if (character === '|' && depth === 0) {
+      members.push(member.trim())
+      member = ''
+      continue
+    }
+    if (character === '[') depth++
+    else if (character === ']') depth--
+    member += character
+  }
+  members.push(member.trim())
+
+  // Mixed unions can use the text input only when they explicitly accept strings.
+  return members.some((type) => EDITABLE_PARAMETER_TYPES.has(type) && (members.length === 1 || type === 'str'))
+}
+
+function canConfigureParameter(parameter: Parameter): boolean {
+  if (parameter.variants) {
+    const variants = Object.values(parameter.variants)
+    return variants.length > 0
+      && variants.every((parameters) =>
+        parameters.every((nested) => !nested.required || canConfigureParameter(nested)))
+  }
+  return isEditableParameter(parameter)
+}
+
+function canConfigureConverterType(converterType: ConverterTypeEntry): boolean {
+  return converterType.parameters.every(
+    (parameter) => !parameter.required || canConfigureParameter(parameter),
+  )
+}
+
 function parameterDefaultValue(parameter: Parameter): string {
   if (Array.isArray(parameter.default)) {
     return parameter.default.join(', ')
   }
   return parameter.default ?? ''
+}
+
+function formValueIsSet(value: ParameterFormValue | undefined): boolean {
+  if (isStructuredParameterFormValue(value)) {
+    return Boolean(value.type)
+  }
+  return typeof value === 'string' ? Boolean(value.trim()) : Boolean(value?.length)
+}
+
+function stringFormValue(value: ParameterFormValue | undefined): string {
+  return typeof value === 'string' ? value : ''
 }
 
 function ParameterInput({
@@ -122,7 +183,16 @@ function ParameterInput({
     )
   }
 
+  if (!isEditableParameter(parameter)) {
+    return (
+      <Field label={label} hint="This parameter cannot be configured here. Omit it to use the converter default.">
+        <Input disabled value="" />
+      </Field>
+    )
+  }
+
   const isFile = parameter.type_name === 'Path'
+    || parameter.type_name === 'Path | str'
     || /path|file/i.test(parameter.name)
     || /path|file/i.test(parameter.description ?? '')
 
@@ -137,7 +207,11 @@ function ParameterInput({
           <Input
             className={styles.fileInput}
             value={value}
-            placeholder={parameterDefaultValue(parameter) || 'Upload a file or enter a server path'}
+            placeholder={parameterDefaultValue(parameter) || (
+              parameter.type_name === 'Path | str'
+                ? 'Upload a file or enter a URL'
+                : 'Upload a file or enter a server path'
+            )}
             onChange={(_, data) => onChange(data.value)}
           />
           <Button type="button" onClick={onBrowse}>Upload</Button>
@@ -165,7 +239,7 @@ export default function CreateConverterDialog({
   const [selectedType, setSelectedType] = useState('')
   const [registryName, setRegistryName] = useState('')
   const [nameEdited, setNameEdited] = useState(false)
-  const [parameterValues, setParameterValues] = useState<Record<string, string>>({})
+  const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
@@ -190,7 +264,7 @@ export default function CreateConverterDialog({
         const [response, targetResponse, converterResponse] = responses
         if (!cancelled) {
           setConverterTypes(
-            response.items.filter((item) => !HIDDEN_CONVERTER_TYPES.has(item.converter_type)),
+            response.items.filter(canConfigureConverterType),
           )
           setTargets(targetResponse.items)
           setConverters(converterResponse.items)
@@ -263,13 +337,16 @@ export default function CreateConverterDialog({
     setSelectedType(converterType)
     if (!nameEdited) setRegistryName(converterType)
     const typeEntry = converterTypes.find((item) => item.converter_type === converterType)
-    setParameterValues(
-      Object.fromEntries(
-        (typeEntry?.parameters ?? [])
-          .filter((parameter) => parameter.default != null)
+    const parameters = typeEntry?.parameters ?? []
+    setParameterValues({
+      ...getInitialFormValues(parameters.filter((parameter) => parameter.variants)),
+      ...Object.fromEntries(
+        parameters
+          .filter((parameter) => !parameter.variants
+            && isEditableParameter(parameter) && parameter.default != null)
           .map((parameter) => [parameter.name, parameterDefaultValue(parameter)]),
       ),
-    )
+    })
     setShowValidation(false)
     setError(null)
   }
@@ -296,11 +373,27 @@ export default function CreateConverterDialog({
     const missingParameters = (selectedConverterType?.parameters ?? []).some(
       (parameter) => parameter.required
         && !parameter.default
-        && !parameterValues[parameter.name]?.trim(),
+        && !formValueIsSet(parameterValues[parameter.name]),
     )
     if (!selectedType || !registryName.trim() || missingParameters) {
       setShowValidation(true)
       return
+    }
+
+    const parameters = selectedConverterType?.parameters ?? []
+    const params = Object.fromEntries(
+      Object.entries(parameterValues).filter(([, value]) => !isStructuredParameterFormValue(value)),
+    )
+    const structured = buildParametersFromForm(
+      parameters.filter((parameter) => parameter.variants),
+      parameterValues,
+    )
+    if (!structured.ok) {
+      setError(structured.error)
+      return
+    }
+    if (structured.parameters) {
+      Object.assign(params, structured.parameters)
     }
 
     setSubmitting(true)
@@ -309,7 +402,7 @@ export default function CreateConverterDialog({
       const response = await convertersApi.createConverter({
         name: registryName.trim(),
         type: selectedType,
-        params: parameterValues,
+        params,
       })
       reset()
       onCreated(response.converter_id)
@@ -434,22 +527,34 @@ export default function CreateConverterDialog({
                   <div className={styles.parameterGrid}>
                     {selectedConverterType?.parameters.map((parameter) => (
                       <div key={parameter.name} className={styles.parameterRow}>
-                        <ParameterInput
+                        {parameter.variants ? (
+                          <ParameterField
+                            parameter={parameter}
+                            value={parameterValues[parameter.name] ?? ''}
+                            disabled={submitting}
+                            showRequiredError={showValidation && parameter.required}
+                            testIdPrefix="structured"
+                            onChange={(name, value) => setParameterValues((current) => ({
+                              ...current,
+                              [name]: value,
+                            }))}
+                          />
+                        ) : <ParameterInput
                           parameter={parameter}
                           referenceOptions={referenceOptions(parameter)}
-                          value={parameterValues[parameter.name] ?? ''}
+                          value={stringFormValue(parameterValues[parameter.name])}
                           showError={
                             showValidation
                             && parameter.required
                             && !parameter.default
-                            && !parameterValues[parameter.name]?.trim()
+                            && !formValueIsSet(parameterValues[parameter.name])
                           }
                           onChange={(value) => setParameterValues((current) => ({
                             ...current,
                             [parameter.name]: value,
                           }))}
                           onBrowse={() => browse(parameter.name)}
-                        />
+                        />}
                       </div>
                     ))}
                   </div>

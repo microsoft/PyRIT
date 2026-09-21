@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
 
@@ -187,3 +187,10 @@ class ToolsCalled(Condition):
         if len(set(names)) != len(names):
             raise ValueError("ToolsCalled requires each tool name once.")
         return self
+
+
+class DivergesFromRepetition(Condition):
+    """The evidence continues with other content after repeating the literal text."""
+
+    condition_type: Literal["diverges_from_repetition"] = "diverges_from_repetition"
+    text: str = Field(min_length=1, pattern=r"\S")
