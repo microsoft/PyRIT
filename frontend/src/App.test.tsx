@@ -5,7 +5,7 @@
 
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation, useNavigate } from "react-router";
 import App from "./App";
 
 import { attacksApi, targetsApi } from "./services/api";
@@ -436,6 +436,18 @@ jest.mock("./components/History/ScenarioHistory", () => {
   };
 });
 
+function RouterProbe() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  return (
+    <>
+      <output aria-label="Current URL">{location.pathname}</output>
+      <button type="button" onClick={() => navigate(-1)}>Back</button>
+    </>
+  );
+}
+
 describe("App", () => {
   // App reads the active view from the URL, so every render needs a router.
   // initialPath lets a test deep-link straight to a view.
@@ -555,6 +567,30 @@ describe("App", () => {
       "data-current-view",
       "registry"
     );
+  });
+
+  it("redirects legacy /targets to the target registry without adding a history entry", async () => {
+    const user = userEvent.setup();
+    render(
+      <ThemeProvider>
+        <MemoryRouter initialEntries={["/chat", "/targets"]}>
+          <App />
+          <RouterProbe />
+        </MemoryRouter>
+      </ThemeProvider>
+    );
+
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/registry\/targets$/);
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Back", exact: true }));
+
+    expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/chat$/);
   });
 
   it("renders the converter registry from its direct URL", async () => {
