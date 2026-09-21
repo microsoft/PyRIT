@@ -347,9 +347,8 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
 
   // Layout: the labels icon (with custom-label count badge) is always the first
   // element on the bar. We then render as many full chips as fit, in
-  // declaration order. The icon's popover shows the custom labels and the
-  // add form, so the user can reach them regardless of how many chips are
-  // currently visible.
+  // declaration order. The icon's popover keeps every metadata field and
+  // custom label reachable regardless of how many chips are currently visible.
   const rootRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const ICON_BUTTON_WIDTH_PX = 56  // labels icon + count badge + gap
@@ -357,6 +356,10 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   const [visibleCount, setVisibleCount] = useState(Infinity)
 
   const headerEntries = useMemo(() => Object.entries(labels), [labels])
+  const metadataEntries = useMemo(
+    () => headerEntries.filter(([key]) => METADATA_KEYS.has(key)),
+    [headerEntries]
+  )
   const labelEntries = useMemo(
     () => headerEntries.filter(([key]) => !METADATA_KEYS.has(key)),
     [headerEntries]
@@ -537,7 +540,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             onKeyDown={e => handleStartEditKeyDown(e, key)}
             role="button"
             tabIndex={0}
-            aria-label={`Edit ${key} label, currently ${value}`}
+            aria-label={`Edit ${key}${isRequired ? '' : ' label'}, currently ${value}`}
             data-testid={`label-${key}`}
           >
             <Text size={200} weight="semibold">{key}:</Text>
@@ -559,48 +562,58 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     )
   }
 
+  const renderPopoverEntry = (key: string, value: string, isMetadata: boolean) => {
+    if (editingLabel === key) {
+      return (
+        <div key={key} className={styles.inputRow} style={{ position: 'relative' }}>
+          {renderValueEditor(key, value)}
+        </div>
+      )
+    }
+    return (
+      <div
+        key={key}
+        className={`${styles.labelBadge} ${isDummyValue(key, value) ? styles.labelDummy : styles.labelNormal}`}
+        style={{ flexShrink: 0 }}
+        onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
+      >
+        <div
+          className={styles.labelEdit}
+          onClick={() => handleStartEdit(key)}
+          onKeyDown={e => handleStartEditKeyDown(e, key)}
+          role="button"
+          tabIndex={0}
+          aria-label={`Edit ${key}${isMetadata ? '' : ' label'}, currently ${value}`}
+          data-testid={`popover-${isMetadata ? 'metadata' : 'label'}-${key}`}
+        >
+          <Text size={200} weight="semibold">{key}:</Text>
+          <Text size={200}>{value}</Text>
+        </div>
+        {!isMetadata && (
+          <Button
+            className={styles.removeBtn}
+            appearance="transparent"
+            size="small"
+            icon={<DismissRegular fontSize={12} />}
+            onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
+            aria-label={`Remove ${key} label`}
+            data-testid={`popover-remove-label-${key}`}
+          />
+        )}
+      </div>
+    )
+  }
+
+  const renderMetadataList = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      {metadataEntries.map(([key, value]) => renderPopoverEntry(key, value, true))}
+    </div>
+  )
+
   const renderLabelsList = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
       {labelEntries.length === 0 && <Text size={200}>No labels yet</Text>}
-      {labelEntries.map(([key, value]) => {
-        if (editingLabel === key) {
-          return (
-            <div key={key} className={styles.inputRow} style={{ position: 'relative' }}>
-              {renderValueEditor(key, value)}
-            </div>
-          )
-        }
-        return (
-          <div
-            key={key}
-            className={`${styles.labelBadge} ${styles.labelNormal}`}
-            style={{ flexShrink: 0 }}
-            onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
-          >
-            <div
-              className={styles.labelEdit}
-              onClick={() => handleStartEdit(key)}
-              onKeyDown={e => handleStartEditKeyDown(e, key)}
-              role="button"
-              tabIndex={0}
-              aria-label={`Edit ${key} label, currently ${value}`}
-              data-testid={`popover-label-${key}`}
-            >
-              <Text size={200} weight="semibold">{key}:</Text>
-              <Text size={200}>{value}</Text>
-            </div>
-            <Button
-              className={styles.removeBtn}
-              appearance="transparent"
-              size="small"
-              icon={<DismissRegular fontSize={12} />}
-              onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
-              aria-label={`Remove ${key} label`}
-              data-testid={`popover-remove-label-${key}`}
-            />
-          </div>
-        )
-      })}
+      {labelEntries.map(([key, value]) => renderPopoverEntry(key, value, false))}
     </div>
   )
 
@@ -704,9 +717,9 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
 
       {/*
         Labels icon + custom-label count. Always present, anchored leftmost.
-        Clicking opens a popover with the custom-label list and add form
-        — so even when every chip fits, this is still the canonical
-        entry point for editing/adding labels.
+        Clicking opens a popover with metadata fallbacks, the custom-label
+        list, and the add form — so even when every chip fits, this is still
+        the canonical entry point for editing/adding labels.
       */}
       <Popover open={isPopoverOpen} onOpenChange={(_, d) => { setIsPopoverOpen(d.open); setError(''); if (!d.open) setEditingLabel(null) }}>
         <PopoverTrigger>
@@ -732,6 +745,9 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         </PopoverTrigger>
         <PopoverSurface>
           <div className={styles.popoverSurface}>
+            <Text weight="semibold" size={300}>Run metadata</Text>
+            {renderMetadataList()}
+            <div className={styles.popoverDivider} />
             <Text weight="semibold" size={300}>Labels</Text>
             {renderLabelsList()}
             <div className={styles.popoverDivider} />

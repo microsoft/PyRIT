@@ -892,6 +892,8 @@ describe('LabelsBar', () => {
     expect(await screen.findByText('No labels yet')).toBeInTheDocument()
     expect(screen.queryByTestId('popover-label-operator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('popover-label-operation')).not.toBeInTheDocument()
+    expect(screen.getByTestId('popover-metadata-operator')).toBeInTheDocument()
+    expect(screen.getByTestId('popover-metadata-operation')).toBeInTheDocument()
   })
 
   it('icon button opens a popover with custom labels and the add form', async () => {
@@ -965,11 +967,20 @@ describe('LabelsBar', () => {
 
     // Some chips render inline and some don't (the heuristic decides which);
     // the important guarantee is that the popover is reachable for the rest.
+    expect(screen.getByTestId('label-operator')).toBeInTheDocument()
+    expect(screen.queryByTestId('label-operation')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('labels-icon-btn'))
     await waitFor(() => {
       expect(screen.getByTestId('popover-label-team')).toBeInTheDocument()
     })
     expect(screen.getByTestId('popover-label-extra')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('popover-metadata-operator'))
+    expect(await screen.findByTestId('edit-label-operator')).toBeInTheDocument()
+    fireEvent.keyDown(screen.getByTestId('edit-label-operator'), { key: 'Enter' })
+
+    fireEvent.click(screen.getByTestId('popover-metadata-operation'))
+    expect(await screen.findByTestId('edit-label-operation')).toBeInTheDocument()
   })
 
   describe('operation picker', () => {
