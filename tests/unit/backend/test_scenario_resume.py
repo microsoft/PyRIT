@@ -179,6 +179,7 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
     before = CentralMemory.get_memory_instance().get_attack_results(scenario_result_id=run_id)
     completed_ids = {result.attack_result_id for result in before if result.outcome != AttackOutcome.ERROR}
     assert len(completed_ids) == 1
+    failed_result = next(result for result in before if result.outcome == AttackOutcome.ERROR)
     assert (_LAUNCH_REQUEST_METADATA_KEY in stored.metadata) is not legacy
     original_plan = stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
     target.prompt_sent.clear()
@@ -210,6 +211,23 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
     )
     assert sum(result.objective == _FIRST_OBJECTIVE for result in results) == 1
     assert len(CentralMemory.get_memory_instance().get_scenario_results()) == 1
+    detail = await asyncio.to_thread(service.get_run, scenario_result_id=run_id)
+    history = await asyncio.to_thread(service.list_runs)
+    assert detail is not None
+    assert detail.status == ScenarioRunState.COMPLETED
+    assert detail.error is None
+    assert detail.error_type is None
+    assert len(detail.failed_attacks) == 1
+    assert detail.failed_attacks[0].objective == _SECOND_OBJECTIVE
+    assert detail.failed_attacks[0].error_message == failed_result.error_message
+    assert detail.failed_attacks[0].error_type == failed_result.error_type
+    assert len(history.items) == 1
+    summary = history.items[0]
+    assert summary.scenario_result_id == run_id
+    assert summary.status == ScenarioRunState.COMPLETED
+    assert summary.error is None
+    assert summary.error_type is None
+    assert summary.error_attacks == detail.error_attacks == 1
 
 
 async def test_legacy_resume_requires_explicit_execution_settings_async(

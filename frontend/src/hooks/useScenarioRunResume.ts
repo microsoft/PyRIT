@@ -13,6 +13,7 @@ interface UseScenarioRunResumeResult {
   readonly pendingRunId: string | null
   readonly legacyRunId: string | null
   readonly error: string | null
+  readonly executionError: string | null
   readonly requestResume: (scenarioResultId: string) => void
   readonly confirmResume: (options: ScenarioResumeExecutionOptions) => void
   readonly cancel: () => void
@@ -29,6 +30,7 @@ export function useScenarioRunResume({
   const [pendingRunId, setPendingRunId] = useState<string | null>(null)
   const [legacyRunId, setLegacyRunId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [executionError, setExecutionError] = useState<string | null>(null)
 
   useEffect(() => {
     mountedRef.current = true
@@ -44,6 +46,7 @@ export function useScenarioRunResume({
     pendingRef.current = true
     setPendingRunId(scenarioResultId)
     setError(null)
+    setExecutionError(null)
     let refresh = false
     let succeeded = false
     try {
@@ -65,7 +68,7 @@ export function useScenarioRunResume({
       setLegacyRunId(null)
       onResumed(resumedRun)
       if (resumedRun.status === 'FAILED') {
-        setError(resumedRun.error || 'The resumed run failed. Finished results remain available.')
+        setExecutionError(resumedRun.error || 'The resumed run failed. Finished results remain available.')
       }
       succeeded = true
     } catch (requestError: unknown) {
@@ -84,6 +87,7 @@ export function useScenarioRunResume({
     pendingRunId,
     legacyRunId,
     error,
+    executionError,
     requestResume: (scenarioResultId: string): void => { void execute(scenarioResultId, true) },
     confirmResume: (options: ScenarioResumeExecutionOptions): void => {
       if (legacyRunIdRef.current !== null) {

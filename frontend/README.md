@@ -15,25 +15,9 @@ decorations without forgetting the selected preset.
 
 ## Resuming a scenario run
 
-Failed runs offer **Resume run** on the run page and **Resume** in Scanner
-History. Resume continues unfinished work under the same run ID, preserving
-finished results. It uses the server's saved configuration; it does not open
-the launch dialog, use current defaults, or start automatically.
-
-The frontend first checks `GET /api/scenarios/runs/{scenario_result_id}/resume`.
-When execution limits were saved, it sends POST to the same URL without a body.
-Older runs without saved concurrency and retry limits require an explicit
-confirmation dialog. Choose concurrency (1–100) and retries (0–20); the safe
-prefilled values are 1 and 0, not historical values or current launch defaults.
-Only these two limits are sent in the legacy POST body. The server restores
-the original target, scenario, techniques, datasets, parameters, and labels.
-
-A successful response restarts progress updates and
-refreshes queue/history state. If the run is missing, already active, or cannot
-be restored safely (including configuration drift), the error remains visible
-while the latest state is refreshed.
-If resumed execution immediately fails, the returned failure is shown and final
-results are refreshed once; execution is never retried automatically.
+Failed runs offer **Resume run** on the run page and **Resume** in Scanner History.
+See the [GUI guide](../doc/gui/0_gui.md#resuming-a-failed-scanner-run) for recovery
+behavior and the execution-settings dialog for older runs.
 
 ## Development
 
@@ -95,6 +79,24 @@ pyrit_backend --host 127.0.0.1 --port 8080
 **Development Mode**: The `dev.py` script sets `PYRIT_DEV_MODE=true` so the backend expects the frontend to run separately on port 3000.
 
 **Production Mode**: When installed from PyPI, the backend serves the bundled frontend and will exit if frontend files are missing.
+
+## Chat converters
+
+Chat keeps one ordered converter pipeline per input modality in memory. Closing
+the converter panel does not clear these pipelines. Sending a message clears
+its conversion results, but keeps the pipelines for the next message.
+Use the arrow keys on a stage's reorder button to move it. Focus stays on that
+stage, including when the same converter occurs more than once.
+
+**Convert** processes each input piece separately, including multiple attachments
+of the same type. **Add converted value** replaces the applied selection with the
+current successful results. Failed pieces remain unconverted and show an error.
+Changing an input or its pipeline clears the affected results and selections;
+late responses cannot restore them.
+
+Send uses the applied pieces' exact message indexes and runs their configured
+converters on the backend. A nondeterministic converter can produce a different
+value at Send than the value shown in the converter panel.
 
 ## Stack
 

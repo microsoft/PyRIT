@@ -30,8 +30,6 @@ export type ViewName =
   | 'chat'
   | 'history'
   | 'registry'
-  // Kept as an internal compatibility destination for the unchanged chat pane.
-  | 'targets'
   | 'configuration'
   | 'scenarios'
 

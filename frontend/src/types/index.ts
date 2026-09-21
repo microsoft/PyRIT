@@ -30,6 +30,8 @@ export interface ThemeContextValue {
 }
 
 export interface MessageAttachment {
+  /** Client-side identity of one attachment in the editable draft. */
+  draftId?: string
   type: 'image' | 'audio' | 'video' | 'file'
   name: string
   url: string
@@ -49,6 +51,47 @@ export interface MessageAttachment {
   pieceId?: string
   /** Backend prompt_metadata — preserved so video_id etc. carry over on remix/copy */
   metadata?: Record<string, unknown>
+}
+
+export interface ConverterInputPiece {
+  id: string
+  pieceType: string
+  name: string
+  dataType: string
+  value: string
+  file?: File
+}
+
+export interface PieceConversion {
+  pieceId: string
+  pieceType: string
+  converterInstanceIds: string[]
+  convertedValue: string
+  originalValue: string
+  convertedDataType: string
+}
+
+export interface ConverterPipelineStage {
+  readonly id: string
+  readonly converterId: string
+}
+
+export interface ChatConverterController {
+  inputs: ConverterInputPiece[]
+  pipelines: Record<string, ConverterPipelineStage[]>
+  results: Record<string, ConverterPreviewResponse>
+  errors: Record<string, string>
+  applied: Record<string, PieceConversion>
+  isConverting: boolean
+  addConverter: (pieceType: string, converterId: string) => void
+  setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
+  retainConverters: (availableIds: Set<string>) => void
+  convert: () => Promise<void>
+  apply: () => void
+  clear: (pieceId: string) => void
+  clearAll: () => void
+  editConvertedValue: (pieceId: string, value: string) => void
+  restore: (text: string, attachments: MessageAttachment[], conversions: Record<string, PieceConversion>) => void
 }
 
 export interface MessageTextDisplayPiece {
@@ -278,7 +321,7 @@ export interface ConverterListResponse {
 }
 
 export interface CreateConverterRequest {
-  name?: string
+  name: string
   type: string
   params?: Record<string, unknown>
 }
@@ -291,6 +334,8 @@ export interface Parameter {
   default?: string | string[] | null
   choices?: string[] | null
   is_list?: boolean
+  /** Structured input variants mapped to their constructor parameters. */
+  variants?: Record<string, Parameter[]> | null
   reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
   description?: string | null
 }
@@ -308,19 +353,38 @@ export interface ConverterTypeListResponse {
   items: ConverterTypeEntry[]
 }
 
-/** Temporary compatibility names used by the existing chat converter panel. */
-export type ConverterCatalogEntry = ConverterTypeEntry
-export type ConverterCatalogResponse = ConverterTypeListResponse
+export interface ConverterPreviewRequest {
+  original_value: string
+  converter_ids: string[]
+  original_value_data_type?: string
+}
 
-export interface TargetCatalogEntry {
+/** One converter stage of a `/converters/preview` pipeline run. */
+export interface ConverterPreviewStep {  converter_id: string
+  converter_type: string
+  input_value: string
+  input_data_type: string
+  output_value: string
+  output_data_type: string
+}
+
+export interface ConverterPreviewResponse {
+  original_value: string
+  original_value_data_type: string
+  converted_value: string
+  converted_value_data_type: string
+  steps: ConverterPreviewStep[]
+}
+
+export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
   supported_auth_modes: ('api_key' | 'identity')[]
   description?: string | null
 }
 
-export interface TargetCatalogResponse {
-  items: TargetCatalogEntry[]
+export interface TargetTypeListResponse {
+  items: TargetTypeEntry[]
 }
 
 // --- Attacks ---
@@ -496,12 +560,25 @@ export interface PrependedMessageRequest {
   pieces: MessagePieceRequest[]
 }
 
+/**
+ * Ordered converter stack applied to specific pieces of a message.
+ * `indexes_to_apply` targets exact piece indexes; `prompt_data_types_to_apply`
+ * targets every piece of the listed data types.
+ */
+export interface ConverterConfigurationRequest {
+  converter_ids: string[]
+  indexes_to_apply?: number[]
+  prompt_data_types_to_apply?: string[]
+}
+
 export interface AddMessageRequest {
   role: string
   pieces: MessagePieceRequest[]
   send: boolean
   target_registry_name?: string
   converter_ids?: string[]
+  request_converter_configurations?: ConverterConfigurationRequest[]
+  response_converter_configurations?: ConverterConfigurationRequest[]
   target_conversation_id: string
 }
 
@@ -852,6 +929,8 @@ export interface ScenarioProgressHeader {
   created_at: string
   started_at?: string | null
   completed_at?: string | null
+  error?: string | null
+  error_type?: string | null
   pyrit_version?: string | null
   target?: ScenarioTargetSummary | null
   techniques_used?: string[]

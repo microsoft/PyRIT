@@ -332,9 +332,9 @@ export default function ScenarioHistory({
             <MessageBarBody>{optionsError}</MessageBarBody>
           </MessageBar>
         )}
-        {resume.error && (
+        {(resume.error || resume.executionError) && (
           <MessageBar intent="error">
-            <MessageBarBody>{resume.error}</MessageBarBody>
+            <MessageBarBody>{resume.error || resume.executionError}</MessageBarBody>
           </MessageBar>
         )}
       </header>

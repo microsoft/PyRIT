@@ -566,6 +566,7 @@ describe('useScenarioRunProgress', () => {
 
   it('drains final deltas once when resume immediately returns FAILED and does not keep polling', async () => {
     jest.useFakeTimers()
+    const failure = { error: 'Execution failed immediately.', error_type: 'ValueError' }
     const failedPage = makePage({
       run: { ...makePage().run, status: 'FAILED' },
       results: [makeResult('finished-before-resume')],
@@ -575,6 +576,7 @@ describe('useScenarioRunProgress', () => {
       .mockResolvedValueOnce(failedPage)
       .mockResolvedValueOnce({
         ...failedPage,
+        run: { ...failedPage.run, ...failure },
         plan: null,
         results: [makeResult('finished-during-resume')],
         next_cursor: 'final-cursor',
@@ -582,11 +584,13 @@ describe('useScenarioRunProgress', () => {
     const { result, unmount } = renderHook(() => useScenarioRunProgress('run-1'))
     await act(async () => Promise.resolve())
 
-    act(() => result.current.applyRunSummary(makeSummary({ status: 'FAILED', error: 'Execution failed immediately.' })))
+    act(() => result.current.applyRunSummary(makeSummary({ status: 'FAILED', ...failure })))
+    expect(result.current.state.run).toMatchObject(failure)
     await act(async () => Promise.resolve())
     await act(async () => jest.advanceTimersByTimeAsync(SCENARIO_RUN_POLL_INTERVAL_MS * 5))
 
     expect(result.current.state.run?.status).toBe('FAILED')
+    expect(result.current.state.run).toMatchObject(failure)
     expect(result.current.state.results).toHaveLength(2)
     expect(mockGetRunProgress).toHaveBeenCalledTimes(2)
     expect(mockGetRunProgress).toHaveBeenLastCalledWith(

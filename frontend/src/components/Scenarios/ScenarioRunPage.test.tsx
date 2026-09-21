@@ -17,6 +17,7 @@ import type {
   ScenarioProgressSummary,
   ScenarioProgressResult,
   ScenarioRunPlan,
+  ScenarioRunProgress,
   ScenarioRunState,
   ScenarioRunSummary,
   ScenarioResumeRequirements,
@@ -41,6 +42,7 @@ jest.mock('@/services/api', () => ({
     cancelRun: jest.fn(),
     resumeRun: jest.fn(),
     getResumeRequirements: jest.fn(),
+    getRunProgress: jest.fn(),
   },
 }))
 
@@ -49,6 +51,7 @@ const mockUseScenarioQueue = useScenarioQueue as jest.Mock
 const mockCancelRun = scenariosApi.cancelRun as jest.Mock
 const mockResumeRun = scenariosApi.resumeRun as jest.Mock
 const mockGetResumeRequirements = scenariosApi.getResumeRequirements as jest.Mock
+const mockGetRunProgress = scenariosApi.getRunProgress as jest.Mock
 const mockQueueRetry = jest.fn()
 const mockRetry = jest.fn()
 const mockApplyRunSummary = jest.fn()
@@ -446,6 +449,40 @@ describe('ScenarioRunPage', () => {
     expect(screen.getByText(/showing the last successfully loaded progress/i)).toBeInTheDocument()
   })
 
+  it('shows the persisted failure reason and type for failed runs', () => {
+    mockHookState(makeState({
+      run: {
+        ...makeState().run!,
+        status: 'FAILED',
+        error: 'Scenario initialization failed.',
+        error_type: 'ValueError',
+      },
+    }))
+
+    renderPage()
+
+    expect(screen.getByText(
+      /Run failed \(ValueError\): Scenario initialization failed\. Finished executions remain available below\./,
+    )).toBeInTheDocument()
+    expect(screen.getByText(/Resume continues the remaining work with the original configuration and the same run ID/))
+      .toBeInTheDocument()
+  })
+
+  it('shows a generic failure message for legacy runs without error details', () => {
+    mockHookState(makeState({
+      run: {
+        ...makeState().run!,
+        status: 'FAILED',
+      },
+    }))
+
+    renderPage()
+
+    expect(screen.getByText(
+      /This run ended before all planned executable units completed\. Finished executions remain available below\./,
+    )).toBeInTheDocument()
+  })
+
   it('cancels a queued run after confirmation and immediately applies the terminal state', async () => {
     const user = userEvent.setup()
     const cancelledRun = {
@@ -601,6 +638,39 @@ describe('ScenarioRunPage', () => {
     },
   )
 
+  it.each([false, true])(
+    'keeps request errors separate when the persisted execution error has the same text (preflight: %s)',
+    async (preflight: boolean) => {
+      const user = userEvent.setup()
+      const detail = 'The saved target rejected execution.'
+      const failedState = makeState({
+        run: {
+          scenario_result_id: SCENARIO_RESULT_ID,
+          scenario_name: 'TestScenario',
+          scenario_version: 1,
+          created_at: '2026-01-01T00:00:00Z',
+          status: 'FAILED',
+          error: detail,
+          error_type: 'ValueError',
+        },
+      })
+      mockHookState(failedState)
+      const request = preflight ? mockGetResumeRequirements : mockResumeRun
+      request.mockRejectedValueOnce({ isAxiosError: true, response: { status: 409, data: { detail } } })
+      mockRetry.mockImplementationOnce(() => { mockHookState(failedState) })
+      renderPage()
+
+      await user.click(screen.getByRole('button', { name: 'Resume run' }))
+
+      expect(await screen.findByText(detail)).toBeInTheDocument()
+      expect(screen.getAllByText(/The saved target rejected execution\./)).toHaveLength(2)
+      expect(mockRetry).toHaveBeenCalledTimes(1)
+      expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+      expect(mockApplyRunSummary).not.toHaveBeenCalled()
+      expect(mockResumeRun).toHaveBeenCalledTimes(preflight ? 0 : 1)
+    },
+  )
+
   it('requires explicit legacy limit confirmation and sends only the chosen limits', async () => {
     const user = userEvent.setup()
     mockHookState(makeState({
@@ -729,25 +799,62 @@ describe('ScenarioRunPage', () => {
     expect(mockQueueRetry).not.toHaveBeenCalled()
   })
 
-  it('applies an immediately failed resume response, shows its error, and never resubmits automatically', async () => {
+  it('shows one failure banner for an immediately failed resume and its matching progress update', async () => {
     const user = userEvent.setup()
-    mockHookState(makeState({
-      run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
-        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
-    }))
-    mockResumeRun.mockResolvedValueOnce({
+    const resumedRun: ScenarioRunSummary = {
       scenario_result_id: SCENARIO_RESULT_ID,
+      scenario_name: 'TestScenario',
+      scenario_version: 1,
       status: 'FAILED',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:01:00Z',
+      techniques_used: [],
+      total_attacks: 2,
+      completed_attacks: 1,
+      objective_achieved_rate: 100,
+      failed_attacks: [],
+      attack_retries: [],
+      total_retries: 0,
+      labels: {},
       error: 'The saved target rejected execution.',
-    })
+      error_type: 'ValueError',
+    }
+    const progress: ScenarioRunProgress = {
+      run: resumedRun,
+      plan: PLAN,
+      results: [ATTEMPT],
+      summary: SUMMARY,
+      next_cursor: 'saved-cursor',
+      has_more: false,
+      plan_complete: true,
+    }
+    const actualProgressHook = jest.requireActual<typeof import('@/hooks/useScenarioRunProgress')>(
+      '@/hooks/useScenarioRunProgress',
+    )
+    mockUseScenarioRunProgress.mockImplementation(actualProgressHook.useScenarioRunProgress)
+    let resolveProgress: ((page: ScenarioRunProgress) => void) | undefined
+    mockGetRunProgress
+      .mockResolvedValueOnce({ ...progress, run: { ...resumedRun, error: null, error_type: null } })
+      .mockImplementationOnce(() => new Promise<ScenarioRunProgress>((resolve) => {
+        resolveProgress = resolve
+      }))
+    mockResumeRun.mockResolvedValueOnce(resumedRun)
     renderPage()
-    await user.click(screen.getByRole('button', { name: 'Resume run' }))
+    await user.click(await screen.findByRole('button', { name: 'Resume run' }))
 
-    expect(await screen.findByText('The saved target rejected execution.')).toBeInTheDocument()
+    expect(await screen.findByText(/Run failed \(ValueError\): The saved target rejected execution\./))
+      .toHaveTextContent('Resume continues the remaining work with the original configuration and the same run ID.')
+    expect(screen.getAllByText(/The saved target rejected execution\./)).toHaveLength(1)
+    expect(mockGetRunProgress).toHaveBeenCalledTimes(2)
+    expect(mockGetRunProgress).toHaveBeenLastCalledWith(
+      SCENARIO_RESULT_ID, { since: 'saved-cursor', limit: 500 }, expect.any(AbortSignal),
+    )
+
+    await act(async () => { resolveProgress?.({ ...progress, plan: null }) })
+
+    expect(screen.getAllByText(/The saved target rejected execution\./)).toHaveLength(1)
     expect(screen.getByTestId('run-state-badge')).toHaveTextContent('Failed')
     expect(screen.getByRole('button', { name: 'Resume run' })).toBeEnabled()
-    expect(mockApplyRunSummary).toHaveBeenCalledWith(expect.objectContaining({ status: 'FAILED' }))
-    expect(mockRetry).not.toHaveBeenCalled()
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
     expect(mockGetResumeRequirements).toHaveBeenCalledTimes(1)
     expect(mockResumeRun).toHaveBeenCalledTimes(1)

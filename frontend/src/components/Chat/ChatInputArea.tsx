@@ -8,11 +8,11 @@ import {
   mergeClasses,
 } from '@fluentui/react-components'
 import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular, OpenRegular, ArrowSyncRegular } from '@fluentui/react-icons'
-import type { AttackTargetResolutionStatus, ChatSendOutcome, MessageAttachment, TargetInstance } from '../../types'
+import type { AttackTargetResolutionStatus, ChatSendOutcome, MessageAttachment, PieceConversion, TargetInstance } from '../../types'
 import { isTargetResolutionBlocking } from '../../utils/targetIdentity'
 import { useChatInputAreaStyles } from './ChatInputArea.styles'
 import SystemPromptSetup from './SystemPromptSetup'
-import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
+import { PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
 
 // ---------------------------------------------------------------------------
 // Reusable status banner
@@ -162,9 +162,9 @@ function TargetResolutionBanner({
 
 interface AttachmentListProps {
   attachments: MessageAttachment[]
-  mediaConversions: Array<{ pieceType: string; convertedValue: string; convertedDataType: string }>
+  mediaConversions: Array<Pick<PieceConversion, 'pieceId' | 'convertedValue' | 'convertedDataType'>>
   onRemove: (index: number) => void
-  onClearMediaConversion: (pieceType: string) => void
+  onClearMediaConversion: (pieceId: string) => void
   formatFileSize: (bytes: number) => string
   styles: ReturnType<typeof useChatInputAreaStyles>
 }
@@ -174,9 +174,9 @@ function AttachmentList({ attachments, mediaConversions, onRemove, onClearMediaC
   return (
     <div className={styles.attachmentsContainer}>
       {attachments.map((att, index) => {
-        const conversion = mediaConversions.find((mc) => mc.pieceType === att.type)
+        const conversion = mediaConversions.find((mc) => mc.pieceId === att.draftId)
         return (
-          <div key={index} className={styles.attachmentGroup}>
+          <div key={att.draftId} className={styles.attachmentGroup}>
             <div className={styles.attachmentRow}>
               <span className={styles.attachmentContent}>
                 {conversion && <span className={styles.originalBadge}>Original</span>}
@@ -208,7 +208,7 @@ function AttachmentList({ attachments, mediaConversions, onRemove, onClearMediaC
                   size="small"
                   className={styles.dismissBtn}
                   icon={<DismissRegular />}
-                  onClick={() => onClearMediaConversion(att.type)}
+                  onClick={() => onClearMediaConversion(conversion.pieceId)}
                   data-testid={`clear-media-conversion-${att.type}`}
                 />
               </div>
@@ -434,15 +434,15 @@ interface ChatInputAreaProps {
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
   onInputChange: (value: string) => void
-  onAttachmentsChange: (types: string[], data: Record<string, string>) => void
+  onAttachmentsChange: (attachments: MessageAttachment[]) => void
   convertedValue?: string | null
   originalValue?: string | null
   onClearConversion: () => void
   onClearAllConversions?: () => void
   onConvertedValueChange: (value: string) => void
   converterOutputDataTypes?: string[]
-  mediaConversions?: Array<{ pieceType: string; convertedValue: string; convertedDataType: string }>
-  onClearMediaConversion: (pieceType: string) => void
+  mediaConversions?: Array<Pick<PieceConversion, 'pieceId' | 'convertedValue' | 'convertedDataType'>>
+  onClearMediaConversion: (pieceId: string) => void
   /** Chip describing a text→file conversion (e.g. PDFConverter output). */
   convertedFileChip?: ConvertedFileChip | null
   onClearConvertedFileChip?: () => void
@@ -486,7 +486,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
 
   useImperativeHandle(ref, () => ({
     addAttachment: (att: MessageAttachment) => {
-      const nextAttachments = [...attachmentsRef.current, att]
+      const nextAttachments = [...attachmentsRef.current, withDraftIdentity({ ...att, draftId: undefined })]
       attachmentsRef.current = nextAttachments
       draftRevisionRef.current += 1
       setAttachments(nextAttachments)
@@ -497,7 +497,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       setInput(text)
     },
     restoreDraft: (text: string, draftAttachments: MessageAttachment[]) => {
-      const restoredAttachments = draftAttachments.map((attachment) => ({ ...attachment }))
+      const restoredAttachments = draftAttachments.map(withDraftIdentity)
       inputRef.current = text
       attachmentsRef.current = restoredAttachments
       draftRevisionRef.current += 1
@@ -525,14 +525,14 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       else if (file.type.startsWith('audio/')) type = 'audio'
       else if (file.type.startsWith('video/')) type = 'video'
 
-      newAttachments.push({
+      newAttachments.push(withDraftIdentity({
         type,
         name: file.name,
         url,
         mimeType: file.type,
         size: file.size,
         file,
-      })
+      }))
     }
 
     const nextAttachments = [...attachmentsRef.current, ...newAttachments]
@@ -613,39 +613,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     }
   }, [convertedValue])
 
-  useEffect(() => {
-    const types = [...new Set(attachments.map((a) => a.type))]
-
-    // The converter panel uses one value per media type. Uploads become data
-    // URIs; recovered attachments keep their original server-side reference.
-    let cancelled = false
-    const buildData = async () => {
-      const data: Record<string, string> = {}
-      for (const att of attachments) {
-        if (cancelled) return
-        if (data[att.type]) continue
-        if (att.file) {
-          const reader = new FileReader()
-          const file = att.file
-          const base64 = await new Promise<string>((resolve, reject) => {
-            reader.onload = () => resolve(reader.result as string)
-            reader.onerror = () => reject(reader.error)
-            reader.readAsDataURL(file)
-          })
-          if (cancelled) return
-          data[att.type] = base64
-        } else if (att.sourceValue != null) {
-          data[att.type] = att.sourceValue
-        }
-      }
-      if (!cancelled) {
-        onAttachmentsChange(types, data)
-      }
-    }
-
-    void buildData()
-
-    return () => { cancelled = true }
+  useLayoutEffect(() => {
+    onAttachmentsChange(attachments)
   }, [attachments, onAttachmentsChange])
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {

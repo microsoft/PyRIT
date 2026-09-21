@@ -11,7 +11,6 @@ import {
   Field,
   MessageBar,
   MessageBarBody,
-  SpinButton,
   Text,
   type DialogOpenChangeData,
   type DialogOpenChangeEvent,
@@ -19,6 +18,7 @@ import {
   type SpinButtonOnChangeData,
 } from '@fluentui/react-components'
 
+import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import type { ScenarioResumeExecutionOptions } from '@/types'
 
 import { useScenarioResumeDialogStyles } from './ScenarioResumeDialog.styles'
@@ -82,7 +82,7 @@ export default function ScenarioResumeDialog({
               validationState={validConcurrency ? 'none' : 'error'}
               validationMessage={validConcurrency ? undefined : 'Enter a whole number from 1 to 100.'}
             >
-              <SpinButton
+              <SingleStepSpinButton
                 className={styles.numberInput}
                 value={concurrency}
                 min={MIN_CONCURRENCY}
@@ -99,7 +99,7 @@ export default function ScenarioResumeDialog({
               validationState={validRetries ? 'none' : 'error'}
               validationMessage={validRetries ? undefined : 'Enter a whole number from 0 to 20.'}
             >
-              <SpinButton
+              <SingleStepSpinButton
                 className={styles.numberInput}
                 value={retries}
                 min={MIN_RETRIES}

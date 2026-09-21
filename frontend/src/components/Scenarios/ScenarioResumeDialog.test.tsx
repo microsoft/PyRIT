@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import ScenarioResumeDialog from './ScenarioResumeDialog'
@@ -21,6 +21,35 @@ describe('ScenarioResumeDialog', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+  })
+
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it.each<[string, number, string, string]>([
+    ['Max concurrency', 0, '1', '2'],
+    ['Max retries', 1, '0', '1'],
+  ])('increments %s once per click, not while held', async (
+    label: string,
+    index: number,
+    initial: string,
+    incremented: string,
+  ) => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    render(<TestWrapper><ScenarioResumeDialog {...defaultProps} /></TestWrapper>)
+
+    await user.pointer({
+      keys: '[MouseLeft>]',
+      target: screen.getAllByRole('button', { name: 'Increment value' })[index],
+    })
+    act(() => { jest.advanceTimersByTime(1_000) })
+    expect(screen.getByRole('spinbutton', { name: label })).toHaveValue(initial)
+    await user.pointer({ keys: '[/MouseLeft]' })
+
+    expect(screen.getByRole('spinbutton', { name: label })).toHaveValue(incremented)
+    expect(defaultProps.onConfirm).not.toHaveBeenCalled()
   })
 
   it('requires explicit confirmation even when the safe initial values are unchanged', async () => {

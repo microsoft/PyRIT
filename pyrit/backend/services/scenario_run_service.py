@@ -1413,14 +1413,14 @@ class ScenarioRunService:
             The API response model.
         """
         scenario_result_id = str(scenario_result.id)
+        status = scenario_result.scenario_run_state
 
         # Primary source: DB-persisted error fields
         error = scenario_result.error_message
         error_type = scenario_result.error_type
 
-        # Fallback: look up error from any persisted error AttackResults linked
-        # to this scenario via the new attribution_parent_id foreign key.
-        if not error:
+        # Historical attack errors remain after a successful resume; only use them for failed runs.
+        if not error and status == ScenarioRunState.FAILED:
             error_ars = self._memory.get_attack_results(
                 scenario_result_id=scenario_result_id,
                 outcome=AttackOutcome.ERROR,
@@ -1433,7 +1433,6 @@ class ScenarioRunService:
         if not error:
             error = active_error
 
-        status = scenario_result.scenario_run_state
         terminal = status in (
             ScenarioRunState.COMPLETED,
             ScenarioRunState.FAILED,
@@ -2076,6 +2075,8 @@ class ScenarioRunService:
                 created_at=header_result.creation_time,
                 started_at=self._load_started_at(scenario_result=header_result),
                 completed_at=header_result.completion_time if terminal else None,
+                error=header_result.error_message,
+                error_type=header_result.error_type,
                 pyrit_version=header_result.pyrit_version,
                 target=target,
                 techniques_used=techniques_used,

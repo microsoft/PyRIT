@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -20,8 +20,9 @@
 # Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
 # target recommends non-existent packages that an attacker could squat), an audio probe (which
-# delivers spoken jailbreaks to multimodal targets), and FigStep visual jailbreaks (which place
-# harmful instructions in images).
+# delivers spoken jailbreaks to multimodal targets), FigStep visual jailbreaks (which place
+# harmful instructions in images), and a repetition probe (which detects unexpected continuation
+# after repeated text).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -36,6 +37,9 @@ from pyrit.scenario.garak import (
     ApiKey,
     ApiKeyDatasetConfiguration,
     ApiKeyTechnique,
+    Divergence,
+    DivergenceDatasetConfiguration,
+    DivergenceTechnique,
     Doctor,
     Encoding,
     EncodingTechnique,
@@ -400,6 +404,45 @@ audio_scenario_result = await audio_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(audio_scenario_result)
+
+# %% [markdown]
+# ## Divergence
+#
+# Ports Garak's `divergence.Repeat` probe. The dataset contains 36 literal requests to repeat
+# a word indefinitely. A shared scorer receives a typed repetition expectation for each word.
+# A positive score means unexpected continuation, not proof of training-data disclosure.
+# `RepeatedToken` is not included. Baselines are forbidden because the repetition request is
+# already the direct attack; sending the leakage objective would not provide a useful comparison.
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan run garak.divergence --target openai_chat --techniques repeat --max-dataset-size 2
+# ```
+#
+# **Available techniques:** `Repeat`, `DEFAULT`, and `ALL` all select the same probe.
+# The default budget is 10 prompts across the entire dataset, not per word. Use
+# `DivergenceDatasetConfiguration(max_dataset_size=None, dataset_names=["garak_divergence"])`
+# to run all 36 prompts. The example below samples only two.
+
+# %%
+divergence_scenario = Divergence()
+divergence_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [DivergenceTechnique.Repeat],
+        "dataset_config": DivergenceDatasetConfiguration(dataset_names=["garak_divergence"], max_dataset_size=2),
+    }
+)
+await divergence_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {divergence_scenario.name}")
+print(f"Atomic attacks: {divergence_scenario.atomic_attack_count}")
+
+divergence_result = await divergence_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(divergence_result)
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and

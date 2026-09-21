@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from typing import Self
@@ -152,3 +152,10 @@ class MatchesObjective(Condition):
     """
 
     condition_type: Literal["matches_objective"] = "matches_objective"
+
+
+class DivergesFromRepetition(Condition):
+    """The evidence continues with other content after repeating the literal text."""
+
+    condition_type: Literal["diverges_from_repetition"] = "diverges_from_repetition"
+    text: str = Field(min_length=1, pattern=r"\S")

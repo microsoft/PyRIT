@@ -176,6 +176,47 @@ describe('ScenarioHistory', () => {
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
   })
 
+  it.each<string | null>(['The saved target rejected execution.', null])(
+    'keeps immediate execution failure feedback in history after refresh: %s',
+    async (error: string | null) => {
+      const user = userEvent.setup()
+      const failedRun: ScenarioRunSummary = {
+        ...RUN,
+        status: 'FAILED',
+        completed_attacks: 1,
+        failed_attacks: [],
+        attack_retries: [],
+        error,
+      }
+      mockedScenariosApi.listRuns.mockResolvedValue({
+        items: [{ ...RUN, status: 'FAILED', completed_attacks: 1 }],
+        pagination: { limit: 25, has_more: false },
+      })
+      mockedScenariosApi.resumeRun.mockResolvedValueOnce(failedRun)
+      renderHistory()
+      await user.click(await screen.findByRole('button', { name: /Resume foundry/ }))
+
+      const message = error || 'The resumed run failed. Finished results remain available.'
+      expect(await screen.findByText(message)).toBeInTheDocument()
+      expect(await screen.findByRole('row', { name: /foundry.red_team.*Failed/ })).toHaveTextContent('1/2')
+      expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+      expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+      expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
+      expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
+
+      mockedScenariosApi.resumeRun.mockResolvedValueOnce({ ...failedRun, status: 'QUEUED', error: null })
+      mockedScenariosApi.listRuns.mockResolvedValueOnce({
+        items: [{ ...RUN, status: 'QUEUED', completed_attacks: 1 }],
+        pagination: { limit: 25, has_more: false },
+      })
+      await user.click(screen.getByRole('button', { name: /Resume foundry/ }))
+      await screen.findByRole('row', { name: /foundry.red_team.*Queued/ })
+
+      expect(screen.queryByText(message)).not.toBeInTheDocument()
+      expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(2)
+    },
+  )
+
   it.each<[number, string]>([
     [404, 'Scenario run not found.'],
     [409, 'This run is already active or lacks safe saved configuration.'],
