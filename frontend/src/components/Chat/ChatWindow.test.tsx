@@ -4977,10 +4977,9 @@ describe("ChatWindow Integration", () => {
     // Click Convert — should use chat input text
     await userEvent.click(screen.getByTestId("converter-preview-btn"));
 
-    await waitFor(() => {
-      expect(screen.getByTestId("converter-preview-result")).toBeInTheDocument();
-      expect(screen.getByText("aGVsbG8=")).toBeInTheDocument();
-    });
+    const previewResult = await screen.findByTestId("converter-preview-result");
+    expect(within(previewResult).getByRole("textbox", { name: "Stage 1 output - Text" }))
+      .toHaveValue("aGVsbG8=");
 
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled();
     expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith({
