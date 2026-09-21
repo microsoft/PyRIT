@@ -43,8 +43,14 @@ def resolve_target_info(target_id: ComponentIdentifier | None) -> TargetInfo:
     """
     if target_id is None:
         return TargetInfo(None, None, None)
+    # params values are JSONValue; keep only strings (None otherwise) for the str|None fields.
     model = target_id.params.get("underlying_model_name") or target_id.params.get("model_name")
-    return TargetInfo(target_id.class_name, model, target_id.params.get("endpoint"))
+    endpoint = target_id.params.get("endpoint")
+    return TargetInfo(
+        target_id.class_name,
+        model if isinstance(model, str) else None,
+        endpoint if isinstance(endpoint, str) else None,
+    )
 
 
 def group_success_rate(attacks: list[AttackResult]) -> int:
