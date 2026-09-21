@@ -24,6 +24,7 @@ from pyrit.models import (
     ConversationType,
     Message,
     Score,
+    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -207,7 +208,9 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 continue  # Retry if no response (filtered or error)
 
             # Score the response including auxiliary and objective scoring
-            score = await self._evaluate_response_async(response=response, objective=context.objective)
+            score = await self._evaluate_response_async(
+                response=response, objective=context.objective, expectation=context.expectation
+            )
 
             # If there is no objective, we have a response but can't determine success
             if not self._objective_scorer:
@@ -341,6 +344,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         *,
         response: Message,
         objective: str,
+        expectation: ScoringExpectation,
     ) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
@@ -351,6 +355,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         Args:
             response (Message): The response from the model.
             objective (str): The natural-language description of the attack's objective.
+            expectation (ScoringExpectation): The effective scoring question.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if
@@ -358,16 +363,15 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 but are still executed and stored.
         """
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._objective_scorer.get_identifier() if self._objective_scorer else None,
             objective=objective,
         ):
             scoring_results = await MessageScorer.score_response_async(
                 response=response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                objective=objective,
+                expectation=expectation,
             )
 
         if not self._objective_scorer:

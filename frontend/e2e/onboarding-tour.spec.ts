@@ -14,7 +14,7 @@ test.describe("Onboarding tour", () => {
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
     await expect(dialog).toContainText(
-      "target selection happens in Targets"
+      "target selection happens in the Target Registry"
     );
     await expect(dialog).toContainText("choose Configure a target");
     await expect(dialog).toContainText("use Set Active there");
@@ -23,13 +23,13 @@ test.describe("Onboarding tour", () => {
     await page
       .getByRole("button", { name: "Configure a target", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/targets$/);
+    await expect(page).toHaveURL(/\/registry\/targets$/);
     await expect(
-      page.getByRole("heading", { name: "Target Configuration" })
+      page.getByRole("heading", { name: "Target Registry" })
     ).toBeVisible();
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText(
-      "target selection happens in Targets"
+      "target selection happens in the Target Registry"
     );
 
     await dialog.getByRole("button", { name: "Back", exact: true }).click();
@@ -42,7 +42,7 @@ test.describe("Onboarding tour", () => {
     await page
       .getByRole("button", { name: "Configure a target", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/targets$/);
+    await expect(page).toHaveURL(/\/registry\/targets$/);
     await expect(dialog).toBeVisible();
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
@@ -91,10 +91,10 @@ test.describe("Onboarding tour", () => {
 
     await page.goto("/");
     await page
-      .getByRole("button", { name: "Targets", exact: true })
+      .getByRole("button", { name: "Registry", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "Target Configuration" })
+      page.getByRole("heading", { name: "Target Registry" })
     ).toBeVisible();
     await page.getByRole("button", { name: "Set Active", exact: true }).click();
     await page.getByRole("button", { name: "Home", exact: true }).click();
@@ -106,15 +106,15 @@ test.describe("Onboarding tour", () => {
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
     await expect(dialog).toContainText("target currently active for Chat");
-    await expect(dialog).toContainText("use Set Active in Targets");
+    await expect(dialog).toContainText("use Set Active in the Target Registry");
     await expect(page.locator('[data-tour="target-card"]')).toBeVisible();
 
     await page
       .getByRole("button", { name: "Manage targets", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/targets$/);
+    await expect(page).toHaveURL(/\/registry\/targets$/);
     await expect(
-      page.getByRole("heading", { name: "Target Configuration" })
+      page.getByRole("heading", { name: "Target Registry" })
     ).toBeVisible();
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("target currently active for Chat");
@@ -168,7 +168,7 @@ test.describe("Onboarding tour", () => {
       .getByRole("button", { name: "Configure a target", exact: true })
       .click();
 
-    await expect(page).toHaveURL(/\/targets$/);
+    await expect(page).toHaveURL(/\/registry\/targets$/);
     await expect(dialog).toBeVisible();
     await page.getByRole("button", { name: "Set Active", exact: true }).click();
     await expect(page.getByText("Active", { exact: true }).first()).toBeVisible();

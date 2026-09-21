@@ -3,7 +3,7 @@
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoreStatus
+from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoreStatus, ScoringExpectation
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleAggregatorFunc,
     FloatScaleScorerByCategory,
@@ -144,6 +144,13 @@ class VideoFloatScaleScorer(
             conditions.update(scorer.required_conditions())
         return frozenset(conditions)
 
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """Validate all media scorer criteria before acquiring evidence or sending prompts."""
+        super()._validate_expectation(expectation=expectation)
+        self._video_helper.image_scorer._validate_expectation(expectation=expectation)
+        if self.audio_scorer is not None:
+            self.audio_scorer._validate_expectation(expectation=expectation)
+
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score a single video piece by extracting frames and optionally audio, then aggregating their scores.
@@ -171,7 +178,7 @@ class VideoFloatScaleScorer(
                 audio_scored = True
 
         # Get the ID from the message piece
-        piece_id = message_piece.id if message_piece.id is not None else message_piece.original_prompt_id
+        piece_id = message_piece.id
 
         # Call the aggregator - all aggregators now return list[ScoreAggregatorResult]
         aggregator_results: list[ScoreAggregatorResult] = self._score_aggregator(all_scores)

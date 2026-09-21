@@ -114,6 +114,12 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             conditions.update(scorer.required_conditions())
         return frozenset(conditions)
 
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """Validate every child before any runs, leaving coverage to the root scorer group."""
+        super()._validate_expectation(expectation=expectation)
+        for scorer in self._scorers:
+            scorer._validate_expectation(expectation=expectation)
+
     async def _score_scorable_async(
         self,
         *,

@@ -1,11 +1,13 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 import { mobileTouchTarget, mobileTouchTargetHeight } from '../../styles/touchTargets'
 
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
+
 export const useHomeStyles = makeStyles({
   root: {
     flex: 1,
     overflowY: 'auto',
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
   },
   container: {
     maxWidth: '1100px',

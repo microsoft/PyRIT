@@ -205,7 +205,7 @@ class ImageCompressionConverter(Converter):
                 save_kwargs["optimize"] = True
             if self._compress_level is not None:
                 save_kwargs["compress_level"] = self._compress_level
-        elif output_format == "WEBP":
+        else:
             save_kwargs = {}
             if self._quality is not None:
                 save_kwargs["quality"] = self._quality

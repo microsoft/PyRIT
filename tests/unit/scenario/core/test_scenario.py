@@ -270,6 +270,7 @@ class TestScenarioInitialization2:
         assert scenario.atomic_attack_count == 0
 
         scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        scenario.set_initial_metadata(metadata={"scheduler_managed_by": "test"})
         await scenario.initialize_async()
 
         assert scenario.atomic_attack_count == len(mock_atomic_attacks)
@@ -277,6 +278,7 @@ class TestScenarioInitialization2:
         [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
         assert stored.metadata["run_plan"]["version"] == 1
         assert len(stored.metadata["run_plan"]["atomic_groups"]) == len(mock_atomic_attacks)
+        assert stored.metadata["scheduler_managed_by"] == "test"
 
     async def test_initialize_async_deduplicates_logical_seed_groups_in_run_plan(self, mock_objective_target) -> None:
         duplicate_seed_groups = [
@@ -356,6 +358,24 @@ class TestScenarioInitialization2:
         # Verify it's a ComponentIdentifier with the expected class_name
         assert scenario._objective_target_identifier.class_name == "MockTarget"
         assert scenario._objective_target_identifier.class_module == "test"
+
+    async def test_initial_metadata_survives_subclass_metadata_override(self, mock_objective_target):
+        scenario = ConcreteScenario(name="Test Scenario", version=1)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        scenario.set_initial_metadata(metadata={"scheduler_managed_by": "test"})
+
+        with patch.object(
+            scenario,
+            "_build_initial_scenario_metadata",
+            return_value={"scenario_owned": "value"},
+        ):
+            await scenario.initialize_async()
+
+        [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
+        assert stored.metadata == {
+            "scenario_owned": "value",
+            "scheduler_managed_by": "test",
+        }
 
     async def test_initialize_async_requires_objective_target(self):
         """Test that initialize_async raises ValueError when objective_target is None."""
@@ -1064,6 +1084,14 @@ class TestScenarioBaselineOnlyExecution:
 
         assert resolved_none == resolved_empty
         assert len(resolved_none) > 0
+
+    def test_unknown_technique_raises(self):
+        """Test that an item outside the technique catalog is rejected instead of dropped."""
+        scenario = ConcreteScenario(name="Test", version=1)
+        technique_class = scenario._technique_class
+
+        with pytest.raises(ValueError, match="unsupported techniques"):
+            technique_class.resolve(["not_a_technique"], default=scenario._default_technique)
 
 
 class TestGetDefaultObjectiveScorer:

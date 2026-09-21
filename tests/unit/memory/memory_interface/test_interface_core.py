@@ -10,8 +10,22 @@ from sqlalchemy.dialects import mssql
 from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.memory import MemoryInterface
+from pyrit.memory.memory_interface import _normalize_attribution_filter_values
 from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.models import MessagePiece
+
+
+@pytest.mark.parametrize("raw", [["valid", None], [3], [False]])
+def test_normalize_attribution_filter_values_rejects_non_strings(raw):
+    with pytest.raises(ValueError, match="operator values must be strings"):
+        _normalize_attribution_filter_values(field="operator", raw=raw)
+
+
+def test_normalize_attribution_filter_values_snapshots_input():
+    raw = ["", "operator"]
+    result = _normalize_attribution_filter_values(field="operator", raw=raw)
+    raw.append("later")
+    assert result == ("", "operator")
 
 
 def test_memory(sqlite_instance: MemoryInterface):

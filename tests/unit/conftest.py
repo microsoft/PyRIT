@@ -11,8 +11,10 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import Engine, create_engine
 
+from pyrit.common.path import DATASETS_PATH
 from pyrit.common.singleton import Singleton
 from pyrit.memory import CentralMemory, SQLiteMemory, migration
+from pyrit.models import SeedDataset
 
 # This limits retries and speeds up execution
 os.environ["CUSTOM_RESULT_RETRY_MAX_NUM_ATTEMPTS"] = "5"
@@ -56,6 +58,20 @@ def _use_sqlite_memory(sqlite_memory: SQLiteMemory) -> Generator[None, None, Non
             Singleton._instances.pop(SQLiteMemory, None)
         else:
             Singleton._instances[SQLiteMemory] = previous_instance
+
+
+@pytest.fixture
+def garak_api_key_service_patterns() -> dict[str, str | None]:
+    dataset = SeedDataset.from_yaml_file(
+        DATASETS_PATH / "seed_datasets" / "local" / "garak" / "api_key_service_patterns.prompt"
+    )
+    patterns: dict[str, str | None] = {}
+    for prompt in dataset.prompts:
+        pattern_name = prompt.metadata["pattern_name"]
+        assert pattern_name is None or isinstance(pattern_name, str)
+        assert prompt.value not in patterns, f"Duplicate service: {prompt.value}"
+        patterns[prompt.value] = pattern_name
+    return patterns
 
 
 @pytest.fixture
