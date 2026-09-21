@@ -33,6 +33,8 @@ const DUMMY_VALUES: Record<string, string> = {
   operation: 'op_trash_panda',
 }
 
+const METADATA_KEYS = new Set(['operator', 'operation'])
+
 // Fluent's listbox renders every option as a real component, so a long list
 // stalls opening and typing. Past this many, you narrow the list by typing.
 const MAX_LISTED = 200
@@ -339,23 +341,26 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   }
 
   // Suggestions: show existing keys not yet used, and values for the current key
-  const suggestedKeys = Object.keys(existingLabels).filter(k => !(k in labels))
+  const suggestedKeys = Object.keys(existingLabels)
+    .filter(key => !METADATA_KEYS.has(key) && !(key in labels))
   const suggestedValues = (editingLabel ? existingLabels[editingLabel] : existingLabels[newKey]) || []
 
-  // Layout: the labels icon (with total count badge) is always the first
+  // Layout: the labels icon (with custom-label count badge) is always the first
   // element on the bar. We then render as many full chips as fit, in
-  // declaration order. The icon's popover always shows the full list and
-  // the add form, so the user can reach everything regardless of how many
-  // chips are currently visible. The inline "+ Add" button is only shown
-  // when every chip already fits — otherwise the popover already covers
-  // the same flow.
+  // declaration order. The icon's popover shows the custom labels and the
+  // add form, so the user can reach them regardless of how many chips are
+  // currently visible.
   const rootRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const ICON_BUTTON_WIDTH_PX = 56  // labels icon + count badge + gap
   const ADD_BUTTON_WIDTH_PX = 60   // "+ Add" button
   const [visibleCount, setVisibleCount] = useState(Infinity)
 
-  const labelEntries = useMemo(() => Object.entries(labels), [labels])
+  const headerEntries = useMemo(() => Object.entries(labels), [labels])
+  const labelEntries = useMemo(
+    () => headerEntries.filter(([key]) => !METADATA_KEYS.has(key)),
+    [headerEntries]
+  )
 
   useEffect(() => {
     const root = rootRef.current
@@ -410,7 +415,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     if (root.parentElement) observer.observe(root.parentElement)
     check()
     return () => observer.disconnect()
-  }, [labelEntries])
+  }, [headerEntries])
 
   const renderValueEditor = (key: string, value: string) => {
     // Whatever is deferred below belongs to this edit, and only this one.
@@ -556,9 +561,8 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
 
   const renderLabelsList = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      {labelEntries.length === 0 && <Text size={200}>No labels yet</Text>}
       {labelEntries.map(([key, value]) => {
-        const isDummy = isDummyValue(key, value)
-        const isRequired = key === 'operator' || key === 'operation'
         if (editingLabel === key) {
           return (
             <div key={key} className={styles.inputRow} style={{ position: 'relative' }}>
@@ -569,7 +573,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         return (
           <div
             key={key}
-            className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
+            className={`${styles.labelBadge} ${styles.labelNormal}`}
             style={{ flexShrink: 0 }}
             onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
           >
@@ -585,17 +589,15 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
               <Text size={200} weight="semibold">{key}:</Text>
               <Text size={200}>{value}</Text>
             </div>
-            {!isRequired && (
-              <Button
-                className={styles.removeBtn}
-                appearance="transparent"
-                size="small"
-                icon={<DismissRegular fontSize={12} />}
-                onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
-                aria-label={`Remove ${key} label`}
-                data-testid={`popover-remove-label-${key}`}
-              />
-            )}
+            <Button
+              className={styles.removeBtn}
+              appearance="transparent"
+              size="small"
+              icon={<DismissRegular fontSize={12} />}
+              onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
+              aria-label={`Remove ${key} label`}
+              data-testid={`popover-remove-label-${key}`}
+            />
           </div>
         )
       })}
@@ -688,7 +690,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         aria-hidden="true"
         className={styles.measureRow}
       >
-        {labelEntries.map(([key, value], idx) => (
+        {headerEntries.map(([key, value], idx) => (
           <span
             key={key}
             data-label-idx={idx}
@@ -701,8 +703,8 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
       </div>
 
       {/*
-        Labels icon + total count. Always present, anchored leftmost.
-        Clicking opens a popover with the full label list and add form
+        Labels icon + custom-label count. Always present, anchored leftmost.
+        Clicking opens a popover with the custom-label list and add form
         — so even when every chip fits, this is still the canonical
         entry point for editing/adding labels.
       */}
@@ -730,7 +732,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         </PopoverTrigger>
         <PopoverSurface>
           <div className={styles.popoverSurface}>
-            <Text weight="semibold" size={300}>All Labels</Text>
+            <Text weight="semibold" size={300}>Labels</Text>
             {renderLabelsList()}
             <div className={styles.popoverDivider} />
             <Text weight="semibold" size={300}>Add Label</Text>
@@ -740,8 +742,8 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
       </Popover>
 
       <div className={styles.labelsContainer}>
-        {labelEntries
-          .slice(0, visibleCount === Infinity ? labelEntries.length : visibleCount)
+        {headerEntries
+          .slice(0, visibleCount === Infinity ? headerEntries.length : visibleCount)
           .map(([key, value], idx) => renderLabelBadge(key, value, idx))}
       </div>
     </div>
