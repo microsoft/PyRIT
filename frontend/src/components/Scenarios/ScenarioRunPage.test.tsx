@@ -437,6 +437,38 @@ describe('ScenarioRunPage', () => {
     expect(screen.getByText(/showing the last successfully loaded progress/i)).toBeInTheDocument()
   })
 
+  it('shows the persisted failure reason and type for failed runs', () => {
+    mockHookState(makeState({
+      run: {
+        ...makeState().run!,
+        status: 'FAILED',
+        error: 'Scenario initialization failed.',
+        error_type: 'ValueError',
+      },
+    }))
+
+    renderPage()
+
+    expect(screen.getByText(
+      /Run failed \(ValueError\): Scenario initialization failed\. Finished executions remain available below\./,
+    )).toBeInTheDocument()
+  })
+
+  it('shows a generic failure message for legacy runs without error details', () => {
+    mockHookState(makeState({
+      run: {
+        ...makeState().run!,
+        status: 'FAILED',
+      },
+    }))
+
+    renderPage()
+
+    expect(screen.getByText(
+      /This run ended before all planned executable units completed\. Finished executions remain available below\./,
+    )).toBeInTheDocument()
+  })
+
   it('cancels a queued run after confirmation and immediately applies the terminal state', async () => {
     const user = userEvent.setup()
     const cancelledRun = {
