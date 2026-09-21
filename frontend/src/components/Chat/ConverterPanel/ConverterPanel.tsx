@@ -272,11 +272,9 @@ export default function ConverterPanel({
     .filter((type: string) => groups[type]?.length)
     .map((type: string) => ({ type, converters: groups[type] }))
 
-  const configuredPieceTypes = tabs.filter(
-    (pieceType: string) => (pipelines[pieceType]?.length ?? 0) > 0,
-  )
-  const convertibleInputs = inputs.filter(
-    (input: ConverterInputPiece) => (workingInputs[input.id] ?? input.value).trim() && pipelines[input.pieceType]?.length,
+  const activePipelineConfigured = selectedStages.length > 0
+  const convertibleInputs = activeInputs.filter(
+    (input: ConverterInputPiece) => (workingInputs[input.id] ?? input.value).trim(),
   )
 
   const handleConverterSelect = useCallback((converterId: string): void => {
@@ -442,15 +440,15 @@ export default function ConverterPanel({
           )}
           {!isLoading && !error && (
             <div className={styles.converterList} data-testid="converter-panel-list">
-              {configuredPieceTypes.length > 0 && (
+              {activePipelineConfigured && (
                 <Button
                   appearance="primary"
                   size="small"
                   icon={isConverting ? <Spinner size="tiny" /> : <PlayRegular />}
-                  onClick={() => void controller.convert()}
+                  onClick={() => void controller.convert(effectiveActiveTab)}
                   disabled={isConverting || convertibleInputs.length === 0}
                   className={styles.previewButton}
-                  title="Convert all configured chains from their working inputs."
+                  title={`Convert the configured ${PIECE_TYPE_LABELS[effectiveActiveTab] ?? effectiveActiveTab} chain.`}
                   data-testid="converter-preview-btn"
                 >
                   {isConverting ? 'Converting...' : 'Convert'}

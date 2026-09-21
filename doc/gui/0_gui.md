@@ -72,7 +72,9 @@ Type a message and press Enter (or click Send) to send it to the active target. 
 Open **Converters** and use the picker above the working input to add registered
 converters in the order you want them to run.
 The top text box is an editable working copy: changing it does not change the original
-chat message. The top **Convert** button runs every configured input's full pipeline.
+chat message. The top **Convert** button runs the active tab's configured pipeline.
+For attachment tabs, it converts every attachment shown on that tab without rerunning
+pipelines on other tabs.
 
 Each text stage output is also editable. After changing an intermediate output, use
 the **Convert** button below it to run **all remaining stages** from that value,

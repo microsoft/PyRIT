@@ -95,7 +95,7 @@ export interface ChatConverterController {
   addConverter: (pieceType: string, converterId: string) => void
   setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
   retainConverters: (availableIds: Set<string>) => void
-  convert: () => Promise<void>
+  convert: (pieceType: string) => Promise<void>
   convertRemaining: (pieceId: string, stageId: string) => Promise<void>
   editInput: (pieceId: string, value: string) => void
   editStageOutput: (pieceId: string, stageId: string, value: string) => void

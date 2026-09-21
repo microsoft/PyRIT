@@ -43,6 +43,12 @@ interface ConversionJob {
   dataType: string
 }
 
+interface ConversionScope {
+  pieceType?: string
+  pieceId?: string
+  afterStageId?: string
+}
+
 function omitPieces<T>(values: Record<string, T>, ids: Set<string>): Record<string, T> {
   return Object.fromEntries(Object.entries(values).filter(([id]: [string, T]) => !ids.has(id)))
 }
@@ -216,9 +222,14 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     })
   }, [])
 
-  const runConversion = async (pieceId?: string, afterStageId?: string): Promise<void> => {
+  const runConversion = async ({
+    pieceType,
+    pieceId,
+    afterStageId,
+  }: ConversionScope): Promise<void> => {
     if (activeRun.current !== null) return
     const selected = state.inputs.flatMap((input: VersionedInput): ConversionJob[] => {
+      if (pieceType !== undefined && pieceType !== input.pieceType) return []
       if (pieceId !== undefined && pieceId !== input.id) return []
       const pipeline = state.pipelines[input.pieceType] ?? []
       const previous = state.stageResults[input.id] ?? []
@@ -370,8 +381,8 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     addConverter,
     setPipeline,
     retainConverters,
-    convert: () => runConversion(),
-    convertRemaining: (pieceId: string, stageId: string) => runConversion(pieceId, stageId),
+    convert: (pieceType: string) => runConversion({ pieceType }),
+    convertRemaining: (pieceId: string, stageId: string) => runConversion({ pieceId, afterStageId: stageId }),
     editInput,
     editStageOutput,
     apply,
