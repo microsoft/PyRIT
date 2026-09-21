@@ -306,6 +306,8 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
 
         Unlike ``fetch_dataset_async``, this retains ``response`` and ``response_label``
         so scorer evaluation can reuse remote human/LLM-jury labels instead of hand-authored CSVs.
+        Each retained row contributes one binary score, so this dataset contains no
+        inter-rater agreement or graded-severity information.
 
         Args:
             harm_category: Aegis harm category to export.
@@ -313,9 +315,11 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
             harm_definition: Harm definition YAML path. Required when the category has no default profile.
             harm_definition_version: Version of the harm definition.
             dataset_version: Version to assign to the exported dataset.
-            label_sources: ``response_label_source`` values to include. Defaults to
-                ``("human",)`` so ``human_scores`` reflects human labels only; pass
-                ``("human", "llm_jury")`` to opt into jury-labelled rows.
+            label_sources: ``response_label_source`` values to include. Aegis labels
+                responses with ``human``, ``llm_jury``, or ``refusal_data_augmentation``;
+                the last source is synthetic and derives its label from row construction.
+                Defaults to ``("human",)`` so ``human_scores`` reflects human labels only.
+                Other sources require explicit opt-in.
 
         Returns:
             The Aegis responses and labels as a harm evaluation dataset.

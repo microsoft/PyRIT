@@ -59,6 +59,16 @@ async def test_fetch_human_labeled_harm_dataset_violence():
                 "prompt_label_source": "human",
                 "response_label_source": "llm_jury",
             },
+            {
+                "id": "10",
+                "prompt": "Violent request",
+                "response": "I cannot help with that.",
+                "prompt_label": "unsafe",
+                "response_label": "safe",
+                "violated_categories": "Violence",
+                "prompt_label_source": "human",
+                "response_label_source": "refusal_data_augmentation",
+            },
         ]
     }
 
@@ -208,6 +218,16 @@ async def test_fetch_human_labeled_harm_dataset_includes_jury_when_opted_in():
                 "violated_categories": "Violence",
                 "prompt_label_source": "human",
                 "response_label_source": "human",
+            },
+            {
+                "id": "9",
+                "prompt": "Violent request",
+                "response": "I cannot help with that.",
+                "prompt_label": "unsafe",
+                "response_label": "safe",
+                "violated_categories": "Violence",
+                "prompt_label_source": "human",
+                "response_label_source": "refusal_data_augmentation",
             },
         ]
     }
