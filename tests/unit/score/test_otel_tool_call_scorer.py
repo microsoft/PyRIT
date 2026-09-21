@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from opentelemetry import trace
-from opentelemetry.sdk.trace import SpanLimits, TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace import ReadableSpan, SpanLimits, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -17,6 +18,7 @@ from pyrit.memory import SQLiteMemory
 from pyrit.memory.memory_models import ScoreEntry
 from pyrit.models import (
     Acquisition,
+    ComponentIdentifier,
     ContentScorable,
     MessageScorable,
     Score,
@@ -64,6 +66,45 @@ def _span(
 
 def _expectation(*names: str) -> ScoringExpectation:
     return ScoringExpectation(conditions=(ToolsCalled(tools=tuple(ToolCallRequirement(name=name) for name in names)),))
+
+
+def test_scorer_identifier_retains_source_child() -> None:
+    source = OtelTraceSource(trace_client=InMemoryTraceClient(source_id="first"))
+    identifier = OtelToolCallScorer(source=source).get_identifier()
+    other_source = OtelTraceSource(trace_client=InMemoryTraceClient(source_id="second"))
+
+    assert identifier.children["source"] == source.get_identifier()
+    assert "source_hash" not in identifier.params
+    assert identifier.params["matching_version"] == 1
+    assert identifier.hash != OtelToolCallScorer(source=other_source).get_identifier().hash
+    assert ComponentIdentifier.model_validate_json(identifier.model_dump_json()).children == identifier.children
+
+
+async def test_replay_preserves_source_identity_from_before_package_move_async(sqlite_instance: SQLiteMemory) -> None:
+    client = InMemoryTraceClient()
+    client.add_span(_span())
+    scope = TraceScorable(trace_ids=("1" * 32,))
+    source = OtelTraceSource(trace_client=client)
+    old_identifier = ComponentIdentifier(
+        class_name="OtelTraceSource",
+        class_module="pyrit.score.otel_trace_source",
+    )
+    with patch.object(source, "get_identifier", return_value=old_identifier):
+        scorer = OtelToolCallScorer(source=source)
+        score = (await scorer.score_async(scorable=scope, expectation=_expectation("lookup")))[0]
+    observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+    assert observation.source_identifier == old_identifier
+    assert source.get_identifier().class_module == "pyrit.score.observation.otel_trace_source"
+    client.close()
+
+    replay_scorer = OtelToolCallScorer(source=source)
+    replay = (await replay_scorer.score_observation_async(observation=observation, expectation=_expectation("lookup")))[
+        0
+    ]
+
+    assert replay.get_value() is True
+    assert replay.observation_ids == score.observation_ids
+    assert sqlite_instance.get_observations(observation_ids=score.observation_ids)[0] == observation
 
 
 @pytest.mark.parametrize("complete", [False, True])
@@ -244,7 +285,10 @@ async def test_model_requested_calls_are_not_execution_evidence_async() -> None:
 async def test_real_sdk_export_and_existing_global_provider_are_preserved_async(sqlite_instance) -> None:
     previous_provider = trace.get_tracer_provider()
     client = InMemoryTraceClient()
-    provider = TracerProvider(sampler=ALWAYS_ON)
+    with patch.dict(
+        "os.environ", {"OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT": "3", "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT": "3"}
+    ):
+        provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attribute_length=SpanLimits.UNSET))
     exporter = InMemoryTraceExporter(trace_client=client)
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     try:
@@ -293,7 +337,10 @@ async def test_limits_duplicates_and_late_spans_keep_coverage_honest_async() -> 
 
 async def test_sdk_dropped_execution_marker_prevents_false_negative_async(sqlite_instance: SQLiteMemory) -> None:
     client = InMemoryTraceClient()
-    provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attributes=1))
+    provider = TracerProvider(
+        sampler=ALWAYS_ON,
+        span_limits=SpanLimits(max_span_attributes=1, max_span_attribute_length=SpanLimits.UNSET),
+    )
     provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
     try:
         with provider.get_tracer(__name__).start_as_current_span("tool") as span:
@@ -319,6 +366,75 @@ async def test_sdk_dropped_execution_marker_prevents_false_negative_async(sqlite
         assert replay.is_undetermined
     finally:
         await asyncio.to_thread(provider.shutdown)
+
+
+@pytest.mark.parametrize(
+    ("limit_kwargs", "limit_env"),
+    [
+        ({"max_span_attribute_length": 12}, {}),
+        ({"max_span_attribute_length": 3}, {}),
+        ({"max_attribute_length": 12}, {}),
+        ({}, {"OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT": "12"}),
+        ({}, {"OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT": "12"}),
+    ],
+)
+@pytest.mark.parametrize("convention", ["genai", "openinference"])
+async def test_sdk_truncation_cannot_prove_tool_calls_async(
+    *, sqlite_instance: SQLiteMemory, limit_kwargs: dict[str, int], limit_env: dict[str, str], convention: str
+) -> None:
+    client = InMemoryTraceClient()
+    exporter = InMemoryTraceExporter(trace_client=client)
+    capture = InMemorySpanExporter()
+    with patch.dict("os.environ", limit_env, clear=True):
+        limits = SpanLimits(**limit_kwargs)
+    provider = TracerProvider(sampler=ALWAYS_ON, span_limits=limits)
+    provider.add_span_processor(SimpleSpanProcessor(capture))
+    try:
+        with provider.get_tracer(__name__).start_as_current_span(
+            "tool", attributes=_span(name="lookup_customer", convention=convention).attributes
+        ) as span:
+            scope = TraceScorable(trace_ids=(f"{span.get_span_context().trace_id:032x}",))
+        captured = capture.get_finished_spans()
+        assert captured[0].dropped_attributes == 0
+        name_key = "gen_ai.tool.name" if convention == "genai" else "tool.name"
+        shortened_name = "lookup_customer"[: limits.max_span_attribute_length]
+        assert captured[0].attributes[name_key] == shortened_name
+        assert shortened_name != "lookup_customer"
+        assert exporter.export(captured) is SpanExportResult.FAILURE
+        result = await client.get_spans_async(query=TraceQuery(scope=scope))
+        assert result.spans == ()
+        assert "capture_failed" in result.coverage.reasons
+        with pytest.raises(ValueError, match="incomplete or lossy"):
+            client.mark_complete(trace_ids=scope.trace_ids)
+
+        scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+        observations = []
+        for name in ("lookup_customer", shortened_name):
+            score = (await scorer.score_async(scorable=scope, expectation=_expectation(name)))[0]
+            assert score.is_undetermined
+            observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+            assert observation.payload.events == ()
+            observations.append((name, observation))
+        client.close()
+        for name, observation in observations:
+            replay = (await scorer.score_observation_async(observation=observation, expectation=_expectation(name)))[0]
+            assert replay.is_undetermined
+    finally:
+        await asyncio.to_thread(provider.shutdown)
+
+
+async def test_sdk_unknown_attribute_limits_fail_closed_async() -> None:
+    client = InMemoryTraceClient()
+    exporter = InMemoryTraceExporter(trace_client=client)
+    span = ReadableSpan(name="tool", attributes={"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "lookup"})
+
+    assert exporter.export((span,)) is SpanExportResult.FAILURE
+    scope = TraceScorable(trace_ids=("1" * 32,))
+    result = await client.get_spans_async(query=TraceQuery(scope=scope))
+    assert result.spans == ()
+    assert "capture_failed" in result.coverage.reasons
+    with pytest.raises(ValueError, match="incomplete or lossy"):
+        client.mark_complete(trace_ids=scope.trace_ids)
 
 
 async def test_cancellation_and_programming_errors_propagate_async() -> None:

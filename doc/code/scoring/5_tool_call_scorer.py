@@ -19,7 +19,7 @@
 # Supply the trace IDs explicitly. This first version does not discover traces
 # from messages or act as an automatic attack outcome scorer.
 #
-# Install PyRIT with the `otel` extra. This walkthrough uses a real SDK provider,
+# The OpenTelemetry SDK is included with PyRIT. This walkthrough uses a real SDK provider,
 # local capture, and PyRIT's in-memory storage. It needs no model, service, credentials, or global
 # provider changes.
 
@@ -27,13 +27,14 @@
 import asyncio
 
 from opentelemetry.context import Context
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import SpanLimits, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 
 from pyrit.memory import CentralMemory
 from pyrit.models import ScoreStatus, ScoringExpectation, ToolCallRequirement, ToolsCalled, TraceScorable
-from pyrit.score import InMemoryTraceClient, InMemoryTraceExporter, OtelToolCallScorer, OtelTraceSource
+from pyrit.score import OtelToolCallScorer
+from pyrit.score.observation import InMemoryTraceClient, InMemoryTraceExporter, OtelTraceSource
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(  # type: ignore
@@ -44,7 +45,7 @@ await initialize_pyrit_async(  # type: ignore
 )
 memory = CentralMemory.get_memory_instance()
 client = InMemoryTraceClient()
-provider = TracerProvider(sampler=ALWAYS_ON)
+provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attribute_length=SpanLimits.UNSET))
 provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
 tracer = provider.get_tracer("pyrit-tool-example")
 scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
@@ -87,6 +88,10 @@ print(f"Observed lookup: {positive.get_value()}")
 # Capture starts incomplete. Observing a call proves invocation, but an absent
 # tool is not false until coverage is explicitly complete.
 #
+# This example disables span attribute string truncation, including limits set by
+# environment variables. The exporter rejects finite or unknown length limits:
+# shortened names cannot prove which tools ran, even with incomplete coverage.
+#
 # This example has no background work and uses always-on sampling. Both spans
 # have ended, so after checking export we can declare this controlled capture
 # complete. A flush alone would not prove that an arbitrary remote trace is
@@ -109,7 +114,7 @@ print(f"Missing tool after controlled completion: {negative.get_value()}")
 #
 # Load the observation from PyRIT memory, stop capture, and change the expected name.
 # Replay reads the same immutable snapshot; it does not call the trace client.
-# Arguments and results are not retained. Existing judgment observations still
+# Arguments and results are not retained. Scorer target response observations still
 # have their stricter, original-expectation replay rules.
 
 # %%

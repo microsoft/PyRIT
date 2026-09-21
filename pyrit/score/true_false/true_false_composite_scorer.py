@@ -19,7 +19,7 @@ from pyrit.models import (
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.score.observation import _merge_observation_ids
+from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 

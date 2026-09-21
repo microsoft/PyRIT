@@ -40,10 +40,11 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.message_scorer import MessageScorer
-    from pyrit.score.observation import NonReplayableObservationError
-    from pyrit.score.observation_source import ObservationSource
-    from pyrit.score.otel_span_exporter import InMemoryTraceExporter
-    from pyrit.score.otel_trace_source import OtelTraceSource
+    from pyrit.score.observation.execution import NonReplayableObservationError
+    from pyrit.score.observation.observation_source import ObservationSource
+    from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
+    from pyrit.score.observation.otel_trace_source import OtelTraceSource
+    from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
     from pyrit.score.response_handler import CallableResponseHandler, JsonSchemaResponseHandler, ResponseHandler
     from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
     from pyrit.score.scorer import Scorer
@@ -73,7 +74,6 @@ if TYPE_CHECKING:
     )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-    from pyrit.score.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
@@ -176,13 +176,13 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "HumanLabeledDataset": "pyrit.score.scorer_evaluation.human_labeled_dataset",
     "HumanLabeledEntry": "pyrit.score.scorer_evaluation.human_labeled_dataset",
     "InsecureCodeScorer": "pyrit.score.float_scale.insecure_code_scorer",
-    "InMemoryTraceClient": "pyrit.score.trace_client",
-    "InMemoryTraceExporter": "pyrit.score.otel_span_exporter",
-    "ObservationSource": "pyrit.score.observation_source",
-    "OtelTraceSource": "pyrit.score.otel_trace_source",
+    "InMemoryTraceClient": "pyrit.score.observation.trace_client",
+    "InMemoryTraceExporter": "pyrit.score.observation.otel_span_exporter",
+    "ObservationSource": "pyrit.score.observation.observation_source",
+    "OtelTraceSource": "pyrit.score.observation.otel_trace_source",
     "OtelToolCallScorer": "pyrit.score.true_false.otel_tool_call_scorer",
-    "TraceAcquisitionError": "pyrit.score.trace_client",
-    "TraceClient": "pyrit.score.trace_client",
+    "TraceAcquisitionError": "pyrit.score.observation.trace_client",
+    "TraceClient": "pyrit.score.observation.trace_client",
     "JsonSchemaResponseHandler": "pyrit.score.response_handler",
     "LDAPInjectionOutputScorer": "pyrit.score.true_false.regex.ldap_injection_output_scorer",
     "LikertScaleEvalFiles": "pyrit.score.float_scale.self_ask_likert_scorer",
@@ -199,7 +199,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MessageScorableResolver": "pyrit.score.message_scorable_resolver",
     "MessageScorable": "pyrit.score.scorable",
     "MessageScorer": "pyrit.score.message_scorer",
-    "NonReplayableObservationError": "pyrit.score.observation",
+    "NonReplayableObservationError": "pyrit.score.observation.execution",
     "MethKeywordScorer": "pyrit.score.true_false.regex.meth_keyword_scorer",
     "MetricsType": "pyrit.score.scorer_evaluation.metrics_type",
     "NerveAgentKeywordScorer": "pyrit.score.true_false.regex.nerve_agent_keyword_scorer",

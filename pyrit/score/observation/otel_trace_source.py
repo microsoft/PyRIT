@@ -19,13 +19,13 @@ from pyrit.models import (
     TraceCoverage,
     TraceQuery,
 )
-from pyrit.score.trace_client import TraceAcquisitionError
+from pyrit.score.observation.trace_client import TraceAcquisitionError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.models import TraceScorable, TraceSpan
-    from pyrit.score.trace_client import TraceClient
+    from pyrit.score.observation.trace_client import TraceClient
 
 logger = logging.getLogger(__name__)
 

@@ -36,7 +36,7 @@ from pyrit.models.score.observation import _message_piece_digest
 from pyrit.models.score.scorable import SCORABLE_TYPES
 from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
-from pyrit.score.observation import (
+from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _observation_collection,
     _ObservationEvidence,

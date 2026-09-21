@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Optional SDK bridge; attach it only to a caller-owned provider."""
+"""Local SDK bridge; attach it only to a caller-owned provider."""
 
 from __future__ import annotations
 
@@ -9,10 +9,11 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from opentelemetry.attributes import BoundedAttributes
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 from pyrit.models import TraceSpan, TraceSpanStatus
-from pyrit.score.trace_client import TraceAcquisitionError
+from pyrit.score.observation.trace_client import TraceAcquisitionError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -20,13 +21,19 @@ if TYPE_CHECKING:
     from opentelemetry.sdk.trace import ReadableSpan
     from pydantic import JsonValue
 
-    from pyrit.score.trace_client import InMemoryTraceClient
+    from pyrit.score.observation.trace_client import InMemoryTraceClient
 
 logger = logging.getLogger(__name__)
 
 
 class InMemoryTraceExporter(SpanExporter):
-    """Copy ended SDK spans into a local trace client without global state."""
+    """
+    Copy ended SDK spans into a local trace client without global state.
+
+    The provider must disable span attribute string truncation with
+    ``SpanLimits(max_span_attribute_length=SpanLimits.UNSET)``. Spans with finite
+    or unknown length limits are omitted and make capture incomplete.
+    """
 
     def __init__(self, *, trace_client: InMemoryTraceClient) -> None:
         """Initialize a bridge to a caller-owned client."""
@@ -46,6 +53,19 @@ class InMemoryTraceExporter(SpanExporter):
         result = SpanExportResult.SUCCESS
         try:
             for span in spans:
+                # ReadableSpan's public mapping hides the SDK's string-length limit.
+                attributes = getattr(span, "_attributes", None)
+                if (
+                    not isinstance(attributes, BoundedAttributes)
+                    or getattr(attributes, "max_value_len", -1) is not None
+                ):
+                    self._client.record_capture_failure()
+                    logger.warning(
+                        "SDK span attribute length is limited or unknown; span omitted. "
+                        "Use SpanLimits(max_span_attribute_length=SpanLimits.UNSET)."
+                    )
+                    result = SpanExportResult.FAILURE
+                    continue
                 if span.dropped_attributes:
                     self._client.record_capture_failure()
                     logger.warning("SDK span attributes were dropped; evidence is not complete.")

@@ -266,13 +266,15 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   `TraceScorable` IDs through an injected `TraceClient`. `OtelToolCallScorer`
   matches tool names against the saved snapshot; incomplete absence is
   undetermined, not false. Automatic message-to-trace correlation is deferred.
-- `ObservationSource` is typed by the scorable it accepts. Sources acquire evidence;
-  matchers decide whether that evidence meets a condition.
+- `pyrit.score.observation` owns acquisition and replay support, not evaluation.
+  `ObservationSource` is typed by the scorable it accepts; sources acquire evidence
+  and matchers decide whether it meets a condition. Its local SDK exporter
+  supports caller-owned, in-process capture, not a remote collector or durable store.
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.
-- `score_observation_async` coordinates replay of stored evidence without calling the target. The judgment replay path owns the checks for the exact original expectation, scorer configuration, and response-handler contract; evidence resolution checks that scored evidence and response content are unchanged.
+- `score_observation_async` coordinates replay of stored evidence without calling the target. Scorer target response replay owns the checks for the exact original expectation, scorer configuration, and response-handler contract; evidence resolution checks that scored evidence and response content are unchanged.
 - Tool-event observations can be matched against new tool-name expectations
-  without querying the trace client again. This does not relax judgment replay rules.
+  without querying the trace client again. This does not relax scorer target response replay rules.
 - **Does not own**: acting on its own result. A scorer evaluates a response and returns a score; branching on that score is the attack's job, and aggregating scores across runs is analytics'. It may call a target to evaluate, but it doesn't send the attack's objective prompt or manage the conversation.
 
 **Framework Plans**:

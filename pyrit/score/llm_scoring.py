@@ -28,7 +28,7 @@ from pyrit.models import (
 from pyrit.models.score.observation import _response_piece_digest
 from pyrit.models.score.scorable import SCORABLE_TYPES
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
-from pyrit.score.observation import (
+from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _collect_observation,
     _get_current_scorable,

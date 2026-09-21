@@ -16,13 +16,13 @@ from pyrit.models import (
     ToolsCalled,
     TraceScorable,
 )
-from pyrit.score.observation import NonReplayableObservationError, _collect_observation
+from pyrit.score.observation.execution import NonReplayableObservationError, _collect_observation
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation
-    from pyrit.score.observation import _ObservationEvidence
-    from pyrit.score.observation_source import ObservationSource
+    from pyrit.score.observation.execution import _ObservationEvidence
+    from pyrit.score.observation.observation_source import ObservationSource
 
 
 def match_tools_called(
@@ -55,7 +55,8 @@ class OtelToolCallScorer(TrueFalseScorer):
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
-            params={"source_hash": self._source.get_identifier().hash, "matching_version": 1}
+            params={"matching_version": 1},
+            children={"source": self._source.get_identifier()},
         )
 
     def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:

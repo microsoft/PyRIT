@@ -4709,6 +4709,7 @@ dependencies = [
     { name = "numpy" },
     { name = "openai" },
     { name = "openpyxl" },
+    { name = "opentelemetry-sdk" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -4743,7 +4744,6 @@ all = [
     { name = "litellm" },
     { name = "ollama" },
     { name = "opencv-python" },
-    { name = "opentelemetry-sdk" },
     { name = "playwright" },
     { name = "pyarrow", marker = "python_full_version >= '3.14'" },
     { name = "sentencepiece" },
@@ -4770,9 +4770,6 @@ litellm = [
 opencv = [
     { name = "opencv-python" },
 ]
-otel = [
-    { name = "opentelemetry-sdk" },
-]
 playwright = [
     { name = "flask" },
     { name = "ollama" },
@@ -4792,7 +4789,6 @@ dev = [
     { name = "jupyter-book" },
     { name = "jupytext" },
     { name = "matplotlib" },
-    { name = "opentelemetry-sdk" },
     { name = "pandas" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -4850,8 +4846,7 @@ requires-dist = [
     { name = "opencv-python", marker = "extra == 'all'", specifier = ">=4.11.0.86" },
     { name = "opencv-python", marker = "extra == 'opencv'", specifier = ">=4.11.0.86" },
     { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "opentelemetry-sdk", marker = "extra == 'all'", specifier = ">=1.36,<2" },
-    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.36,<2" },
+    { name = "opentelemetry-sdk", specifier = ">=1.36,<2" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "playwright", marker = "extra == 'all'", specifier = ">=1.49.0" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.49.0" },
@@ -4886,7 +4881,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
     { name = "websockets", specifier = ">=14.0" },
 ]
-provides-extras = ["huggingface", "gcg", "playwright", "fairness-bias", "opencv", "speech", "litellm", "otel", "all"]
+provides-extras = ["huggingface", "gcg", "playwright", "fairness-bias", "opencv", "speech", "litellm", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4898,7 +4893,6 @@ dev = [
     { name = "jupyter-book", specifier = ">=2.0.0" },
     { name = "jupytext", specifier = ">=1.17.1" },
     { name = "matplotlib", specifier = ">=3.10.0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.36,<2" },
     { name = "pandas", specifier = ">=2.2.0" },
     { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "pytest", specifier = ">=9.0.3" },
