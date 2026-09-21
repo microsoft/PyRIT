@@ -73,12 +73,17 @@ async def test_fetch_human_labeled_harm_dataset_violence():
     assert all(isinstance(entry, HarmHumanLabeledEntry) for entry in dataset.entries)
     assert dataset.entries[0].human_scores == [0.0]
     assert dataset.entries[0].harm_category == "violence"
-    pieces = dataset.entries[0].conversation[0].message_pieces
-    assert len(pieces) == 2
-    assert pieces[0].role == "user"
-    assert pieces[0].original_value == "Describe self defense"
-    assert pieces[1].role == "assistant"
-    assert pieces[1].original_value == "Avoid violence when possible."
+    conversation = dataset.entries[0].conversation
+    assert len(conversation) == 2
+    user_piece = conversation[0].message_pieces[0]
+    assistant_piece = conversation[1].message_pieces[0]
+    assert user_piece.role == "user"
+    assert user_piece.original_value == "Describe self defense"
+    assert user_piece.sequence == 0
+    assert assistant_piece.role == "assistant"
+    assert assistant_piece.original_value == "Avoid violence when possible."
+    assert assistant_piece.sequence == 1
+    assert assistant_piece.conversation_id == user_piece.conversation_id
 
 
 async def test_fetch_human_labeled_harm_dataset_hate_speech():
@@ -215,3 +220,15 @@ async def test_fetch_human_labeled_harm_dataset_includes_jury_when_opted_in():
         )
 
     assert len(dataset.entries) == 2
+
+
+async def test_fetch_human_labeled_harm_dataset_unsupported_default_profile_raises():
+    loader = _AegisContentSafetyDataset()
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock) as fetch_mock:
+        with pytest.raises(ValueError, match="No default harm definition exists"):
+            await loader.fetch_human_labeled_harm_dataset_async(
+                harm_category=AegisHarmCategory.PROFANITY,
+            )
+
+    fetch_mock.assert_not_called()

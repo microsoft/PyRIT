@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 from enum import Enum
 from uuid import uuid4
@@ -16,6 +17,7 @@ from pyrit.models.harm_definition import HarmDefinition
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
     HarmHumanLabeledEntry,
     HumanLabeledDataset,
+    HumanLabeledEntry,
 )
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType
 
@@ -76,11 +78,20 @@ _HUMAN_LABELED_HARM_PROFILES: dict[AegisHarmCategory, tuple[str, str]] = {
 
 def _resolve_human_labeled_harm_profile(
     harm_category: AegisHarmCategory,
+    *,
+    harm_definition: str | None,
 ) -> tuple[str, str]:
-    if harm_category in _HUMAN_LABELED_HARM_PROFILES:
-        return _HUMAN_LABELED_HARM_PROFILES[harm_category]
-    pyrit_name = harm_category.name.lower()
-    return pyrit_name, f"{pyrit_name}.yaml"
+    profile = _HUMAN_LABELED_HARM_PROFILES.get(harm_category)
+    if profile:
+        pyrit_name, default_harm_definition = profile
+        return pyrit_name, harm_definition or default_harm_definition
+    if harm_definition:
+        return harm_category.name.lower(), harm_definition
+    supported_categories = ", ".join(category.value for category in _HUMAN_LABELED_HARM_PROFILES)
+    raise ValueError(
+        f"No default harm definition exists for {harm_category.value!r}. "
+        f"Provide `harm_definition`, or use one of: {supported_categories}."
+    )
 
 
 class _AegisContentSafetyDataset(_RemoteDatasetLoader):
@@ -290,36 +301,47 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         dataset_version: str = "1.0",
         label_sources: tuple[str, ...] = ("human",),
     ) -> HumanLabeledDataset:
-        """Build a ``HumanLabeledDataset`` from labeled assistant responses in Aegis 2.0.
+        """
+        Build a ``HumanLabeledDataset`` from labeled assistant responses in Aegis 2.0.
 
-        Unlike :meth:`fetch_dataset_async`, this retains ``response`` and ``response_label``
+        Unlike ``fetch_dataset_async``, this retains ``response`` and ``response_label``
         so scorer evaluation can reuse remote human/LLM-jury labels instead of hand-authored CSVs.
 
         Args:
+            harm_category: Aegis harm category to export.
+            cache: Whether to cache the fetched Hugging Face dataset.
+            harm_definition: Harm definition YAML path. Required when the category has no default profile.
+            harm_definition_version: Version of the harm definition.
+            dataset_version: Version to assign to the exported dataset.
             label_sources: ``response_label_source`` values to include. Defaults to
                 ``("human",)`` so ``human_scores`` reflects human labels only; pass
                 ``("human", "llm_jury")`` to opt into jury-labelled rows.
+
+        Returns:
+            The Aegis responses and labels as a harm evaluation dataset.
+
+        Raises:
+            ValueError: If the category has no default profile, a label is unsupported,
+                or no rows match the filters.
         """
         logger.info(
             "Loading NVIDIA Aegis AI Content Safety human-labeled rows for %s",
             harm_category.value,
         )
 
+        pyrit_harm_category, harm_definition = _resolve_human_labeled_harm_profile(
+            harm_category,
+            harm_definition=harm_definition,
+        )
+
+        await asyncio.to_thread(HarmDefinition.from_yaml, harm_definition)
+
         hf_dataset = await self._fetch_from_huggingface_async(
             dataset_name=self.HF_DATASET_NAME,
             cache=cache,
         )
 
-        pyrit_harm_category, default_harm_definition = _resolve_human_labeled_harm_profile(
-            harm_category
-        )
-        if harm_definition is None:
-            harm_definition = default_harm_definition
-
-        # Validate harm definition path before iterating rows.
-        HarmDefinition.from_yaml(harm_definition)
-
-        entries: list[HarmHumanLabeledEntry] = []
+        entries: list[HumanLabeledEntry] = []
         skipped_missing_fields = 0
         skipped_harm_category = 0
         skipped_label_source = 0
@@ -344,34 +366,41 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                     continue
 
                 response_label_source = example.get("response_label_source") or ""
-                label_source_counts[response_label_source] = (
-                    label_source_counts.get(response_label_source, 0) + 1
-                )
+                label_source_counts[response_label_source] = label_source_counts.get(response_label_source, 0) + 1
                 if response_label_source not in label_sources:
                     skipped_label_source += 1
                     continue
 
                 prompt_value = example.get("prompt", "")
                 conversation_id = str(uuid4())
-                message_pieces: list[MessagePiece] = []
+                messages: list[Message] = []
                 if prompt_value and str(prompt_value).strip():
-                    message_pieces.append(
-                        MessagePiece(
-                            role="user",
-                            original_value=str(prompt_value).strip(),
-                            original_value_data_type="text",
-                            conversation_id=conversation_id,
+                    messages.append(
+                        Message(
+                            message_pieces=[
+                                MessagePiece(
+                                    role="user",
+                                    original_value=str(prompt_value).strip(),
+                                    original_value_data_type="text",
+                                    conversation_id=conversation_id,
+                                    sequence=0,
+                                )
+                            ]
                         )
                     )
-                message_pieces.append(
-                    MessagePiece(
-                        role="assistant",
-                        original_value=str(response_value).strip(),
-                        original_value_data_type="text",
-                        conversation_id=conversation_id,
+                messages.append(
+                    Message(
+                        message_pieces=[
+                            MessagePiece(
+                                role="assistant",
+                                original_value=str(response_value).strip(),
+                                original_value_data_type="text",
+                                conversation_id=conversation_id,
+                                sequence=len(messages),
+                            )
+                        ]
                     )
                 )
-                messages = [Message(message_pieces=message_pieces)]
                 entries.append(
                     HarmHumanLabeledEntry(
                         conversation=messages,
@@ -394,9 +423,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         )
 
         if not entries:
-            raise ValueError(
-                "HumanLabeledDataset cannot be empty. Check harm_category filter and response labels."
-            )
+            raise ValueError("HumanLabeledDataset cannot be empty. Check harm_category filter and response labels.")
 
         return HumanLabeledDataset(
             name=f"aegis_{pyrit_harm_category}",
