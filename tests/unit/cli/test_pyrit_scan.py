@@ -1514,6 +1514,52 @@ class TestScenarioResults:
         client.get_scenario_run_results_async.assert_awaited_once_with(scenario_result_id="SID")
         mock_print.assert_awaited_once()
 
+    def test_handle_results_json_output_writes_file(self, tmp_path):
+        import asyncio
+        import json
+
+        out = tmp_path / "out.json"
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--format", "json", "-o", str(out)])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        assert json.loads(out.read_text(encoding="utf-8"))["view"] == "overview"
+
+    def test_handle_results_pretty_output_file_errors(self, tmp_path, capsys):
+        import asyncio
+
+        out = tmp_path / "out.txt"
+        client = AsyncMock()
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--format", "pretty", "-o", str(out)])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 1
+        assert "requires --format json" in capsys.readouterr().out
+        assert not out.exists()
+
+    def test_handle_results_html_output_writes_report(self, tmp_path):
+        import asyncio
+
+        out = tmp_path / "report.html"
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.return_value = {"messages": []}
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--format", "html", "-o", str(out)])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        text = out.read_text(encoding="utf-8")
+        assert "<!DOCTYPE html>" in text
+        assert "test_scenario" in text
+
+    def test_handle_results_html_without_output_errors(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--format", "html"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 1
+        assert "requires --output" in capsys.readouterr().out
+
     def test_handle_results_attacks_prints_table(self, capsys):
         import asyncio
 

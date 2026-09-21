@@ -20,6 +20,7 @@ from pyrit.cli._cli_args import ScenarioResultView
 
 if TYPE_CHECKING:
     from pyrit.models import ScenarioResult
+    from pyrit.output.sink import Sink
 
 #: Default cap on how many attacks the transcript-fetching views (``conversations``
 #: and ``full``) render when the user gives neither ``--attack-result-ids`` nor
@@ -88,6 +89,61 @@ def apply_view_limit_policy(
             return _DEFAULT_HEAVY_VIEW_LIMIT
         return limit
     return limit
+
+
+def warn_if_view_ignored_by_html(*, view: ScenarioResultView | None) -> None:
+    """
+    Warn when an explicit ``--view`` is discarded because ``--format html`` always
+    renders the full report.
+
+    ``html`` is not a rendering of a *view* — it is a fixed complete report — so any
+    ``--view`` other than ``full`` is silently ignored. The parser defaults ``--view``
+    to ``None``, so an explicit value is distinguishable from an omitted one.
+
+    Args:
+        view (ScenarioResultView | None): The raw parsed ``--view``, or ``None`` when omitted.
+    """
+    if view is not None and view is not ScenarioResultView.FULL:
+        print(f"Note: --view {view.value} is ignored with --format html; rendering the full report.")
+
+
+#: Formats that ``--output`` can write to a file. Pretty is terminal-oriented
+#: (redirect with ``> file`` instead).
+_FILE_OUTPUT_FORMATS = frozenset({"json", "html"})
+
+
+def resolve_output_sink(*, output_path: str | None, output_format: str) -> Sink | None:
+    """
+    Resolve ``--output`` to a file sink, or ``None`` for stdout.
+
+    Args:
+        output_path (str | None): The ``--output`` path, or None when omitted.
+        output_format (str): The resolved ``--format`` value.
+
+    Returns:
+        Sink | None: A ``FileSink`` for *output_path*, or None to use the default (stdout).
+
+    Raises:
+        ValueError: If ``html`` is requested without ``--output``, a file destination is
+            requested for a terminal-oriented format, or its parent directory does not exist.
+    """
+    if output_format == "html" and output_path is None:
+        raise ValueError("--format html writes a report file and requires --output PATH.")
+    if output_path is None:
+        return None
+    if output_format not in _FILE_OUTPUT_FORMATS:
+        raise ValueError(
+            f"--output writes a document file and requires --format json or html, not {output_format!r}. "
+            "For pretty output, redirect with '> file' instead."
+        )
+    from pathlib import Path
+
+    from pyrit.output.sink import FileSink
+
+    path = Path(output_path)
+    if not path.parent.exists():
+        raise ValueError(f"--output directory does not exist: {path.parent}")
+    return FileSink(path=path)
 
 
 def _objective_scorer_key(*, result: ScenarioResult) -> tuple[str | None, str | None]:

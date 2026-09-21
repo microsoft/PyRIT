@@ -295,13 +295,36 @@ def build_scenario_full_document(
     Returns:
         str: The rendered JSON document.
     """
-    payload = {
+    payload = build_scenario_full_payload(result=result, overview=overview, entries=entries)
+    return _dumps_json(payload, indent=indent)
+
+
+def build_scenario_full_payload(
+    *,
+    result: ScenarioResult,
+    overview: dict[str, Any],
+    entries: list[ConversationEntry],
+) -> dict[str, Any]:
+    """
+    Build the format-agnostic ``full`` report structure (overview + conversations).
+
+    Shared by the JSON document (serialized) and the HTML report (templated), so both
+    render the same facts.
+
+    Args:
+        result (ScenarioResult): The scenario result (for its id).
+        overview (dict[str, Any]): The overview payload from ``JsonScenarioResultPrinter.build``.
+        entries (list[ConversationEntry]): Per-attack ``(name, result, messages)`` triples.
+
+    Returns:
+        dict[str, Any]: The ``{view, scenario_result_id, overview, conversations}`` structure.
+    """
+    return {
         "view": "full",
         "scenario_result_id": str(result.id),
         "overview": overview,
         "conversations": _build_conversations_list(entries),
     }
-    return _dumps_json(payload, indent=indent)
 
 
 def _build_conversations_list(entries: list[ConversationEntry]) -> list[dict[str, Any]]:

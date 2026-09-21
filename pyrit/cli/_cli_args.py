@@ -467,9 +467,17 @@ def add_results_arguments(*, parser: argparse.ArgumentParser) -> None:
     )
     group.add_argument(
         "--format",
-        choices=["pretty", "json"],
+        choices=["pretty", "json", "html"],
         default="pretty",
-        help="Output format: 'pretty' (default, human-readable) or 'json' (structured, one document)",
+        help="Output format: 'pretty' (default, human-readable), 'json' (structured, one document), "
+        "or 'html' (a shareable full report; requires --output)",
+    )
+    group.add_argument(
+        "--output",
+        "-o",
+        metavar="PATH",
+        help="Write the output to PATH instead of stdout (requires --format json). "
+        "For pretty output, redirect with '> file' instead.",
     )
 
 

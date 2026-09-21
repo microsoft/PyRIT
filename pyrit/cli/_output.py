@@ -25,7 +25,7 @@ if TYPE_CHECKING:
         ScenarioRunSummary,
         TargetInstance,
     )
-    from pyrit.output.sink import OutputFormat
+    from pyrit.output.sink import OutputFormat, Sink
 
 try:
     import termcolor
@@ -394,17 +394,23 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def print_scenario_result_async(*, result: ScenarioResult, format: OutputFormat = "pretty") -> None:  # noqa: A002
+async def print_scenario_result_async(
+    *,
+    result: ScenarioResult,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
     """
     Print the scenario overview — the CLI's entry to the framework ``output_scenario_async`` helper.
 
     Args:
         result: Deserialized ``ScenarioResult`` from the REST API.
         format: Output format — "pretty" or "json". Defaults to "pretty".
+        sink: Output sink. Defaults to None (the helper's default destination).
     """
     from pyrit.output.helpers import output_scenario_async
 
-    await output_scenario_async(result, format=format)
+    await output_scenario_async(result, format=format, sink=sink)
 
 
 # Outcome -> color, mirroring the pretty printer's inverted palette (a
@@ -417,19 +423,20 @@ _OUTCOME_COLORS = {
 }
 
 
-async def _write_json_document_async(document: str) -> None:
+async def _write_json_document_async(document: str, *, sink: Sink | None = None) -> None:
     """
-    Write an assembled JSON document to stdout.
+    Write an assembled JSON document to *sink* (stdout by default).
 
-    Routes through ``StdoutSink`` (not ``print``) for its encoding-safe fallback, since
-    the JSON is emitted with ``ensure_ascii=False`` and may contain non-ASCII text.
+    Routes through a sink (not ``print``) for its encoding-safe fallback, since the JSON
+    is emitted with ``ensure_ascii=False`` and may contain non-ASCII text.
 
     Args:
         document (str): The serialized JSON document.
+        sink (Sink | None): Destination sink. Defaults to StdoutSink.
     """
     from pyrit.output.sink import StdoutSink
 
-    await StdoutSink().write_async(document)
+    await (sink or StdoutSink()).write_async(document)
 
 
 async def _collect_conversation_entries_async(
@@ -485,6 +492,7 @@ async def print_conversations_async(
     client: PyRITApiClient,
     scenario_result_id: str,
     format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
     attack_result_ids: list[str] | None = None,
     limit: int | None = None,
 ) -> None:
@@ -501,6 +509,7 @@ async def print_conversations_async(
         scenario_result_id (str): The run id, echoed in the header.
         format (OutputFormat): Output format — "pretty" (streamed per-attack) or "json"
             (one combined document). Defaults to "pretty".
+        sink (Sink | None): Destination for the json document. Defaults to stdout. Ignored for pretty.
         attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
         limit (int | None): Maximum number of attacks to fetch and render. Defaults to None.
     """
@@ -510,7 +519,8 @@ async def print_conversations_async(
         entries = await _collect_conversation_entries_async(
             result=result, client=client, attack_result_ids=attack_result_ids, limit=limit
         )
-        await _write_json_document_async(build_scenario_conversations_document(result=result, entries=entries))
+        document = build_scenario_conversations_document(result=result, entries=entries)
+        await _write_json_document_async(document, sink=sink)
         return
 
     from pyrit.cli._results import _objective_scorer_key
@@ -561,6 +571,7 @@ async def print_full_async(
     client: PyRITApiClient,
     scenario_result_id: str,
     format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
     attack_result_ids: list[str] | None = None,
     limit: int | None = None,
 ) -> None:
@@ -576,6 +587,7 @@ async def print_full_async(
         client (PyRITApiClient): Client used to fetch each conversation's messages.
         scenario_result_id (str): The run id, echoed in the transcript header.
         format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
+        sink (Sink | None): Destination for the json document. Defaults to stdout. Ignored for pretty.
         attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
         limit (int | None): Maximum number of attacks to fetch and render. Defaults to None.
     """
@@ -587,7 +599,19 @@ async def print_full_async(
         )
         overview = JsonScenarioResultMemoryPrinter().build(result, view="overview")
         document = build_scenario_full_document(result=result, overview=overview, entries=entries)
-        await _write_json_document_async(document)
+        await _write_json_document_async(document, sink=sink)
+        return
+
+    if format == "html":
+        from pyrit.output.scenario_result.html import HtmlScenarioReportPrinter
+        from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter, build_scenario_full_payload
+
+        entries = await _collect_conversation_entries_async(
+            result=result, client=client, attack_result_ids=attack_result_ids, limit=limit
+        )
+        overview = JsonScenarioResultMemoryPrinter().build(result, view="overview")
+        payload = build_scenario_full_payload(result=result, overview=overview, entries=entries)
+        await HtmlScenarioReportPrinter(sink=sink).write_async(payload)
         return
 
     await print_scenario_result_async(result=result, format="pretty")

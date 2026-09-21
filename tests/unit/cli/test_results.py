@@ -15,7 +15,9 @@ from pyrit.cli._cli_args import (
 )
 from pyrit.cli._results import (
     apply_view_limit_policy,
+    resolve_output_sink,
     resolve_view,
+    warn_if_view_ignored_by_html,
 )
 
 # ---------------------------------------------------------------------------
@@ -150,3 +152,70 @@ def test_limit_policy_heavy_view_respects_attack_ids(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.CONVERSATIONS, limit=None, attack_result_ids=["a"])
     assert effective is None
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
+# warn_if_view_ignored_by_html
+# ---------------------------------------------------------------------------
+
+
+def test_html_warns_on_explicit_non_full_view(capsys):
+    warn_if_view_ignored_by_html(view=ScenarioResultView.OVERVIEW)
+    out = capsys.readouterr().out
+    assert "--view overview is ignored with --format html" in out
+
+
+def test_html_silent_when_view_omitted(capsys):
+    warn_if_view_ignored_by_html(view=None)
+    assert capsys.readouterr().out == ""
+
+
+def test_html_silent_for_explicit_full_view(capsys):
+    warn_if_view_ignored_by_html(view=ScenarioResultView.FULL)
+    assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
+# resolve_output_sink / --output flag
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_output_sink_none_for_stdout():
+    assert resolve_output_sink(output_path=None, output_format="json") is None
+    assert resolve_output_sink(output_path=None, output_format="pretty") is None
+
+
+def test_resolve_output_sink_json_returns_file_sink(tmp_path):
+    from pyrit.output.sink import FileSink
+
+    sink = resolve_output_sink(output_path=str(tmp_path / "out.json"), output_format="json")
+    assert isinstance(sink, FileSink)
+
+
+def test_resolve_output_sink_rejects_pretty(tmp_path):
+    with pytest.raises(ValueError, match="requires --format json"):
+        resolve_output_sink(output_path=str(tmp_path / "out.txt"), output_format="pretty")
+
+
+def test_resolve_output_sink_rejects_missing_directory(tmp_path):
+    with pytest.raises(ValueError, match="directory does not exist"):
+        resolve_output_sink(output_path=str(tmp_path / "nope" / "out.json"), output_format="json")
+
+
+def test_resolve_output_sink_html_requires_output():
+    with pytest.raises(ValueError, match="requires --output"):
+        resolve_output_sink(output_path=None, output_format="html")
+
+
+def test_resolve_output_sink_html_returns_file_sink(tmp_path):
+    from pyrit.output.sink import FileSink
+
+    sink = resolve_output_sink(output_path=str(tmp_path / "report.html"), output_format="html")
+    assert isinstance(sink, FileSink)
+
+
+def test_output_flag_parses_via_short_and_long(tmp_path):
+    parser = build_scenario_results_parser()
+    assert parser.parse_args(["rid", "-o", "a.json"]).output == "a.json"
+    assert parser.parse_args(["rid", "--output", "b.json"]).output == "b.json"
+    assert parser.parse_args(["rid"]).output is None

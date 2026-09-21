@@ -617,7 +617,7 @@ async def test_print_scenario_result_async_delegates_to_output_helper():
     with patch("pyrit.output.helpers.output_scenario_async", new_callable=AsyncMock) as mock_output:
         await _output.print_scenario_result_async(result=fake_scenario, format="json")
 
-    mock_output.assert_awaited_once_with(fake_scenario, format="json")
+    mock_output.assert_awaited_once_with(fake_scenario, format="json", sink=None)
 
 
 # ---------------------------------------------------------------------------
