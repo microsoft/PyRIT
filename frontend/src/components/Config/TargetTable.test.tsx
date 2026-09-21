@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import TargetTable from './TargetTable'
@@ -56,8 +57,10 @@ const sampleTargets: TargetInstance[] = [
 describe('TargetTable', () => {
   const defaultProps = {
     targets: sampleTargets,
-    activeTarget: null as TargetInstance | null,
-    onSetActiveTarget: jest.fn(),
+    defaultObjectiveTarget: null as TargetInstance | null,
+    defaultAdversarialTarget: null as TargetInstance | null,
+    onSetDefaultObjectiveTarget: jest.fn(),
+    onSetDefaultAdversarialTarget: jest.fn(),
   }
 
   beforeEach(() => {
@@ -102,68 +105,80 @@ describe('TargetTable', () => {
     expect(screen.getByText('Parameters')).toBeInTheDocument()
   })
 
-  it('should show "Set Active" button for non-active targets', () => {
+  it('should offer objective and adversarial defaults for each target', () => {
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
       </TestWrapper>
     )
 
-    const setActiveButtons = screen.getAllByText('Set Active')
-    expect(setActiveButtons).toHaveLength(3)
+    expect(screen.getAllByRole('button', { name: 'Set default objective target' })).toHaveLength(3)
+    const buttons = screen.getAllByRole('button', { name: 'Set default adversarial target' })
+    expect(buttons).toHaveLength(3)
+    expect(buttons[0]).toBeEnabled()
+    expect(buttons[1]).toBeDisabled()
+    expect(buttons[2]).toBeDisabled()
   })
 
-  it('should show "Active" badge for the active target', () => {
+  it('should show the objective default badge and a clear action', () => {
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} activeTarget={sampleTargets[0]} />
+        <TargetTable {...defaultProps} defaultObjectiveTarget={sampleTargets[0]} />
       </TestWrapper>
     )
 
-    // Active badge appears in both the indicator and the table row
-    expect(screen.getAllByText('Active').length).toBeGreaterThanOrEqual(2)
-    const setActiveButtons = screen.getAllByText('Set Active')
-    expect(setActiveButtons).toHaveLength(2)
+    expect(screen.getByText('Default objective target')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Clear objective default' })).toBeEnabled()
+    expect(screen.getAllByRole('button', { name: 'Set default objective target' })).toHaveLength(2)
   })
 
-  it('should show active target indicator above the table', () => {
+  it('should allow the same eligible target to serve both roles and clear them separately', async () => {
+    const user = userEvent.setup()
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} activeTarget={sampleTargets[0]} />
+        <TargetTable
+          {...defaultProps}
+          defaultObjectiveTarget={sampleTargets[0]}
+          defaultAdversarialTarget={sampleTargets[0]}
+        />
       </TestWrapper>
     )
 
-    const activeTargetTable = screen.getByRole('table', { name: 'Active target' })
-    expect(within(activeTargetTable).getByText('openai_chat_gpt4')).toBeInTheDocument()
-
-    const badges = screen.getAllByText('Active')
-    expect(badges.length).toBeGreaterThanOrEqual(2) // one above table + one in row
+    const row = screen.getByRole('row', { name: /openai_chat_gpt4/ })
+    expect(within(row).getByText('Default objective target')).toBeInTheDocument()
+    expect(within(row).getByText('Default adversarial target')).toBeInTheDocument()
+    await user.click(within(row).getByRole('button', { name: 'Clear objective default' }))
+    expect(defaultProps.onSetDefaultObjectiveTarget).toHaveBeenCalledWith(null)
+    expect(defaultProps.onSetDefaultAdversarialTarget).not.toHaveBeenCalled()
+    await user.click(within(row).getByRole('button', { name: 'Clear adversarial default' }))
+    expect(defaultProps.onSetDefaultAdversarialTarget).toHaveBeenCalledWith(null)
   })
 
-  it('should not show active target indicator when no target is active', () => {
+  it('should not show default badges when no defaults are selected', () => {
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
       </TestWrapper>
     )
 
-    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    expect(screen.queryByText('Default objective target')).not.toBeInTheDocument()
+    expect(screen.queryByText('Default adversarial target')).not.toBeInTheDocument()
   })
 
-  it('should call onSetActiveTarget when "Set Active" is clicked', () => {
-    const onSetActiveTarget = jest.fn()
+  it('should set each role independently', async () => {
+    const user = userEvent.setup()
 
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} onSetActiveTarget={onSetActiveTarget} />
+        <TargetTable {...defaultProps} />
       </TestWrapper>
     )
 
-    const setActiveButtons = screen.getAllByText('Set Active')
-    fireEvent.click(setActiveButtons[1])
-
-    expect(onSetActiveTarget).toHaveBeenCalledTimes(1)
-    expect(onSetActiveTarget).toHaveBeenCalledWith(sampleTargets[1])
+    await user.click(screen.getAllByRole('button', { name: 'Set default objective target' })[1])
+    expect(defaultProps.onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[1])
+    expect(defaultProps.onSetDefaultAdversarialTarget).not.toHaveBeenCalled()
+    await user.click(screen.getAllByRole('button', { name: 'Set default adversarial target' })[0])
+    expect(defaultProps.onSetDefaultAdversarialTarget).toHaveBeenCalledWith(sampleTargets[0])
   })
 
   it('should handle empty targets list gracefully', () => {
@@ -174,7 +189,7 @@ describe('TargetTable', () => {
     )
 
     expect(screen.getByRole('table')).toBeInTheDocument()
-    expect(screen.queryByText('Set Active')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Set default objective target' })).not.toBeInTheDocument()
   })
 
   it('should show dash when model_name or endpoint is null', () => {
@@ -275,7 +290,7 @@ describe('TargetTable', () => {
 
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} targets={targetWithParams} activeTarget={null} />
+        <TargetTable {...defaultProps} targets={targetWithParams} />
       </TestWrapper>
     )
 
@@ -296,7 +311,7 @@ describe('TargetTable', () => {
 
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} targets={targetWithUnderlying} activeTarget={null} />
+        <TargetTable {...defaultProps} targets={targetWithUnderlying} />
       </TestWrapper>
     )
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
+from contextlib import nullcontext
 from functools import lru_cache
 from time import monotonic
 
@@ -20,6 +21,7 @@ from pyrit.models.catalog.scenario import (
     ScenarioRunSizeEstimateRequest,
 )
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
+from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.core.dataset_configuration import read_only_dataset_resolution
 
 logger = logging.getLogger(__name__)
@@ -296,21 +298,25 @@ class ScenarioService:
         scenario_class = self._registry.get_class(scenario_name)
         resolver = ScenarioConfigurationResolver()
         objective_target = resolver.resolve_target(target_name=request.target_name) if request.target_name else None
-        estimate_kwargs = resolver.resolve_configuration(
-            scenario_name=scenario_name,
-            scenario_class=scenario_class,
-            objective_target=objective_target,
-            techniques=request.techniques,
-            dataset_names=request.dataset_names,
-            max_dataset_size=request.max_dataset_size,
-            dataset_filters=request.dataset_filters,
-            include_baseline=request.include_baseline,
-        )
-        return await self._registry.create_and_estimate_async(
-            name=scenario_name,
-            scenario_params=request.scenario_params or {},
-            **estimate_kwargs,
-        )
+        adversarial_target = resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
+        with (
+            override_default_adversarial_target(adversarial_target) if adversarial_target is not None else nullcontext()
+        ):
+            estimate_kwargs = resolver.resolve_configuration(
+                scenario_name=scenario_name,
+                scenario_class=scenario_class,
+                objective_target=objective_target,
+                techniques=request.techniques,
+                dataset_names=request.dataset_names,
+                max_dataset_size=request.max_dataset_size,
+                dataset_filters=request.dataset_filters,
+                include_baseline=request.include_baseline,
+            )
+            return await self._registry.create_and_estimate_async(
+                name=scenario_name,
+                scenario_params=request.scenario_params or {},
+                **estimate_kwargs,
+            )
 
     @staticmethod
     def _paginate(

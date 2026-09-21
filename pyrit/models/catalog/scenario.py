@@ -202,6 +202,11 @@ class RegisteredScenario(BaseModel):
 class ScenarioRunSizeEstimateRequest(BaseModel):
     """Request-specific scenario run-size configuration."""
 
+    adversarial_target_name: str | None = Field(
+        None,
+        min_length=1,
+        description="Registered multi-turn target overriding only the adversarial fallback for this request",
+    )
     target_name: str | None = Field(
         None,
         description="Optional registered objective target used to resolve target-capability-dependent estimates",
@@ -243,6 +248,11 @@ class RunScenarioRequest(BaseModel):
 
     scenario_name: str = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
     target_name: str = Field(..., description="Name of a registered target from the TargetRegistry")
+    adversarial_target_name: str | None = Field(
+        None,
+        min_length=1,
+        description="Registered multi-turn target overriding only the adversarial fallback for this run",
+    )
     initializers: list[str] | None = Field(
         None, description="Initializer names to run before scenario (e.g., ['target', 'load_default_datasets'])"
     )

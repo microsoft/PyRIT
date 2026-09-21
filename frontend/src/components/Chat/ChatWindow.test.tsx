@@ -6,6 +6,7 @@ import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import {
   BackendMessage,
+  AttackTargetResolutionStatus,
   ConverterInstance,
   Message,
   MessageAttachment,
@@ -428,7 +429,9 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 
-  it("should attach an updated human score to the latest response", async () => {
+  it.each<AttackTargetResolutionStatus>(["resolved", "unavailable", "ambiguous", "legacy", "error"])(
+    "should update the human score with target status %s",
+    async (targetResolutionStatus) => {
     const user = userEvent.setup();
     const onHumanScoreChange = jest.fn();
     mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Forked response") as never);
@@ -446,6 +449,8 @@ describe("ChatWindow Integration", () => {
       <TestWrapper>
         <ChatWindow
           {...defaultProps}
+          activeTarget={targetResolutionStatus === "resolved" ? mockTarget : null}
+          targetResolutionStatus={targetResolutionStatus}
           attackResultId="attack-result-id"
           conversationId="primary-conversation-id"
           activeConversationId="forked-conversation-id"
@@ -492,9 +497,12 @@ describe("ChatWindow Integration", () => {
     });
   });
 
-  it("should remove the attack human-score override", async () => {
+  it.each<AttackTargetResolutionStatus>(["resolved", "unavailable", "ambiguous", "legacy", "error"])(
+    "should remove the human score with target status %s",
+    async (targetResolutionStatus) => {
     const user = userEvent.setup();
     const onHumanScoreChange = jest.fn();
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
     mockedAttacksApi.removeHumanScore.mockResolvedValue({
       attack_result_id: "attack-result-id",
       conversation_id: "primary-conversation-id",
@@ -513,6 +521,8 @@ describe("ChatWindow Integration", () => {
       <TestWrapper>
         <ChatWindow
           {...defaultProps}
+          activeTarget={targetResolutionStatus === "resolved" ? mockTarget : null}
+          targetResolutionStatus={targetResolutionStatus}
           attackResultId="attack-result-id"
           conversationId="primary-conversation-id"
           activeConversationId="primary-conversation-id"
@@ -846,7 +856,7 @@ describe("ChatWindow Integration", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.getByTestId("copy-to-input-btn-0")).toBeDisabled();
     expect(screen.getByTestId("branch-conv-btn-0")).toBeDisabled();
-    expect(screen.getByTestId("branch-attack-btn-0")).toBeDisabled();
+    expect(screen.getByTestId("branch-attack-btn-0")).toBeEnabled();
     expect(await screen.findByTestId("star-btn-conv-related")).toBeDisabled();
     expect(mockedAttacksApi.changeMainConversation).not.toHaveBeenCalled();
 
@@ -4414,7 +4424,9 @@ describe("ChatWindow Integration", () => {
   // handleBranchAttack
   // -----------------------------------------------------------------------
 
-  it("should branch into a new attack and load cloned messages", async () => {
+  it("should branch into a new attack with the selected destination target", async () => {
+    const user = userEvent.setup();
+    const destination = makeTarget({ target_registry_name: "branch-target" });
     const onConversationCreated = jest.fn();
     const mockMessages: Message[] = [
       { role: "user", content: "hello" },
@@ -4434,6 +4446,7 @@ describe("ChatWindow Integration", () => {
           attackResultId="ar-branch-attack"
           conversationId="conv-branch-attack"
           activeConversationId="conv-branch-attack"
+          availableTargets={[mockTarget, destination]}
           onConversationCreated={onConversationCreated}
           relatedConversationCount={0}
         />
@@ -4454,17 +4467,22 @@ describe("ChatWindow Integration", () => {
     mockedMapper.backendMessagesToFrontend.mockReturnValue(clonedMessages);
 
     const branchBtn = screen.getByTestId("branch-attack-btn-1");
-    await userEvent.click(branchBtn);
+    await user.click(branchBtn);
+    const destinationSelector = await screen.findByRole("combobox", { name: "Destination target" });
+    await user.selectOptions(destinationSelector, "branch-target");
+    expect(destinationSelector).toHaveValue("branch-target");
+    expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Create attack" }));
 
     await waitFor(() => {
       expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
         expect.objectContaining({
-          target_registry_name: "openai_chat_1",
+          target_registry_name: "branch-target",
           source_conversation_id: "conv-branch-attack",
           cutoff_index: 1,
         })
       );
-      expect(onConversationCreated).toHaveBeenCalledWith("ar-new-branch", "conv-new-branch");
+      expect(onConversationCreated).toHaveBeenCalledWith("ar-new-branch", "conv-new-branch", undefined, destination);
     });
   });
 
@@ -4582,6 +4600,7 @@ describe("ChatWindow Integration", () => {
 
     const useTemplateBtn = screen.getByTestId("use-as-template-btn");
     await userEvent.click(useTemplateBtn);
+    await userEvent.click(await screen.findByRole("button", { name: "Create attack" }));
 
     await waitFor(() => {
       expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
@@ -4591,7 +4610,7 @@ describe("ChatWindow Integration", () => {
           cutoff_index: 1,
         })
       );
-      expect(onConversationCreated).toHaveBeenCalledWith("ar-template", "conv-template");
+      expect(onConversationCreated).toHaveBeenCalledWith("ar-template", "conv-template", undefined, mockTarget);
     });
   });
 

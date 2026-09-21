@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams, useSearchParams, matchPath } from 'react-router'
 import { useMsal } from '@azure/msal-react'
+import { Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
 import { Joyride } from 'react-joyride'
 import { useTheme } from './hooks/useTheme'
 import MainLayout from './components/Layout/MainLayout'
@@ -23,6 +24,9 @@ import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAttackTargetResolution } from './hooks/useAttackTargetResolution'
+import { useAuthConfig } from './auth/AuthConfigContext'
+import { useTargetPreferences } from './hooks/useTargetPreferences'
+import { useTargetRegistry } from './hooks/useTargetRegistry'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import { readStoredGlobalLabels, persistGlobalLabels } from './components/Labels/labelStorage'
@@ -33,7 +37,7 @@ import {
 } from './components/History/scenarioHistoryFilters'
 import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
-import type { AttackOutcome, AttackSummary, BackendScore, TargetInfo } from './types'
+import type { AttackOutcome, AttackSummary, BackendScore, TargetInfo, TargetInstance, TargetPreferences } from './types'
 import {
   targetEndpoint,
   targetIdentifierHash,
@@ -117,6 +121,7 @@ interface LoadedAttack {
   labels: Record<string, string> | null
   operator: string | null
   target: TargetInfo | null
+  createdTarget?: TargetInstance
   relatedConversationIds: string[]
   objective: string
   outcome: NonNullable<AttackSummary['outcome']>
@@ -148,10 +153,27 @@ function ConnectionBannerContainer() {
   return <ConnectionBanner status={status} />
 }
 
-function App() {
+function AppContent({ accountKey }: { accountKey: string | null }) {
   const { instance } = useMsal()
   const navigate = useNavigate()
   const location = useLocation()
+  const registry = useTargetRegistry()
+  const targetDefaults = useTargetPreferences(accountKey, registry.targets)
+  const [draftSelection, setDraftSelection] = useState<{
+    pageKey: string
+    target: TargetInstance | null
+  } | null>(null)
+  const selectedDraftTarget = draftSelection?.pageKey === location.key
+    ? draftSelection.target : targetDefaults.objectiveTarget
+  const draftTarget = !registry.loading && !registry.error && selectedDraftTarget
+    ? registry.targets.find((target: TargetInstance) => (
+        target.target_registry_name === selectedDraftTarget.target_registry_name
+        && target.identifier.hash === selectedDraftTarget.identifier.hash
+      )) ?? null : null
+  const setDefaultTarget = (role: keyof TargetPreferences, target: TargetInstance | null): void => {
+    if (target) registry.rememberTarget(target)
+    targetDefaults.setDefault(role, target)
+  }
 
   // The URL is the source of truth for which attack/conversation is open.
   const conversationMatch = matchPath(
@@ -399,8 +421,7 @@ function App() {
   const isAttackError = attackForRoute?.status === 'error'
   const isLoadingAttack = routeAttackId !== null && !readyAttack && !isAttackNotFound && !isAttackError
   const {
-    activeTarget,
-    setExplicitTarget: handleSetActiveTarget,
+    activeTarget: resolvedChatTarget,
     resolutionStatus: targetResolutionStatus,
     retryResolution: retryTargetResolution,
   } = useAttackTargetResolution({
@@ -408,7 +429,9 @@ function App() {
     attackLoadSequence: readyAttack?.loadSequence ?? 0,
     attackTarget: readyAttack?.target ?? null,
     attackTargetSource: readyAttack?.targetSource ?? 'persisted',
+    createdTarget: readyAttack?.createdTarget,
   })
+  const activeTarget = routeAttackId ? resolvedChatTarget : draftTarget
   const activeConversationId = readyAttack
     ? routeConversationId ?? readyAttack.mainConversationId
     : null
@@ -440,24 +463,26 @@ function App() {
   }, [navigate])
 
   const handleNewAttack = useCallback(() => {
+    setDraftSelection(null)
     navigate(VIEW_PATHS.chat)
   }, [navigate])
 
-  const handleConversationCreated = useCallback((arId: string, convId: string, objective?: string) => {
+  const handleConversationCreated = useCallback((
+    arId: string,
+    convId: string,
+    objective?: string,
+    selectedTarget?: TargetInstance,
+  ) => {
     // Seed the freshly-created attack synchronously and tell the loader to skip
     // its next fetch for this id, so the attack opens without a redundant load.
-    if (activeTarget) {
-      // The target that created or branched this attack is now an explicit
-      // selection for the new attack; a later reload will revalidate it.
-      handleSetActiveTarget(activeTarget)
-    }
-    const target: TargetInfo | null = activeTarget
+    const createdTarget = selectedTarget ?? activeTarget
+    const target: TargetInfo | null = createdTarget
       ? {
-          target_type: targetType(activeTarget),
-          target_registry_name: activeTarget.target_registry_name,
-          endpoint: targetEndpoint(activeTarget),
-          model_name: targetModelName(activeTarget),
-          identifier_hash: targetIdentifierHash(activeTarget),
+          target_type: targetType(createdTarget),
+          target_registry_name: createdTarget.target_registry_name,
+          endpoint: targetEndpoint(createdTarget),
+          model_name: targetModelName(createdTarget),
+          identifier_hash: targetIdentifierHash(createdTarget),
         }
       : null
     skipNextLoadForAttackId.current = arId
@@ -472,6 +497,7 @@ function App() {
       labels: null,
       operator: null,
       target,
+      createdTarget: createdTarget ?? undefined,
       relatedConversationIds: [],
       objective: objective ?? '',
       outcome: 'undetermined',
@@ -483,15 +509,15 @@ function App() {
     // Replace when promoting an empty /chat to its attack url (first message);
     // push when branching from an existing attack so Back returns to the source.
     navigate(attackRoutePath(arId), { replace: routeAttackId === null })
-  }, [activeTarget, handleSetActiveTarget, routeAttackId, navigate])
+  }, [activeTarget, routeAttackId, navigate])
 
   const handleObjectiveChange = useCallback((objective: string) => {
     setLoadedAttack((current) => current ? { ...current, objective } : current)
   }, [])
 
   const handleHumanScoreChange = useCallback((humanScore: BackendScore | null, outcome: AttackOutcome) => {
-    setLoadedAttack((current) => current ? { ...current, humanScore, outcome } : current)
-  }, [])
+    setLoadedAttack((current) => current?.id === routeAttackId ? { ...current, humanScore, outcome } : current)
+  }, [routeAttackId])
 
   const handleAttackChange = useCallback((attack: AttackSummary) => {
     setLoadedAttack((current) => (
@@ -537,6 +563,12 @@ function App() {
     <ChatWindow
       onNewAttack={handleNewAttack}
       activeTarget={activeTarget}
+      availableTargets={registry.targets}
+      targetsLoading={registry.loading}
+      targetsError={registry.error}
+      onRefreshTargets={registry.refresh}
+      onSelectTarget={(target: TargetInstance | null) => setDraftSelection({ pageKey: location.key, target })}
+      defaultBranchTarget={targetDefaults.objectiveTarget}
       attackResultId={readyAttack ? readyAttack.id : null}
       conversationId={readyAttack ? readyAttack.mainConversationId : null}
       activeConversationId={activeConversationId}
@@ -570,7 +602,7 @@ function App() {
     handleNavigate,
     resolved === 'dark',
     currentView,
-    activeTarget !== null,
+    targetDefaults.objectiveTarget !== null,
   )
 
   return (
@@ -585,6 +617,27 @@ function App() {
             canManageConfiguration={canManageConfiguration}
             onStartTour={startTour}
           >
+            {targetDefaults.error && (
+              <MessageBar intent="warning">
+                <MessageBarBody>{targetDefaults.error}</MessageBarBody>
+              </MessageBar>
+            )}
+            {!registry.loading && !registry.error && (
+              (['objective', 'adversarial'] as const).map((role) => (
+                targetDefaults.preferences[role]
+                && !(role === 'objective' ? targetDefaults.objectiveTarget : targetDefaults.adversarialTarget)
+                ? (
+                  <MessageBar key={role} intent="warning">
+                    <MessageBarBody>
+                      The saved default {role} target is unavailable or has changed. Select a new default in the registry.
+                      <Button appearance="subtle" onClick={() => setDefaultTarget(role, null)}>
+                        Clear {role} default
+                      </Button>
+                    </MessageBarBody>
+                  </MessageBar>
+                ) : null
+              ))
+            )}
             <Routes>
               <Route
                 path="/"
@@ -592,7 +645,7 @@ function App() {
                   <Home
                     labels={globalLabels}
                     onLabelsChange={handleGlobalLabelsChange}
-                    activeTarget={activeTarget}
+                    activeTarget={targetDefaults.objectiveTarget}
                     onNavigate={handleNavigate}
                     onOpenAttack={handleOpenAttack}
                   />
@@ -616,8 +669,11 @@ function App() {
                   path="targets"
                   element={
                     <TargetConfig
-                      activeTarget={activeTarget}
-                      onSetActiveTarget={handleSetActiveTarget}
+                      defaultObjectiveTarget={targetDefaults.objectiveTarget}
+                      defaultAdversarialTarget={targetDefaults.adversarialTarget}
+                      onSetDefaultObjectiveTarget={(target: TargetInstance | null) => setDefaultTarget('objective', target)}
+                      onSetDefaultAdversarialTarget={(target: TargetInstance | null) => setDefaultTarget('adversarial', target)}
+                      onTargetsChanged={registry.refresh}
                     />
                   }
                 />
@@ -627,8 +683,16 @@ function App() {
               <Route
                 path="/scanner/:scenarioName"
                 element={
-                  <ScenarioDetail
-                    activeTarget={activeTarget}
+                  registry.loading ? <Spinner label="Loading target defaults..." /> : registry.error ? (
+                    <MessageBar intent="error">
+                      <MessageBarBody>
+                        {registry.error}
+                        <Button onClick={registry.refresh}>Retry targets</Button>
+                      </MessageBarBody>
+                    </MessageBar>
+                  ) : <ScenarioDetail
+                    defaultObjectiveTarget={targetDefaults.objectiveTarget}
+                    defaultAdversarialTarget={targetDefaults.adversarialTarget}
                     labels={globalLabels}
                     onNavigate={handleNavigate}
                   />
@@ -649,7 +713,7 @@ function App() {
                       onOpenAttack={handleOpenAttack}
                       filters={historyFilters}
                       onFiltersChange={handleFiltersChange}
-                      activeTarget={activeTarget}
+                      activeTarget={targetDefaults.objectiveTarget}
                       onNavigate={handleNavigate}
                       showTitle={false}
                     />
@@ -687,6 +751,16 @@ function App() {
       </ConnectionHealthProvider>
     </ErrorBoundary>
   )
+}
+
+function App() {
+  const { instance, accounts = [] } = useMsal()
+  const authConfig = useAuthConfig()
+  const account = instance.getActiveAccount?.() ?? accounts[0]
+  const accountKey = account?.homeAccountId
+    ? `${account.tenantId}:${account.homeAccountId}`
+    : authConfig.clientId ? null : 'local'
+  return <AppContent key={accountKey ?? 'account-loading'} accountKey={accountKey} />
 }
 
 export default App

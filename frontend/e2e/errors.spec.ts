@@ -132,6 +132,7 @@ async function mockAllAPIs(
               model_name: "gpt-4o-mock",
             }),
           ],
+          pagination: { limit: 200, has_more: false },
         }),
       });
     } else {
@@ -229,7 +230,7 @@ async function activateMockTarget(page: Page) {
   await expect(page.getByText("Target Registry")).toBeVisible({
     timeout: 10000,
   });
-  const setActiveBtn = page.getByRole("button", { name: /set active/i });
+  const setActiveBtn = page.getByRole("button", { name: /set default objective target/i });
   await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
   await setActiveBtn.click();
   await page.getByTitle("Chat").click();
@@ -604,6 +605,7 @@ test.describe("Error: create attack fails", () => {
                 model_name: "gpt-4o-mock",
               }),
             ],
+            pagination: { limit: 200, has_more: false },
           }),
         });
       } else {

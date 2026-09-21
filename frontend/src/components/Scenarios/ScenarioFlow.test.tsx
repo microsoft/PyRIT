@@ -145,7 +145,8 @@ function renderFlow(): void {
             path="/scanner/:scenarioName"
             element={(
               <ScenarioDetail
-                activeTarget={null}
+                defaultObjectiveTarget={TARGET}
+                defaultAdversarialTarget={null}
                 labels={{ operator: 'integration-test' }}
                 onNavigate={jest.fn()}
               />

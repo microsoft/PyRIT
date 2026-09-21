@@ -65,7 +65,11 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 #### Sending Messages
 
-Type a message and press Enter (or click Send) to send it to the active target. The response appears below. Shift+Enter inserts a newline without sending.
+For a new chat, select a target from the **Chat target** dropdown. Your default objective target is preselected if it is available. You can select another target for this chat without changing the default.
+
+Type a message and press Enter (or click Send) to send it to the chat target. The response appears below. Shift+Enter inserts a newline without sending.
+
+When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
 
 #### Attachments
 
@@ -89,7 +93,7 @@ Each assistant message has four action buttons:
 1. **Copy to input:** Copies the message content and attachments into the current input box.
 2. **Copy to new conversation:** Creates a new conversation within the same attack and copies the message to its input.
 3. **Branch conversation:** Clones the conversation up to the selected message into a new conversation within the same attack.
-4. **Branch into new attack:** Creates an entirely new attack with the conversation cloned up to the selected message.
+4. **Branch into new attack:** Opens a destination-target picker, then creates a new attack with the conversation cloned up to the selected message. This does not change the source chat or your defaults.
 
 <img width="1663" alt="Branching into a new conversation" src="images/chat_branch.png" />
 
@@ -125,10 +129,12 @@ Clicking the `operation` label opens a picker listing the operations already rec
 
 CoPyRIT enforces several safety guards:
 
-- **No target selected:** When no target is configured, the input area shows a banner prompting you to configure a target.
+- **No target selected:** Select a registered target from the new-chat dropdown. If the registry is empty, add a target first.
 - **Single-turn targets:** Some targets (e.g., image generators) don't track conversation history. CoPyRIT shows a warning indicator and blocks additional messages after the first turn, offering a "New Conversation" button instead.
 - **Operator locking:** If you open a historical attack created by a different operator, the conversation is read-only. You can use "Continue with your target" to branch into a new attack with your own target.
-- **Cross-target locking:** If the active target differs from the target used in a historical attack, sending is blocked. Use "Continue with your target" to branch with your current target.
+- **Target identity:** A saved chat uses its original target, not your default. Sending is blocked while that target is being resolved, or if it is missing, changed, or ambiguous. Retry after restoring the target, or branch into a new attack and select a destination target.
+
+Human score changes do not require a registered objective target. The original operator can update or remove a human score even when the target is unavailable. The existing operator lock still applies.
 
 ### Attack History
 
@@ -181,7 +187,34 @@ The Configuration view manages the targets available for attacks.
 
 #### Target Table
 
-Lists all registered targets with their type, endpoint, and model name. Click "Set Active" to select a target for use in the Chat view. The active target is highlighted with an "Active" badge.
+Lists all registered targets with their type, endpoint, and model name. Set or clear two independent defaults:
+
+- **Default objective target:** Preselected for new chats and scanner runs.
+- **Default adversarial target:** Preselected as the adversarial fallback for scanner runs. The target must support multi-turn conversations.
+
+Defaults are saved in this browser, separately for each signed-in account. They do not follow you to another browser or device. When authentication is disabled, the browser uses a separate local profile. Only target names and identity hashes are stored, not credentials or complete target configurations.
+
+A missing or changed default is shown as unavailable. Select a new default or clear it; CoPyRIT does not silently substitute a different target. If browser storage is unavailable, a warning states that the choice applies only in the current session.
+
+Scanner forms let you override either selection for one run. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique, including benchmark target lists, still take priority. Scorer targets are unchanged.
+
+#### Core Adversarial Default Override
+
+Framework users can use the same scoped override as the GUI:
+
+```python
+from pyrit.scenario.core import override_default_adversarial_target
+
+with override_default_adversarial_target(target):
+    # Construct the scenario here, then initialize and run it within this scope.
+    ...
+```
+
+The override changes `get_default_adversarial_target()` for the current execution scope. Apply it before constructing a scenario because some scenarios resolve the target in their constructor. It does not change already-built scenarios.
+
+Resolution order is: explicit scenario/technique target, scoped override, registered `adversarial_chat`, then the existing OpenAI fallback. Nested scopes restore the previous choice when they exit. The override does not modify the shared registry or scorer defaults.
+
+REST run and request-specific estimate payloads accept an optional `adversarial_target_name`. The backend resolves the registered target and applies the same core override during preparation and execution. Omitting the field preserves server behavior.
 
 #### Creating Targets
 

@@ -377,7 +377,7 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 async function startChatWithMessages(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Registry", exact: true }).click();
   await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
-  await page.getByRole("button", { name: "Set Active" }).first().click();
+  await page.getByRole("button", { name: "Set default objective target" }).first().click();
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   await page.getByTestId("chat-input").fill(
     "Assess this deterministic mobile prompt"
@@ -402,7 +402,7 @@ test.describe("Mobile touch targets", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
-    await page.getByRole("button", { name: "Set Active" }).first().click();
+    await page.getByRole("button", { name: "Set default objective target" }).first().click();
     await page.getByRole("button", { name: "Chat", exact: true }).click();
 
     await page.getByRole("button", { name: "Add objective" }).click();
@@ -455,7 +455,7 @@ test.describe("Mobile touch targets", () => {
       page.getByRole("button", { name: "New Target", exact: true })
     );
     await expectMinimumTouchTargets(
-      page.getByRole("button", { name: "Set Active" })
+      page.getByRole("button", { name: "Set default objective target" })
     );
     await expectMinimumTouchTarget(
       page.getByRole("button", { name: "Expand inner targets" })
@@ -522,7 +522,7 @@ test.describe("Mobile touch targets", () => {
 
     await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
-    await page.getByRole("button", { name: "Set Active" }).first().click();
+    await page.getByRole("button", { name: "Set default objective target" }).first().click();
     await page.goBack();
     await expect(
       page.getByTestId("toggle-objective-header-btn")
@@ -717,7 +717,7 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
   );
   await expectCompactDesktopTarget(page.locator("select"));
   await expectCompactDesktopTarget(
-    page.getByRole("button", { name: "Set Active" }).first()
+    page.getByRole("button", { name: "Set default objective target" }).first()
   );
   await expectCompactDesktopTarget(
     page.getByRole("button", { name: "Expand inner targets" })

@@ -7,19 +7,28 @@ import {
   Spinner,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
-import { targetsApi } from '../../services/api'
-import { toApiError } from '../../services/errors'
-import type { TargetInstance } from '../../types'
+import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
+import type { TargetInstance } from '@/types'
 import CreateTargetDialog from './CreateTargetDialog'
 import TargetTable from './TargetTable'
 import { useTargetConfigStyles } from './TargetConfig.styles'
 
 interface TargetConfigProps {
-  activeTarget: TargetInstance | null
-  onSetActiveTarget: (target: TargetInstance) => void
+  defaultObjectiveTarget: TargetInstance | null
+  defaultAdversarialTarget: TargetInstance | null
+  onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
+  onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
+  onTargetsChanged?: () => void
 }
 
-export default function TargetConfig({ activeTarget, onSetActiveTarget }: TargetConfigProps) {
+export default function TargetConfig({
+  defaultObjectiveTarget,
+  defaultAdversarialTarget,
+  onSetDefaultObjectiveTarget,
+  onSetDefaultAdversarialTarget,
+  onTargetsChanged,
+}: TargetConfigProps) {
   const styles = useTargetConfigStyles()
   const [targets, setTargets] = useState<TargetInstance[]>([])
   const [loading, setLoading] = useState(true)
@@ -38,9 +47,9 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
 
     const attempt = async (n: number): Promise<void> => {
       try {
-        const response = await targetsApi.listTargets(200)
+        const items = await listRegisteredTargets()
         if (cancelled) return
-        setTargets(response.items)
+        setTargets(items)
         setError(null)
         setLoading(false)
       } catch (err) {
@@ -70,7 +79,13 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
   const handleTargetCreated = useCallback(() => {
     setDialogOpen(false)
     fetchTargets()
-  }, [fetchTargets])
+    onTargetsChanged?.()
+  }, [fetchTargets, onTargetsChanged])
+
+  const handleRefresh = (): void => {
+    fetchTargets()
+    onTargetsChanged?.()
+  }
 
   return (
     <div className={styles.root} data-testid="target-config">
@@ -78,7 +93,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
         <div className={styles.headerLeft}>
           <Text as="h1" size={600} weight="semibold">Target Registry</Text>
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
-            Manage targets for attack sessions. Select a target to use in the chat view.
+            Manage targets and choose defaults for new chats and scanner runs. Existing chats and runs are unchanged.
           </Text>
         </div>
         <div className={styles.headerActions}>
@@ -86,7 +101,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             className={styles.headerAction}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
-            onClick={fetchTargets}
+            onClick={handleRefresh}
             disabled={loading}
           >
             Refresh
@@ -146,8 +161,10 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
       {!loading && !error && targets.length > 0 && (
         <TargetTable
           targets={targets}
-          activeTarget={activeTarget}
-          onSetActiveTarget={onSetActiveTarget}
+          defaultObjectiveTarget={defaultObjectiveTarget}
+          defaultAdversarialTarget={defaultAdversarialTarget}
+          onSetDefaultObjectiveTarget={onSetDefaultObjectiveTarget}
+          onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
         />
       )}
 

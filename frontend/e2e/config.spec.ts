@@ -225,7 +225,7 @@ test.describe("Target Registry Page", () => {
     await expect(page.getByText(/error/i)).toBeVisible({ timeout: 10000 });
   });
 
-  test("should set a target active", async ({ page }) => {
+  test("should set a default objective target", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
@@ -233,13 +233,12 @@ test.describe("Target Registry Page", () => {
     await goToTargets(page);
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
 
-    // Both rows should have a "Set Active" button initially
-    const setActiveBtns = page.getByRole("button", { name: /set active/i });
+    // Both rows offer an objective default initially.
+    const setActiveBtns = page.getByRole("button", { name: /set default objective target/i });
     await expect(setActiveBtns.first()).toBeVisible();
     await setActiveBtns.first().click();
 
-    // After clicking, the first target should show "Active" badge
-    await expect(page.locator("table").getByText("Active", { exact: true }).first()).toBeVisible();
+    await expect(page.locator("table").getByText("Default objective target", { exact: true })).toBeVisible();
   });
 
   test("should open create target dialog", async ({ page }) => {
@@ -528,7 +527,7 @@ test.describe("Responsive Target Registry", () => {
 });
 
 test.describe("Target Config ↔ Chat Navigation", () => {
-  test("should display active target info in chat after setting it", async ({ page }) => {
+  test("should preselect the objective default in a new chat", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
@@ -537,13 +536,13 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
 
     // Set first target active
-    await page.getByRole("button", { name: /set active/i }).first().click();
+    await page.getByRole("button", { name: /set default objective target/i }).first().click();
 
     // Navigate back to chat
     await page.getByTitle("Chat").click();
     await expect(page.getByTestId("new-attack-btn")).toBeVisible();
 
-    // Chat should show the active target type. Scope to the badge to
+    // Chat should show the selected target type. Scope to the badge to
     // avoid matching the (hidden) tooltip copy of the same text.
     const badge = page.getByTestId("target-badge");
     await expect(badge).toBeVisible();
@@ -564,7 +563,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     // Go to targets, set a target
     await page.getByTitle("Registry").click();
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
-    await page.getByRole("button", { name: /set active/i }).first().click();
+    await page.getByRole("button", { name: /set default objective target/i }).first().click();
 
     // Return to chat — send should be enabled when there's text
     await page.getByTitle("Chat").click();

@@ -65,8 +65,10 @@ const sampleTargets: TargetInstance[] = [
 
 describe("TargetConfig", () => {
   const defaultProps = {
-    activeTarget: null as TargetInstance | null,
-    onSetActiveTarget: jest.fn(),
+    defaultObjectiveTarget: null as TargetInstance | null,
+    defaultAdversarialTarget: null as TargetInstance | null,
+    onSetDefaultObjectiveTarget: jest.fn(),
+    onSetDefaultAdversarialTarget: jest.fn(),
   };
 
   beforeEach(() => {
@@ -104,6 +106,24 @@ describe("TargetConfig", () => {
       expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText("OpenAIImageTarget").length).toBeGreaterThanOrEqual(1);
     });
+  });
+
+  it("should load every registry page before offering defaults", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargets
+      .mockResolvedValueOnce({
+        items: [sampleTargets[0]],
+        pagination: { limit: 200, has_more: true, next_cursor: "second-page" },
+      })
+      .mockResolvedValueOnce({
+        items: [sampleTargets[1]],
+        pagination: { limit: 200, has_more: false },
+      });
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+    expect(await screen.findByText("openai_image_dalle")).toBeInTheDocument();
+    expect(mockedTargetsApi.listTargets).toHaveBeenCalledWith(200, "second-page");
+    await user.click(screen.getAllByRole("button", { name: "Set default objective target" })[1]);
+    expect(defaultProps.onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[1]);
   });
 
   it("should show empty state when no targets", async () => {
@@ -156,8 +176,9 @@ describe("TargetConfig", () => {
     20000
   );
 
-  it("should call onSetActiveTarget when Set Active is clicked", async () => {
-    const onSetActiveTarget = jest.fn();
+  it("should set the objective default", async () => {
+    const user = userEvent.setup();
+    const onSetDefaultObjectiveTarget = jest.fn();
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: sampleTargets,
       pagination: { limit: 200, has_more: false },
@@ -167,7 +188,7 @@ describe("TargetConfig", () => {
       <TestWrapper>
         <TargetConfig
           {...defaultProps}
-          onSetActiveTarget={onSetActiveTarget}
+          onSetDefaultObjectiveTarget={onSetDefaultObjectiveTarget}
         />
       </TestWrapper>
     );
@@ -176,13 +197,13 @@ describe("TargetConfig", () => {
       expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
 
-    const setActiveButtons = screen.getAllByText("Set Active");
-    await userEvent.click(setActiveButtons[0]);
+    const buttons = screen.getAllByRole("button", { name: "Set default objective target" });
+    await user.click(buttons[0]);
 
-    expect(onSetActiveTarget).toHaveBeenCalledWith(sampleTargets[0]);
+    expect(onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[0]);
   });
 
-  it("should show Active badge for active target", async () => {
+  it("should show the objective default badge", async () => {
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: sampleTargets,
       pagination: { limit: 200, has_more: false },
@@ -192,17 +213,19 @@ describe("TargetConfig", () => {
       <TestWrapper>
         <TargetConfig
           {...defaultProps}
-          activeTarget={sampleTargets[0]}
+          defaultObjectiveTarget={sampleTargets[0]}
         />
       </TestWrapper>
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("Active").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText("Default objective target")).toBeInTheDocument();
     });
   });
 
   it("should refresh targets when Refresh button is clicked", async () => {
+    const user = userEvent.setup();
+    const onTargetsChanged = jest.fn();
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: sampleTargets,
       pagination: { limit: 200, has_more: false },
@@ -210,7 +233,7 @@ describe("TargetConfig", () => {
 
     render(
       <TestWrapper>
-        <TargetConfig {...defaultProps} />
+        <TargetConfig {...defaultProps} onTargetsChanged={onTargetsChanged} />
       </TestWrapper>
     );
 
@@ -219,12 +242,14 @@ describe("TargetConfig", () => {
     });
 
     expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
+    expect(onTargetsChanged).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByText("Refresh"));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
 
     await waitFor(() => {
       expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
     });
+    expect(onTargetsChanged).toHaveBeenCalledTimes(1);
   });
 
   it("should open create dialog when New Target is clicked", async () => {
@@ -249,13 +274,15 @@ describe("TargetConfig", () => {
   });
 
   it("should refresh list after target creation", async () => {
+    const user = userEvent.setup();
+    const onTargetsChanged = jest.fn();
     mockedTargetsApi.listTargets
       .mockResolvedValueOnce({ items: [], pagination: { limit: 200, has_more: false } })
       .mockResolvedValueOnce({ items: sampleTargets, pagination: { limit: 200, has_more: false } });
 
     render(
       <TestWrapper>
-        <TargetConfig {...defaultProps} />
+        <TargetConfig {...defaultProps} onTargetsChanged={onTargetsChanged} />
       </TestWrapper>
     );
 
@@ -263,13 +290,17 @@ describe("TargetConfig", () => {
       expect(screen.getByText("No Targets Configured")).toBeInTheDocument();
     });
 
-    // Open dialog and trigger create
-    await userEvent.click(screen.getByText("New Target"));
-    await userEvent.click(screen.getByTestId("dialog-create"));
+    expect(onTargetsChanged).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "New Target" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onTargetsChanged).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "New Target" }));
+    await user.click(screen.getByRole("button", { name: "Create", exact: true }));
 
     await waitFor(() => {
       expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
+    expect(onTargetsChanged).toHaveBeenCalledTimes(1);
   });
 
   it("should display target type, endpoint, and model", async () => {

@@ -14,6 +14,22 @@ import { makeTarget } from "./test-utils/targetFixtures";
 
 const mockGetActiveAccount = jest.fn();
 
+jest.mock("./hooks/useTargetRegistry", () => ({
+  useTargetRegistry: () => {
+    const { useState } = jest.requireActual<typeof import("react")>("react");
+    const [targets, setTargets] = useState<import("./types").TargetInstance[]>([]);
+    return {
+      targets,
+      loading: false,
+      error: null,
+      refresh: jest.fn(),
+      rememberTarget: (target: import("./types").TargetInstance) => {
+        setTargets((current) => [...current, target]);
+      },
+    };
+  },
+}));
+
 // Mock react-joyride to prevent the guided tour from interfering with App tests.
 // The Joyride component is rendered as a no-op div, avoiding uncontrolled state
 // updates from the tour's auto-start logic.
@@ -217,20 +233,20 @@ jest.mock("./components/Chat/ChatWindow", () => {
 jest.mock("./components/Config/TargetConfig", () => {
   const { makeTarget } = jest.requireActual("@/test-utils/targetFixtures") as typeof import("@/test-utils/targetFixtures");
   const MockTargetConfig = ({
-    activeTarget,
-    onSetActiveTarget,
+    defaultObjectiveTarget,
+    onSetDefaultObjectiveTarget,
   }: {
-    activeTarget: unknown;
-    onSetActiveTarget: (t: unknown) => void;
+    defaultObjectiveTarget: unknown;
+    onSetDefaultObjectiveTarget: (t: unknown) => void;
   }) => {
     return (
       <div data-testid="target-config">
         <span data-testid="active-target-name">
-          {(activeTarget as { target_registry_name?: string })?.target_registry_name ?? "none"}
+          {(defaultObjectiveTarget as { target_registry_name?: string })?.target_registry_name ?? "none"}
         </span>
         <button
           onClick={() =>
-            onSetActiveTarget(makeTarget({
+            onSetDefaultObjectiveTarget(makeTarget({
               target_registry_name: "test_target",
               target_type: "OpenAIChatTarget",
               identifier_hash: "test-target-hash",
@@ -356,17 +372,17 @@ jest.mock("./components/Scenarios/ScenarioCatalog", () => {
 
 jest.mock("./components/Scenarios/ScenarioDetail", () => {
   const MockScenarioDetail = ({
-    activeTarget,
+    defaultObjectiveTarget,
     labels,
     onNavigate,
   }: {
-    activeTarget: unknown;
+    defaultObjectiveTarget: unknown;
     labels: Record<string, string>;
     onNavigate: (view: string) => void;
   }) => {
     return (
       <div data-testid="scenario-detail">
-        <span data-testid="scenario-detail-has-target">{activeTarget ? "yes" : "no"}</span>
+        <span data-testid="scenario-detail-has-target">{defaultObjectiveTarget ? "yes" : "no"}</span>
         <span data-testid="scenario-detail-labels-json">{JSON.stringify(labels)}</span>
         <button onClick={() => onNavigate("registry")} data-testid="scenario-detail-go-config">
           Configure target
@@ -1692,7 +1708,15 @@ describe("App", () => {
     expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
   });
 
-  it("preserves an explicitly selected different target and reports a cross-target state", async () => {
+  it("selects the history target instead of the objective default and preserves that default", async () => {
+    const historyTarget = makeTarget({
+      target_registry_name: "history-target",
+      identifier_hash: "other-target-hash",
+    });
+    mockListTargets.mockResolvedValue({
+      items: [historyTarget],
+      pagination: { limit: 200, has_more: false },
+    });
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-other-target",
       conversation_id: "conv-other-target",
@@ -1712,10 +1736,13 @@ describe("App", () => {
     await user.click(screen.getByTestId("open-attack"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("explicit-mismatch")
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
     );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("history-target");
+    await user.click(screen.getByTestId("new-attack"));
     expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
-    expect(mockListTargets).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId("nav-config"));
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
   });
 
   it("hash-validates an explicitly selected matching target against the registry", async () => {
@@ -1753,7 +1780,7 @@ describe("App", () => {
     expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
   });
 
-  it("preserves an explicitly selected alias with the same canonical hash", async () => {
+  it("selects the persisted alias rather than a default with the same hash", async () => {
     const persistedAliasTarget = makeTarget({
       target_registry_name: "persisted-alias",
       target_type: "OpenAIChatTarget",
@@ -1782,7 +1809,7 @@ describe("App", () => {
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
     );
-    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("persisted-alias");
     expect(mockGetTarget).toHaveBeenCalledWith("persisted-alias");
     expect(mockListTargets).not.toHaveBeenCalled();
   });

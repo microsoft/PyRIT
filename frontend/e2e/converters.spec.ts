@@ -476,7 +476,7 @@ async function activateMockTarget(page: Page) {
   await page.getByTitle("Registry").click();
   await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 
-  const setActiveBtn = page.getByRole("button", { name: /set active/i });
+  const setActiveBtn = page.getByRole("button", { name: /set default objective target/i });
   await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
   await setActiveBtn.click();
 
@@ -561,7 +561,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await page.goto("/");
     await page.getByTitle("Registry", { exact: true }).click();
     await page.getByTestId(`target-row-${targetRegistryName}`)
-      .getByRole("button", { name: "Set Active", exact: true }).click();
+      .getByRole("button", { name: "Set default objective target", exact: true }).click();
     await page.getByTitle("Chat", { exact: true }).click();
     await expect(page.getByTestId("chat-input")).toBeEnabled();
   });

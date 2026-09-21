@@ -88,6 +88,20 @@ function makeTarget(name: string, modelName?: string): TargetInstance {
   }
 }
 
+function makeAdversarialTarget(name: string): TargetInstance {
+  return {
+    ...makeTarget(name),
+    capabilities: {
+      supports_multi_turn: true,
+      supports_json_schema: false,
+      supports_json_output: false,
+      supports_system_prompt: true,
+      supported_input_modalities: ['text'],
+      supported_output_modalities: ['text'],
+    },
+  }
+}
+
 function makeEstimate(total: number | null): ScenarioRunSizeEstimateResponse {
   return {
     estimated_attack_count: total,
@@ -136,31 +150,34 @@ async function confirmRunPreview(user: ReturnType<typeof userEvent.setup>): Prom
 
 function renderDetail(
   path: string,
-  props: Partial<{
-    activeTarget: TargetInstance | null
-    labels: Record<string, string>
-    onNavigate: (view: string) => void
-  }> = {},
+  props: Partial<React.ComponentProps<typeof ScenarioDetail>> = {},
 ) {
   const defaultProps = {
-    activeTarget: null,
+    defaultObjectiveTarget: makeTarget('target-a'),
+    defaultAdversarialTarget: null,
     labels: { operator: 'roakey' },
     onNavigate: jest.fn(),
   }
   const merged = { ...defaultProps, ...props }
-  return render(
+  const renderPage = (pageProps: React.ComponentProps<typeof ScenarioDetail>): React.ReactElement => (
     <FluentProvider theme={webLightTheme}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route
             path="/:catalog/:scenarioName"
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            element={<ScenarioDetail {...(merged as any)} />}
+            element={<ScenarioDetail {...pageProps} />}
           />
         </Routes>
       </MemoryRouter>
-    </FluentProvider>,
+    </FluentProvider>
   )
+  const view = render(renderPage(merged))
+  return {
+    ...view,
+    updateDefaults: (defaults: Partial<React.ComponentProps<typeof ScenarioDetail>>): void => {
+      view.rerender(renderPage({ ...merged, ...defaults }))
+    },
+  }
 }
 
 describe('ScenarioDetail', () => {
@@ -273,8 +290,8 @@ describe('ScenarioDetail', () => {
     expect(onNavigate).toHaveBeenCalledWith('registry')
   })
 
-  it('defaults the target selector to the active target when it is among the fetched targets', async () => {
-    renderDetail('/scanner/foundry.red_team_agent', { activeTarget: makeTarget('target-b') })
+  it('prefills the objective default when it is among the fetched targets', async () => {
+    renderDetail('/scanner/foundry.red_team_agent', { defaultObjectiveTarget: makeTarget('target-b') })
 
     expect(await screen.findByTestId('scenario-target-select')).toHaveValue('target-b')
   })
@@ -292,10 +309,157 @@ describe('ScenarioDetail', () => {
     expect(mockListTargets).toHaveBeenCalledTimes(1)
   })
 
-  it('defaults the target selector to the first fetched target when there is no matching active target', async () => {
+  it.each([null, makeTarget('missing-target'), {
+    ...makeTarget('target-a'),
+    identifier: { class_name: 'OpenAIChatTarget', hash: 'changed' },
+  }])('leaves the objective selection blank without a valid default (%s)', async (defaultObjectiveTarget: TargetInstance | null) => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/foundry.red_team_agent', { defaultObjectiveTarget })
+
+    expect(await screen.findByRole('combobox', { name: 'Target' })).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Select a target.')
+    expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
+  it('loads objective and eligible adversarial defaults from all registry pages', async () => {
+    const adversary = makeAdversarialTarget('adversary')
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [makeTarget('target-a')],
+        pagination: { has_more: true, next_cursor: 'page-two' },
+      })
+      .mockResolvedValueOnce({
+        items: [makeTarget('target-b'), adversary],
+        pagination: { has_more: false },
+      })
+    renderDetail('/scanner/foundry.red_team_agent', {
+      defaultObjectiveTarget: makeTarget('target-b'),
+      defaultAdversarialTarget: adversary,
+    })
+    expect(await screen.findByRole('combobox', { name: 'Target' })).toHaveValue('target-b')
+    const fallback = screen.getByRole('combobox', { name: 'Adversarial fallback target' })
+    expect(fallback).toHaveValue('adversary')
+    expect(within(fallback).queryByRole('option', { name: 'target-a' })).not.toBeInTheDocument()
+    expect(mockListTargets).toHaveBeenCalledWith(200, 'page-two')
+  })
+
+  it.each([undefined, 'repeated-cursor'])('rejects incomplete registry pagination (%s) rather than displaying partial targets', async (nextCursor: string | undefined) => {
+    const user = userEvent.setup()
+    mockListTargets.mockResolvedValue({
+      items: [makeTarget('target-a')],
+      pagination: { has_more: true, next_cursor: nextCursor },
+    })
     renderDetail('/scanner/foundry.red_team_agent')
 
-    expect(await screen.findByTestId('scenario-target-select')).toHaveValue('target-a')
+    expect(await screen.findByTestId('scenario-error')).toHaveTextContent('Target registry pagination did not advance')
+    expect(screen.queryByRole('combobox', { name: 'Target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Adversarial fallback target' })).not.toBeInTheDocument()
+
+    mockListTargets.mockResolvedValue({
+      items: [makeTarget('target-a')],
+      pagination: { has_more: false },
+    })
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByRole('combobox', { name: 'Target' })).toHaveValue('target-a')
+  })
+
+  it('does not replace per-form overrides or cleared values when saved defaults change', async () => {
+    const user = userEvent.setup()
+    const adversary = makeAdversarialTarget('adversary')
+    mockListTargets.mockResolvedValue({
+      items: [makeTarget('target-a'), makeTarget('target-b'), adversary],
+      pagination: { has_more: false },
+    })
+    const view = renderDetail('/scanner/foundry.red_team_agent', { defaultAdversarialTarget: adversary })
+    const objective = await screen.findByRole('combobox', { name: 'Target' })
+    const fallback = screen.getByRole('combobox', { name: 'Adversarial fallback target' })
+    await user.selectOptions(objective, 'target-b')
+    await user.selectOptions(fallback, '')
+    view.updateDefaults({ defaultObjectiveTarget: null, defaultAdversarialTarget: null })
+    expect(objective).toHaveValue('target-b')
+    view.updateDefaults({ defaultObjectiveTarget: makeTarget('target-a'), defaultAdversarialTarget: adversary })
+    expect(objective).toHaveValue('target-b')
+    expect(fallback).toHaveValue('')
+  })
+
+  it.each(['default', 'override', 'clear'])('uses the same %s adversarial fallback for estimate and run', async (mode: string) => {
+    const user = userEvent.setup()
+    const adversary = makeAdversarialTarget('adversary')
+    const override = makeAdversarialTarget('override')
+    mockListTargets.mockResolvedValue({
+      items: [makeTarget('target-a'), adversary, override],
+      pagination: { has_more: false },
+    })
+    mockEstimateRun.mockResolvedValue(makeEstimate(8))
+    renderDetail('/scanner/foundry.red_team_agent', { defaultAdversarialTarget: adversary })
+    const fallback = await screen.findByRole('combobox', { name: 'Adversarial fallback target' })
+    expect(fallback).toHaveValue('adversary')
+    const name = mode === 'clear' ? '' : mode === 'override' ? 'override' : 'adversary'
+    await user.selectOptions(fallback, name)
+    await waitFor(() => {
+      expect(mockEstimateRun).toHaveBeenLastCalledWith(
+        'foundry.red_team_agent',
+        {
+          target_name: 'target-a',
+          techniques: ['default_technique'],
+          include_baseline: true,
+          ...(name ? { adversarial_target_name: name } : {}),
+        },
+        expect.any(AbortSignal),
+      )
+    })
+    const estimateRequest = mockEstimateRun.mock.calls[mockEstimateRun.mock.calls.length - 1][1]
+    await confirmRunPreview(user)
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+    expect(mockStartRun.mock.calls[0][0]).toEqual({
+      ...estimateRequest,
+      scenario_name: 'foundry.red_team_agent',
+      max_concurrency: 10,
+      max_retries: 0,
+      labels: { operator: 'roakey' },
+    })
+    if (!name) expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('adversarial_target_name')
+  })
+
+  it('ignores an ineligible adversarial default', async () => {
+    renderDetail('/scanner/foundry.red_team_agent', { defaultAdversarialTarget: makeTarget('target-a') })
+    expect(await screen.findByRole('combobox', { name: 'Adversarial fallback target' })).toHaveValue('')
+  })
+
+  it('keeps explicit benchmark adversarial target lists separate from the fallback', async () => {
+    const user = userEvent.setup()
+    const adversary = makeAdversarialTarget('adversary')
+    mockListTargets.mockResolvedValue({
+      items: [makeTarget('target-a'), adversary],
+      pagination: { has_more: false },
+    })
+    mockGetScenario.mockResolvedValue(makeScenario({
+      supported_parameters: [{
+        name: 'adversarial_targets',
+        type_name: 'str',
+        required: false,
+        default: null,
+        choices: null,
+        is_list: true,
+      }],
+    }))
+    mockEstimateRun.mockResolvedValue(makeEstimate(8))
+    renderDetail('/scanner/foundry.red_team_agent', { defaultAdversarialTarget: adversary })
+    await user.type(await screen.findByRole('textbox', { name: 'adversarial_targets' }), 'benchmark-a, benchmark-b')
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
+      'foundry.red_team_agent',
+      expect.objectContaining({
+        adversarial_target_name: 'adversary',
+        scenario_params: { adversarial_targets: ['benchmark-a', 'benchmark-b'] },
+      }),
+      expect.any(AbortSignal),
+    ))
+    await confirmRunPreview(user)
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+      adversarial_target_name: 'adversary',
+      scenario_params: { adversarial_targets: ['benchmark-a', 'benchmark-b'] },
+    })))
   })
 
   it('shows the configuration, estimate, and launch sections before the preview dialog', async () => {

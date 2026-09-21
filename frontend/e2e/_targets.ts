@@ -4,7 +4,7 @@
 // folds flat identity scalars into the embedded `identifier` so route mocks
 // match the current nested `TargetInstance` wire model. Without this, the
 // target table crashes reading `target.identifier.class_name` and no rows
-// (and no "Set Active" button) render.
+// (and no "Set default objective target" button) render.
 
 export interface FlatTarget {
   target_registry_name: string;

@@ -71,7 +71,7 @@ describe("Home", () => {
       screen.getByRole("heading", { level: 1, name: /welcome to co-pyrit/i })
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Labels" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Target" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Default objective target" })).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 2, name: "Recent operations" })
     ).toBeInTheDocument();

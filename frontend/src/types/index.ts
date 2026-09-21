@@ -203,6 +203,16 @@ export interface EnvironmentFileListResponse {
 
 // --- Targets ---
 
+export interface TargetReference {
+  readonly registryName: string
+  readonly identifierHash: string
+}
+
+export interface TargetPreferences {
+  readonly objective: TargetReference | null
+  readonly adversarial: TargetReference | null
+}
+
 export interface TargetCapabilities {
   supports_multi_turn: boolean
   supports_multi_message_pieces?: boolean
@@ -665,6 +675,7 @@ export interface ListRegisteredScenariosResponse {
 export interface RunScenarioRequest {
   scenario_name: string
   target_name: string
+  adversarial_target_name?: string | null
   initializers?: string[] | null
   techniques?: string[] | null
   dataset_names?: string[] | null
@@ -714,6 +725,7 @@ export interface ScenarioRunSizeEstimateResponse {
 
 export interface ScenarioRunSizeEstimateRequest {
   target_name?: string | null
+  adversarial_target_name?: string | null
   techniques?: string[] | null
   dataset_names?: string[] | null
   max_dataset_size?: number | null

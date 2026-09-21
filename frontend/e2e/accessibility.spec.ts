@@ -120,10 +120,10 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to the registry, set active, return to chat so input is enabled
+    // Save an objective default, then open a new chat with that target.
     await page.getByTitle("Registry").click();
     await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
-    const setActiveBtn = page.getByRole("button", { name: /set active/i });
+    const setActiveBtn = page.getByRole("button", { name: /set default objective target/i });
     await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
     await setActiveBtn.click();
     await page.getByTitle("Chat").click();
@@ -263,10 +263,10 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to the registry, set active, return to chat so input is enabled
+    // Save an objective default, then open a new chat with that target.
     await page.getByTitle("Registry").click();
     await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
-    const setActiveBtn = page.getByRole("button", { name: /set active/i });
+    const setActiveBtn = page.getByRole("button", { name: /set default objective target/i });
     await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
     await setActiveBtn.click();
     await page.getByTitle("Chat").click();

@@ -69,8 +69,10 @@ from pyrit.models.catalog.scenario import (
     ScenarioTargetSummary,
     ScenarioTechniqueSummary,
 )
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.scenario import Scenario
+from pyrit.scenario.core import override_default_adversarial_target
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +110,21 @@ _STARTED_AT_ADAPTER = TypeAdapter(datetime)
 
 
 @dataclass
+class _PreparedRun:
+    """Scenario and request-scoped default captured in the preparation worker."""
+
+    scenario: Scenario
+    adversarial_target: PromptTarget | None = None
+
+
+@dataclass
 class _ActiveTask:
     """Tracks an in-flight scenario run's asyncio task."""
 
     scenario_result_id: str
     task: asyncio.Task[None] | None = None
     scenario: Scenario | None = None
+    adversarial_target: PromptTarget | None = None
     error: str | None = None
     scenario_name: str = ""
     scenario_registry_name: str = ""
@@ -210,7 +221,7 @@ class ScenarioRunService:
                 functools.partial(self._prepare_run_blocking, request=request),
             )
             try:
-                scenario = await asyncio.shield(prepare_task)
+                prepared = await asyncio.shield(prepare_task)
             except asyncio.CancelledError:
                 if prepare_task.done():
                     try:
@@ -221,6 +232,7 @@ class ScenarioRunService:
                     prepare_task.add_done_callback(self._release_abandoned_prepare)
                 raise
 
+            scenario = prepared.scenario
             scenario_result_id = scenario._scenario_result_id
             if scenario_result_id is None:
                 raise ValueError("Scenario did not produce a scenario_result_id during initialization.")
@@ -257,6 +269,7 @@ class ScenarioRunService:
             scheduled = _ActiveTask(
                 scenario_result_id=scenario_result_id,
                 scenario=scenario,
+                adversarial_target=prepared.adversarial_target,
                 scenario_name=persisted[0].scenario_name,
                 scenario_registry_name=request.scenario_name,
                 created_at=persisted[0].creation_time,
@@ -294,7 +307,7 @@ class ScenarioRunService:
         stored = self._memory.get_scenario_result_header(scenario_result_id=scenario_result_id)
         return stored is not None and stored.scenario_run_state == ScenarioRunState.CANCELLED
 
-    def _release_abandoned_prepare(self, prepare_task: "asyncio.Future[Scenario]") -> None:
+    def _release_abandoned_prepare(self, prepare_task: "asyncio.Future[_PreparedRun]") -> None:
         """
         Clean up after an abandoned preparation thread has finished.
 
@@ -315,7 +328,7 @@ class ScenarioRunService:
         # Initialization already stored a CREATED scenario result, and nothing is going to run
         # it now, so terminalize it rather than leaving a run that never starts. A run that
         # already reached a terminal state keeps it, so a real failure is not relabelled.
-        scenario_result_id = prepare_task.result()._scenario_result_id
+        scenario_result_id = prepare_task.result().scenario._scenario_result_id
         if scenario_result_id:
             try:
                 self._memory.try_update_scenario_run_state(
@@ -330,7 +343,7 @@ class ScenarioRunService:
                 )
         logger.warning("Abandoned scenario preparation completed after the request was cancelled.")
 
-    def _prepare_run_blocking(self, *, request: RunScenarioRequest) -> Scenario:
+    def _prepare_run_blocking(self, *, request: RunScenarioRequest) -> _PreparedRun:
         """
         Run the eager initialization for a scenario run on the calling thread.
 
@@ -345,21 +358,21 @@ class ScenarioRunService:
             request: The run request with scenario name, target, and options.
 
         Returns:
-            Scenario: The initialized scenario.
+            _PreparedRun: The initialized scenario and its scoped default.
 
         Raises:
             RuntimeError: If tasks are still running on the initialization loop after the drain.
         """
 
-        async def prepare_async() -> Scenario:
-            scenario = await self._prepare_run_async(request=request)
+        async def prepare_async() -> _PreparedRun:
+            prepared = await self._prepare_run_async(request=request)
             try:
                 await self._drain_initialization_tasks_async()
             except RuntimeError as drain_error:
                 # Initialization already stored a CREATED row and this start is over, so
                 # terminalize it here rather than leaving a run that never begins. A cancel
                 # can land while the drain is running, so keep whatever terminal state won.
-                scenario_result_id = scenario._scenario_result_id
+                scenario_result_id = prepared.scenario._scenario_result_id
                 if scenario_result_id:
                     try:
                         self._memory.try_update_scenario_run_state(
@@ -372,7 +385,7 @@ class ScenarioRunService:
                     except Exception as update_error:
                         logger.warning(f"Could not mark scenario run {scenario_result_id} as failed: {update_error}")
                 raise
-            return scenario
+            return prepared
 
         return asyncio.run(prepare_async())
 
@@ -412,7 +425,7 @@ class ScenarioRunService:
                 if not task.cancelled() and task.exception() is not None:
                     logger.debug(f"A scenario initialization task failed during teardown: {task.exception()}")
 
-    async def _prepare_run_async(self, *, request: RunScenarioRequest) -> Scenario:
+    async def _prepare_run_async(self, *, request: RunScenarioRequest) -> _PreparedRun:
         """
         Resolve and initialize the scenario for a run request.
 
@@ -420,7 +433,7 @@ class ScenarioRunService:
             request: The run request with scenario name, target, and options.
 
         Returns:
-            Scenario: The initialized scenario.
+            _PreparedRun: The initialized scenario and its scoped default.
 
         Raises:
             ValueError: If scenario, target, initializer, or technique cannot be found.
@@ -428,20 +441,29 @@ class ScenarioRunService:
         scenario_class = self._configuration_resolver.resolve_scenario_class(scenario_name=request.scenario_name)
         await self._run_initializers_async(request=request)
         objective_target = self._configuration_resolver.resolve_target(target_name=request.target_name)
-        init_kwargs = self._configuration_resolver.resolve_configuration(
-            scenario_name=request.scenario_name,
-            scenario_class=scenario_class,
-            objective_target=objective_target,
-            techniques=request.techniques,
-            dataset_names=request.dataset_names,
-            max_dataset_size=request.max_dataset_size,
-            dataset_filters=request.dataset_filters,
-            include_baseline=request.include_baseline,
-            max_concurrency=request.max_concurrency,
-            max_retries=request.max_retries,
-            memory_labels=request.labels,
+        adversarial_target = self._configuration_resolver.resolve_adversarial_target(
+            target_name=request.adversarial_target_name
         )
-        return await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
+        with (
+            override_default_adversarial_target(adversarial_target)
+            if adversarial_target is not None
+            else contextlib.nullcontext()
+        ):
+            init_kwargs = self._configuration_resolver.resolve_configuration(
+                scenario_name=request.scenario_name,
+                scenario_class=scenario_class,
+                objective_target=objective_target,
+                techniques=request.techniques,
+                dataset_names=request.dataset_names,
+                max_dataset_size=request.max_dataset_size,
+                dataset_filters=request.dataset_filters,
+                include_baseline=request.include_baseline,
+                max_concurrency=request.max_concurrency,
+                max_retries=request.max_retries,
+                memory_labels=request.labels,
+            )
+            scenario = await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
+        return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
 
     def get_run(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
@@ -1059,7 +1081,12 @@ class ScenarioRunService:
         handoff_ready = True
 
         try:
-            await active.scenario.run_async()
+            with (
+                override_default_adversarial_target(active.adversarial_target)
+                if active.adversarial_target is not None
+                else contextlib.nullcontext()
+            ):
+                await active.scenario.run_async()
 
         except asyncio.CancelledError:
             try:

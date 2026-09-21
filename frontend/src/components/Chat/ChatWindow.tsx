@@ -6,12 +6,20 @@ import {
   BreadcrumbDivider,
   BreadcrumbItem,
   Drawer,
+  Dialog,
+  DialogSurface,
+  DialogBody,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
   Menu,
   MenuItem,
   MenuList,
   MenuPopover,
   MenuTrigger,
   mergeClasses,
+  MessageBar,
+  MessageBarBody,
   Spinner,
   Switch,
   Text,
@@ -31,6 +39,7 @@ import TargetBadge from './TargetBadge'
 import ObjectiveHeader from './ObjectiveHeader'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
+import TargetSelect from '@/components/Config/TargetSelect'
 import {
   basenameFromValue,
   buildMediaUrl,
@@ -203,10 +212,21 @@ function matchesNarrowScreen(): boolean {
 interface ChatWindowProps {
   onNewAttack: () => void
   activeTarget: TargetInstance | null
+  availableTargets?: TargetInstance[]
+  targetsLoading?: boolean
+  targetsError?: string | null
+  onRefreshTargets?: () => void
+  onSelectTarget?: (target: TargetInstance | null) => void
+  defaultBranchTarget?: TargetInstance | null
   attackResultId: string | null
   conversationId: string | null
   activeConversationId: string | null
-  onConversationCreated: (attackResultId: string, conversationId: string, objective?: string) => void
+  onConversationCreated: (
+    attackResultId: string,
+    conversationId: string,
+    objective?: string,
+    target?: TargetInstance,
+  ) => void
   onSelectConversation: (conversationId: string) => void
   onObjectiveChange?: (objective: string) => void
   onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
@@ -240,6 +260,12 @@ interface ChatWindowProps {
 export default function ChatWindow({
   onNewAttack,
   activeTarget,
+  availableTargets,
+  targetsLoading = false,
+  targetsError,
+  onRefreshTargets,
+  onSelectTarget,
+  defaultBranchTarget,
   attackResultId,
   conversationId,
   activeConversationId,
@@ -269,6 +295,12 @@ export default function ChatWindow({
   const restoreFocusSourceAttributes = useRestoreFocusSource()
   const [messages, setMessages] = useState<Message[]>([])
   const [pendingObjective, setPendingObjective] = useState('')
+  const [branchRequest, setBranchRequest] = useState<{ conversationId: string; cutoff: number } | null>(null)
+  const [branchTarget, setBranchTarget] = useState<TargetInstance | null>(null)
+  const [branchError, setBranchError] = useState<string | null>(null)
+  const [isBranching, setIsBranching] = useState(false)
+  const branchingRef = useRef(false)
+  const selectableTargets = availableTargets ?? (activeTarget ? [activeTarget] : [])
   // Track sending state per conversation so parallel conversations can send independently
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
   /** True while an async message fetch is in-flight */
@@ -520,6 +552,7 @@ export default function ChatWindow({
     activeConversationId && activeConversationId !== loadedConversationId
     && !sendingConversations.has(activeConversationId)
   )
+  const isScoreLocked = isOperatorLocked || Boolean(isLoadingAttack) || isLoadingMessages || awaitingConversationLoad
 
   // Handle conversation selection from the panel
   // For a different ID the useEffect handles loading; for same ID force a refresh
@@ -1002,26 +1035,54 @@ export default function ChatWindow({
   ])
 
   /** 4. Branch into a brand-new attack (clone up to clicked message with new labels) */
-  const handleBranchAttack = useCallback(async (messageIndex: number) => {
-    if (!activeTarget || !activeConversationId) { return }
+  const handleBranchAttack = useCallback((messageIndex: number): void => {
+    if (!activeConversationId || isLoadingAttack || isLoadingMessages || awaitingConversationLoad) return
+    setBranchRequest({ conversationId: activeConversationId, cutoff: messageIndex })
+    setBranchTarget(defaultBranchTarget ?? activeTarget)
+    setBranchError(null)
+    onRefreshTargets?.()
+  }, [
+    activeConversationId, activeTarget, awaitingConversationLoad, defaultBranchTarget,
+    isLoadingAttack, isLoadingMessages, onRefreshTargets,
+  ])
 
+  const confirmBranch = async (): Promise<void> => {
+    if (!branchRequest || !branchTarget || branchingRef.current || targetsLoading || targetsError) return
+    if (!selectableTargets.some((target: TargetInstance) => (
+      target.target_registry_name === branchTarget.target_registry_name
+      && target.identifier.hash === branchTarget.identifier.hash
+    ))) {
+      setBranchError('The destination target changed or is no longer registered. Select a target again.')
+      return
+    }
+    branchingRef.current = true
+    setIsBranching(true)
+    setBranchError(null)
     try {
       const createResponse = await attacksApi.createAttack({
-        target_registry_name: activeTarget.target_registry_name,
+        target_registry_name: branchTarget.target_registry_name,
         labels,
-        source_conversation_id: activeConversationId,
-        cutoff_index: messageIndex,
+        source_conversation_id: branchRequest.conversationId,
+        cutoff_index: branchRequest.cutoff,
       })
-      onConversationCreated(createResponse.attack_result_id, createResponse.conversation_id)
-      // Load the cloned messages into the UI
+      if (viewedConvRef.current !== branchRequest.conversationId) return
+      setBranchRequest(null)
+      onConversationCreated(createResponse.attack_result_id, createResponse.conversation_id, undefined, branchTarget)
       const messagesResp = await attacksApi.getMessages(createResponse.attack_result_id, createResponse.conversation_id)
+      if (
+        viewedConvRef.current !== branchRequest.conversationId
+        && viewedConvRef.current !== createResponse.conversation_id
+      ) return
       const frontendMessages = backendMessagesToFrontend(messagesResp.messages)
       setMessages(frontendMessages)
       markConversationLoaded(createResponse.conversation_id)
     } catch (err) {
-      console.error('Failed to branch into new attack:', err)
+      setBranchError(toApiError(err).detail)
+    } finally {
+      branchingRef.current = false
+      setIsBranching(false)
     }
-  }, [activeTarget, activeConversationId, labels, markConversationLoaded, onConversationCreated])
+  }
 
   const handleChangeMainConversation = useCallback(async (convId: string) => {
     if (
@@ -1047,7 +1108,7 @@ export default function ChatWindow({
       !attackResultId
       || !lastResponseMessagePieceId
       || !(objective || pendingObjective).trim()
-      || isMutationLocked
+      || isScoreLocked
     ) {
       return
     }
@@ -1060,13 +1121,13 @@ export default function ChatWindow({
       update_attack: true,
     })
     onHumanScoreChange?.(score, value ? 'success' : 'failure')
-    if (activeConversationId) {
+    if (activeConversationId && viewedConvRef.current === activeConversationId) {
       await loadConversation(attackResultId, activeConversationId)
     }
   }, [
     activeConversationId,
     attackResultId,
-    isMutationLocked,
+    isScoreLocked,
     lastResponseMessagePieceId,
     loadConversation,
     objective,
@@ -1075,18 +1136,18 @@ export default function ChatWindow({
   ])
 
   const handleHumanScoreRemove = useCallback(async (): Promise<void> => {
-    if (!attackResultId || !humanScore || isMutationLocked) return
+    if (!attackResultId || !humanScore || isScoreLocked) return
 
     const attack = await attacksApi.removeHumanScore(attackResultId)
     onHumanScoreChange?.(null, attack.outcome ?? 'undetermined')
-    if (activeConversationId) {
+    if (activeConversationId && viewedConvRef.current === activeConversationId) {
       await loadConversation(attackResultId, activeConversationId)
     }
   }, [
     activeConversationId,
     attackResultId,
     humanScore,
-    isMutationLocked,
+    isScoreLocked,
     loadConversation,
     onHumanScoreChange,
   ])
@@ -1111,41 +1172,20 @@ export default function ChatWindow({
     : undefined
 
   // "Continue with your target" — clone the current conversation into a new attack
-  const handleUseAsTemplate = useCallback(async () => {
-    if (!attackResultId || !activeTarget || !activeConversationId) { return }
-
-    // Find the last non-loading message index to use as cutoff
+  const handleUseAsTemplate = useCallback(() => {
+    if (!attackResultId || !activeConversationId) { return }
     const lastIndex = messages.reduce(
       (acc, m, i) => (m.isLoading ? acc : i),
       -1
     )
     if (lastIndex < 0) { return }
 
-    try {
-      // Let the backend clone the conversation with new labels
-      const createResponse = await attacksApi.createAttack({
-        target_registry_name: activeTarget.target_registry_name,
-        labels,
-        source_conversation_id: activeConversationId,
-        cutoff_index: lastIndex,
-      })
-      onConversationCreated(createResponse.attack_result_id, createResponse.conversation_id)
-      // Load the cloned messages into the UI
-      const messagesResp = await attacksApi.getMessages(createResponse.attack_result_id, createResponse.conversation_id)
-      const frontendMessages = backendMessagesToFrontend(messagesResp.messages)
-      setMessages(frontendMessages)
-      markConversationLoaded(createResponse.conversation_id)
-    } catch (err) {
-      console.error('Failed to use as template:', err)
-    }
+    handleBranchAttack(lastIndex)
   }, [
     activeConversationId,
-    activeTarget,
     attackResultId,
-    labels,
-    markConversationLoaded,
+    handleBranchAttack,
     messages,
-    onConversationCreated,
   ])
 
   const systemMessage = messages.find(message => message.role === 'system')
@@ -1182,6 +1222,46 @@ export default function ChatWindow({
   return (
     <div className={styles.root}>
       <h1 className={styles.pageHeading}>Chat</h1>
+      <Dialog
+        open={branchRequest !== null && branchRequest.conversationId === activeConversationId}
+        onOpenChange={(_event, data) => { if (!data.open && !isBranching) setBranchRequest(null) }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Continue in a new attack</DialogTitle>
+            <DialogContent>
+              <TargetSelect
+                label="Destination target"
+                targets={selectableTargets}
+                value={branchTarget?.target_registry_name ?? ''}
+                onChange={setBranchTarget}
+                disabled={targetsLoading || isBranching}
+              />
+              {(branchError || targetsError) && (
+                <MessageBar intent="error"><MessageBarBody>{branchError || targetsError}</MessageBarBody></MessageBar>
+              )}
+              {!targetsLoading && selectableTargets.length === 0 && (
+                <Text>No targets are registered. Add a target in the registry.</Text>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setBranchRequest(null)} disabled={isBranching}>Cancel</Button>
+              <Button onClick={onRefreshTargets} disabled={targetsLoading || isBranching}>Refresh targets</Button>
+              <Button
+                appearance="primary"
+                onClick={confirmBranch}
+                disabled={!branchTarget || targetsLoading || Boolean(targetsError) || isBranching
+                  || !selectableTargets.some((target: TargetInstance) => (
+                    target.target_registry_name === branchTarget.target_registry_name
+                    && target.identifier.hash === branchTarget.identifier.hash
+                  ))}
+              >
+                Create attack
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
       {isConverterPanelOpen && (
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
@@ -1221,6 +1301,27 @@ export default function ChatWindow({
               <LabelsBar labels={labels} onLabelsChange={onLabelsChange} />
             )}
           </div>
+          {!attackResultId && !isLoadingAttack && onSelectTarget && (
+            <div className={styles.targetSelection}>
+              <TargetSelect
+                label="Chat target"
+                targets={selectableTargets}
+                value={activeTarget?.target_registry_name ?? ''}
+                onChange={onSelectTarget}
+                disabled={targetsLoading || isSending}
+              />
+              <Button className={styles.ribbonAction} onClick={onRefreshTargets} disabled={targetsLoading || isSending}>
+                Refresh targets
+              </Button>
+              {targetsLoading && <Spinner size="tiny" label="Loading targets..." />}
+              {targetsError && (
+                <MessageBar intent="error"><MessageBarBody>{targetsError}</MessageBarBody></MessageBar>
+              )}
+              {!targetsLoading && !targetsError && selectableTargets.length === 0 && (
+                <Text>No targets are registered. Add a target in the registry.</Text>
+              )}
+            </div>
+          )}
           <div className={styles.ribbonActions}>
             <Tooltip content="Render all messages as Markdown by default" relationship="label">
               <Switch
@@ -1299,12 +1400,13 @@ export default function ChatWindow({
           canUpdateOutcome={
             Boolean(attackResultId)
             && Boolean(lastResponseMessagePieceId)
-            && !isMutationLocked
+            && Boolean((objective || pendingObjective).trim())
+            && !isScoreLocked
           }
           canRemoveHumanScore={
             Boolean(attackResultId)
             && Boolean(humanScore)
-            && !isMutationLocked
+            && !isScoreLocked
           }
           onUpdateHumanScore={handleHumanScoreUpdate}
           onRemoveHumanScore={handleHumanScoreRemove}
@@ -1323,7 +1425,7 @@ export default function ChatWindow({
           onCopyToInput={handleCopyToInput}
           onCopyToNewConversation={attackResultId ? handleCopyToNewConversation : undefined}
           onBranchConversation={attackResultId && activeConversationId ? handleBranchConversation : undefined}
-          onBranchAttack={activeTarget && activeConversationId ? handleBranchAttack : undefined}
+          onBranchAttack={activeConversationId ? handleBranchAttack : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
           isSingleTurn={activeTarget?.capabilities?.supports_multi_turn === false}
           isOperatorLocked={isOperatorLocked}

@@ -83,7 +83,7 @@ function TargetResolutionBanner({
         className={styles.statusBanner}
         textClassName={styles.statusBannerText}
         icon={<ArrowSyncRegular fontSize={18} />}
-        text="Verifying this attack's target before enabling changes..."
+        text="Verifying this attack's target before sending messages..."
         testId="target-resolution-loading-banner"
       />
     )
@@ -94,7 +94,7 @@ function TargetResolutionBanner({
         className={styles.statusBanner}
         textClassName={styles.statusBannerText}
         icon={<WarningRegular fontSize={18} />}
-        text="Target verification failed. This conversation remains read-only."
+        text="Target verification failed. Sending is disabled; human scores can still be changed by the same operator."
         buttonText="Retry"
         buttonIcon={<ArrowSyncRegular />}
         onButtonClick={onRetry}
@@ -110,7 +110,7 @@ function TargetResolutionBanner({
         className={styles.statusBanner}
         textClassName={styles.statusBannerText}
         icon={<WarningRegular fontSize={18} />}
-        text="The target used by this attack is not currently registered. This conversation is read-only."
+        text="The target used by this attack is not currently registered. Sending is disabled; human scores can still be changed by the same operator."
         buttonText="Retry"
         buttonIcon={<ArrowSyncRegular />}
         onButtonClick={onRetry}
@@ -143,7 +143,7 @@ function TargetResolutionBanner({
         className={styles.statusBanner}
         textClassName={styles.statusBannerText}
         icon={<WarningRegular fontSize={18} />}
-        text="This attack does not contain a complete target identity. The original conversation is read-only."
+        text="This attack does not contain a complete target identity. Sending is disabled; human scores can still be changed by the same operator."
         buttonText={canUseAsTemplate ? 'Continue with your target' : 'Configure Target'}
         buttonIcon={canUseAsTemplate ? <CopyRegular /> : <SettingsRegular />}
         onButtonClick={canUseAsTemplate ? onUseAsTemplate : onConfigureTarget}

@@ -35,8 +35,10 @@ import { useTargetTableStyles } from './TargetTable.styles'
 
 interface TargetTableProps {
   targets: TargetInstance[]
-  activeTarget: TargetInstance | null
-  onSetActiveTarget: (target: TargetInstance) => void
+  defaultObjectiveTarget: TargetInstance | null
+  defaultAdversarialTarget: TargetInstance | null
+  onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
+  onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
 }
 
 /** Format target_specific_params into a short human-readable string. */
@@ -197,8 +199,7 @@ function CapabilityCells({ target }: { target: TargetInstance }) {
   )
 }
 
-/** Render expandable sub-rows for a RoundRobinTarget's inner targets.
- *  Reused by both the active target summary and the main table. */
+/** Render expandable sub-rows for a RoundRobinTarget's inner targets. */
 function InnerTargetRows({ parentKey, innerTargets, weights }: {
   parentKey: string
   innerTargets: TargetInstance[]
@@ -244,7 +245,13 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
   )
 }
 
-export default function TargetTable({ targets, activeTarget, onSetActiveTarget }: TargetTableProps) {
+export default function TargetTable({
+  targets,
+  defaultObjectiveTarget,
+  defaultAdversarialTarget,
+  onSetDefaultObjectiveTarget,
+  onSetDefaultAdversarialTarget,
+}: TargetTableProps) {
   const styles = useTargetTableStyles()
   const typeFilterId = useId()
   const [typeFilter, setTypeFilter] = useState('')
@@ -278,69 +285,15 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
     [targets, typeFilter],
   )
 
-  const isActive = (target: TargetInstance): boolean =>
-    activeTarget?.target_registry_name === target.target_registry_name
+  const isDefaultObjective = (target: TargetInstance): boolean =>
+    defaultObjectiveTarget?.target_registry_name === target.target_registry_name
+    && defaultObjectiveTarget.identifier.hash === target.identifier.hash
+  const isDefaultAdversarial = (target: TargetInstance): boolean =>
+    defaultAdversarialTarget?.target_registry_name === target.target_registry_name
+    && defaultAdversarialTarget.identifier.hash === target.identifier.hash
 
   return (
     <div className={styles.tableContainer} data-testid="target-table-scroll-region">
-      {activeTarget && (
-        <Table aria-label="Active target" className={styles.table} style={{ marginBottom: '12px' }}>
-          <TableBody>
-            <TableRow className={styles.activeRow}>
-              <TableCell style={{ width: '120px' }}>
-                <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>Active</Badge>
-              </TableCell>
-              <TableCell className={styles.registryNameCell} style={{ width: '180px' }}>
-                <Text size={200} className={styles.registryNameText}>{activeTarget.target_registry_name}</Text>
-              </TableCell>
-              <TableCell style={{ width: '140px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  {hasInnerTargets(activeTarget) && (
-                    <Button
-                      className={styles.rowAction}
-                      appearance="subtle"
-                      size="small"
-                      icon={expandedRows.has(activeTarget.target_registry_name) ? <ChevronDownRegular /> : <ChevronRightRegular />}
-                      onClick={() => toggleExpanded(activeTarget.target_registry_name)}
-                      aria-label={expandedRows.has(activeTarget.target_registry_name) ? 'Collapse inner targets' : 'Expand inner targets'}
-                    />
-                  )}
-                  <Text size={200}>{targetType(activeTarget)}</Text>
-                </div>
-              </TableCell>
-              <TableCell style={{ width: '160px' }}>
-                <ModelCell target={activeTarget} />
-              </TableCell>
-              <TableCell style={{ width: '450px' }}>
-                <Text size={200} className={styles.endpointCell} title={targetEndpoint(activeTarget) || undefined}>
-                  {targetEndpoint(activeTarget) || '—'}
-                </Text>
-              </TableCell>
-              <TableCell className={styles.inputsModalityCell}>
-                <ModalityCell modalities={activeTarget.capabilities?.supported_input_modalities} />
-              </TableCell>
-              <TableCell className={styles.modalityCell}>
-                <ModalityCell modalities={activeTarget.capabilities?.supported_output_modalities} />
-              </TableCell>
-              <CapabilityCells target={activeTarget} />
-              <TableCell style={{ width: '160px' }}>
-                <Text size={200} className={styles.paramsCell}>
-                  {formatParams(activeTarget.target_specific_params) || '—'}
-                </Text>
-              </TableCell>
-            </TableRow>
-            {/* Expandable sub-rows for the active target summary */}
-            {expandedRows.has(activeTarget.target_registry_name) && activeTarget.inner_targets && (
-              <InnerTargetRows
-                parentKey="active"
-                innerTargets={activeTarget.inner_targets}
-                weights={activeTarget.target_specific_params?.weights as number[] | undefined}
-              />
-            )}
-          </TableBody>
-        </Table>
-      )}
-
       {targetTypes.length > 1 && (
         <div className={styles.filterRow}>
           <label htmlFor={typeFilterId}>
@@ -363,7 +316,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
       <Table aria-label="Target instances" className={styles.table}>
         <TableHeader className={styles.stickyHeader}>
           <TableRow>
-            <TableHeaderCell style={{ width: '120px' }} />
+            <TableHeaderCell className={styles.defaultsCell}>Defaults</TableHeaderCell>
             <TableHeaderCell style={{ width: '180px' }}>
               <Tooltip content={COLUMN_TOOLTIPS.registryName} relationship="description">
                 <span className={styles.helpHeader}>Registry Name</span>
@@ -418,24 +371,40 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
             return (
               <React.Fragment key={target.target_registry_name}>
                 <TableRow
-                  className={isActive(target) ? styles.activeRow : undefined}
+                  className={isDefaultObjective(target) || isDefaultAdversarial(target) ? styles.defaultRow : undefined}
                   data-testid={`target-row-${target.target_registry_name}`}
                 >
                   <TableCell>
-                    {isActive(target) ? (
-                      <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
-                        Active
-                      </Badge>
-                    ) : (
+                    <div className={styles.defaultActions}>
+                      {isDefaultObjective(target) && (
+                        <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
+                          Default objective target
+                        </Badge>
+                      )}
                       <Button
                         className={styles.rowAction}
-                        appearance="primary"
+                        appearance="secondary"
                         size="small"
-                        onClick={() => onSetActiveTarget(target)}
+                        onClick={() => onSetDefaultObjectiveTarget(isDefaultObjective(target) ? null : target)}
                       >
-                        Set Active
+                        {isDefaultObjective(target) ? 'Clear objective default' : 'Set default objective target'}
                       </Button>
-                    )}
+                      {isDefaultAdversarial(target) && (
+                        <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>
+                          Default adversarial target
+                        </Badge>
+                      )}
+                      <Button
+                        className={styles.rowAction}
+                        appearance="secondary"
+                        size="small"
+                        disabled={!isDefaultAdversarial(target) && target.capabilities?.supports_multi_turn !== true}
+                        title={target.capabilities?.supports_multi_turn === true ? undefined : 'Adversarial targets require multi-turn support'}
+                        onClick={() => onSetDefaultAdversarialTarget(isDefaultAdversarial(target) ? null : target)}
+                      >
+                        {isDefaultAdversarial(target) ? 'Clear adversarial default' : 'Set default adversarial target'}
+                      </Button>
+                    </div>
                   </TableCell>
                   <TableCell className={styles.registryNameCell}>
                     <Text size={200} className={styles.registryNameText}>{target.target_registry_name}</Text>
