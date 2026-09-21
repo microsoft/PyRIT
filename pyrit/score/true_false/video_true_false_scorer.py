@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoreStatus
+from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoreStatus, ScoringExpectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
@@ -121,6 +121,13 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
             conditions.update(scorer.required_conditions())
         return frozenset(conditions)
 
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """Validate all media scorer criteria before acquiring evidence or sending prompts."""
+        super()._validate_expectation(expectation=expectation)
+        self._video_helper.image_scorer._validate_expectation(expectation=expectation)
+        if self.audio_scorer is not None:
+            self.audio_scorer._validate_expectation(expectation=expectation)
+
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Score a single video piece by extracting frames and optionally audio, then aggregating their scores.
@@ -136,7 +143,7 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
         Returns:
             List containing a single aggregated score for the video.
         """
-        piece_id = message_piece.id if message_piece.id is not None else message_piece.original_prompt_id
+        piece_id = message_piece.id
 
         # Get scores for all frames and aggregate with OR (True if ANY frame matches)
         frame_scores = await self._video_helper._score_frames_async(message_piece=message_piece, objective=objective)

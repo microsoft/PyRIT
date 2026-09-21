@@ -405,3 +405,23 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     persisted_scores = memory.get_scores(score_type="true_false")
     assert len(persisted_scores) == 1
     assert memory.get_scores(score_type="float_scale") == []
+
+
+@pytest.mark.parametrize("threshold", [float("nan"), float("inf"), float("-inf"), 0.0, -0.5, 1.5])
+def test_init_rejects_non_finite_or_outside_unit_range_threshold(patch_central_database, threshold):
+    """A threshold that is not a finite value in (0, 1] cannot express a verdict.
+
+    NaN is the dangerous one: it passes an unchained ``<= 0 or > 1`` guard because both
+    comparisons are False, and every ``value >= nan`` comparison is False as well, so each
+    scored response is persisted as a COMPLETE refusal that was never actually judged.
+    """
+    scorer = create_mock_float_scorer(0.9)
+    with pytest.raises(ValueError, match="The threshold must be between 0 and 1"):
+        FloatScaleThresholdScorer(scorer=scorer, threshold=threshold)
+
+
+@pytest.mark.parametrize("threshold", [0.0001, 1.0])
+def test_init_accepts_threshold_within_unit_range(patch_central_database, threshold):
+    scorer = create_mock_float_scorer(0.9)
+    threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=threshold)
+    assert threshold_scorer.threshold == threshold

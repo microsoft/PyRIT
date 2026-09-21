@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import yaml
 
 from pyrit.common.path import DEFAULT_CONFIG_PATH
+from pyrit.common.text_helper import is_non_empty_string
 from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models import class_name_to_snake_case
@@ -194,7 +195,7 @@ class ConfigurationLoader(YamlLoadable):
             raise ValueError("env_akv_ref must be a list of Azure Key Vault secret URLs.")
         if len(self.env_akv_ref) > 1:
             raise ValueError("env_akv_ref supports at most one Azure Key Vault bootstrap secret URL.")
-        if any(not isinstance(secret_url, str) or not secret_url.strip() for secret_url in self.env_akv_ref):
+        if any(not is_non_empty_string(secret_url) for secret_url in self.env_akv_ref):
             raise ValueError("env_akv_ref must contain only non-empty Azure Key Vault secret URLs.")
 
     def _normalize_memory_db_type(self) -> None:

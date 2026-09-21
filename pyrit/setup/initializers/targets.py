@@ -41,6 +41,19 @@ from pyrit.setup.pyrit_initializer import PyRITInitializer
 logger = logging.getLogger(__name__)
 
 
+def _auto_group_enabled(value: object) -> bool:
+    """
+    Normalize direct booleans and YAML string/list auto-group settings.
+
+    Returns:
+        bool: Whether automatic target grouping is enabled.
+    """
+    if isinstance(value, bool):
+        return value
+    scalar = value[0] if isinstance(value, list) else value
+    return str(scalar).lower() not in ("false", "0", "no")
+
+
 class TargetInitializerTags(str, Enum):
     """Tags used by TargetInitializer for filtering which targets to register."""
 
@@ -616,11 +629,7 @@ class TargetInitializer(PyRITInitializer):
         if TargetInitializerTags.ALL in tags:
             tags = [tag for tag in TargetInitializerTags if tag != TargetInitializerTags.ALL]
 
-        auto_group = self.params.get("auto_group", True)
-        # Normalize: params arrive as bool (direct), str, or list[str] (YAML).
-        if not isinstance(auto_group, bool):
-            value = auto_group[0] if isinstance(auto_group, list) else auto_group
-            auto_group = str(value).lower() not in ("false", "0", "no")
+        auto_group = _auto_group_enabled(self.params.get("auto_group", True))
 
         self._registered_names: list[str] = []
 

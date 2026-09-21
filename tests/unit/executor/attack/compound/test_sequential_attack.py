@@ -6,7 +6,9 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.compound import (
     SequenceCompletionPolicy,
     SequentialAttack,
@@ -16,7 +18,7 @@ from pyrit.executor.attack.compound import (
 from pyrit.executor.attack.core.attack_executor import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext
-from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, SeedObjective
+from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, ScoringExpectation, SeedObjective
 
 
 def _make_strategy(*, outcomes: list[AttackOutcome], name: str = "attack") -> MagicMock:
@@ -35,9 +37,10 @@ def _make_context(
     *,
     objective: str = "obj",
     labels: dict[str, str] | None = None,
+    expectation: ScoringExpectation | None = None,
 ) -> AttackContext[AttackParameters]:
     params_type = AttackParameters.excluding("next_message", "prepended_conversation")
-    return AttackContext(params=params_type(objective=objective, memory_labels=labels or {}))
+    return AttackContext(params=params_type(objective=objective, memory_labels=labels or {}, expectation=expectation))
 
 
 def _patch_run_child_attack(*, strategies_by_id: dict[int, MagicMock]):
@@ -51,7 +54,7 @@ def _patch_run_child_attack(*, strategies_by_id: dict[int, MagicMock]):
     counters: dict[int, int] = dict.fromkeys(strategies_by_id, 0)
     calls: list[dict] = []
 
-    async def _stub(self, *, child_attack, memory_labels, attribution=None):
+    async def _stub(self, *, child_attack, memory_labels, attribution=None, expectation=None):
         sid = id(child_attack.strategy)
         idx = counters[sid]
         counters[sid] = idx + 1
@@ -61,6 +64,7 @@ def _patch_run_child_attack(*, strategies_by_id: dict[int, MagicMock]):
                 "child_attack": child_attack,
                 "memory_labels": dict(memory_labels),
                 "attribution": attribution,
+                "expectation": expectation,
             }
         )
         return AttackResult(
@@ -260,6 +264,94 @@ class TestExhaustive:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestOutcomeDerivation:
+    async def test_unscored_child_keeps_compound_undetermined_async(self) -> None:
+        target = MockPromptTarget()
+        child = SequentialChildAttack(
+            strategy=PromptSendingAttack(objective_target=target),
+            seed_group=_make_seed_group(),
+        )
+        compound = SequentialAttack(objective_target=target, child_attacks=[child])
+
+        result = await compound.execute_async(objective="compound objective")
+
+        assert result.child_attack_results[0].outcome is AttackOutcome.UNDETERMINED
+        assert result.outcome is AttackOutcome.UNDETERMINED
+
+    @pytest.mark.parametrize(
+        ("policy", "outcomes", "expected", "executed"),
+        [
+            (
+                SequenceCompletionPolicy.FIRST_SUCCESS,
+                [AttackOutcome.UNDETERMINED, AttackOutcome.SUCCESS, AttackOutcome.FAILURE],
+                AttackOutcome.SUCCESS,
+                2,
+            ),
+            (
+                SequenceCompletionPolicy.FIRST_SUCCESS,
+                [AttackOutcome.FAILURE, AttackOutcome.UNDETERMINED],
+                AttackOutcome.UNDETERMINED,
+                2,
+            ),
+            (
+                SequenceCompletionPolicy.FIRST_DECISIVE,
+                [AttackOutcome.UNDETERMINED, AttackOutcome.FAILURE],
+                AttackOutcome.UNDETERMINED,
+                2,
+            ),
+            (
+                SequenceCompletionPolicy.STRICT_ALL,
+                [AttackOutcome.UNDETERMINED, AttackOutcome.SUCCESS],
+                AttackOutcome.UNDETERMINED,
+                1,
+            ),
+            (
+                SequenceCompletionPolicy.EXHAUSTIVE,
+                [AttackOutcome.UNDETERMINED, AttackOutcome.SUCCESS, AttackOutcome.FAILURE],
+                AttackOutcome.SUCCESS,
+                3,
+            ),
+            (
+                SequenceCompletionPolicy.LAST_RESULT,
+                [AttackOutcome.UNDETERMINED, AttackOutcome.FAILURE],
+                AttackOutcome.FAILURE,
+                2,
+            ),
+        ],
+    )
+    async def test_undetermined_reporting_preserves_stopping_rules(
+        self, target, seed_group, policy, outcomes, expected, executed
+    ):
+        strategies = [_make_strategy(outcomes=[outcome], name=f"s{i}") for i, outcome in enumerate(outcomes)]
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[SequentialChildAttack(strategy=strategy, seed_group=seed_group) for strategy in strategies],
+            completion_policy=policy,
+        )
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(strategy): strategy for strategy in strategies})
+        with patcher:
+            result = await compound._perform_async(context=_make_context())
+        assert result.outcome is expected
+        assert len(calls) == executed
+
+    @pytest.mark.parametrize("expectation", [None, ScoringExpectation(objective="child criterion")])
+    async def test_child_receives_only_explicit_expectation(self, target, seed_group, expectation):
+        strategy = _make_strategy(outcomes=[AttackOutcome.SUCCESS])
+        child = SequentialChildAttack(strategy=strategy, seed_group=seed_group)
+        compound = SequentialAttack(objective_target=target, child_attacks=[child])
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as execute:
+            execute.return_value = AttackExecutorResult(
+                completed_results=[
+                    AttackResult(conversation_id="child", objective="child objective", outcome=AttackOutcome.SUCCESS)
+                ],
+                incomplete_objectives=[],
+            )
+            await compound._perform_async(context=_make_context(objective="parent objective", expectation=expectation))
+        kwargs = execute.call_args.kwargs
+        if expectation is None:
+            assert "expectation" not in kwargs
+        else:
+            assert kwargs["expectation"] is expectation
+
     @pytest.mark.parametrize(
         ("completion_policy", "outcomes", "expected"),
         [
@@ -278,7 +370,7 @@ class TestOutcomeDerivation:
             (
                 SequenceCompletionPolicy.EXHAUSTIVE,
                 [AttackOutcome.UNDETERMINED, AttackOutcome.UNDETERMINED],
-                AttackOutcome.FAILURE,
+                AttackOutcome.UNDETERMINED,
             ),
             (
                 SequenceCompletionPolicy.EXHAUSTIVE,
@@ -293,10 +385,9 @@ class TestOutcomeDerivation:
             (
                 SequenceCompletionPolicy.EXHAUSTIVE,
                 [AttackOutcome.UNDETERMINED, AttackOutcome.FAILURE],
-                AttackOutcome.FAILURE,
+                AttackOutcome.UNDETERMINED,
             ),
-            # STRICT_ALL: SUCCESS only if every executed child_attack succeeded, ERROR if any errored,
-            # else FAILURE. Short-circuits on the first non-SUCCESS.
+            # STRICT_ALL stops at the first non-SUCCESS and retains that outcome.
             (
                 SequenceCompletionPolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.SUCCESS],
@@ -315,7 +406,7 @@ class TestOutcomeDerivation:
             (
                 SequenceCompletionPolicy.STRICT_ALL,
                 [AttackOutcome.SUCCESS, AttackOutcome.UNDETERMINED],
-                AttackOutcome.FAILURE,
+                AttackOutcome.UNDETERMINED,
             ),
             (
                 SequenceCompletionPolicy.STRICT_ALL,
@@ -493,7 +584,7 @@ class TestResultShape:
 
         captured_ids: list[str] = []
 
-        async def _stub(self, *, child_attack, memory_labels, attribution=None):
+        async def _stub(self, *, child_attack, memory_labels, attribution=None, expectation=None):
             inner = AttackResult(
                 conversation_id=f"c-{child_attack.strategy._name}",
                 objective="obj",
@@ -514,7 +605,7 @@ class TestResultShape:
 
         inner_ids: list[str] = []
 
-        async def _stub(self, *, child_attack, memory_labels, attribution=None):
+        async def _stub(self, *, child_attack, memory_labels, attribution=None, expectation=None):
             inner = AttackResult(conversation_id="c", objective="obj", outcome=AttackOutcome.SUCCESS)
             inner_ids.append(inner.attack_result_id)
             return inner
@@ -605,7 +696,7 @@ class TestResultShape:
         child_attacks = [SequentialChildAttack(strategy=s, seed_group=seed_group) for s in (a, b)]
         compound = SequentialAttack(objective_target=target, child_attacks=child_attacks)
 
-        async def _stub(self, *, child_attack, memory_labels, attribution=None):
+        async def _stub(self, *, child_attack, memory_labels, attribution=None, expectation=None):
             return AttackResult(
                 conversation_id="c",
                 objective="obj",

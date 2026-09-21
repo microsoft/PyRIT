@@ -269,9 +269,10 @@ class TestDeriveParameters:
         assert params["ratio"].default == 0.5
         assert params["count"].param_type is int
 
-    def test_optional_unwrapped(self) -> None:
+    def test_optional_annotation_preserved(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}
-        assert params["note"].param_type is str
+        assert params["note"].param_type == str | None
+        assert params["note"].type_name == "str"
 
     def test_descriptions_parsed(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}

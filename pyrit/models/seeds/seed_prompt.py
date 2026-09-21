@@ -172,7 +172,7 @@ class SeedPrompt(Seed):
                             "bitrate": bitrate,
                             "samplerate": tag.samplerate if tag.samplerate is not None else 0,
                             "bitdepth": tag.bitdepth if tag.bitdepth is not None else 0,
-                            "filesize": tag.filesize if tag.filesize is not None else 0,
+                            "filesize": tag.filesize,
                             "duration": duration,
                         }
                     )

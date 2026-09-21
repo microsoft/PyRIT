@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 
+from pyrit.common.utils import is_numeric_value
 from pyrit.models import Score, UndeterminedScoreError
 
 # Key used by FloatScaleThresholdScorer to store the original float value
@@ -119,6 +120,4 @@ def normalize_score_to_float(score: Score | None) -> float:
         return 0.0
     if isinstance(score_value, bool):
         return 1.0 if score_value else 0.0
-    if isinstance(score_value, (int, float)):
-        return float(score_value)
-    return 0.0
+    return float(score_value) if is_numeric_value(score_value) else 0.0

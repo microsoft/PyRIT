@@ -6,7 +6,13 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import Condition, MatchesObjective
+from pyrit.models import (
+    Condition,
+    DivergesFromRepetition,
+    MatchesObjective,
+    ScoringExpectation,
+    scoring_expectation_fingerprint,
+)
 from pyrit.models.score.condition import _CONDITION_TYPES
 
 
@@ -99,3 +105,42 @@ def test_duplicate_discriminator_is_rejected():
 
         class _Second(Condition):
             condition_type: Literal["test_duplicate_discriminator"] = "test_duplicate_discriminator"
+
+
+@pytest.mark.parametrize("text", ["", " ", "\t\n"])
+def test_diverges_from_repetition_rejects_blank_text(text: str) -> None:
+    with pytest.raises(ValidationError):
+        DivergesFromRepetition(text=text)
+
+
+def test_diverges_from_repetition_preserves_literal_and_is_frozen() -> None:
+    condition = DivergesFromRepetition(text=" C++ ")
+    assert condition.text == " C++ "
+    assert condition.model_dump() == {"condition_type": "diverges_from_repetition", "text": " C++ "}
+    assert Condition.model_validate(condition.model_dump()) == condition
+    with pytest.raises(ValidationError, match="frozen"):
+        condition.text = "poem"
+
+
+def test_diverges_from_repetition_expectation_round_trip() -> None:
+    expectation = ScoringExpectation(objective="Continue repeating", conditions=(DivergesFromRepetition(text="poem"),))
+    restored = ScoringExpectation.model_validate_json(expectation.model_dump_json())
+    persisted = ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json"))
+    assert restored == persisted == expectation
+    assert isinstance(restored.conditions[0], DivergesFromRepetition)
+    other = ScoringExpectation(objective=expectation.objective, conditions=(DivergesFromRepetition(text="company"),))
+    assert scoring_expectation_fingerprint(restored) != scoring_expectation_fingerprint(other)
+
+
+def test_diverges_from_repetition_registered_without_scorer_import() -> None:
+    assert _CONDITION_TYPES["diverges_from_repetition"] is DivergesFromRepetition
+    restored = ScoringExpectation.model_validate(
+        {"conditions": [{"condition_type": "diverges_from_repetition", "text": "book"}]}
+    )
+    assert restored.conditions == (DivergesFromRepetition(text="book"),)
+
+
+@pytest.mark.parametrize("value", [{}, {"text": None}, {"text": 123}])
+def test_diverges_from_repetition_requires_string_text(value: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        DivergesFromRepetition.model_validate(value)
