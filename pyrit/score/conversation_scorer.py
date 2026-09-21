@@ -145,12 +145,13 @@ class ConversationScorer(MessageScorer, ABC):
         # Build the full conversation text
         conversation_text = ""
 
-        # Goes through each message in the conversation and appends user/assistant messages only
-        # Explicitly excludes system, tool, developer messages from being scored/included in conversation history
-        # they are allowed in validation but not included in the scored conversation text
+        # The scored conversation text carries user, assistant and tool turns; system and developer
+        # turns never enter it. A simulated assistant turn reports api_role "assistant", so whether
+        # those turns are read is decided by the validator, which compares the stored role.
         for conv_message in conversation:
             for piece in conv_message.message_pieces:
-                # Only include user and assistant messages in the conversation text
+                # A scorer can narrow this further: supported_roles=["user", "assistant"] leaves
+                # tool output out of the scored text.
                 if piece.api_role in ["user", "assistant", "tool"] and self._validator.is_role_supported(piece):
                     role_display = "Assistant (simulated)" if piece.is_simulated else piece.api_role.capitalize()
                     # For blocked pieces with partial content, use the partial content

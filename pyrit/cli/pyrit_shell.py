@@ -396,7 +396,7 @@ class PyRITShell(cmd.Cmd):
                 print(f"Error: File not found: {script_path}")
                 return
             try:
-                content = script_path.read_text()
+                content = script_path.read_text(encoding="utf-8")
                 self._run_async(
                     self._api_client.register_initializer_async(name=script_path.stem, script_content=content)
                 )

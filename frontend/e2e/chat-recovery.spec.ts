@@ -10,6 +10,7 @@ import {
   type Route,
 } from "@playwright/test";
 import type {
+  AddMessageRequest,
   AddMessageResponse,
   ConversationMessagesResponse,
   CreateConversationResponse,
@@ -22,7 +23,24 @@ interface LocalTarget {
   setProcessingFailure: (enabled: boolean) => void;
 }
 
-const test = base.extend<{ localTarget: LocalTarget }>({
+const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>({
+  imageConverterId: async ({ request }, runTest) => {
+    const name = `recovery-image-${randomUUID()}`;
+    const created = await request.post("/api/converters", {
+      data: {
+        name,
+        type: "ImageRotationConverter",
+        params: { angle: 90, output_format: "PNG" },
+      },
+    });
+    expect(created.status()).toBe(201);
+    try {
+      await runTest(name);
+    } finally {
+      const deleted = await request.delete(`/api/converters/${encodeURIComponent(name)}`);
+      expect(deleted.status()).toBe(204);
+    }
+  },
   localTarget: async ({ page, request }, runTest) => {
     const requestBodies: string[] = [];
     const errors: Error[] = [];
@@ -313,8 +331,8 @@ test.describe("Chat processing recovery @seeded", () => {
     expect(exported).not.toContain("Only conversation A history");
   });
 
-  test("preserves an image converter when recovery is sent before its preview input finishes loading", async ({
-    page, request, localTarget,
+  test("preserves an image converter while a recovered attachment is serialized for sending", async ({
+    page, request, localTarget, imageConverterId,
   }) => {
     await installDeferredFileReads(page);
     await page.getByTestId("file-input").setInputFiles({
@@ -328,21 +346,28 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByTestId("toggle-converter-panel-btn").click();
     const panel = page.getByTestId("converter-panel");
     await panel.getByRole("tab", { name: "Image", exact: true }).click();
-    await panel.getByRole("combobox").click();
-    await panel.getByRole("combobox").fill("ImageRotationConverter");
-    await page.getByRole("option", { name: /ImageRotationConverter/ }).click();
-    await page.getByTestId("converter-preview-btn").click();
+    await panel.getByRole("combobox", { name: "Add converter", exact: true }).click();
+    await page.getByTestId(`converter-option-${imageConverterId}`).click();
+    await expect(panel.getByTestId(`converter-item-${imageConverterId}`)).toBeVisible();
+    await panel.getByRole("button", { name: "Convert", exact: true }).click();
     await expect(page.getByTestId("converter-preview-result")).toBeVisible();
-    await page.getByTestId("use-converted-btn").click();
-    await page.getByTestId("close-converter-panel-btn").click();
+    await panel.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await panel.getByRole("button", { name: "Close converters", exact: true }).click();
     localTarget.setProcessingFailure(true);
     const [originalRequest, first] = await Promise.all([
       page.waitForRequest(isMessagePost),
-      sendFromComposer(page),
+      sendFromComposer(page, "Recover this image"),
     ]);
     expect(first.messages.target_response_status?.response_error).toBe("processing");
-    const originalConverterIds = originalRequest.postDataJSON().converter_ids;
-    expect(originalConverterIds).toHaveLength(1);
+    const originalSend: AddMessageRequest = originalRequest.postDataJSON();
+    expect(originalSend.pieces).toEqual([
+      expect.objectContaining({ data_type: "text", original_value: "Recover this image" }),
+      expect.objectContaining({ data_type: "image_path" }),
+    ]);
+    expect(originalSend.request_converter_configurations).toEqual([
+      { converter_ids: [imageConverterId], indexes_to_apply: [1] },
+    ]);
+    expect(originalSend).not.toHaveProperty("converter_ids");
     const attackId = first.attack.attack_result_id;
     const otherId = await createConversation(request, attackId);
     await selectConversation(page, otherId);
@@ -356,9 +381,11 @@ test.describe("Chat processing recovery @seeded", () => {
     try {
       await recover.click();
       await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
-      await expect.poll(() => page.evaluate(
+      await expect(page.getByTestId("chat-input")).toHaveValue("Recover this image");
+      await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
+      expect(await page.evaluate(
         () => document.documentElement.dataset.recoveryReadCount,
-      )).toBe("1");
+      )).toBeUndefined();
       localTarget.setProcessingFailure(false);
       const [resentRequest, sent] = await Promise.all([
         page.waitForRequest(isMessagePost),
@@ -366,17 +393,22 @@ test.describe("Chat processing recovery @seeded", () => {
         (async () => {
           await expect.poll(() => page.evaluate(
             () => document.documentElement.dataset.recoveryReadCount,
-          )).toBe("2");
+          )).toBe("1");
+          await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+          expect(localTarget.requestBodies).toHaveLength(1);
           await page.evaluate(() => {
-            document.dispatchEvent(new CustomEvent("release-recovery-read", { detail: 1 }));
+            document.dispatchEvent(new CustomEvent("release-recovery-read", { detail: 0 }));
           });
         })(),
       ]);
-      expect(resentRequest.postDataJSON().converter_ids).toEqual(originalConverterIds);
+      const resent: AddMessageRequest = resentRequest.postDataJSON();
+      expect(resent.request_converter_configurations).toEqual(originalSend.request_converter_configurations);
+      expect(resent.pieces).toEqual(originalSend.pieces);
+      expect(resent).not.toHaveProperty("converter_ids");
       expect(sent.messages.target_response_status?.response_error).toBe("none");
-      const initialConverters = first.messages.messages[0].message_pieces[0].converter_identifiers;
+      const initialConverters = first.messages.messages[0].message_pieces[1].converter_identifiers;
       expect(initialConverters).toHaveLength(1);
-      expect(sent.messages.messages[0].message_pieces[0].converter_identifiers).toEqual(initialConverters);
+      expect(sent.messages.messages[0].message_pieces[1].converter_identifiers).toEqual(initialConverters);
     } finally {
       await page.evaluate(() => {
         document.dispatchEvent(new CustomEvent("release-recovery-read", { detail: "all" }));

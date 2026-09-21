@@ -67,6 +67,7 @@ jest.mock("./services/api", () => ({
     listConverterTypes: jest.fn().mockResolvedValue({ items: [] }),
     createConverter: jest.fn(),
     deleteConverter: jest.fn(),
+    previewConversion: jest.fn(),
   },
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
