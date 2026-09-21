@@ -45,7 +45,7 @@ async function mockNumericControlApis(page: Page): Promise<void> {
         items: [makeTarget({ target_registry_name: 'mock-target' })],
         pagination: { limit: 200, has_more: false },
       },
-      '/api/targets/catalog': {
+      '/api/targets/types': {
         items: ['AzureMLChatTarget', 'RoundRobinTarget'].map((targetType) => ({
           target_type: targetType,
           parameters: [],
