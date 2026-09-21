@@ -1,8 +1,13 @@
-import { createContext, useCallback, useContext, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import type { UserPreferences } from '@/types'
-import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
+import {
+  DEFAULT_USER_PREFERENCES,
+  readUserPreferences,
+  userPreferencesStorageKey,
+  writeUserPreferences,
+} from '@/utils/userPreferences'
 
 interface PreferenceState {
   preferences: UserPreferences
@@ -22,7 +27,7 @@ function readPreferences(accountKey: string | null): PreferenceState {
   } catch {
     return {
       preferences: DEFAULT_USER_PREFERENCES,
-      error: 'Could not read saved user preferences. Default settings are in use.',
+      error: 'Could not read saved user preferences.',
     }
   }
 }
@@ -37,17 +42,67 @@ export function UserPreferencesProvider({
 }) {
   const [state, setState] = useState<PreferenceState>(() => readPreferences(accountKey))
   const preferencesRef = useRef(state.preferences)
+  const pendingUpdates = useRef<Array<(current: UserPreferences) => UserPreferences>>([])
+
+  useEffect(() => {
+    if (accountKey === null) return
+    const synchronize = (event: StorageEvent): void => {
+      if (event.storageArea !== window.localStorage
+        || (event.key !== null && event.key !== userPreferencesStorageKey(accountKey))) return
+      const stored = readPreferences(accountKey)
+      if (stored.error) {
+        setState({ preferences: preferencesRef.current, error: stored.error })
+        return
+      }
+      const preferences = pendingUpdates.current.reduce(
+        (current: UserPreferences, update) => update(current), stored.preferences,
+      )
+      preferencesRef.current = preferences
+      const hasPendingUpdates = pendingUpdates.current.length > 0
+      setState((current: PreferenceState) => ({
+        preferences,
+        error: hasPendingUpdates ? current.error : null,
+      }))
+    }
+    window.addEventListener('storage', synchronize)
+    return () => { window.removeEventListener('storage', synchronize) }
+  }, [accountKey])
+
   const updatePreferences = useCallback((update: (current: UserPreferences) => UserPreferences): void => {
     const preferences = update(preferencesRef.current)
     preferencesRef.current = preferences
-    let error: string | null = null
-    try {
-      if (accountKey === null) throw new Error('Account identity is not ready.')
-      writeUserPreferences(accountKey, preferences)
-    } catch {
-      error = 'Preferences apply in this session only. Could not save them in this browser.'
+    pendingUpdates.current.push(update)
+    setState((current: PreferenceState) => ({ preferences, error: current.error }))
+
+    const reportSaveFailure = (): void => {
+      setState({
+        preferences: preferencesRef.current,
+        error: 'Preferences apply in this session only. Could not save them in this browser.',
+      })
     }
-    setState({ preferences, error })
+    const persist = (): void => {
+      if (pendingUpdates.current.length === 0) return
+      try {
+        if (accountKey === null) throw new Error('Account identity is not ready.')
+        const stored = readPreferences(accountKey)
+        const merged = stored.error ? preferencesRef.current : pendingUpdates.current.reduce(
+          (current: UserPreferences, applyUpdate) => applyUpdate(current), stored.preferences,
+        )
+        writeUserPreferences(accountKey, merged)
+        pendingUpdates.current = []
+        preferencesRef.current = merged
+        setState({ preferences: merged, error: null })
+      } catch {
+        reportSaveFailure()
+      }
+    }
+    // Serialize cross-tab read/modify/write on HTTPS and localhost. Older or
+    // insecure browsers still merge with the latest stored values on each edit.
+    if (accountKey !== null && navigator.locks) {
+      void navigator.locks.request(userPreferencesStorageKey(accountKey), persist).catch(reportSaveFailure)
+    } else {
+      persist()
+    }
   }, [accountKey])
 
   return (

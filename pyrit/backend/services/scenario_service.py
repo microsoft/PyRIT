@@ -161,8 +161,9 @@ class ScenarioService:
         Returns:
             ScenarioRunSizeEstimate | None: Estimate, or ``None`` when the scenario is unknown.
         """
-        metadata = self._registry.get_registered_class_metadata(scenario_name)
-        if metadata is None:
+        try:
+            self._registry.get_class(scenario_name)
+        except KeyError:
             return None
 
         semaphore = getattr(self, "_estimate_semaphore", None)

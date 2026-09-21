@@ -16,7 +16,7 @@ export function useTargetRegistry() {
     const updates = new Map<string, TargetInstance>()
     pendingUpdates.current = updates
     listRegisteredTargets().then((items: TargetInstance[]) => {
-      if (cancelled) return
+      if (cancelled || pendingUpdates.current !== updates) return
       const merged = new Map(items.map((item: TargetInstance) => [item.target_registry_name, item]))
       updates.forEach((target: TargetInstance, name: string) => merged.set(name, target))
       setTargets([...merged.values()])
@@ -24,7 +24,7 @@ export function useTargetRegistry() {
       setError(null)
       setLoading(false)
     }).catch((cause: unknown) => {
-      if (cancelled) return
+      if (cancelled || pendingUpdates.current !== updates) return
       pendingUpdates.current = null
       setError(toApiError(cause).detail)
       setLoading(false)
@@ -46,5 +46,12 @@ export function useTargetRegistry() {
     ])
   }, [])
 
-  return { targets, loading, error, refresh, rememberTarget }
+  const synchronizeTargets = useCallback((items: TargetInstance[]): void => {
+    pendingUpdates.current = null
+    setTargets(items)
+    setError(null)
+    setLoading(false)
+  }, [])
+
+  return { targets, loading, error, refresh, rememberTarget, synchronizeTargets }
 }

@@ -85,6 +85,7 @@ const catalogScenario = {
   default_dataset_summaries: [datasetSummary],
   baseline_policy: "enabled",
   include_baseline_by_default: false,
+  uses_default_adversarial_target: false,
   supported_parameters: [
     {
       name: "num_jailbreaks",
@@ -495,6 +496,7 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
 }
 
 async function configurePromptSendingRun(page: Page): Promise<void> {
+  await page.getByTestId("scenario-target-select").selectOption("test-target");
   await expect(page.getByTestId("scenario-target-select")).toHaveValue("test-target");
   await page.getByTestId("technique-prompt_sending").check();
   await page.getByTestId("technique-jailbreak_system_prompt").uncheck();

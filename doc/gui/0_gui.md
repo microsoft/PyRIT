@@ -80,6 +80,9 @@ browser local storage. Authentication-disabled use has a separate `local` profil
 These settings do not follow you to another browser or device. Changes to labels
 apply to future runs, not stored attacks. Backend label defaults still apply when
 there is no user override. Removing a custom default label is also saved.
+Open tabs synchronize preferences for the same account. Each edit is merged with
+the latest saved values. On HTTPS and localhost, browser locks also serialize
+concurrent saves so edits to different defaults do not overwrite each other.
 
 Old account-specific target defaults are imported for the same account. Old
 browser-wide labels, theme, and chat display settings are imported only into the
@@ -100,6 +103,10 @@ The Chat view is the primary workspace for running interactive attacks against c
 #### Sending Messages
 
 For a new chat, your default objective target is preselected if it is available. Click the target badge at the left of the ribbon to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target; their badge does not change the target.
+
+Clicking **Chat** while already in a new chat keeps its target and draft. Starting
+a new attack resets both. Default changes in another tab apply to the next new
+chat, not the current draft.
 
 Type a message and press Enter (or click Send) to send it to the chat target. The response appears below. Shift+Enter inserts a newline without sending.
 

@@ -433,12 +433,8 @@ export default function ChatWindow({
   // Clear a retained system prompt when switching to a target that can't use it,
   // so it isn't silently dropped on send. Preserved across supporting targets to
   // keep the A/B-testing workflow intact.
-  const [prevTargetName, setPrevTargetName] = useState(activeTarget?.target_registry_name)
-  if (activeTarget?.target_registry_name !== prevTargetName) {
-    setPrevTargetName(activeTarget?.target_registry_name)
-    if (!supportsSystemPrompt) {
-      setSystemPrompt('')
-    }
+  if (activeTarget && !supportsSystemPrompt && systemPrompt) {
+    setSystemPrompt('')
   }
 
   // Load messages for a given conversation

@@ -224,7 +224,7 @@ describe("TargetConfig", () => {
 
   it("should refresh targets when Refresh button is clicked", async () => {
     const user = userEvent.setup();
-    const onTargetsChanged = jest.fn();
+    const onTargetsLoaded = jest.fn();
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: sampleTargets,
       pagination: { limit: 200, has_more: false },
@@ -232,7 +232,7 @@ describe("TargetConfig", () => {
 
     render(
       <TestWrapper>
-        <TargetConfig {...defaultProps} onTargetsChanged={onTargetsChanged} />
+        <TargetConfig {...defaultProps} onTargetsLoaded={onTargetsLoaded} />
       </TestWrapper>
     );
 
@@ -241,14 +241,14 @@ describe("TargetConfig", () => {
     });
 
     expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
-    expect(onTargetsChanged).not.toHaveBeenCalled();
+    expect(onTargetsLoaded).toHaveBeenCalledWith(sampleTargets);
 
     await user.click(screen.getByRole("button", { name: "Refresh" }));
 
     await waitFor(() => {
       expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
     });
-    expect(onTargetsChanged).toHaveBeenCalledTimes(1);
+    expect(onTargetsLoaded).toHaveBeenCalledTimes(2);
   });
 
   it("should open create dialog when New Target is clicked", async () => {
@@ -274,14 +274,14 @@ describe("TargetConfig", () => {
 
   it("should refresh list after target creation", async () => {
     const user = userEvent.setup();
-    const onTargetsChanged = jest.fn();
+    const onTargetsLoaded = jest.fn();
     mockedTargetsApi.listTargets
       .mockResolvedValueOnce({ items: [], pagination: { limit: 200, has_more: false } })
       .mockResolvedValueOnce({ items: sampleTargets, pagination: { limit: 200, has_more: false } });
 
     render(
       <TestWrapper>
-        <TargetConfig {...defaultProps} onTargetsChanged={onTargetsChanged} />
+        <TargetConfig {...defaultProps} onTargetsLoaded={onTargetsLoaded} />
       </TestWrapper>
     );
 
@@ -289,17 +289,18 @@ describe("TargetConfig", () => {
       expect(screen.getByText("No Targets Configured")).toBeInTheDocument();
     });
 
-    expect(onTargetsChanged).not.toHaveBeenCalled();
+    expect(onTargetsLoaded).toHaveBeenCalledWith([]);
     await user.click(screen.getByRole("button", { name: "New Target" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(onTargetsChanged).not.toHaveBeenCalled();
+    expect(onTargetsLoaded).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: "New Target" }));
     await user.click(screen.getByRole("button", { name: "Create", exact: true }));
 
     await waitFor(() => {
       expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
-    expect(onTargetsChanged).toHaveBeenCalledTimes(1);
+    expect(onTargetsLoaded).toHaveBeenCalledTimes(2);
+    expect(onTargetsLoaded).toHaveBeenLastCalledWith(sampleTargets);
   });
 
   it("should display target type, endpoint, and model", async () => {

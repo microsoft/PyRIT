@@ -63,4 +63,23 @@ describe('useTargetRegistry', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.targets).toEqual([])
   })
+
+  it.each([false, true])('ignores an older request after a full reload (failed: %s)', async (failed: boolean) => {
+    let finish: (() => void) | undefined
+    listTargets.mockReturnValueOnce(new Promise((resolve, reject) => {
+      finish = () => {
+        if (failed) reject(new Error('Old failure'))
+        else resolve({ items: [first], pagination: { limit: 200, has_more: false } })
+      }
+    }))
+    const { result } = renderHook(useTargetRegistry)
+    act(() => result.current.synchronizeTargets([second]))
+    await act(async () => {
+      if (!finish) throw new Error('Registry request did not start')
+      finish()
+    })
+    expect(result.current.targets).toEqual([second])
+    expect(result.current.loading).toBe(false)
+    expect(result.current.error).toBeNull()
+  })
 })

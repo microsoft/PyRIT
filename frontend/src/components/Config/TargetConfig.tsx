@@ -19,7 +19,7 @@ interface TargetConfigProps {
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
-  onTargetsChanged?: () => void
+  onTargetsLoaded?: (targets: TargetInstance[]) => void
 }
 
 export default function TargetConfig({
@@ -27,7 +27,7 @@ export default function TargetConfig({
   defaultAdversarialTarget,
   onSetDefaultObjectiveTarget,
   onSetDefaultAdversarialTarget,
-  onTargetsChanged,
+  onTargetsLoaded,
 }: TargetConfigProps) {
   const styles = useTargetConfigStyles()
   const [targets, setTargets] = useState<TargetInstance[]>([])
@@ -52,6 +52,7 @@ export default function TargetConfig({
         setTargets(items)
         setError(null)
         setLoading(false)
+        onTargetsLoaded?.(items)
       } catch (err) {
         if (cancelled) return
         if (n < maxRetries) {
@@ -68,7 +69,7 @@ export default function TargetConfig({
     return () => {
       cancelled = true
     }
-  }, [refetchCount])
+  }, [refetchCount, onTargetsLoaded])
 
   const fetchTargets = useCallback(() => {
     setLoading(true)
@@ -79,13 +80,7 @@ export default function TargetConfig({
   const handleTargetCreated = useCallback(() => {
     setDialogOpen(false)
     fetchTargets()
-    onTargetsChanged?.()
-  }, [fetchTargets, onTargetsChanged])
-
-  const handleRefresh = (): void => {
-    fetchTargets()
-    onTargetsChanged?.()
-  }
+  }, [fetchTargets])
 
   return (
     <div className={styles.root} data-testid="target-config">
@@ -101,7 +96,7 @@ export default function TargetConfig({
             className={styles.headerAction}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
-            onClick={handleRefresh}
+            onClick={fetchTargets}
             disabled={loading}
           >
             Refresh

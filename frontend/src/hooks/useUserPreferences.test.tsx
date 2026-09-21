@@ -1,4 +1,4 @@
-import { act, render, renderHook, screen } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import userEvent from '@testing-library/user-event'
 
@@ -61,6 +61,111 @@ describe('useUserPreferences', () => {
       ...chosenPreferences,
       labels: { operation: 'op_new' },
     })
+  })
+
+  it('merges independent target changes even before a cross-tab event arrives', () => {
+    const first = renderHook(() => useUserPreferences(), { wrapper })
+    const second = renderHook(() => useUserPreferences(), { wrapper })
+    act(() => first.result.current.updatePreferences((current: UserPreferences) => ({
+      ...current, targets: { ...current.targets, objective: chosenPreferences.targets.objective },
+    })))
+    act(() => second.result.current.updatePreferences((current: UserPreferences) => ({
+      ...current, targets: { ...current.targets, adversarial: chosenPreferences.targets.adversarial },
+    })))
+    expect(readUserPreferences('tenant:alice').targets).toEqual(chosenPreferences.targets)
+  })
+
+  it('synchronizes only the current account and handles a cross-tab clear', () => {
+    const { result } = renderHook(() => useUserPreferences(), { wrapper })
+    writeUserPreferences('tenant:alice', chosenPreferences)
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'pyrit.userPreferences.v1.tenant:bob', storageArea: window.localStorage,
+      }))
+    })
+    expect(result.current.preferences).toEqual(DEFAULT_USER_PREFERENCES)
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'pyrit.userPreferences.v1.tenant:alice', storageArea: window.localStorage,
+      }))
+    })
+    expect(result.current.preferences).toEqual(chosenPreferences)
+    window.localStorage.clear()
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: null, storageArea: window.localStorage }))
+    })
+    expect(result.current.preferences).toEqual(DEFAULT_USER_PREFERENCES)
+  })
+
+  it('keeps failed local edits while merging later changes from another tab', () => {
+    const { result } = renderHook(() => useUserPreferences(), { wrapper })
+    const write = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
+    act(() => result.current.updatePreferences((current: UserPreferences) => ({ ...current, theme: 'dark' })))
+    write.mockRestore()
+    writeUserPreferences('tenant:alice', {
+      ...DEFAULT_USER_PREFERENCES, targets: chosenPreferences.targets,
+    })
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'pyrit.userPreferences.v1.tenant:alice', storageArea: window.localStorage,
+      }))
+    })
+    expect(result.current.preferences.theme).toBe('dark')
+    expect(result.current.error).toContain('session only')
+    act(() => result.current.updatePreferences((current: UserPreferences) => ({ ...current, chatMarkdown: true })))
+    expect(readUserPreferences('tenant:alice')).toEqual({
+      ...DEFAULT_USER_PREFERENCES, targets: chosenPreferences.targets, theme: 'dark', chatMarkdown: true,
+    })
+    expect(result.current.error).toBeNull()
+  })
+
+  it('merges pending edits with the latest record inside the browser lock', async () => {
+    const releaseLocks: Array<() => void> = []
+    const request = jest.fn((_name: string, callback: () => void) => new Promise<void>((resolve) => {
+      releaseLocks.push(() => { callback(); resolve() })
+    }))
+    const originalLocks = Object.getOwnPropertyDescriptor(navigator, 'locks')
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request } })
+    try {
+      const { result } = renderHook(() => useUserPreferences(), { wrapper })
+      act(() => result.current.updatePreferences((current: UserPreferences) => ({
+        ...current, targets: { ...current.targets, adversarial: chosenPreferences.targets.adversarial },
+      })))
+      act(() => result.current.updatePreferences((current: UserPreferences) => ({ ...current, theme: 'dark' })))
+      expect(result.current.preferences.targets.adversarial).toEqual(chosenPreferences.targets.adversarial)
+      writeUserPreferences('tenant:alice', {
+        ...DEFAULT_USER_PREFERENCES,
+        targets: { objective: chosenPreferences.targets.objective, adversarial: null },
+      })
+      await act(async () => {
+        for (const releaseLock of releaseLocks) releaseLock()
+      })
+      await waitFor(() => expect(readUserPreferences('tenant:alice')).toEqual({
+        ...DEFAULT_USER_PREFERENCES, targets: chosenPreferences.targets, theme: 'dark',
+      }))
+      expect(request).toHaveBeenCalledWith('pyrit.userPreferences.v1.tenant:alice', expect.any(Function))
+    } finally {
+      if (originalLocks) Object.defineProperty(navigator, 'locks', originalLocks)
+      else Reflect.deleteProperty(navigator, 'locks')
+    }
+  })
+
+  it('reports a lock failure and keeps the edit in memory', async () => {
+    const originalLocks = Object.getOwnPropertyDescriptor(navigator, 'locks')
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: { request: jest.fn().mockRejectedValue(new Error('Lock denied')) },
+    })
+    try {
+      const { result } = renderHook(() => useUserPreferences(), { wrapper })
+      act(() => result.current.updatePreferences((current: UserPreferences) => ({ ...current, theme: 'dark' })))
+      await waitFor(() => expect(result.current.error).toContain('session only'))
+      expect(result.current.preferences.theme).toBe('dark')
+      expect(readUserPreferences('tenant:alice').theme).toBe(DEFAULT_USER_PREFERENCES.theme)
+    } finally {
+      if (originalLocks) Object.defineProperty(navigator, 'locks', originalLocks)
+      else Reflect.deleteProperty(navigator, 'locks')
+    }
   })
 
   it('isolates every property when accounts change and restores them when switching back', async () => {

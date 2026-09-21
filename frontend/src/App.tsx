@@ -161,14 +161,20 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const registry = useTargetRegistry()
   const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
   const targetDefaults = useTargetPreferences(registry.targets)
-  const [draftSelection, setDraftSelection] = useState<{
-    pageKey: string
+  const [draftSession, setDraftSession] = useState<{
+    pathname: string
+    key: number
     target: TargetReference | null
-  } | null>(null)
-  const selectedDraftTarget = draftSelection?.pageKey === location.key
-    ? draftSelection.target : targetDefaults.preferences.objective
-  const draftTarget = !registry.loading && !registry.error && selectedDraftTarget
-    ? resolveTargetReference(selectedDraftTarget, registry.targets) : null
+  }>({ pathname: location.pathname, key: 0, target: targetDefaults.preferences.objective })
+  if (draftSession.pathname !== location.pathname) {
+    setDraftSession({
+      pathname: location.pathname,
+      key: draftSession.key + (location.pathname === VIEW_PATHS.chat ? 1 : 0),
+      target: targetDefaults.preferences.objective,
+    })
+  }
+  const draftTarget = !registry.loading && !registry.error && draftSession.target
+    ? resolveTargetReference(draftSession.target, registry.targets) : null
   const setDefaultTarget = (role: keyof TargetPreferences, target: TargetInstance | null): void => {
     if (target) registry.rememberTarget(target)
     targetDefaults.setDefault(role, target)
@@ -200,27 +206,29 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   }, [])
 
   const [defaultLabels, setDefaultLabels] = useState<Record<string, string>>(DEFAULT_GLOBAL_LABELS)
-  const globalLabels: Record<string, string> = Object.fromEntries(
+  const globalLabels = useMemo<Record<string, string>>(() => Object.fromEntries(
     Object.entries({
       ...defaultLabels,
       ...preferences.labels,
       ...(operatorAlias ? { operator: operatorAlias } : {}),
     }).filter((entry): entry is [string, string] => entry[1] !== null),
-  )
+  ), [defaultLabels, preferences.labels, operatorAlias])
 
   const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
-    updatePreferences((current: UserPreferences) => ({
-      ...current,
-      labels: Object.fromEntries(
-        Object.keys({ ...current.labels, ...defaultLabels, ...labels })
-          .filter((key: string) => !(operatorAlias && key === 'operator') && (
-            labels[key] !== defaultLabels[key]
-            || (current.labels[key] === null && !(key in labels))
-          ))
-          .map((key: string) => [key, labels[key] ?? null]),
-      ),
-    }))
-  }, [defaultLabels, operatorAlias, updatePreferences])
+    const changedKeys = Object.keys({ ...globalLabels, ...labels })
+      .filter((key: string) => !(operatorAlias && key === 'operator') && labels[key] !== globalLabels[key])
+    updatePreferences((current: UserPreferences) => {
+      const overrides = { ...current.labels }
+      for (const key of changedKeys) {
+        if (labels[key] === defaultLabels[key]) {
+          delete overrides[key]
+        } else {
+          overrides[key] = labels[key] ?? null
+        }
+      }
+      return { ...current, labels: overrides }
+    })
+  }, [defaultLabels, globalLabels, operatorAlias, updatePreferences])
 
   // History filters live in the URL query string so they are shareable and
   // survive refresh. The breadcrumb ref remembers the last /history query so
@@ -432,7 +440,6 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   }, [navigate])
 
   const handleNewAttack = useCallback(() => {
-    setDraftSelection(null)
     navigate(VIEW_PATHS.chat)
   }, [navigate])
 
@@ -530,15 +537,16 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     />
   ) : (
     <ChatWindow
+      key={draftSession.key}
       onNewAttack={handleNewAttack}
       activeTarget={activeTarget}
       availableTargets={registry.targets}
       targetsLoading={registry.loading}
       targetsError={registry.error}
       onRefreshTargets={registry.refresh}
-      onSelectTarget={(target: TargetInstance | null) => setDraftSelection({
-        pageKey: location.key, target: target ? targetReference(target) : null,
-      })}
+      onSelectTarget={(target: TargetInstance | null) => setDraftSession((current) => ({
+        ...current, target: target ? targetReference(target) : null,
+      }))}
       defaultBranchTarget={targetDefaults.objectiveTarget}
       attackResultId={readyAttack ? readyAttack.id : null}
       conversationId={readyAttack ? readyAttack.mainConversationId : null}
@@ -646,7 +654,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                       defaultAdversarialTarget={targetDefaults.adversarialTarget}
                       onSetDefaultObjectiveTarget={(target: TargetInstance | null) => setDefaultTarget('objective', target)}
                       onSetDefaultAdversarialTarget={(target: TargetInstance | null) => setDefaultTarget('adversarial', target)}
-                      onTargetsChanged={registry.refresh}
+                      onTargetsLoaded={registry.synchronizeTargets}
                     />
                   }
                 />

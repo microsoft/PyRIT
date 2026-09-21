@@ -43,6 +43,7 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
     override_default_adversarial_target,
 )
+from pyrit.scenario.scenarios.airt.scam import Scam
 from unit.mocks import MockPromptTarget
 
 if TYPE_CHECKING:
@@ -146,6 +147,58 @@ def test_catalog_preserves_adversarial_default_usage(uses_default: bool) -> None
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAdversarialEstimateScope:
+    async def test_cold_registry_estimate_uses_selected_target_without_global_fallback_async(self) -> None:
+        registry = ScenarioRegistry()
+        selected = MockPromptTarget()
+        targets = {
+            "objective": MockPromptTarget(),
+            "selected": selected,
+            "objective_scorer_chat": MockPromptTarget(),
+        }
+        target_registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        target_registry.instances.get.side_effect = targets.get
+
+        async def estimate_async(scenario: Scam, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
+            assert scenario._adversarial_chat is selected
+            assert get_default_adversarial_target() is selected
+            return ScenarioRunSizeEstimate(estimated_attack_count=0)
+
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
+            patch.object(Scam, "get_run_size_estimate_async", autospec=True, side_effect=estimate_async),
+            patch(
+                "pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget",
+                side_effect=AssertionError("The request must not construct the server fallback."),
+            ),
+        ):
+            assert registry._metadata_cache is None
+            service = ScenarioService()
+            result = await service.estimate_scenario_run_size_async(
+                scenario_name="airt.scam",
+                request=ScenarioRunSizeEstimateRequest(
+                    target_name="objective",
+                    adversarial_target_name="selected",
+                    max_dataset_size=1,
+                ),
+            )
+            assert result is not None
+            assert result.estimated_attack_count == 0
+            assert registry._metadata_cache is None
+            assert not service._estimate_cache
+
+    async def test_unknown_scenario_returns_none_without_metadata_construction_async(self) -> None:
+        registry = MagicMock(spec=ScenarioRegistry)
+        registry.get_class.side_effect = KeyError("missing")
+        with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry):
+            result = await ScenarioService().estimate_scenario_run_size_async(
+                scenario_name="missing",
+                request=ScenarioRunSizeEstimateRequest(),
+            )
+        assert result is None
+        registry.get_registered_class_metadata.assert_not_called()
+        registry.create_and_estimate_async.assert_not_called()
+
     async def test_omitted_adversarial_selection_preserves_outer_scope_async(self) -> None:
         outer = MockPromptTarget()
         registry = MagicMock(spec=ScenarioRegistry)

@@ -1318,6 +1318,30 @@ describe("ChatWindow Integration", () => {
           expect.objectContaining({ system_prompt: "You are helpful" })
         );
       });
+
+    });
+
+    it("preserves the draft prompt while its target is unavailable during refresh", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+      const supported: TargetInstance = {
+        ...mockTarget,
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+      const { rerender } = render(
+        <TestWrapper><ChatWindow {...defaultProps} activeTarget={supported} /></TestWrapper>,
+      );
+      await user.click(screen.getByRole("button", { name: /system prompt/i }));
+      await user.type(screen.getByRole("textbox", { name: /system prompt/i }), "Keep this instruction");
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={null} /></TestWrapper>);
+      expect(screen.getByRole("button", { name: /send/i })).toBeDisabled();
+      expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled();
+      rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={supported} /></TestWrapper>);
+      await user.click(screen.getByRole("button", { name: /send/i }));
+      await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
+        expect.objectContaining({ system_prompt: "Keep this instruction" }),
+      ));
     });
   });
 

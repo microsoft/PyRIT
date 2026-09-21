@@ -85,10 +85,14 @@ function readLegacyPreferences(accountKey: string): UserPreferences {
 }
 
 export function readUserPreferences(accountKey: string): UserPreferences {
-  const stored = window.localStorage.getItem(STORAGE_PREFIX + accountKey)
+  const stored = window.localStorage.getItem(userPreferencesStorageKey(accountKey))
   return stored === null ? readLegacyPreferences(accountKey) : parsePreferences(stored)
 }
 
 export function writeUserPreferences(accountKey: string, preferences: UserPreferences): void {
-  window.localStorage.setItem(STORAGE_PREFIX + accountKey, JSON.stringify(preferences))
+  window.localStorage.setItem(userPreferencesStorageKey(accountKey), JSON.stringify(preferences))
+}
+
+export function userPreferencesStorageKey(accountKey: string): string {
+  return STORAGE_PREFIX + accountKey
 }

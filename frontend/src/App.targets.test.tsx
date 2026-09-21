@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
@@ -32,6 +32,7 @@ jest.mock('@/components/Layout/MainLayout', () => {
       <>
         <Link to="/chat">Open new chat</Link>
         <Link to="/attacks/saved-attack">Open saved chat</Link>
+        <Link to="/registry/targets">Open registry</Link>
         {children}
       </>
     ),
@@ -179,5 +180,74 @@ describe('App target selection with the chat composer', () => {
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-b'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
     expect(readUserPreferences('tenant:alice').targets.objective?.registryName).toBe('target-a')
+  })
+
+  it('keeps the draft and sends to its selected target after navigating to Chat again', async () => {
+    const user = userEvent.setup()
+    saveDefault('alice', targetA)
+    jest.mocked(attacksApi.createAttack).mockResolvedValue(savedAttack)
+    render(<App />, { wrapper: TestWrapper })
+    const selector = screen.getByRole('combobox', { name: 'Chat target' })
+    await waitFor(() => expect(selector).toHaveValue('target-a'))
+    await user.selectOptions(selector, 'target-b')
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Prompt for B')
+    await user.click(screen.getByRole('link', { name: 'Open new chat' }))
+    expect(selector).toHaveValue('target-b')
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Prompt for B')
+    await user.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(attacksApi.addMessage).toHaveBeenCalledWith(
+      'saved-attack',
+      expect.objectContaining({
+        target_registry_name: 'target-b',
+        pieces: [{ data_type: 'text', original_value: 'Prompt for B' }],
+      }),
+    ))
+  })
+
+  it('applies a cross-tab default change only to the next draft', async () => {
+    const user = userEvent.setup()
+    saveDefault('alice', targetA)
+    render(<App />, { wrapper: TestWrapper })
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Prompt for A')
+    act(() => {
+      saveDefault('alice', targetB)
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'pyrit.userPreferences.v1.tenant:alice', storageArea: window.localStorage,
+      }))
+    })
+    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a')
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Prompt for A')
+    await user.click(screen.getByRole('link', { name: 'Open registry' }))
+    await user.click(screen.getByRole('link', { name: 'Open new chat' }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-b'))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+  })
+
+  it('resets both the composer and target when starting a new attack', async () => {
+    const user = userEvent.setup()
+    saveDefault('alice', targetA)
+    render(<App />, { wrapper: TestWrapper })
+    await user.click(screen.getByRole('link', { name: 'Open saved chat' }))
+    await screen.findByText('Saved reply from target B')
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Do not carry this into A')
+    await user.click(screen.getByRole('button', { name: 'New Attack' }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+  })
+
+  it('recovers the app registry after the registry page completes a successful full load', async () => {
+    const user = userEvent.setup()
+    jest.mocked(targetsApi.listTargets).mockRejectedValueOnce(new Error('Initial registry failed'))
+    render(<App />, { wrapper: TestWrapper })
+    await screen.findByText('Targets unavailable', { selector: 'span' })
+    await user.click(screen.getByRole('link', { name: 'Open registry' }))
+    const objective = await screen.findByRole('combobox', { name: 'Default objective target' })
+    await user.selectOptions(objective, 'target-a')
+    await user.click(screen.getByRole('link', { name: 'Open new chat' }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled()
+    expect(screen.queryByText('Targets unavailable')).not.toBeInTheDocument()
+    expect(targetsApi.listTargets).toHaveBeenCalledTimes(2)
   })
 })
