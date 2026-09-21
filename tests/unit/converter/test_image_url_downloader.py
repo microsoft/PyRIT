@@ -81,7 +81,7 @@ async def test_download_image_from_url_async_wraps_connection_error():
     url = "https://example.com/image.png"
     error = aiohttp.ClientConnectionError("connection failed")
     client_session, session, _ = _mock_download_session()
-    session.get.side_effect = error
+    session.get.return_value.__aenter__.side_effect = error
 
     with (
         patch("pyrit.converter._image_url_downloader.aiohttp.ClientSession", return_value=client_session),
@@ -92,6 +92,7 @@ async def test_download_image_from_url_async_wraps_connection_error():
     assert type(exc_info.value) is RuntimeError
     assert str(exc_info.value) == f"Failed to download content from URL {url}: {str(error)}"
     assert exc_info.value.__cause__ is error
+    client_session.__aexit__.assert_awaited_once()
 
 
 async def test_download_image_from_url_async_wraps_client_error_while_reading_body():
