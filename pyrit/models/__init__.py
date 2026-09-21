@@ -98,6 +98,7 @@ if TYPE_CHECKING:
         Parameter,
         ParameterDestination,
         RegistryReference,
+        StructuredParameterValue,
         display_choices,
     )
     from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
@@ -137,6 +138,7 @@ if TYPE_CHECKING:
         Condition,
         ContentEntryScorable,
         ContentScorable,
+        DivergesFromRepetition,
         JudgmentObservationPayload,
         MatchesObjective,
         MessageScorable,
@@ -215,6 +217,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ContentScorable": "pyrit.models.score",
     "construct_response_from_request": "pyrit.models.messages.conversations",
     "display_choices": "pyrit.models.parameter",
+    "DivergesFromRepetition": "pyrit.models.score",
     "EmbeddingData": "pyrit.models.embeddings",
     "EmbeddingResponse": "pyrit.models.embeddings",
     "EmbeddingSupport": "pyrit.models.embeddings",
@@ -321,6 +324,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "sort_message_pieces": "pyrit.models.messages.message_piece",
     "StrategyResult": "pyrit.models.results.strategy_result",
     "StrategyResultT": "pyrit.models.results.strategy_result",
+    "StructuredParameterValue": "pyrit.models.parameter",
     "TARGET_EVAL_PARAM_FALLBACKS": "pyrit.models.identifiers",
     "TARGET_EVAL_PARAMS": "pyrit.models.identifiers",
     "TargetCapabilities": "pyrit.models.target",

@@ -230,41 +230,39 @@ class TestGetTargetObject:
         assert result is mock_target
 
 
-class TestListTargetCatalog:
-    """Tests for TargetService.list_target_catalog_async method."""
+class TestListTargetTypes:
+    """Tests for TargetService.list_target_types_async method."""
 
-    def test_catalog_rejects_unsupported_auth_mode(self) -> None:
+    def test_types_reject_unsupported_auth_mode(self) -> None:
         with pytest.raises(ValueError, match="Unsupported target authentication mode: 'oauth'"):
-            TargetService._get_catalog_auth_modes(("oauth",))
+            TargetService._get_supported_auth_modes(("oauth",))
 
-    async def test_catalog_returns_known_target_types(self) -> None:
-        """The catalog exposes constructible target classes from the registry."""
+    async def test_types_return_known_target_types(self) -> None:
+        """The projection exposes constructible target classes from the registry."""
         service = TargetService()
 
-        result = await service.list_target_catalog_async()
+        result = await service.list_target_types_async()
 
         target_types = [item.target_type for item in result.items]
         assert "OpenAIChatTarget" in target_types
         assert "AzureMLChatTarget" in target_types
 
-    async def test_catalog_includes_declarative_auth_facts(self) -> None:
-        """Catalog entries surface the per-class auth facts the frontend needs."""
+    async def test_types_include_declarative_auth_facts(self) -> None:
+        """Type entries surface the per-class auth facts the frontend needs."""
         service = TargetService()
 
-        result = await service.list_target_catalog_async()
+        result = await service.list_target_types_async()
 
         openai_entry = next(item for item in result.items if item.target_type == "OpenAIChatTarget")
         assert "api_key" in openai_entry.supported_auth_modes
         assert "identity" in openai_entry.supported_auth_modes
 
-    async def test_types_include_references_while_catalog_preserves_scalar_contract(self) -> None:
+    async def test_types_include_structured_parameters(self) -> None:
         service = TargetService()
 
         types_result = await service.list_target_types_async()
-        catalog_result = await service.list_target_catalog_async()
 
         types_entry = next(item for item in types_result.items if item.target_type == "RoundRobinTarget")
-        catalog_entry = next(item for item in catalog_result.items if item.target_type == "RoundRobinTarget")
         targets_parameter = next(param for param in types_entry.parameters if param.name == "targets")
         assert targets_parameter.reference_type == "target"
         assert targets_parameter.type_name == "list[str]"
@@ -273,9 +271,6 @@ class TestListTargetCatalog:
         assert weights_parameter.type_name == "list[int]"
         assert weights_parameter.is_list is True
         assert weights_parameter.required is False
-        assert all(param.name != "targets" for param in catalog_entry.parameters)
-        assert all(param.name != "weights" for param in catalog_entry.parameters)
-        assert catalog_entry.parameters == [param for param in types_entry.parameters if param.is_string_coercible]
 
     async def test_types_preserve_all_registry_parameters(self) -> None:
         service = TargetService()
@@ -288,20 +283,20 @@ class TestListTargetCatalog:
         for entry in result.items:
             assert entry.parameters == list(metadata_by_name[entry.target_type].parameters)
 
-    async def test_catalog_cold_and_warm_results_are_equal(self) -> None:
+    async def test_types_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()
 
-        cold = await service.list_target_catalog_async()
-        warm = await service.list_target_catalog_async()
+        cold = await service.list_target_types_async()
+        warm = await service.list_target_types_async()
 
         assert cold == warm
 
-    async def test_catalog_refreshes_after_runtime_class_registration(self) -> None:
+    async def test_types_refresh_after_runtime_class_registration(self) -> None:
         service = TargetService()
-        initial = await service.list_target_catalog_async()
+        initial = await service.list_target_types_async()
 
         service._registry.register_class(MockPromptTarget)
-        refreshed = await service.list_target_catalog_async()
+        refreshed = await service.list_target_types_async()
 
         assert all(item.target_type != "MockPromptTarget" for item in initial.items)
         assert any(item.target_type == "MockPromptTarget" for item in refreshed.items)
@@ -343,7 +338,7 @@ class TestListTargetCatalog:
             ),
         ],
     )
-    async def test_catalog_includes_enum_parameters(
+    async def test_types_include_enum_parameters(
         self,
         target_type: str,
         parameter_name: str,
@@ -354,7 +349,7 @@ class TestListTargetCatalog:
         """Enum parameters are exposed with their required state and allowed values."""
         service = TargetService()
 
-        result = await service.list_target_catalog_async()
+        result = await service.list_target_types_async()
 
         entry = next(item for item in result.items if item.target_type == target_type)
         parameter = next(param for param in entry.parameters if param.name == parameter_name)
@@ -411,7 +406,7 @@ class TestCreateTarget:
                 request=CreateTargetRequest(name="shared-name", type="TextTarget", params={}),
             )
 
-    @pytest.mark.parametrize("name", ["catalog", "types"])
+    @pytest.mark.parametrize("name", ["types"])
     async def test_create_target_rejects_reserved_route_name(self, sqlite_instance, name: str) -> None:
         service = TargetService()
 

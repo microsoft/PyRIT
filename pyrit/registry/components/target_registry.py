@@ -81,7 +81,7 @@ class TargetRegistry(InstanceHoldingRegistry["PromptTarget", TargetMetadata]):
         """
         super().__init__(
             lazy_discovery=lazy_discovery,
-            reserved_instance_names={"catalog", "types"},
+            reserved_instance_names={"types"},
         )
 
     def _base_type(self) -> type[PromptTarget]:

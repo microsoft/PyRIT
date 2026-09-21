@@ -431,7 +431,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
         {run.status === 'FAILED' && (
           <MessageBar intent="error">
             <MessageBarBody>
-              This run ended before all planned executable units completed. Finished executions remain available below.
+              {formatRunFailure(run)}
             </MessageBarBody>
           </MessageBar>
         )}
@@ -842,6 +842,20 @@ function EmptyState({ text }: EmptyStateProps) {
 
 function formatRunState(status: string): string {
   return status.toLowerCase().replace('_', ' ').replace(/^\w/, (letter) => letter.toUpperCase())
+}
+
+function formatRunFailure(run: ScenarioProgressHeader): string {
+  const completedResultsMessage = 'Finished executions remain available below.'
+  if (run.error_type && run.error) {
+    return `Run failed (${run.error_type}): ${run.error} ${completedResultsMessage}`
+  }
+  if (run.error) {
+    return `Run failed: ${run.error} ${completedResultsMessage}`
+  }
+  if (run.error_type) {
+    return `Run failed (${run.error_type}). ${completedResultsMessage}`
+  }
+  return `This run ended before all planned executable units completed. ${completedResultsMessage}`
 }
 
 function statusIcon(status: ScenarioRunState): React.ReactElement {
