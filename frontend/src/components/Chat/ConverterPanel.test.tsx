@@ -543,10 +543,8 @@ describe('ConverterPanel', () => {
     expect(screen.getByTestId('converter-item-base64-default')).toBeInTheDocument()
     await user.click(screen.getByTestId('converter-preview-btn'))
 
-    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1)
-    await user.click(screen.getByTestId('converter-tab-image'))
-    await user.click(screen.getByTestId('converter-preview-btn'))
     expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(2)
+    await user.click(screen.getByTestId('converter-tab-image'))
     expect(await screen.findByTestId('converter-preview-result')).toContainElement(
       screen.getByRole('img', { name: 'Converted output preview' }),
     )
@@ -718,7 +716,7 @@ describe('ConverterPanel', () => {
       .toEqual(['second'])
   })
 
-  it('converts only inputs from the active tab', async () => {
+  it('converts incomplete inputs once, then only reruns the active tab', async () => {
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [textConverter, imageConverter] })
     mockedConvertersApi.previewConversion.mockImplementation(async (request) => (
       makePreviewResponse(request.converter_ids, [`converted-${request.original_value}`], request.original_value)
@@ -731,17 +729,23 @@ describe('ConverterPanel', () => {
     renderPanel({ previewText: 'hello', attachments })
     await screen.findByTestId('converter-panel-list')
     await selectConverter('base64-default')
-    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
-    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1)
-    expect(mockedConvertersApi.previewConversion).toHaveBeenLastCalledWith(expect.objectContaining({
-      original_value: 'hello',
-    }))
-
     await user.click(screen.getByRole('tab', { name: 'Image' }))
     await selectConverter('image-compressor')
+    await user.click(screen.getByRole('tab', { name: 'Text (1)' }))
     await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
     expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(2)
-    expect(mockedConvertersApi.previewConversion).toHaveBeenLastCalledWith(expect.objectContaining({
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith(expect.objectContaining({
+      original_value: 'hello',
+    }))
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith(expect.objectContaining({
+      original_value: 'data:image/png;base64,aGVsbG8=',
+    }))
+
+    mockedConvertersApi.previewConversion.mockClear()
+    await user.click(screen.getByRole('tab', { name: 'Image (1)' }))
+    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1)
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith(expect.objectContaining({
       original_value: 'data:image/png;base64,aGVsbG8=',
     }))
 

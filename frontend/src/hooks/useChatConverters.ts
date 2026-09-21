@@ -47,6 +47,7 @@ interface ConversionScope {
   pieceType?: string
   pieceId?: string
   afterStageId?: string
+  includeIncomplete?: boolean
 }
 
 function omitPieces<T>(values: Record<string, T>, ids: Set<string>): Record<string, T> {
@@ -226,10 +227,16 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     pieceType,
     pieceId,
     afterStageId,
+    includeIncomplete = false,
   }: ConversionScope): Promise<void> => {
     if (activeRun.current !== null) return
+    const completed = completedResults(state)
     const selected = state.inputs.flatMap((input: VersionedInput): ConversionJob[] => {
-      if (pieceType !== undefined && pieceType !== input.pieceType) return []
+      if (
+        pieceType !== undefined
+        && pieceType !== input.pieceType
+        && (!includeIncomplete || completed[input.id] !== undefined)
+      ) return []
       if (pieceId !== undefined && pieceId !== input.id) return []
       const pipeline = state.pipelines[input.pieceType] ?? []
       const previous = state.stageResults[input.id] ?? []
@@ -381,7 +388,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     addConverter,
     setPipeline,
     retainConverters,
-    convert: (pieceType: string) => runConversion({ pieceType }),
+    convert: (pieceType: string) => runConversion({ pieceType, includeIncomplete: true }),
     convertRemaining: (pieceId: string, stageId: string) => runConversion({ pieceId, afterStageId: stageId }),
     editInput,
     editStageOutput,

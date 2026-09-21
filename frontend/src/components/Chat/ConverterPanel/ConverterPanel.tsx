@@ -448,7 +448,9 @@ export default function ConverterPanel({
                   onClick={() => void controller.convert(effectiveActiveTab)}
                   disabled={isConverting || convertibleInputs.length === 0}
                   className={styles.previewButton}
-                  title={`Convert the configured ${PIECE_TYPE_LABELS[effectiveActiveTab] ?? effectiveActiveTab} chain.`}
+                  title={`Convert the configured ${
+                    PIECE_TYPE_LABELS[effectiveActiveTab] ?? effectiveActiveTab
+                  } chain and any configured inputs without results.`}
                   data-testid="converter-preview-btn"
                 >
                   {isConverting ? 'Converting...' : 'Convert'}
