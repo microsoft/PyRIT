@@ -1,9 +1,8 @@
 # Single place for all coverage checks: overall threshold + diff coverage on PRs.
 # Runs once on Ubuntu/Python 3.12 instead of across the full OS x Python matrix.
 #
-# Release branches run on push only, for the overall coverage threshold. The diff-coverage
-# step is deliberately limited to pull requests targeting main, because it compares against
-# origin/main and a release branch differs from main by the entire release delta.
+# Release branches run on push only, for the overall coverage threshold.
+# Diff coverage remains limited to pull requests targeting main.
 
 name: coverage
 
@@ -69,6 +68,8 @@ jobs:
 
       - name: Check diff coverage on PR (>=90% on changed lines)
         if: github.event_name == 'pull_request'
-        run: |
-          git fetch origin main
-          make unit-test-diff-cover
+        env:
+          # Checkout tests the PR merge commit. Its first parent is the exact base
+          # used for that merge, even if the target branch advances during the run.
+          DIFF_COVER_BASE: HEAD^1
+        run: make unit-test-diff-cover
