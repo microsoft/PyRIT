@@ -67,6 +67,35 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 Type a message and press Enter (or click Send) to send it to the active target. The response appears below. Shift+Enter inserts a newline without sending.
 
+#### Editing Converter Pipelines
+
+Open **Converters** and use the picker above the working input to add registered
+converters in the order you want them to run.
+The top text box is an editable working copy: changing it does not change the original
+chat message. The top **Convert** button runs every configured input's full pipeline.
+
+Each text stage output is also editable. After changing an intermediate output, use
+the **Convert** button below it to run **all remaining stages** from that value,
+without rerunning earlier stages. Editing a value invalidates its downstream results
+until you convert again. The final output has no Convert or selection-only button;
+you can edit it directly before applying it.
+
+To convert only part of a text value, select it and click **Convert selection only**.
+This wraps the selection in `⟪` and `⟫`. The next converter transforms only the marked
+regions and removes their markers, preserving everything outside them. Marked regions
+have a colored highlight while their markers stay visible. Later stages convert the
+whole result unless you select another region. Multiple and multiline
+regions are supported; unmatched, nested, and empty regions are rejected. Partial
+conversion requires text input and text output. Without markers, converters retain
+their normal whole-value behavior, including media conversions.
+
+Click **Add converted value** to apply the final result, then **Send**. The exact
+applied value is sent and stored alongside the unchanged original; the backend does
+not rerun the pipeline. Converter configuration is retained as provenance, and
+reloading the conversation shows the same original and converted values. You can
+also edit only the top working input and apply it as a manual conversion without
+adding or running a registered converter.
+
 #### Attachments
 
 Click the attachment button to add images, audio, video, or documents to your message. Supported types include `image/*`, `audio/*`, `video/*`, `.pdf`, `.doc`, `.docx`, and `.txt`. Attachments are displayed as chips below the input with type icons and file sizes.

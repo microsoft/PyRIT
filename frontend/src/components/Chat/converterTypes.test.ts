@@ -1,5 +1,7 @@
 import type { PieceConversion } from '@/components/Chat/converterTypes'
-import { buildConverterInputs, buildDraftPieceIds, buildRequestConverterConfigurations, withDraftIdentity } from '@/components/Chat/converterTypes'
+import {
+  applyConvertedValues, buildConverterInputs, buildDraftPieceIds, buildRequestConverterConfigurations, withDraftIdentity,
+} from '@/components/Chat/converterTypes'
 import type { MessageAttachment } from '@/types'
 import { buildMessagePieces } from '@/utils/messageMapper'
 
@@ -58,6 +60,31 @@ describe('buildRequestConverterConfigurations', () => {
         indexes_to_apply: [3],
       },
     ])
+  })
+
+  describe('applyConvertedValues', () => {
+    it('preserves original values and applies exact results by piece identity across type changes', () => {
+      const original = [
+        { data_type: 'text', original_value: 'original text' },
+        { data_type: 'image_path', original_value: 'first.png' },
+        { data_type: 'image_path', original_value: 'second.png' },
+      ]
+      const result = applyConvertedValues(original, ['text', 'first', 'second'], {
+        text: { ...makeConversion('text', ['pdf']), convertedValue: 'result.pdf', convertedDataType: 'binary_path' },
+        second: { ...makeConversion('second', ['caption']), convertedValue: '' },
+      })
+      expect(result).toEqual([
+        { ...original[0], converted_value: 'result.pdf', converted_value_data_type: 'binary_path' },
+        original[1],
+        { ...original[2], converted_value: '', converted_value_data_type: 'text' },
+      ])
+      expect(original[0]).not.toHaveProperty('converted_value')
+    })
+
+    it('rejects mismatched piece identities', () => {
+      expect(() => applyConvertedValues([], ['text'], { text: makeConversion('text', ['base64']) }))
+        .toThrow('Message pieces do not match')
+    })
   })
 
   it('skips modalities with an empty pipeline', () => {

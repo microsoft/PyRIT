@@ -76,9 +76,18 @@ export interface ConverterPipelineStage {
   readonly converterId: string
 }
 
+export interface ConverterStageResult {
+  readonly stageId: string
+  readonly generated: ConverterPreviewStep
+  value: string
+}
+
 export interface ChatConverterController {
+  readonly editRevision: number
   inputs: ConverterInputPiece[]
+  workingInputs: Record<string, string>
   pipelines: Record<string, ConverterPipelineStage[]>
+  stageResults: Record<string, ConverterStageResult[]>
   results: Record<string, ConverterPreviewResponse>
   errors: Record<string, string>
   applied: Record<string, PieceConversion>
@@ -87,6 +96,9 @@ export interface ChatConverterController {
   setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
   retainConverters: (availableIds: Set<string>) => void
   convert: () => Promise<void>
+  convertRemaining: (pieceId: string, stageId: string) => Promise<void>
+  editInput: (pieceId: string, value: string) => void
+  editStageOutput: (pieceId: string, stageId: string, value: string) => void
   apply: () => void
   clear: (pieceId: string) => void
   clearAll: () => void
@@ -550,6 +562,7 @@ export interface MessagePieceRequest {
   data_type: string // 'text' | 'image_path' | 'audio_path' | 'video_path' | 'binary_path'
   original_value: string
   converted_value?: string
+  converted_value_data_type?: string
   mime_type?: string
   original_prompt_id?: string
   prompt_metadata?: Record<string, unknown>

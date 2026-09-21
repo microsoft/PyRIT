@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import MappedColumn, Session
 
+from pyrit.memory import SQLiteMemory
 from pyrit.memory.memory_models import (
     AtomicAttackIdentifierEntry,
     AtomicAttackSeedIdentifierEntry,
@@ -414,6 +415,19 @@ def test_embedding_message_with_similarity_forbids_extra():
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPromptMemoryEntry:
+    def test_empty_converted_value_survives_persistence_reload(self, sqlite_instance: SQLiteMemory) -> None:
+        piece = _make_message_piece(original_value="Original nonempty source", converted_value="")
+        sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+
+        recovered = sqlite_instance.get_message_pieces(prompt_ids=[str(piece.id)])
+
+        assert len(recovered) == 1
+        assert recovered[0] is not piece
+        assert recovered[0].original_value == "Original nonempty source"
+        assert recovered[0].converted_value == ""
+        assert recovered[0].original_value_data_type == "text"
+        assert recovered[0].converted_value_data_type == "text"
+
     def test_init_from_message_piece(self):
         piece = _make_message_piece()
         entry = PromptMemoryEntry(entry=piece)

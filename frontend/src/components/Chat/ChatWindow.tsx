@@ -33,6 +33,7 @@ import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
 import {
   basenameFromValue,
+  applyConvertedValues,
   buildMediaUrl,
   buildRequestConverterConfigurations,
   buildDraftPieceIds,
@@ -341,8 +342,10 @@ export default function ChatWindow({
   }, [])
 
   const conversionRevisionKey = useMemo(
-    () => JSON.stringify({ applied: activePieceConversions, pipelines: converters.pipelines }),
-    [activePieceConversions, converters.pipelines],
+    () => JSON.stringify({
+      applied: activePieceConversions, pipelines: converters.pipelines, editRevision: converters.editRevision,
+    }),
+    [activePieceConversions, converters.pipelines, converters.editRevision],
   )
 
   // Auto-open conversation sidebar when loading a historical attack with multiple
@@ -618,14 +621,20 @@ export default function ChatWindow({
 
     try {
       // Build message pieces from text + attachments — always use original text
-      const pieces = await buildMessagePieces(originalValue, attachments)
+      const pieceIds = buildDraftPieceIds(originalValue, attachments, conversions)
+      const originalPieces = await buildMessagePieces(originalValue, attachments)
+      if (textConversion && !originalValue.trim()) {
+        originalPieces.unshift({ data_type: 'text', original_value: originalValue })
+      }
+      const pieces = applyConvertedValues(
+        originalPieces,
+        pieceIds,
+        conversions,
+      )
 
-      // Send converter selections to the backend and let it apply conversions per piece.
-      // Avoid setting converted_value client-side because one converted value does not
-      // necessarily correspond to every piece of the same data type, and any locally
-      // preconverted piece may cause the backend to skip the configuration entirely.
+      // Keep registered converter provenance without rerunning an applied result.
       const requestConverterConfigurations = buildRequestConverterConfigurations(
-        buildDraftPieceIds(originalValue, attachments),
+        pieceIds,
         conversions,
       )
 

@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.backend.mappers.attack_mappers import pyrit_messages_to_dto_async
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AttackSummary,
@@ -40,6 +41,8 @@ from pyrit.backend.services.pagination import (
     normalize_label_filters,
 )
 from pyrit.common.utils import to_sha256
+from pyrit.converter import Converter, ConverterResult
+from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -48,11 +51,12 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    PromptDataType,
     PromptResponseError,
     Score,
 )
 from pyrit.models.conversation_stats import ConversationStats
-from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
 
 @pytest.fixture
@@ -1998,6 +2002,11 @@ class TestAddMessage:
             request_configurations = call_kwargs["request_converter_configurations"]
             assert len(request_configurations) == 1
             assert request_configurations[0].indexes_to_apply == [1]
+            sent_pieces = call_kwargs["message"].message_pieces
+            assert sent_pieces[0].original_value == "Hello"
+            assert sent_pieces[0].converted_value == "SGVsbG8="
+            assert [identifier.class_name for identifier in sent_pieces[0].converter_identifiers] == ["Base64Converter"]
+            assert sent_pieces[1].converter_identifiers == []
             assert len(call_kwargs["response_converter_configurations"]) == 1
             update_call = mock_memory.update_attack_result_by_id.call_args[1]
             assert "atomic_attack_identifier" in update_call["update_fields"]
@@ -2313,6 +2322,159 @@ class TestAttackServiceSingleton:
 @pytest.mark.usefixtures("patch_central_database")
 class TestPersistBase64Pieces:
     """Tests for _persist_base64_pieces_async helper."""
+
+    @pytest.mark.parametrize(
+        ("original_type", "original_value", "converted_type", "converted_value", "expected_types", "extensions"),
+        [
+            (
+                "text",
+                "source",
+                "image_path",
+                "data:image/png;base64,cHJldmlldw==",
+                ["image_path"],
+                [".png"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "text",
+                "Exact description",
+                ["image_path"],
+                [".png"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "audio_path",
+                "data:audio/wav;base64,cHJldmlldw==",
+                ["image_path", "audio_path"],
+                [".png", ".wav"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "image_path",
+                "data:image/jpeg;base64,cHJldmlldw==",
+                ["image_path", "image_path"],
+                [".png", ".jpg"],
+            ),
+        ],
+    )
+    async def test_persists_original_and_converted_media_independently_async(
+        self,
+        *,
+        original_type: PromptDataType,
+        original_value: str,
+        converted_type: PromptDataType,
+        converted_value: str,
+        expected_types: list[PromptDataType],
+        extensions: list[str],
+    ) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type=original_type,
+                    original_value=original_value,
+                    converted_value=converted_value,
+                    converted_value_data_type=converted_type,
+                    mime_type="image/png" if original_type == "image_path" else "text/plain",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        serializers = [MagicMock(value=f"saved-{index}{extension}") for index, extension in enumerate(extensions)]
+        for serializer in serializers:
+            serializer.save_b64_image_async = AsyncMock()
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory", side_effect=serializers) as factory:
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert [call.kwargs["data_type"] for call in factory.call_args_list] == expected_types
+        assert [call.kwargs["extension"] for call in factory.call_args_list] == extensions
+        piece = request.pieces[0]
+        assert piece.data_type == original_type
+        assert piece.converted_value_data_type == converted_type
+        assert piece.original_value == (serializers[0].value if original_type == "image_path" else original_value)
+        assert piece.converted_value == (converted_value if converted_type == "text" else serializers[-1].value)
+        for serializer in serializers:
+            serializer.save_b64_image_async.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("converted_value", "expected_value"),
+        [
+            ("/api/media?path=preview.png", "preview.png"),
+            ("https://example.com/preview.png?token=example", "https://example.com/preview.png?token=example"),
+            ("preview.png", "preview.png"),
+        ],
+    )
+    async def test_converted_media_references_are_not_repersisted_async(
+        self, *, converted_value: str, expected_value: str
+    ) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    original_value="source",
+                    converted_value=converted_value,
+                    converted_value_data_type="image_path",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        with (
+            patch("pyrit.backend.services.media_persistence.Path.is_file", return_value=True),
+            patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory,
+        ):
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert request.pieces[0].original_value == "source"
+        assert request.pieces[0].converted_value == expected_value
+        factory.assert_not_called()
+
+    async def test_identical_original_and_converted_media_saved_once_async(self) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="data:image/png;base64,c291cmNl",
+                    converted_value="data:image/png;base64,c291cmNl",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        serializer = MagicMock(value="saved.png")
+        serializer.save_b64_image_async = AsyncMock()
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory", return_value=serializer):
+            await AttackService._persist_base64_pieces_async(request)
+
+        serializer.save_b64_image_async.assert_awaited_once()
+        assert request.pieces[0].original_value == "saved.png"
+        assert request.pieces[0].converted_value == "saved.png"
+
+    async def test_converted_media_failure_preserves_both_request_values_async(self) -> None:
+        piece = MessagePieceRequest(
+            data_type="image_path",
+            original_value="data:image/png;base64,c291cmNl",
+            converted_value="data:image/png;base64,cHJldmlldw==",
+        )
+        request = AddMessageRequest(pieces=[piece], send=False, target_conversation_id="test-id")
+        before = piece.model_dump()
+        original_serializer = MagicMock(value="source.png")
+        original_serializer.save_b64_image_async = AsyncMock()
+        converted_serializer = MagicMock()
+        converted_serializer.save_b64_image_async = AsyncMock(side_effect=OSError("preview save failed"))
+        with (
+            patch(
+                "pyrit.backend.services.attack_service.data_serializer_factory",
+                side_effect=[original_serializer, converted_serializer],
+            ),
+            pytest.raises(OSError, match="preview save failed"),
+        ):
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert piece.model_dump() == before
 
     async def test_text_pieces_are_unchanged(self, attack_service) -> None:
         """Text pieces should not be modified."""
@@ -3409,6 +3571,238 @@ class TestAttackServiceAdditionalCoverage:
 
         mock_memory.add_conversation_to_memory.assert_not_called()
         mock_memory.add_message_pieces_to_memory.assert_not_called()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestExactPreviewSend:
+    """Exact applied values reach the target without rerunning preview converters."""
+
+    @pytest.mark.parametrize("original_value", ["Original source", ""])
+    @pytest.mark.parametrize("has_converter_pipeline", [True, False])
+    async def test_exact_preview_provenance_survives_memory_and_response_mapping_async(
+        self,
+        *,
+        attack_service: AttackService,
+        sqlite_instance: SQLiteMemory,
+        original_value: str,
+        has_converter_pipeline: bool,
+    ) -> None:
+        conversation_id = str(uuid.uuid4())
+        original_id = str(uuid.uuid4())
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    original_value=original_value,
+                    converted_value="Exact edited preview",
+                    converted_value_data_type="text",
+                    original_prompt_id=original_id,
+                    prompt_metadata={"preview": "applied"},
+                )
+            ],
+            target_conversation_id=conversation_id,
+            target_registry_name="test-target",
+        )
+        converter = MagicMock(spec=Converter)
+        converter.get_identifier.return_value = ComponentIdentifier(
+            class_name="RegisteredPreviewConverter",
+            class_module="pyrit.converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+        converter.convert_tokens_async = AsyncMock(side_effect=AssertionError("Preview must not rerun"))
+        configurations = [ConverterConfiguration(converters=[converter, converter])] if has_converter_pipeline else []
+        target = _make_matching_target_mock()
+        target.send_prompt_async = AsyncMock(return_value=[])
+
+        with patch("pyrit.backend.services.attack_service.get_target_service") as target_service:
+            target_service.return_value.get_target_object.return_value = target
+            await attack_service._send_and_store_message_async(
+                conversation_id=conversation_id,
+                target_registry_name="test-target",
+                request=request,
+                sequence=0,
+                request_converter_configurations=configurations,
+                response_converter_configurations=[],
+                preconverted_indexes={0},
+            )
+
+        converter.convert_tokens_async.assert_not_awaited()
+        sent_piece = target.send_prompt_async.call_args.kwargs["message"].message_pieces[0]
+        assert sent_piece.original_value == original_value
+        assert sent_piece.converted_value == "Exact edited preview"
+        pieces = sqlite_instance.get_message_pieces(conversation_id=conversation_id)
+        assert len(pieces) == 1
+        piece = pieces[0]
+        assert piece.original_value == original_value
+        assert piece.converted_value == "Exact edited preview"
+        assert piece.original_prompt_id == uuid.UUID(original_id)
+        assert piece.prompt_metadata == {"preview": "applied"}
+        assert piece.original_value_sha256 == to_sha256(original_value)
+        assert piece.converted_value_sha256 == to_sha256("Exact edited preview")
+        views = await pyrit_messages_to_dto_async([Message(message_pieces=pieces)])
+        result = views[0].message_pieces[0].model_dump(mode="json")
+        assert result["original_value"] == original_value
+        assert result["converted_value"] == "Exact edited preview"
+        assert result["converted_value_data_type"] == "text"
+        expected_converter_names = (
+            ["RegisteredPreviewConverter", "RegisteredPreviewConverter"] if has_converter_pipeline else []
+        )
+        assert len(result["converter_identifiers"]) == len(expected_converter_names)
+        assert [identifier.class_name for identifier in piece.converter_identifiers] == expected_converter_names
+
+    @pytest.mark.parametrize(
+        ("original_type", "original_value", "converted_type", "converted_value", "expected_original", "expected_final"),
+        [
+            ("text", "source", "text", "", "source", ""),
+            ("text", "", "text", "Edited preview", "", "Edited preview"),
+            ("text", "source", "image_path", "/api/media?path=preview.png", "source", "preview.png"),
+            (
+                "image_path",
+                "/api/media?path=source.png",
+                "text",
+                "Exact description",
+                "source.png",
+                "Exact description",
+            ),
+            (
+                "image_path",
+                "/api/media?path=source.png",
+                "audio_path",
+                "/api/media?path=preview.wav",
+                "source.png",
+                "preview.wav",
+            ),
+        ],
+    )
+    async def test_send_preserves_exact_preview_and_converts_other_piece_async(
+        self,
+        *,
+        attack_service: AttackService,
+        mock_memory: MagicMock,
+        original_type: PromptDataType,
+        original_value: str,
+        converted_type: PromptDataType,
+        converted_value: str,
+        expected_original: str,
+        expected_final: str,
+    ) -> None:
+        mock_memory.get_attack_results.return_value = [make_attack_result(conversation_id="test-id")]
+        preview_converter = MagicMock(spec=Converter)
+        preview_converter.get_identifier.return_value = ComponentIdentifier(
+            class_name="PreviewConverter",
+            class_module="pyrit.converter",
+            params={"supported_input_types": (original_type,), "supported_output_types": (converted_type,)},
+        )
+        preview_converter.convert_tokens_async = AsyncMock(side_effect=AssertionError("Preview must not run again"))
+        live_converter = MagicMock(spec=Converter)
+        live_converter.get_identifier.return_value = ComponentIdentifier(
+            class_name="LiveConverter",
+            class_module="pyrit.converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+        live_converter.convert_tokens_async = AsyncMock(
+            return_value=ConverterResult(output_text="Live conversion", output_type="text")
+        )
+        converters = {"preview": preview_converter, "live": live_converter}
+        target = _make_matching_target_mock()
+        target.send_prompt_async = AsyncMock(return_value=[])
+        original_id = str(uuid.uuid4())
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type=original_type,
+                    original_value=original_value,
+                    converted_value=converted_value,
+                    converted_value_data_type=converted_type,
+                    prompt_metadata={"source": "editing-pane"},
+                    original_prompt_id=original_id,
+                ),
+                MessagePieceRequest(original_value="Unconverted"),
+            ],
+            target_registry_name="test-target",
+            target_conversation_id="test-id",
+            request_converter_configurations=[
+                ConverterConfigurationRequest(
+                    converter_ids=["preview", "preview"],
+                    indexes_to_apply=[0],
+                    prompt_data_types_to_apply=[original_type],
+                ),
+                ConverterConfigurationRequest(converter_ids=["live"], indexes_to_apply=[1]),
+            ],
+        )
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service") as target_service,
+            patch("pyrit.backend.services.attack_service.get_converter_service") as converter_service,
+            patch("pyrit.prompt_normalizer.prompt_normalizer.CentralMemory") as central_memory,
+            patch.object(PromptNormalizer, "_calc_hash_async", new_callable=AsyncMock),
+        ):
+            target_service.return_value.get_target_object.return_value = target
+            converter_service.return_value.get_converter_objects_for_ids.side_effect = lambda *, converter_ids: [
+                converters[converter_id] for converter_id in converter_ids
+            ]
+            central_memory.get_memory_instance.return_value = mock_memory
+
+            await attack_service.add_message_async(attack_result_id="test-id", request=request)
+
+        preview_converter.convert_tokens_async.assert_not_awaited()
+        live_converter.convert_tokens_async.assert_awaited_once()
+        target.send_prompt_async.assert_awaited_once()
+        message = target.send_prompt_async.call_args.kwargs["message"]
+        preview, live = message.message_pieces
+        assert preview.original_value == expected_original
+        assert preview.original_value_data_type == original_type
+        assert preview.converted_value == expected_final
+        assert preview.converted_value_data_type == converted_type
+        assert preview.prompt_metadata == {"source": "editing-pane"}
+        assert preview.original_prompt_id == uuid.UUID(original_id)
+        assert [identifier.class_name for identifier in preview.converter_identifiers] == [
+            "PreviewConverter",
+            "PreviewConverter",
+        ]
+        assert live.original_value == "Unconverted"
+        assert live.converted_value == "Live conversion"
+        assert [identifier.class_name for identifier in live.converter_identifiers] == ["LiveConverter"]
+        assert mock_memory.add_message_to_memory.call_args.kwargs["request"] is message
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        identifier = AtomicAttackIdentifier.model_validate(update_fields["atomic_attack_identifier"])
+        assert [converter.class_name for converter in identifier.attack_technique.attack.request_converters] == [
+            "PreviewConverter",
+            "LiveConverter",
+        ]
+
+    def test_preconverted_provenance_respects_selectors_and_pipeline_order(self) -> None:
+        first = MagicMock(spec=Converter)
+        first.get_identifier.return_value = ComponentIdentifier(class_name="First", class_module="test")
+        second = MagicMock(spec=Converter)
+        second.get_identifier.return_value = ComponentIdentifier(class_name="Second", class_module="test")
+        piece = MessagePiece(
+            role="user",
+            original_value="source",
+            original_value_data_type="text",
+            converted_value="preview.png",
+            converted_value_data_type="image_path",
+        )
+        message = Message(message_pieces=[piece, MessagePiece(role="user", original_value="other")])
+        configurations = [
+            ConverterConfiguration(converters=[first], indexes_to_apply=[1]),
+            ConverterConfiguration(converters=[first], prompt_data_types_to_apply=["audio_path"]),
+            ConverterConfiguration(
+                converters=[first, second, first], indexes_to_apply=[0], prompt_data_types_to_apply=["text"]
+            ),
+            ConverterConfiguration(converters=[second]),
+        ]
+
+        AttackService._set_preconverted_converter_identifiers(
+            message=message, configurations=configurations, preconverted_indexes={0}
+        )
+
+        assert [identifier.class_name for identifier in piece.converter_identifiers] == [
+            "First",
+            "Second",
+            "First",
+            "Second",
+        ]
+        assert message.message_pieces[1].converter_identifiers == []
 
 
 class TestAddMessageGuards:

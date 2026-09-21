@@ -1,4 +1,6 @@
-import type { ConverterConfigurationRequest, ConverterInputPiece, MessageAttachment, PieceConversion } from '@/types'
+import type {
+  ConverterConfigurationRequest, ConverterInputPiece, MessageAttachment, MessagePieceRequest, PieceConversion,
+} from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { mimeTypeToDataType } from '@/utils/messageMapper'
 
@@ -40,10 +42,14 @@ export function buildConverterInputs(text: string, attachments: MessageAttachmen
   ]
 }
 
-/** Match buildMessagePieces ordering, including its omission of empty text. */
-export function buildDraftPieceIds(text: string, attachments: MessageAttachment[]): string[] {
+/** Match request piece ordering, retaining empty original text when it has an applied result. */
+export function buildDraftPieceIds(
+  text: string,
+  attachments: MessageAttachment[],
+  conversions: Record<string, PieceConversion> = {},
+): string[] {
   return buildConverterInputs(text, attachments)
-    .filter((input: ConverterInputPiece) => input.id !== 'text' || text.trim().length > 0)
+    .filter((input: ConverterInputPiece) => input.id !== 'text' || text.trim().length > 0 || conversions.text !== undefined)
     .map((input: ConverterInputPiece) => input.id)
 }
 
@@ -59,5 +65,23 @@ export function buildRequestConverterConfigurations(
       converter_ids: conversion.converterInstanceIds,
       indexes_to_apply: [index],
     }]
+  })
+}
+
+/** Attach applied results by draft identity without changing each piece's original value. */
+export function applyConvertedValues(
+  pieces: MessagePieceRequest[],
+  pieceIds: string[],
+  conversions: Record<string, PieceConversion>,
+): MessagePieceRequest[] {
+  if (Object.keys(conversions).length === 0) return pieces
+  if (pieces.length !== pieceIds.length) throw new Error('Message pieces do not match the draft identities.')
+  return pieces.map((piece: MessagePieceRequest, index: number): MessagePieceRequest => {
+    const conversion = conversions[pieceIds[index]]
+    return conversion ? {
+      ...piece,
+      converted_value: conversion.convertedValue,
+      converted_value_data_type: conversion.convertedDataType,
+    } : piece
   })
 }

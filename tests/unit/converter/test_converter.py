@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import re
-from unittest.mock import patch
+from unittest.mock import AsyncMock, call, patch
 
 import pytest
 from unit.mocks import MockPromptTarget
@@ -102,18 +102,147 @@ async def test_convert_tokens_entire_string_async() -> None:
     assert output.output_type == "text"
 
 
-async def test_convert_tokens_raises_with_non_text_input_type():
+async def test_convert_tokens_raises_with_non_text_input_type_async() -> None:
     prompt = "This is a test ⟪to convert⟪ and ⟫another part⟫."
     converter = Base64Converter()
     with pytest.raises(ValueError, match="Input type must be text when start or end tokens are present."):
-        await converter.convert_tokens_async(prompt=prompt, input_type="non-text")
+        await converter.convert_tokens_async(prompt=prompt, input_type="image_path")
 
 
-async def test_convert_tokens_raises_uneven_tokens():
+async def test_convert_tokens_raises_uneven_tokens_async() -> None:
     converter = Base64Converter()
     prompt = "This is a test ⟪to convert⟫ and ⟪another part."
-    with pytest.raises(ValueError, match="Uneven number of start tokens and end tokens."):
+    with pytest.raises(ValueError, match="Unmatched start token"):
         await converter.convert_tokens_async(prompt=prompt)
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        (" \tBefore\r\n⟪one\ntwo⟫ \n⟪three⟫\tAfter\r\n", " \tBefore\r\nONE\nTWO \nTHREE\tAfter\r\n"),
+        ("⟪one⟫⟪two⟫", "ONETWO"),
+        ("⟪ \n\t⟫", " \n\t"),
+    ],
+)
+async def test_convert_tokens_preserves_unmarked_text_async(*, prompt: str, expected: str) -> None:
+    converter = RandomCapitalLettersConverter(percentage=100)
+    result = await converter.convert_tokens_async(prompt=prompt)
+    assert result.output_text == expected
+    assert result.output_type == "text"
+
+
+@pytest.mark.parametrize(
+    ("start_token", "end_token"),
+    [("<<", ">>"), ("[.*", ".*]"), ("|", "|"), ("<", "</>")],
+)
+async def test_convert_tokens_custom_delimiters_async(*, start_token: str, end_token: str) -> None:
+    converter = Base64Converter()
+    result = await converter.convert_tokens_async(
+        prompt=f"keep {start_token}test{end_token} and {start_token}test2{end_token}",
+        start_token=start_token,
+        end_token=end_token,
+    )
+    assert result.output_text == "keep dGVzdA== and dGVzdDI="
+    assert result.output_type == "text"
+
+
+async def test_convert_tokens_custom_delimiters_leave_default_markers_literal_async() -> None:
+    converter = Base64Converter()
+    with patch.object(converter, "convert_async", new_callable=AsyncMock) as convert:
+        convert.return_value = ConverterResult(output_text="converted", output_type="text")
+        result = await converter.convert_tokens_async(prompt="⟪literal⟫ [test]", start_token="[", end_token="]")
+    convert.assert_awaited_once_with(prompt="test", input_type="text")
+    assert result.output_text == "⟪literal⟫ converted"
+
+
+@pytest.mark.parametrize(
+    ("prompt", "error"),
+    [
+        ("unmatched ⟪start", "Unmatched start token"),
+        ("unmatched end⟫", "Unmatched end token"),
+        ("⟫reversed⟪", "Unmatched end token"),
+        ("⟪outer ⟪inner⟫ outer⟫", "Nested start token"),
+        ("⟪⟫", "Empty marked region"),
+        ("⟪valid⟫ then ⟪unclosed", "Unmatched start token"),
+        ("⟪valid⟫ then unmatched⟫", "Unmatched end token"),
+        ("⟪valid⟫ then ⟪outer ⟪inner⟫⟫", "Nested start token"),
+        ("⟪valid⟫ then ⟪⟫", "Empty marked region"),
+    ],
+)
+async def test_convert_tokens_validates_all_regions_before_conversion_async(*, prompt: str, error: str) -> None:
+    converter = Base64Converter()
+    with patch.object(converter, "convert_async", new_callable=AsyncMock) as convert:
+        with pytest.raises(ValueError, match=error):
+            await converter.convert_tokens_async(prompt=prompt)
+    convert.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("start_token", "end_token"), [("", "⟫"), ("⟪", ""), ("", "")])
+async def test_convert_tokens_rejects_empty_delimiters_async(*, start_token: str, end_token: str) -> None:
+    converter = Base64Converter()
+    with patch.object(converter, "convert_async", new_callable=AsyncMock) as convert:
+        with pytest.raises(ValueError, match="tokens must be non-empty"):
+            await converter.convert_tokens_async(prompt="plain text", start_token=start_token, end_token=end_token)
+    convert.assert_not_awaited()
+
+
+async def test_convert_tokens_assembles_original_spans_without_rematching_output_async() -> None:
+    converter = Base64Converter()
+    with patch.object(converter, "convert_async", new_callable=AsyncMock) as convert:
+        convert.side_effect = [
+            ConverterResult(output_text="generated ⟪same⟫ and ⟪other⟫", output_type="text"),
+            ConverterResult(output_text="second", output_type="text"),
+            ConverterResult(output_text="third ⟪", output_type="text"),
+        ]
+        result = await converter.convert_tokens_async(prompt="⟪same⟫ / ⟪same⟫ / ⟪other⟫")
+    assert convert.await_args_list == [
+        call(prompt="same", input_type="text"),
+        call(prompt="same", input_type="text"),
+        call(prompt="other", input_type="text"),
+    ]
+    assert result.output_text == "generated ⟪same⟫ and ⟪other⟫ / second / third ⟪"
+
+
+@pytest.mark.parametrize(
+    ("input_types", "output_types"),
+    [(("image_path",), ("text",)), (("text",), ("image_path",))],
+)
+async def test_convert_tokens_rejects_incompatible_capabilities_async(
+    *, input_types: tuple[PromptDataType, ...], output_types: tuple[PromptDataType, ...]
+) -> None:
+    converter = Base64Converter()
+    with (
+        patch.object(converter, "SUPPORTED_INPUT_TYPES", input_types),
+        patch.object(converter, "SUPPORTED_OUTPUT_TYPES", output_types),
+        patch.object(converter, "convert_async", new_callable=AsyncMock) as convert,
+    ):
+        with pytest.raises(ValueError, match="supporting text input and text output"):
+            await converter.convert_tokens_async(prompt="keep ⟪selected⟫")
+    convert.assert_not_awaited()
+
+
+async def test_convert_tokens_rejects_actual_nontext_result_async() -> None:
+    converter = Base64Converter()
+    with patch.object(converter, "convert_async", new_callable=AsyncMock) as convert:
+        convert.return_value = ConverterResult(output_text="output.png", output_type="image_path")
+        with pytest.raises(ValueError, match="requires text output, but received image_path"):
+            await converter.convert_tokens_async(prompt="keep ⟪selected⟫")
+    convert.assert_awaited_once_with(prompt="selected", input_type="text")
+
+
+@pytest.mark.parametrize(
+    ("input_type", "output_type"),
+    [("text", "image_path"), ("audio_path", "text"), ("image_path", "image_path")],
+)
+async def test_convert_tokens_unmarked_media_delegates_unchanged_async(
+    *, input_type: PromptDataType, output_type: PromptDataType
+) -> None:
+    converter = Base64Converter()
+    expected = ConverterResult(output_text="converted", output_type=output_type)
+    with patch.object(converter, "convert_async", new_callable=AsyncMock, return_value=expected) as convert:
+        result = await converter.convert_tokens_async(prompt="unmarked", input_type=input_type)
+    assert result is expected
+    convert.assert_awaited_once_with(prompt="unmarked", input_type=input_type)
 
 
 async def test_base64_converter() -> None:

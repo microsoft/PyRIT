@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import {
+  AddMessageResponse,
   BackendMessage,
   ConverterInstance,
   Message,
@@ -2876,7 +2877,7 @@ describe("ChatWindow Integration", () => {
     );
 
     expect(await screen.findByText(/live\.png/)).toBeInTheDocument();
-    expect(screen.getByRole("textbox")).toHaveValue("live draft");
+    expect(screen.getByTestId("chat-input")).toHaveValue("live draft");
     expect(await screen.findByTestId("converted-file-chip")).toHaveTextContent("live.pdf");
     await user.click(screen.getByRole("button", { name: /send message/i }));
     await waitFor(() => {
@@ -5413,6 +5414,131 @@ describe("ChatWindow Integration", () => {
     expect(mockedAttacksApi.addMessage.mock.calls[0][1].request_converter_configurations)
       .toEqual([{ converter_ids: ["base64"], indexes_to_apply: [0] }]);
     expect(mockedAttacksApi.addMessage.mock.calls[1][1].request_converter_configurations).toBeUndefined();
+  });
+
+  it.each(["Working input - Text", "Stage 1 output - Text"])(
+    "keeps unapplied edits to %s made while a send is pending",
+    async (editorLabel: string) => {
+      const user = userEvent.setup();
+      let finishSend: (response: AddMessageResponse) => void = () => { throw new Error("Send not started"); };
+      mockedConvertersApi.listConverters.mockResolvedValue({ items: [makeConverterInstance("base64", "Base64Converter")] });
+      mockedConvertersApi.previewConversion.mockResolvedValue({
+        original_value: "hello", original_value_data_type: "text",
+        converted_value: "aGVsbG8=", converted_value_data_type: "text",
+        steps: [{
+          converter_id: "base64", converter_type: "Base64Converter",
+          input_value: "hello", input_data_type: "text", output_value: "aGVsbG8=", output_data_type: "text",
+        }],
+      });
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.buildMessagePieces.mockImplementation(actualMessageMapper.buildMessagePieces);
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+      mockedAttacksApi.addMessage.mockImplementation(() => new Promise((resolve) => { finishSend = resolve; }));
+      render(<TestWrapper><ChatWindow
+        {...defaultProps} attackResultId="ar-editing" conversationId="conv-editing" activeConversationId="conv-editing"
+      /></TestWrapper>);
+      await waitFor(() => expect(screen.getByTestId("chat-input")).toBeEnabled());
+      await user.type(screen.getByTestId("chat-input"), "hello");
+      await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+      await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
+      await user.click(await screen.findByRole("option", { name: /Base64Converter/ }));
+      await user.click(screen.getByRole("button", { name: "Convert", exact: true }));
+      await screen.findByRole("textbox", { name: "Stage 1 output - Text" });
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(mockedAttacksApi.addMessage).toHaveBeenCalledTimes(1));
+      const editor = screen.getByRole("textbox", { name: editorLabel });
+      await user.clear(editor);
+      await user.type(editor, "next draft");
+
+      await act(async () => { finishSend({
+        attack: {
+          attack_result_id: "ar-editing", conversation_id: "conv-editing",
+          attack_type: "ManualAttack", objective: "", converters: [], message_count: 2,
+          related_conversation_ids: [], labels: {}, created_at: "", updated_at: "",
+        },
+        messages: { messages: [] },
+      }); });
+
+      expect(screen.getByTestId("chat-input")).toHaveValue("hello");
+      expect(screen.getByRole("textbox", { name: editorLabel })).toHaveValue("next draft");
+      expect(screen.getByRole("button", { name: "Add converted value" })).toBeEnabled();
+    },
+  );
+
+  it.each(["original chat", ""])("sends the exact edited pane result with original text %j", async (original: string) => {
+    const user = userEvent.setup();
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [makeConverterInstance("base64", "Base64Converter")] });
+    mockedConvertersApi.previewConversion.mockResolvedValue({
+      original_value: "working draft", original_value_data_type: "text",
+      converted_value: "generated", converted_value_data_type: "text",
+      steps: [{
+        converter_id: "base64", converter_type: "Base64Converter",
+        input_value: "working draft", input_data_type: "text", output_value: "generated", output_data_type: "text",
+      }],
+    });
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.buildMessagePieces.mockImplementation(actualMessageMapper.buildMessagePieces);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedAttacksApi.addMessage.mockImplementation(() => new Promise(() => {}));
+    render(<TestWrapper><ChatWindow
+      {...defaultProps} attackResultId="ar-edited" conversationId="conv-edited" activeConversationId="conv-edited"
+    /></TestWrapper>);
+    await waitFor(() => expect(screen.getByTestId("chat-input")).toBeEnabled());
+    if (original) await user.type(screen.getByTestId("chat-input"), original);
+    await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+    await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
+    await user.click(await screen.findByRole("option", { name: /Base64Converter/ }));
+    const working = screen.getByRole("textbox", { name: "Working input - Text" });
+    await user.clear(working);
+    await user.type(working, "working draft");
+    expect(screen.getByTestId("chat-input")).toHaveValue(original);
+    await user.click(screen.getByRole("button", { name: "Convert", exact: true }));
+    const output = await screen.findByRole("textbox", { name: "Stage 1 output - Text" });
+    await user.clear(output);
+    await user.type(output, "final manual result");
+    await user.click(screen.getByRole("button", { name: "Add converted value" }));
+    expect(screen.getByTestId("chat-input")).toHaveValue(original);
+    expect(screen.getByRole("textbox", { name: /converted prompt/i })).toHaveValue("final manual result");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockedAttacksApi.addMessage).toHaveBeenCalledWith("ar-edited", expect.objectContaining({
+      pieces: [{
+        data_type: "text", original_value: original,
+        converted_value: "final manual result", converted_value_data_type: "text",
+      }],
+      request_converter_configurations: [{ converter_ids: ["base64"], indexes_to_apply: [0] }],
+    })));
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a manual conversion when only the pane working input is edited", async () => {
+    const user = userEvent.setup();
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [] });
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.buildMessagePieces.mockImplementation(actualMessageMapper.buildMessagePieces);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedAttacksApi.addMessage.mockImplementation(() => new Promise(() => {}));
+    render(<TestWrapper><ChatWindow
+      {...defaultProps} attackResultId="ar-manual" conversationId="conv-manual" activeConversationId="conv-manual"
+    /></TestWrapper>);
+    await waitFor(() => expect(screen.getByTestId("chat-input")).toBeEnabled());
+    await user.type(screen.getByTestId("chat-input"), "original chat");
+    await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+    const working = await screen.findByRole("textbox", { name: "Working input - Text" });
+    await user.clear(working);
+    await user.type(working, "manual result");
+    await user.click(screen.getByRole("button", { name: "Add converted value" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(mockedAttacksApi.addMessage).toHaveBeenCalledWith("ar-manual", expect.objectContaining({
+      pieces: [{
+        data_type: "text",
+        original_value: "original chat",
+        converted_value: "manual result",
+        converted_value_data_type: "text",
+      }],
+      request_converter_configurations: undefined,
+    })));
+    expect(mockedConvertersApi.previewConversion).not.toHaveBeenCalled();
   });
 
   it("should render converted-file chip and synthesize file attachment when a text→file converter is used", async () => {

@@ -8,6 +8,8 @@ import type {
   ConverterInputPiece,
   ConverterPipelineStage,
   ConverterPreviewResponse,
+  ConverterPreviewStep,
+  ConverterStageResult,
   MessageAttachment,
   PieceConversion,
 } from '@/types'
@@ -22,13 +24,23 @@ interface ConversionState {
   sourceInputs: ConverterInputPiece[]
   inputs: VersionedInput[]
   nextRevision: number
+  workingInputs: Record<string, string>
   pipelines: Record<string, ConverterPipelineStage[]>
   pipelineRevisions: Record<string, number>
-  results: Record<string, ConverterPreviewResponse>
+  stageResults: Record<string, ConverterStageResult[]>
   errors: Record<string, string>
   applied: Record<string, PieceConversion>
   runId: number
   isConverting: boolean
+}
+
+interface ConversionJob {
+  input: VersionedInput
+  pipeline: ConverterPipelineStage[]
+  prefix: ConverterStageResult[]
+  start: number
+  value: string
+  dataType: string
 }
 
 function omitPieces<T>(values: Record<string, T>, ids: Set<string>): Record<string, T> {
@@ -54,7 +66,8 @@ function reconcileInputs(state: ConversionState, inputs: ConverterInputPiece[]):
     sourceInputs: inputs,
     inputs: versionedInputs,
     nextRevision,
-    results: omitPieces(state.results, changed),
+    workingInputs: omitPieces(state.workingInputs, changed),
+    stageResults: omitPieces(state.stageResults, changed),
     errors: omitPieces(state.errors, changed),
     applied: omitPieces(state.applied, changed),
   }
@@ -62,14 +75,19 @@ function reconcileInputs(state: ConversionState, inputs: ConverterInputPiece[]):
 
 function changePipeline(state: ConversionState, pieceType: string, stages: ConverterPipelineStage[]): ConversionState {
   const previous = state.pipelines[pieceType] ?? []
-  if (previous.length === stages.length && previous.every(
-    (stage: ConverterPipelineStage, index: number) => stage === stages[index],
-  )) {
-    return state
-  }
+  let prefixLength = 0
+  while (
+    prefixLength < previous.length && prefixLength < stages.length
+    && previous[prefixLength].id === stages[prefixLength].id
+    && previous[prefixLength].converterId === stages[prefixLength].converterId
+  ) prefixLength++
+  if (prefixLength === previous.length && prefixLength === stages.length) return state
+
   const affected = new Set(state.inputs
     .filter((input: VersionedInput) => input.pieceType === pieceType)
     .map((input: VersionedInput) => input.id))
+  const stageResults = { ...state.stageResults }
+  for (const id of affected) stageResults[id] = (stageResults[id] ?? []).slice(0, prefixLength)
   return {
     ...state,
     pipelines: { ...state.pipelines, [pieceType]: stages },
@@ -77,20 +95,52 @@ function changePipeline(state: ConversionState, pieceType: string, stages: Conve
       ...state.pipelineRevisions,
       [pieceType]: (state.pipelineRevisions[pieceType] ?? 0) + 1,
     },
-    results: omitPieces(state.results, affected),
+    stageResults,
     errors: omitPieces(state.errors, affected),
     applied: omitPieces(state.applied, affected),
   }
 }
 
-function makeConversion(input: ConverterInputPiece, ids: string[], response: ConverterPreviewResponse): PieceConversion {
+function completedResults(state: ConversionState): Record<string, ConverterPreviewResponse> {
+  const results: Record<string, ConverterPreviewResponse> = {}
+  for (const input of state.inputs) {
+    const pipeline = state.pipelines[input.pieceType] ?? []
+    const stages = state.stageResults[input.id] ?? []
+    const workingValue = state.workingInputs[input.id]
+    if (stages.length === 0 && workingValue !== undefined && workingValue !== input.value) {
+      results[input.id] = {
+        original_value: input.value,
+        original_value_data_type: input.dataType,
+        converted_value: workingValue,
+        converted_value_data_type: input.dataType,
+        steps: [],
+      }
+      continue
+    }
+    const last = stages[stages.length - 1]
+    if (!last || stages.length !== pipeline.length || stages.some(
+      (stage: ConverterStageResult, index: number) => stage.stageId !== pipeline[index].id,
+    )) continue
+    results[input.id] = {
+      original_value: input.value,
+      original_value_data_type: input.dataType,
+      converted_value: last.value,
+      converted_value_data_type: last.generated.output_data_type,
+      steps: stages.map((stage: ConverterStageResult) => stage.generated),
+    }
+  }
+  return results
+}
+
+function invalidatePiece(state: ConversionState, pieceId: string): ConversionState {
+  const revision = state.nextRevision + 1
+  const ids = new Set([pieceId])
   return {
-    pieceId: input.id,
-    pieceType: input.pieceType,
-    converterInstanceIds: [...ids],
-    originalValue: input.value,
-    convertedValue: response.converted_value,
-    convertedDataType: response.converted_value_data_type,
+    ...state,
+    nextRevision: revision,
+    inputs: state.inputs.map((input: VersionedInput) => input.id === pieceId ? { ...input, revision } : input),
+    errors: omitPieces(state.errors, ids),
+    applied: omitPieces(state.applied, ids),
   }
 }
 
@@ -100,19 +150,19 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     sourceInputs: inputs,
     inputs: inputs.map((input: ConverterInputPiece) => ({ ...input, revision: 0 })),
     nextRevision: 0,
+    workingInputs: {},
     pipelines: {},
     pipelineRevisions: {},
-    results: {},
+    stageResults: {},
     errors: {},
     applied: {},
     runId: 0,
     isConverting: false,
   }))
   const nextRunId = useRef(0)
+  const activeRun = useRef<number | null>(null)
 
-  if (state.sourceInputs !== inputs) {
-    setState(reconcileInputs(state, inputs))
-  }
+  if (state.sourceInputs !== inputs) setState(reconcileInputs(state, inputs))
 
   const setPipeline = useCallback((
     pieceType: string,
@@ -138,49 +188,106 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     })
   }, [])
 
-  const convert = async (): Promise<void> => {
-    if (state.isConverting) return
-    const selectedInputs = state.inputs.filter((input: VersionedInput) => (
-      input.value.trim() && state.pipelines[input.pieceType]?.length
-    ))
-    if (selectedInputs.length === 0) return
+  const editInput = useCallback((pieceId: string, value: string): void => {
+    setState((current: ConversionState) => {
+      const input = current.inputs.find((candidate: VersionedInput) => candidate.id === pieceId)
+      if (!input || input.dataType !== 'text' || (current.workingInputs[pieceId] ?? input.value) === value) return current
+      return {
+        ...invalidatePiece(current, pieceId),
+        workingInputs: { ...current.workingInputs, [pieceId]: value },
+        stageResults: { ...current.stageResults, [pieceId]: [] },
+      }
+    })
+  }, [])
+
+  const editStageOutput = useCallback((pieceId: string, stageId: string, value: string): void => {
+    setState((current: ConversionState) => {
+      const stages = current.stageResults[pieceId] ?? []
+      const index = stages.findIndex((stage: ConverterStageResult) => stage.stageId === stageId)
+      const stage = stages[index]
+      if (!stage || stage.generated.output_data_type !== 'text' || stage.value === value) return current
+      return {
+        ...invalidatePiece(current, pieceId),
+        stageResults: {
+          ...current.stageResults,
+          [pieceId]: [...stages.slice(0, index), { ...stage, value }],
+        },
+      }
+    })
+  }, [])
+
+  const runConversion = async (pieceId?: string, afterStageId?: string): Promise<void> => {
+    if (activeRun.current !== null) return
+    const selected = state.inputs.flatMap((input: VersionedInput): ConversionJob[] => {
+      if (pieceId !== undefined && pieceId !== input.id) return []
+      const pipeline = state.pipelines[input.pieceType] ?? []
+      const previous = state.stageResults[input.id] ?? []
+      const boundary = afterStageId === undefined ? -1 : previous.findIndex(
+        (stage: ConverterStageResult) => stage.stageId === afterStageId,
+      )
+      if (afterStageId !== undefined && boundary < 0) return []
+      const start = boundary + 1
+      const value = boundary < 0 ? state.workingInputs[input.id] ?? input.value : previous[boundary].value
+      const dataType = boundary < 0 ? input.dataType : previous[boundary].generated.output_data_type
+      if (start >= pipeline.length || !value.trim()) return []
+      return [{ input, pipeline, prefix: previous.slice(0, start), start, value, dataType }]
+    })
+    if (selected.length === 0) return
     const runId = ++nextRunId.current
+    activeRun.current = runId
+    const affected = new Set(selected.map(({ input }: ConversionJob) => input.id))
     setState((current: ConversionState) => ({
-      ...current, runId, isConverting: true, results: {}, errors: {}, applied: {},
+      ...current,
+      runId,
+      isConverting: true,
+      stageResults: {
+        ...current.stageResults,
+        ...Object.fromEntries(selected.map(({ input, prefix }: ConversionJob) => [input.id, prefix])),
+      },
+      errors: omitPieces(current.errors, affected),
+      applied: omitPieces(current.applied, affected),
     }))
 
-    const outcomes = await Promise.all(selectedInputs.map(async (input: VersionedInput) => {
-      const converterIds = state.pipelines[input.pieceType].map((stage: ConverterPipelineStage) => stage.converterId)
+    const outcomes = await Promise.all(selected.map(async ({
+      input, pipeline, prefix, start, value, dataType,
+    }: ConversionJob) => {
       const pipelineRevision = state.pipelineRevisions[input.pieceType]
       try {
-        const value = input.file
+        const requestValue = start === 0 && input.file && state.workingInputs[input.id] === undefined
           ? `data:${input.file.type || 'application/octet-stream'};base64,${await fileToBase64(input.file)}`
-          : input.value
+          : value
+        const remaining = pipeline.slice(start)
         const response = await convertersApi.previewConversion({
-          original_value: value,
-          original_value_data_type: input.dataType,
-          converter_ids: converterIds,
+          original_value: requestValue,
+          original_value_data_type: dataType,
+          converter_ids: remaining.map((stage: ConverterPipelineStage) => stage.converterId),
         })
-        return { input, pipelineRevision, response }
+        if (response.steps.length !== remaining.length || response.steps.some(
+          (step: ConverterPreviewStep, index: number) => step.converter_id !== remaining[index].converterId,
+        )) throw new Error('The conversion response does not match the requested stages.')
+        const stages: ConverterStageResult[] = response.steps.map((step: ConverterPreviewStep, index: number) => ({
+          stageId: remaining[index].id, generated: step, value: step.output_value,
+        }))
+        return { input, pipelineRevision, stages: [...prefix, ...stages] }
       } catch (error) {
-        return { input, pipelineRevision, error: toApiError(error).detail }
+        return { input, pipelineRevision, error: `Conversion from stage ${start + 1} failed: ${toApiError(error).detail}` }
       }
     }))
-
+    if (activeRun.current === runId) activeRun.current = null
     setState((current: ConversionState) => {
       if (current.runId !== runId) return current
-      const results: Record<string, ConverterPreviewResponse> = {}
-      const errors: Record<string, string> = {}
+      const stageResults = { ...current.stageResults }
+      const errors = { ...current.errors }
       for (const outcome of outcomes) {
         const input = current.inputs.find((candidate: VersionedInput) => candidate.id === outcome.input.id)
         if (
           !input || input.revision !== outcome.input.revision
           || current.pipelineRevisions[input.pieceType] !== outcome.pipelineRevision
         ) continue
-        if (outcome.response) results[input.id] = outcome.response
+        if (outcome.stages) stageResults[input.id] = outcome.stages
         else if (outcome.error) errors[input.id] = outcome.error
       }
-      return { ...current, results, errors, isConverting: false }
+      return { ...current, stageResults, errors, isConverting: false }
     })
   }
 
@@ -188,11 +295,17 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     setState((current: ConversionState) => {
       if (current.isConverting) return current
       const applied: Record<string, PieceConversion> = {}
+      const results = completedResults(current)
       for (const input of current.inputs) {
-        const result = current.results[input.id]
-        if (result) {
-          const converterIds = current.pipelines[input.pieceType].map((stage: ConverterPipelineStage) => stage.converterId)
-          applied[input.id] = makeConversion(input, converterIds, result)
+        const result = results[input.id]
+        if (!result) continue
+        applied[input.id] = {
+          pieceId: input.id,
+          pieceType: input.pieceType,
+          converterInstanceIds: result.steps.map((step: ConverterPreviewStep) => step.converter_id),
+          originalValue: input.value,
+          convertedValue: result.converted_value,
+          convertedDataType: result.converted_value_data_type,
         }
       }
       return { ...current, applied }
@@ -204,8 +317,9 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   }, [])
 
   const clearAll = useCallback((): void => {
+    activeRun.current = null
     setState((current: ConversionState) => ({
-      ...current, runId: 0, isConverting: false, results: {}, errors: {}, applied: {},
+      ...current, runId: 0, isConverting: false, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
     }))
   }, [])
 
@@ -222,6 +336,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     restoredAttachments: MessageAttachment[],
     conversions: Record<string, PieceConversion>,
   ): void => {
+    activeRun.current = null
     const restoredPipelines: Record<string, ConverterPipelineStage[]> = {}
     for (const conversion of Object.values(conversions)) {
       restoredPipelines[conversion.pieceType] = conversion.converterInstanceIds.map((converterId: string) => ({
@@ -234,27 +349,31 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
         const previous = next.pipelines[pieceType] ?? []
         if (previous.length !== stages.length || previous.some(
           (stage: ConverterPipelineStage, index: number) => stage.converterId !== stages[index].converterId,
-        )) {
-          next = changePipeline(next, pieceType, stages)
-        }
+        )) next = changePipeline(next, pieceType, stages)
       }
       return {
-        ...next, applied: { ...conversions }, results: {}, errors: {}, runId: 0, isConverting: false,
+        ...next, applied: { ...conversions }, workingInputs: {}, stageResults: {}, errors: {}, runId: 0, isConverting: false,
       }
     })
   }, [])
 
   return {
+    editRevision: state.nextRevision,
     inputs: state.inputs,
+    workingInputs: state.workingInputs,
     pipelines: state.pipelines,
-    results: state.results,
+    stageResults: state.stageResults,
+    results: completedResults(state),
     errors: state.errors,
     applied: state.applied,
     isConverting: state.isConverting,
     addConverter,
     setPipeline,
     retainConverters,
-    convert,
+    convert: () => runConversion(),
+    convertRemaining: (pieceId: string, stageId: string) => runConversion(pieceId, stageId),
+    editInput,
+    editStageOutput,
     apply,
     clear,
     clearAll,

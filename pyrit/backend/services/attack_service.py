@@ -21,7 +21,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from pyrit.backend.mappers import (
     attack_result_to_summary_async,
@@ -65,6 +65,7 @@ from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory, data_serializer_factory
 from pyrit.models import (
+    MEDIA_PATH_DATA_TYPES,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackOutcome,
@@ -75,7 +76,7 @@ from pyrit.models import (
     ConversationStats,
     ConversationType,
     ConverterIdentifier,
-    PromptDataType,
+    Message,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
@@ -1084,7 +1085,7 @@ class AttackService:
     @staticmethod
     async def _persist_base64_pieces_async(request: AddMessageRequest) -> None:
         """
-        Persist base64-encoded non-text pieces to disk, updating values in-place.
+        Resolve original and converted media independently, updating values in-place.
 
         The frontend sends binary media (images, audio, etc.) as base64 strings
         with a ``*_path`` data_type.  The PyRIT target layer expects ``*_path``
@@ -1097,22 +1098,38 @@ class AttackService:
         exists in storage.
         """
         for piece in request.pieces:
-            # Only persist *_path types (image_path, audio_path, video_path, binary_path).
-            # Other non-text types (url, reasoning, function_call, tool_call, etc.)
-            # are text-like and must not be base64-decoded.
-            if not piece.data_type.endswith("_path"):
-                continue
+            original_value = piece.original_value
+            converted_value = piece.converted_value
+            converted_type = piece.converted_value_data_type or piece.data_type
+            if piece.data_type in MEDIA_PATH_DATA_TYPES:
+                result = await persist_media_value_async(
+                    value=original_value,
+                    data_type=piece.data_type,
+                    mime_type=piece.mime_type,
+                    serializer_factory=data_serializer_factory,
+                )
+                if result.resolved:
+                    original_value = result.value
+                    if converted_value is None or (
+                        converted_value == piece.original_value and converted_type == piece.data_type
+                    ):
+                        converted_value = original_value
 
-            result = await persist_media_value_async(
-                value=piece.original_value,
-                data_type=cast("PromptDataType", piece.data_type),
-                mime_type=piece.mime_type,
-                serializer_factory=data_serializer_factory,
-            )
-            if result.resolved:
-                piece.original_value = result.value
-                if piece.converted_value is None:
-                    piece.converted_value = result.value
+            if (
+                converted_value is not None
+                and converted_type in MEDIA_PATH_DATA_TYPES
+                and (converted_value != original_value or converted_type != piece.data_type)
+            ):
+                result = await persist_media_value_async(
+                    value=converted_value,
+                    data_type=converted_type,
+                    serializer_factory=data_serializer_factory,
+                )
+                if result.resolved:
+                    converted_value = result.value
+
+            piece.original_value = original_value
+            piece.converted_value = converted_value
 
     async def _store_prepended_messages_async(
         self,
@@ -1161,6 +1178,11 @@ class AttackService:
             request=request,
             conversation_id=conversation_id,
             sequence=sequence,
+        )
+        self._set_preconverted_converter_identifiers(
+            message=pyrit_message,
+            configurations=request_converter_configurations,
+            preconverted_indexes=preconverted_indexes,
         )
 
         request_converter_configurations = self._exclude_preconverted_piece_indexes(
@@ -1279,6 +1301,25 @@ class AttackService:
             )
             for configuration in configurations or []
         ]
+
+    @staticmethod
+    def _set_preconverted_converter_identifiers(
+        *,
+        message: Message,
+        configurations: list[ConverterConfiguration],
+        preconverted_indexes: set[int],
+    ) -> None:
+        """Record registered preview pipelines, selecting by the original input type."""
+        for index in preconverted_indexes:
+            piece = message.message_pieces[index]
+            for configuration in configurations:
+                indexes = configuration.indexes_to_apply
+                data_types = configuration.prompt_data_types_to_apply
+                if indexes is not None and index not in indexes:
+                    continue
+                if data_types is not None and piece.original_value_data_type not in data_types:
+                    continue
+                piece.converter_identifiers.extend(converter.get_identifier() for converter in configuration.converters)
 
     @staticmethod
     def _exclude_preconverted_piece_indexes(
