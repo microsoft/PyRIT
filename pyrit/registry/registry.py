@@ -32,6 +32,7 @@ import threading
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
+from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.resolution import (
     derive_parameters,
@@ -43,12 +44,14 @@ if TYPE_CHECKING:
     from types import ModuleType
     from typing import Self
 
+    from pyrit.models import Identifiable
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.models.parameter import ComponentType, Parameter
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+InstanceT = TypeVar("InstanceT", bound="Identifiable")
 MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
 ConfigurableT = TypeVar("ConfigurableT", bound="SupportsParamBag")
 
@@ -734,6 +737,68 @@ class Registry(ABC, Generic[T, MetadataT]):
             Iterator[str]: An iterator over sorted registered names.
         """
         return iter(self.get_class_names())
+
+
+class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
+    """
+    Registry that builds classes and stores named, configured instances.
+
+    Extends the class-catalog and construction behavior of ``Registry`` with a
+    typed ``instances`` container. This keeps construction on the owning component
+    registry while ``InstanceRegistry`` remains responsible only for storing and
+    retrieving already-built objects.
+
+    Type Parameters:
+        InstanceT: The identifiable component type that this registry builds and stores.
+        MetadataT: The metadata dataclass for buildable classes.
+    """
+
+    def __init__(
+        self,
+        *,
+        lazy_discovery: bool = True,
+        reserved_instance_names: set[str] | frozenset[str] | None = None,
+    ) -> None:
+        """
+        Initialize the class catalog and typed instance container.
+
+        Args:
+            lazy_discovery (bool): If True, class discovery is deferred until first
+                access. If False, discovery runs immediately.
+            reserved_instance_names (set[str] | frozenset[str] | None): Names that
+                cannot be used for stored instances.
+        """
+        super().__init__(lazy_discovery=lazy_discovery)
+        self.instances: InstanceRegistry[InstanceT] = DefaultInstanceRegistry(
+            instance_type=self._base_type,
+            reserved_names=reserved_instance_names,
+        )
+
+    def create_named_instance(
+        self,
+        *,
+        name: str,
+        type_name: str,
+        params: Mapping[str, object] | None = None,
+        registry_metadata: dict[str, Any] | None = None,
+    ) -> InstanceT:
+        """
+        Build and store a configured instance under an explicit name.
+
+        Args:
+            name (str): The unique instance name.
+            type_name (str): The registered class name to build.
+            params (Mapping[str, object] | None): Constructor arguments.
+            registry_metadata (dict[str, Any] | None): Per-entry metadata to store
+                with the instance.
+
+        Returns:
+            InstanceT: The constructed and registered instance.
+        """
+        self.instances.validate_name_available(name)
+        instance = self.create_instance(type_name, **dict(params) if params is not None else {})
+        self.instances.register(instance, name=name, metadata=registry_metadata)
+        return instance
 
 
 class ParamBagRegistry(Registry[ConfigurableT, MetadataT]):

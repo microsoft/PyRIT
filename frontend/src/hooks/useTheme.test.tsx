@@ -8,10 +8,14 @@ import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { ThemeProvider, resolveTheme, useTheme } from './useTheme'
 import type { ThemeMode } from './useTheme'
+import { THEME_PRESETS } from '@/themes/themePresets'
 
 const STORAGE_KEY = 'pyrit.themeMode'
 const FORCED_COLORS_QUERY = '(forced-colors: active)'
 const PREFERS_DARK_QUERY = '(prefers-color-scheme: dark)'
+const CUSTOM_MODES = [
+  'raccoon', 'jimothy', 'pirate', 'seattle-rain', 'evergreen', 'blueprint', 'night-sky',
+] as const
 
 type MediaListener = (event: MediaQueryListEvent) => void
 
@@ -272,9 +276,49 @@ describe('useTheme / ThemeProvider', () => {
     expect(prefersDark.removeEventListener).toHaveBeenCalledWith('change', expect.any(Function))
   })
 
-  it.each<[ThemeMode]>([['system'], ['light'], ['dark']])(
+  it.each(CUSTOM_MODES)('restores the palette and background for %s', (mode: typeof CUSTOM_MODES[number]) => {
+    window.localStorage.setItem(STORAGE_KEY, mode)
+    const { result } = renderHook(() => useTheme(), { wrapper })
+
+    expect(result.current.mode).toBe(mode)
+    expect(result.current.resolved).toBe(THEME_PRESETS[mode].resolved)
+    expect(result.current.background).toEqual(THEME_PRESETS[mode].background)
+    expect(document.documentElement.style.colorScheme).toBe(THEME_PRESETS[mode].resolved)
+
+    media.trigger(PREFERS_DARK_QUERY, true)
+    expect(result.current.resolved).toBe(THEME_PRESETS[mode].resolved)
+    media.trigger(PREFERS_DARK_QUERY, false)
+    expect(result.current.resolved).toBe(THEME_PRESETS[mode].resolved)
+  })
+
+  it.each(CUSTOM_MODES)('suspends and restores %s for forced colors', (mode: typeof CUSTOM_MODES[number]) => {
+    window.localStorage.setItem(STORAGE_KEY, mode)
+    const { result } = renderHook(() => useTheme(), { wrapper })
+
+    media.trigger(FORCED_COLORS_QUERY, true)
+    expect(result.current.resolved).toBe('high-contrast')
+    expect(result.current.background).toBeUndefined()
+    expect(result.current.mode).toBe(mode)
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe(mode)
+
+    media.trigger(FORCED_COLORS_QUERY, false)
+    expect(result.current.resolved).toBe(THEME_PRESETS[mode].resolved)
+    expect(result.current.background).toEqual(THEME_PRESETS[mode].background)
+  })
+
+  it.each(['system', 'light', 'dark'] as const)(
+    'removes the background when returning to %s',
+    (mode: ThemeMode) => {
+      window.localStorage.setItem(STORAGE_KEY, 'jimothy')
+      const { result } = renderHook(() => useTheme(), { wrapper })
+      act(() => result.current.setMode(mode))
+      expect(result.current.background).toBeUndefined()
+    },
+  )
+
+  it.each<ThemeMode>(['system', 'light', 'dark', ...CUSTOM_MODES])(
     'round-trips mode "%s" through localStorage',
-    (mode) => {
+    (mode: ThemeMode) => {
       const { result, unmount } = renderHook(() => useTheme(), { wrapper })
       act(() => result.current.setMode(mode))
       unmount()

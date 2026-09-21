@@ -44,7 +44,9 @@ from pyrit.backend.models.attacks import (
     CreateConversationRequest,
     CreateConversationResponse,
     MessagePieceRequest,
+    MessageView,
     PrependedMessageRequest,
+    TargetResponseStatus,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
@@ -78,6 +80,27 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
 logger = logging.getLogger(__name__)
+
+
+def _get_latest_target_response_status(messages: list[MessageView]) -> TargetResponseStatus | None:
+    """Return error metadata when the conversation ends with a real target response."""
+    latest_response = messages[-1] if messages else None
+    if not latest_response or latest_response.role != "assistant":
+        return None
+
+    request = next((message for message in reversed(messages[:-1]) if message.role == "user"), None)
+    if not request:
+        return None
+
+    response_error = next(
+        (piece.response_error for piece in latest_response.message_pieces if piece.response_error != "none"),
+        "none",
+    )
+    return TargetResponseStatus(
+        response_error=response_error,
+        request_turn_number=request.turn_number,
+        response_turn_number=latest_response.turn_number,
+    )
 
 
 class AttackObjectiveConflictError(Exception):
@@ -342,6 +365,7 @@ class AttackService:
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
             messages=backend_messages,
+            target_response_status=_get_latest_target_response_status(backend_messages),
         )
 
     async def create_attack_async(self, *, request: CreateAttackRequest) -> CreateAttackResponse:
@@ -656,8 +680,8 @@ class AttackService:
                 updated_at=datetime.now(UTC),
             )
 
-        # Verify the conversation belongs to this attack (main or related)
-        if not ar.includes_conversation(target_conv_id):
+        # Only user-visible conversations can become the main conversation.
+        if target_conv_id not in ar.get_active_conversation_ids():
             raise ValueError(f"Conversation '{target_conv_id}' is not part of this attack")
 
         # Build updated DB columns: remove target from its list, add old main
@@ -672,6 +696,11 @@ class AttackService:
             for ref in ar.related_conversations
             if ref.conversation_id != target_conv_id and ref.conversation_type == ConversationType.ADVERSARIAL
         ]
+        updated_preparation = [
+            ref.conversation_id
+            for ref in ar.related_conversations
+            if ref.conversation_id != target_conv_id and ref.conversation_type == ConversationType.PREPARATION
+        ]
         # The old main becomes a pruned related conversation so it remains
         # visible in the GUI and fetchable via get_conversation_messages.
         updated_pruned.append(ar.conversation_id)
@@ -684,6 +713,7 @@ class AttackService:
                 "conversation_id": target_conv_id,
                 "pruned_conversation_ids": updated_pruned if updated_pruned else None,
                 "adversarial_chat_conversation_ids": updated_adversarial if updated_adversarial else None,
+                "preparation_conversation_ids": updated_preparation if updated_preparation else None,
                 "timestamp": now,
             },
         )

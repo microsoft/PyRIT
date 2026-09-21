@@ -81,12 +81,25 @@ class TestRegistration:
         assert len(registry) == 3
         assert registry.get("name2") == "value2"
 
-    def test_register_overwrites_existing(self, registry: DefaultInstanceRegistry[_TestItem]):
+    def test_register_rejects_existing_name(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("original"), name="name")
-        registry.register(_item("updated"), name="name")
 
-        assert len(registry) == 1
+        with pytest.raises(ValueError, match="already exists"):
+            registry.register(_item("updated"), name="name")
+
+        assert registry.get("name") == "original"
+
+    def test_register_can_explicitly_replace_existing(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("original"), name="name")
+        registry.register(_item("updated"), name="name", replace=True)
+
         assert registry.get("name") == "updated"
+
+    def test_register_rejects_reserved_name(self):
+        registry: DefaultInstanceRegistry[_TestItem] = DefaultInstanceRegistry(reserved_names={"types"})
+
+        with pytest.raises(ValueError, match="reserved"):
+            registry.register(_item("value"), name="types")
 
     def test_register_defaults_name_to_identifier_unique_name(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("value1"))
@@ -169,6 +182,43 @@ class TestGet:
 
     def test_get_entry_nonexistent_returns_none(self, registry: DefaultInstanceRegistry[_TestItem]):
         assert registry.get_entry("missing") is None
+
+
+class TestUnregister:
+    """Tests for unregistering instances."""
+
+    def test_unregister_removes_and_returns_instance(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        item = _item("value1")
+        registry.register(item, name="name1")
+
+        assert registry.unregister("name1") is item
+        assert registry.get("name1") is None
+
+    def test_unregister_missing_returns_none(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        assert registry.unregister("missing") is None
+
+    def test_unregister_expected_entry_preserves_replacement(
+        self, registry: DefaultInstanceRegistry[_TestItem]
+    ) -> None:
+        item = _item("item")
+        registry.register(item, name="name", metadata={"version": 1})
+        original_entry = registry.get_entry("name")
+        assert original_entry is not None
+        registry.register(item, name="name", metadata={"version": 2}, replace=True)
+
+        assert registry.unregister("name", expected_entry=original_entry) is None
+        assert registry.get("name") is item
+        replacement_entry = registry.get_entry("name")
+        assert replacement_entry is not None
+        assert replacement_entry.metadata == {"version": 2}
+
+    def test_unregister_invalidates_metadata_cache(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        registry.register(_item("value1"), name="name1")
+        assert len(registry.list_metadata()) == 1
+
+        registry.unregister("name1")
+
+        assert registry.list_metadata() == []
 
 
 class TestGetNamesAndAllInstances:

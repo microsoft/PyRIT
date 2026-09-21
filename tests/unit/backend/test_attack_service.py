@@ -44,9 +44,11 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    ChatMessageRole,
     ComponentIdentifier,
     Message,
     MessagePiece,
+    PromptResponseError,
     Score,
 )
 from pyrit.models.conversation_stats import ConversationStats
@@ -135,6 +137,26 @@ def _make_matching_target_mock() -> MagicMock:
     return mock_target
 
 
+def _make_message(
+    *,
+    role: ChatMessageRole,
+    sequence: int,
+    response_error: PromptResponseError = "none",
+) -> Message:
+    """Create a single-piece text message for conversation response tests."""
+    piece = MessagePiece(
+        role=role,
+        original_value="message",
+        converted_value="message",
+        original_value_data_type="text",
+        converted_value_data_type="text",
+        conversation_id="test-id",
+        sequence=sequence,
+        response_error=response_error,
+    )
+    return Message(message_pieces=[piece])
+
+
 async def _send_message_and_get_update_fields(
     *,
     attack_service: AttackService,
@@ -205,7 +227,7 @@ async def _send_message_and_get_update_fields(
         mock_normalizer_class.return_value.send_prompt_async = AsyncMock()
 
         await attack_service.add_message_async(attack_result_id=attack_result_id, request=request)
-
+    return mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
     return mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
 
 
@@ -784,6 +806,75 @@ class TestGetConversationMessages:
         assert result is not None
         assert result.conversation_id == "test-id"
         assert result.messages == []
+        assert result.target_response_status is None
+
+    @pytest.mark.parametrize("response_error", ["none", "processing", "blocked"])
+    async def test_get_conversation_messages_returns_latest_target_status_async(
+        self,
+        attack_service,
+        mock_memory,
+        response_error: PromptResponseError,
+    ) -> None:
+        """Test that the latest real assistant response is linked to its user request."""
+        ar = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = [
+            _make_message(role="user", sequence=2),
+            _make_message(role="assistant", sequence=3, response_error=response_error),
+        ]
+
+        result = await attack_service.get_conversation_messages_async(
+            attack_result_id="test-id", conversation_id="test-id"
+        )
+
+        assert result is not None
+        assert result.target_response_status is not None
+        assert result.target_response_status.response_error == response_error
+        assert result.target_response_status.request_turn_number == 2
+        assert result.target_response_status.response_turn_number == 3
+
+    async def test_get_conversation_messages_ignores_stale_processing_error(self, attack_service, mock_memory) -> None:
+        """Test that a later successful response supersedes an earlier processing failure."""
+        ar = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = [
+            _make_message(role="user", sequence=0),
+            _make_message(role="assistant", sequence=1, response_error="processing"),
+            _make_message(role="user", sequence=2),
+            _make_message(role="assistant", sequence=3),
+        ]
+
+        result = await attack_service.get_conversation_messages_async(
+            attack_result_id="test-id", conversation_id="test-id"
+        )
+
+        assert result is not None
+        assert result.target_response_status is not None
+        assert result.target_response_status.response_error == "none"
+        assert result.target_response_status.request_turn_number == 2
+        assert result.target_response_status.response_turn_number == 3
+
+    @pytest.mark.parametrize("latest_role", ["user", "simulated_assistant"])
+    async def test_get_conversation_messages_ignores_non_target_latest_message(
+        self,
+        attack_service,
+        mock_memory,
+        latest_role: ChatMessageRole,
+    ) -> None:
+        """Test that user and simulated-assistant history are not classified as target responses."""
+        ar = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = [
+            _make_message(role="user", sequence=0),
+            _make_message(role=latest_role, sequence=1, response_error="processing"),
+        ]
+
+        result = await attack_service.get_conversation_messages_async(
+            attack_result_id="test-id", conversation_id="test-id"
+        )
+
+        assert result is not None
+        assert result.target_response_status is None
 
     async def test_get_conversation_messages_marks_attack_objective_score(self, attack_service, mock_memory) -> None:
         """The message mapper receives the attack's canonical objective score ID."""
@@ -1468,6 +1559,15 @@ class TestAddMessage:
         # The PromptNormalizer persists a full error piece before re-raising; model
         # that by flipping to return the stored error piece only after send fails.
         traceback_text = "Connection error.\nAPIConnectionError('Connection error.')\nTraceback..."
+        request_piece = MessagePiece(
+            role="user",
+            original_value="Hello",
+            original_value_data_type="text",
+            converted_value="Hello",
+            converted_value_data_type="text",
+            conversation_id="test-id",
+            sequence=0,
+        )
         error_piece = MessagePiece(
             role="assistant",
             original_value=traceback_text,
@@ -1483,7 +1583,7 @@ class TestAddMessage:
         # The conversation-messages read (used to build the response DTO) must include
         # the stored error turn so we can assert it is surfaced to the caller.
         mock_memory.get_conversation_messages.side_effect = lambda **_: (
-            [Message(message_pieces=[error_piece])] if state["sent"] else []
+            [Message(message_pieces=[request_piece]), Message(message_pieces=[error_piece])] if state["sent"] else []
         )
 
         async def _raise_after_store(**_):
@@ -1521,6 +1621,10 @@ class TestAddMessage:
             error_views = [piece for piece in returned_pieces if piece.response_error == "processing"]
             assert len(error_views) == 1
             assert "APIConnectionError" in error_views[0].converted_value
+            assert result.messages.target_response_status is not None
+            assert result.messages.target_response_status.response_error == "processing"
+            assert result.messages.target_response_status.request_turn_number == 0
+            assert result.messages.target_response_status.response_turn_number == 1
 
     async def test_add_message_reraises_when_send_fails_without_stored_error_piece(
         self, attack_service, mock_memory
@@ -2608,6 +2712,13 @@ class TestGetConversations:
                 description="Scoring conversation",
             )
         )
+        ar.related_conversations.add(
+            ConversationReference(
+                conversation_id="preparation-1",
+                conversation_type=ConversationType.PREPARATION,
+                description="Preparation conversation",
+            )
+        )
 
         mock_memory.get_attack_results.return_value = [ar]
 
@@ -2618,6 +2729,7 @@ class TestGetConversations:
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t1),
             "branch-1": ConversationStats(message_count=2, last_message_preview="test", created_at=t2),
             "score-1": ConversationStats(message_count=0),
+            "preparation-1": ConversationStats(message_count=2),
         }
 
         result = await attack_service.get_conversations_async(attack_result_id="attack-1")
@@ -2750,7 +2862,7 @@ class TestUpdateMainConversation:
         ar.related_conversations = {
             ConversationReference(
                 conversation_id="branch-1",
-                conversation_type=ConversationType.ADVERSARIAL,
+                conversation_type=ConversationType.PRUNED,
                 description="Branch 1",
             ),
         }
@@ -2775,6 +2887,28 @@ class TestUpdateMainConversation:
         pruned = call_kwargs["update_fields"]["pruned_conversation_ids"]
         assert "attack-1" in pruned
         assert "branch-1" not in pruned
+
+    @pytest.mark.parametrize("conversation_type", ["preparation", "adversarial"])
+    async def test_rejects_promoting_diagnostic_conversation(self, attack_service, mock_memory, conversation_type):
+        """Diagnostic conversations cannot replace the evaluated main conversation."""
+        from pyrit.models import ConversationReference, ConversationType
+
+        ar = make_attack_result(conversation_id="attack-1")
+        ar.related_conversations = {
+            ConversationReference(
+                conversation_id="diagnostic-1",
+                conversation_type=ConversationType(conversation_type),
+            ),
+        }
+        mock_memory.get_attack_results.return_value = [ar]
+
+        with pytest.raises(ValueError, match="not part of this attack"):
+            await attack_service.update_main_conversation_async(
+                attack_result_id="ar-attack-1",
+                request=UpdateMainConversationRequest(conversation_id="diagnostic-1"),
+            )
+
+        mock_memory.update_attack_result_by_id.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")

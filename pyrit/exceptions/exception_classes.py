@@ -4,6 +4,7 @@
 import json
 import logging
 import os
+import uuid
 from abc import ABC
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -227,16 +228,24 @@ class EmptyResponseException(BadRequestException):
 class ScorerLLMResponseBlockedException(BadRequestException):
     """Exception raised when a scorer's own LLM response is blocked by content filtering."""
 
-    def __init__(self, *, status_code: int = 400, message: str = "Scorer LLM response blocked") -> None:
+    def __init__(
+        self,
+        *,
+        status_code: int = 400,
+        message: str = "Scorer LLM response blocked",
+        observation_id: uuid.UUID | None = None,
+    ) -> None:
         """
         Initialize a scorer-response-blocked exception.
 
         Args:
             status_code (int): Status code for the error.
             message (str): Error message.
+            observation_id (uuid.UUID | None): Collected failed-acquisition observation, if any.
 
         """
         super().__init__(status_code=status_code, message=message)
+        self.observation_id = observation_id
 
 
 class ScenarioPartialFailureException(PyritException, ValueError):  # noqa: N818
@@ -430,10 +439,10 @@ def pyrit_placeholder_retry(func: Callable[..., Any]) -> Callable[..., Any]:
     )(func)
 
 
-# Empirically-observed markers in OpenAI / Azure OpenAI / MAI error payloads that
+# Documented or empirically observed markers in OpenAI / Azure OpenAI / MAI error payloads that
 # indicate the response was blocked by a content filter or safety system.
 #
-# There is no canonical spec for these - providers expose the signal through
+# Providers expose the signal through
 # different field names (``error.code``, ``finish_reason``, ``incomplete_details.reason``,
 # free-form ``error.message``) and the exact wording evolves over time. Rather than
 # try to track every (provider, field) combination as an exact match, we scan the
@@ -447,12 +456,16 @@ def pyrit_placeholder_retry(func: Callable[..., Any]) -> Callable[..., Any]:
 #   - ``policy_violation``         - Substring of Azure's ``content_policy_violation``
 #                                    and OpenAI moderation's ``usage_policy_violation``.
 #   - ``moderation_blocked``       - OpenAI moderation ``error.code``.
+#   - ``bio_policy`` / ``cyber_policy`` - Biological / cybersecurity policy blocks;
+#                                    observed in HTTP 400s and handled by OpenAI Codex.
 CONTENT_FILTER_MARKERS = frozenset(
     {
         "content_filter",
         "content_safety_violation",
         "policy_violation",
         "moderation_blocked",
+        "bio_policy",
+        "cyber_policy",
     }
 )
 

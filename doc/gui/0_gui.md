@@ -34,7 +34,28 @@ To deploy an isolated instance for an external team, see [Deploy a New Instance]
 
 ## Views
 
-CoPyRIT has three main views, accessible from the left sidebar: **Chat**, **Attack History**, and **Target Configuration**. A dark/light theme toggle is available at the bottom of the sidebar.
+CoPyRIT has three main views, accessible from the left sidebar: **Chat**, **Attack History**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
+
+### Themes
+
+Choose **System**, **Light**, or **Dark**, or select a preset with its own palette
+and workspace background:
+
+| Preset | Appearance |
+| --- | --- |
+| Raccoon | Warm gray with broad raccoon-tail stripes |
+| Jimothy | Mist and sage with a newly drawn, round-bodied Seattle raccoon |
+| Pirate | Navy and gold with a compass and nautical chart |
+| Seattle Rain | Dark storm gray with rain and puddle ripples |
+| Evergreen | Forest green with layered fir silhouettes |
+| Blueprint | Deep blue with a subtle technical drawing grid |
+| Night Sky | Indigo with sparse stars and constellation lines |
+
+Theme choices are saved in your browser and do not change your conversations
+or configuration. System follows your operating system's light/dark setting;
+the named presets keep their own palettes. High-contrast mode takes precedence
+and hides decorative backgrounds, restoring your chosen preset when it ends.
+Select System, Light, or Dark to return to an undecorated workspace.
 
 ### Chat View
 
@@ -189,6 +210,33 @@ The **Configuration** page provides administrator-only editing for the files and
 Use **Reload** to discard local edits and fetch the latest source content. Saved configuration and environment changes take effect after restarting PyRIT. Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
 
 ---
+
+## Registry API Migration Notes
+
+Use `/api/converters/types` and `/api/targets/types` for registry build metadata.
+These endpoints return all constructor parameters from the registry, including
+lists, unions, and component references. The temporary `/catalog` routes retain
+their scalar-only filtering for the current UI.
+Create requests should supply an explicit registry `name`. Converter creation
+returns the complete `ConverterInstance`; read its type from
+`identifier.class_name`, not the old top-level `converter_type` field. Treat
+returned IDs as opaque registry names, not UUIDs or identifier hashes.
+
+Constructor parameters typed as `Path` accept base64 data-URI uploads through REST,
+not server filesystem paths. Parameters typed as `Path | str` also accept Azure
+Blob URLs. This applies to `AddImageVideoConverter.video_path` and
+`ImageOverlayConverter.base_image`. Other local file inputs remain `Path`.
+Uploads stay in backend-owned temporary storage until deletion or shutdown,
+including with Azure-backed memory. Converter outputs still use configured result
+storage. Uploads can contain any file type; the media endpoint renders only
+allowlisted image, audio, and video extensions inline. Other files, including PDF,
+SVG, HTML, text, and executables, download as `application/octet-stream` attachments.
+
+**Temporary compatibility, scheduled for removal with the chat migration:**
+the `/api/converters/catalog` and `/api/targets/catalog` routes project the same
+registry metadata for the current UI. Create requests without a name receive a
+generated `compat_...` name. New clients should not depend on these routes or
+unnamed creation.
 
 ## Connection Health
 

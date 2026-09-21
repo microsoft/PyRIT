@@ -121,6 +121,53 @@ print(df.to_string(index=False))
 # storage and stores its SHA-256 digest. The score remains resolvable after the source file is
 # removed.
 #
+# Target-backed scorers over text evidence also persist an `Observation` that references and hashes
+# the retained response in the SCORE conversation. The observation and its first score are
+# committed together. Capture requires durable scored evidence. A custom general-scorer template
+# that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
+# In-hand messages keep their score-to-message links when storage rounds timestamps. Observation
+# evidence checks remain exact: a content-only snapshot cannot replay a metadata-dependent judgment.
+# `Score.scored_expectation` records the complete expectation used for the verdict, while
+# `Score.objective` remains a read-only compatibility view. `score_observation_async()` can
+# parse that stored judgment again without calling the target. Replay requires unchanged scored
+# evidence and response content, plus the exact original expectation, scorer configuration, and
+# response-handler contract. The payload is a `JudgmentObservationPayload` with kind `judgment`;
+# the target need not be a language model. Media, tool-call observations, and coverage are deferred
+# until their evidence can be snapshotted before judgment.
+#
+# Replaying a judgment is different from evaluating a stored run against a new expectation.
+# A retained target judgment answers the original expectation; changing that expectation
+# requires a new judgment, not just parsing the old response. Use
+# `score_async(scorable=stored_scorable, expectation=new_expectation)` to evaluate the same
+# stored attack evidence again. This does not rerun the attack, but a target-backed scorer
+# calls its scoring target again. The exact-expectation restriction applies to judgment
+# observations, not to the general `Scorer` contract.
+#
+# Replay is an explicit contract for each concrete class, not an inherited promise.
+# A custom scorer declares `_judgment_replay_identifier()` and shares pure judgment logic
+# between live scoring and `_score_judgment_observation()` (for example, in `_convert_score()`).
+# Async-only postprocessing is not replayed. A custom response handler declares
+# `_replay_identifier()`. Both identifiers must include a behavior version and every added
+# setting that changes the judgment or parsing. Subclasses without their own declaration
+# can still capture observations, but replay raises `NonReplayableObservationError`.
+#
+# Deleting a score through `memory.get_session()` and ORM `session.delete()` removes its
+# observation only after the final score reference is gone. Removing an ORM observation link
+# also triggers this cleanup, including when a collection is cleared before its score is deleted.
+# Cleanup uses persisted links and removed relationship history, not just cached collections.
+# Cleanup and the reference removal share one transaction; shared observations remain available.
+# Bulk SQL deletes do not use this ORM cleanup path.
+#
+# Response helpers accept `expectation=`; their bare `objective=` input is deprecated until 2.0.
+# Objective and auxiliary scorers receive the complete expectation, with condition routing checked
+# across the group. Each scorer root keeps its own score/observation persistence boundary.
+# Direct scorers check required and duplicate criteria but ignore condition types they do not use.
+# Empty conditions retain legacy objective-only behavior and skip required-condition checks.
+# Data-bearing required conditions will need explicit validation before their scorer types are added.
+# Use a group helper, even with one scorer, when every condition must have a consumer.
+# `Scorer.score_with_scorers_async` accepts optional `scorer_roles`, one per scorer, for execution
+# context. Its result lists follow scorer input order, including empty lists.
+#
 # Scoring APIs return `list[Score]`. An empty list means that the scorer does not apply to the
 # evidence, such as a message with no supported role or data type. A non-empty list contains
 # completed or undetermined scores.

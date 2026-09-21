@@ -317,8 +317,8 @@ async def test_score_video_no_scores(video_converter_sample_video):
     """Test error handling when frame scoring returns no scores"""
     image_scorer = MockTrueFalseScorer()
 
-    # Mock score_batch_async to return empty list
-    image_scorer.score_batch_async = AsyncMock(return_value=[])
+    # Mock nested batch scoring to return an empty list.
+    image_scorer._score_batch_nested_async = AsyncMock(return_value=[])
     scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer, num_sampled_frames=3)
 
     with pytest.raises(ValueError, match="No scores returned for image frames extracted from video."):

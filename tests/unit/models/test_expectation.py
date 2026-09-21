@@ -30,6 +30,17 @@ def test_expectation_defaults():
     assert expectation.conditions == ()
 
 
+@pytest.mark.parametrize("value", [None, ScoringExpectation(), ScoringExpectation(objective="criterion")])
+def test_validate_type_accepts_runtime_expectation(value: ScoringExpectation | None) -> None:
+    ScoringExpectation.validate_type(value)
+
+
+@pytest.mark.parametrize("value", ["criterion", {"objective": "criterion"}, 42])
+def test_validate_type_rejects_untyped_input(value: object) -> None:
+    with pytest.raises(TypeError, match=r"^expectation must be a ScoringExpectation or None\.$"):
+        ScoringExpectation.validate_type(value)
+
+
 def test_expectation_is_frozen():
     expectation = ScoringExpectation(objective="exfiltrate")
 

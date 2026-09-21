@@ -1,22 +1,23 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
 import logging
 from typing import Any
 
 import numpy as np
 import torch
 import torch.nn as nn
-from tqdm.auto import tqdm
 
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     AttackPrompt,
-    ModelWorkerOperation,
     MultiPromptAttack,
     PromptManager,
     get_embedding_matrix,
     get_embeddings,
 )
+from pyrit.executor.promptgen.gcg.attack.gcg.candidate_evaluator import GCGCandidateEvaluator
+from pyrit.executor.promptgen.gcg.attack.gcg.candidate_proposer import GCGCandidateProposer
 from pyrit.executor.promptgen.gcg.default_implementations import (
     CrossEntropyLoss,
     LengthPreservingFilter,
@@ -104,6 +105,7 @@ class GCGPromptManager(PromptManager):
         topk: int = 256,
         temp: float = 1.0,
         allow_non_ascii: bool = True,
+        torch_generator: torch.Generator | None = None,
     ) -> torch.Tensor:
         """
         Sample new control token candidates based on gradients.
@@ -114,6 +116,7 @@ class GCGPromptManager(PromptManager):
             topk (int): Number of top gradient positions to sample from. Defaults to 256.
             temp (float): Temperature for sampling. Currently unused but kept for API compatibility. Defaults to 1.0.
             allow_non_ascii (bool): Whether to allow non-ASCII tokens. Defaults to True.
+            torch_generator (torch.Generator | None): Optional generator for deterministic sampling.
 
         Returns:
             torch.Tensor: Batch of new candidate control token sequences.
@@ -127,7 +130,9 @@ class GCGPromptManager(PromptManager):
             torch.int64
         )
         new_token_val = torch.gather(
-            top_indices[new_token_pos], 1, torch.randint(0, topk, (batch_size, 1), device=grad.device)
+            top_indices[new_token_pos],
+            1,
+            torch.randint(0, topk, (batch_size, 1), device=grad.device, generator=torch_generator),
         )
         return original_control_toks.scatter_(1, new_token_pos.unsqueeze(-1), new_token_val)
 
@@ -199,15 +204,22 @@ class GCGMultiPromptAttack(MultiPromptAttack):
     ) -> torch.Tensor:
         sampler = self._resolve_sampling()
         prompt_manager = self.prompts[worker_index]
-        return sampler.sample_candidates(
-            gradient=gradient,
-            control_tokens=prompt_manager.control_toks,
-            batch_size=batch_size,
-            top_k=topk,
-            temperature=temp,
-            allow_non_ascii=allow_non_ascii,
-            non_ascii_tokens=prompt_manager.disallowed_toks,
-        )
+        torch_gens = getattr(self, "_torch_gens", None) or {}
+        torch_gen = torch_gens.get(worker_index)
+        kwargs: dict[str, Any] = {
+            "gradient": gradient,
+            "control_tokens": prompt_manager.control_toks,
+            "batch_size": batch_size,
+            "top_k": topk,
+            "temperature": temp,
+            "allow_non_ascii": allow_non_ascii,
+            "non_ascii_tokens": prompt_manager.disallowed_toks,
+        }
+        if torch_gen is not None:
+            sig = inspect.signature(sampler.sample_candidates)
+            if "torch_generator" in sig.parameters:
+                kwargs["torch_generator"] = torch_gen
+        return sampler.sample_candidates(**kwargs)
 
     def _filter_control_candidates(
         self,
@@ -296,94 +308,44 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             raise ValueError("GCG optimization requires at least one worker")
 
         main_device = self.models[0].device
-        control_cands = []
         loss_function = self._resolve_loss(target_weight=target_weight, control_weight=control_weight)
 
-        for j, worker in enumerate(self.workers):
-            worker(self.prompts[j], ModelWorkerOperation.GRAD)
+        proposer = GCGCandidateProposer(
+            workers=self.workers,
+            prompts=self.prompts,
+            sampling=self._resolve_sampling(),
+            candidate_filter=self._resolve_candidate_filter(filter_cand=filter_cand),
+            sample_fn=self._sample_control_candidates,
+            filter_fn=self._filter_control_candidates,
+            main_device=main_device,
+        )
+        candidate_batch = proposer.propose_candidates(
+            batch_size=batch_size,
+            topk=topk,
+            temp=temp,
+            allow_non_ascii=allow_non_ascii,
+            filter_cand=filter_cand,
+            current_control_str=self.control_str,
+        )
+        evaluator = GCGCandidateEvaluator(
+            workers=self.workers,
+            prompts=self.prompts,
+            loss_function=loss_function,
+            main_device=main_device,
+        )
+        eval_batch = evaluator.evaluate_candidates(
+            control_candidates_by_group=candidate_batch.control_candidates_by_group,
+            batch_size=batch_size,
+            verbose=verbose,
+        )
 
-        # Aggregate gradients
-        grad = None
-        for j, worker in enumerate(self.workers):
-            new_grad = worker.results.get().to(main_device)
-            new_grad = new_grad / new_grad.norm(dim=-1, keepdim=True)
-            if grad is None:
-                grad = torch.zeros_like(new_grad)
-            if grad.shape != new_grad.shape:
-                with torch.no_grad():
-                    control_cand = self._sample_control_candidates(
-                        worker_index=j - 1,
-                        gradient=grad,
-                        batch_size=batch_size,
-                        topk=topk,
-                        temp=temp,
-                        allow_non_ascii=allow_non_ascii,
-                    )
-                    control_cands.append(
-                        self._filter_control_candidates(
-                            worker_index=j - 1,
-                            control_cand=control_cand,
-                            filter_cand=filter_cand,
-                        )
-                    )
-                grad = new_grad
-            else:
-                grad += new_grad
-
-        if grad is None:
-            raise RuntimeError("GCG workers did not produce an aggregate gradient")
-
-        last_worker_index = len(self.workers) - 1
         with torch.no_grad():
-            control_cand = self._sample_control_candidates(
-                worker_index=last_worker_index,
-                gradient=grad,
-                batch_size=batch_size,
-                topk=topk,
-                temp=temp,
-                allow_non_ascii=allow_non_ascii,
-            )
-            control_cands.append(
-                self._filter_control_candidates(
-                    worker_index=last_worker_index,
-                    control_cand=control_cand,
-                    filter_cand=filter_cand,
-                )
-            )
-        del grad, control_cand
-
-        # Search
-        loss = torch.zeros(len(control_cands) * batch_size).to(main_device)
-        with torch.no_grad():
-            for j, cand in enumerate(control_cands):
-                # Looping through the prompts at this level is less elegant, but
-                # we can manage VRAM better this way
-                progress = tqdm(range(len(self.prompts[0])), total=len(self.prompts[0])) if verbose else None
-                prompt_indices = progress if progress is not None else range(len(self.prompts[0]))
-                for i in prompt_indices:
-                    for k, worker in enumerate(self.workers):
-                        worker(self.prompts[k][i], ModelWorkerOperation.LOGITS, cand, return_ids=True)
-                    logits, ids = zip(*[worker.results.get() for worker in self.workers], strict=True)
-                    loss[j * batch_size : (j + 1) * batch_size] += sum(
-                        loss_function.compute_loss(
-                            logits=logit,
-                            token_ids=token_ids,
-                            target_slice=self.prompts[k][i]._target_slice,
-                            control_slice=self.prompts[k][i]._control_slice,
-                        ).to(main_device)
-                        for k, (logit, token_ids) in enumerate(zip(logits, ids, strict=True))
-                    )
-                    del logits, ids
-
-                    if progress is not None:
-                        progress.set_description(
-                            f"loss={loss[j * batch_size : (j + 1) * batch_size].min().item() / (i + 1):.4f}"
-                        )
-
             next_control, cand_loss = self._select_best_candidate(
-                control_cands=control_cands, losses=loss, batch_size=batch_size
+                control_cands=eval_batch.control_candidates_by_group,
+                losses=eval_batch.losses,
+                batch_size=batch_size,
             )
-        del control_cands, loss
+        del candidate_batch, eval_batch
 
         current_length = self._get_control_length(control=next_control)
         if current_length is not None:

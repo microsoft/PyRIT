@@ -10,7 +10,13 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.scenario.scenarios._dynamic_techniques import DoctorTechnique
+    from pyrit.scenario.scenarios.garak.api_key import ApiKey, ApiKeyDatasetConfiguration, ApiKeyTechnique
     from pyrit.scenario.scenarios.garak.audio_achilles_heel import AudioAchillesHeel, AudioAchillesHeelTechnique
+    from pyrit.scenario.scenarios.garak.divergence import (
+        Divergence,
+        DivergenceDatasetConfiguration,
+        DivergenceTechnique,
+    )
     from pyrit.scenario.scenarios.garak.doctor import Doctor
     from pyrit.scenario.scenarios.garak.encoding import Encoding, EncodingTechnique
     from pyrit.scenario.scenarios.garak.figstep import FigStep, FigStepTechnique
@@ -25,8 +31,14 @@ if TYPE_CHECKING:
     from pyrit.scenario.scenarios.garak.web_injection import WebInjection, WebInjectionTechnique
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "ApiKey": "pyrit.scenario.scenarios.garak.api_key",
+    "ApiKeyDatasetConfiguration": "pyrit.scenario.scenarios.garak.api_key",
+    "ApiKeyTechnique": "pyrit.scenario.scenarios.garak.api_key",
     "AudioAchillesHeel": "pyrit.scenario.scenarios.garak.audio_achilles_heel",
     "AudioAchillesHeelTechnique": "pyrit.scenario.scenarios.garak.audio_achilles_heel",
+    "Divergence": "pyrit.scenario.scenarios.garak.divergence",
+    "DivergenceDatasetConfiguration": "pyrit.scenario.scenarios.garak.divergence",
+    "DivergenceTechnique": "pyrit.scenario.scenarios.garak.divergence",
     "Doctor": "pyrit.scenario.scenarios.garak.doctor",
     "DoctorTechnique": "pyrit.scenario.scenarios._dynamic_techniques",
     "Encoding": "pyrit.scenario.scenarios.garak.encoding",

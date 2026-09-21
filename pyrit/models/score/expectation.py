@@ -27,15 +27,18 @@ class ScoringExpectation(BaseModel):
     configuration or a seed can reach a scorer through an attack that knows nothing
     about it. It has two independent axes.
 
-    ``objective`` carries the intent: prose describing what the run is trying to do.
-    Components read it for framing — an adversarial target renders it into a system
-    prompt, a report prints it — and none of them match it.
+    ``objective`` carries optional scoring context. It can differ from the attack
+    objective that drives adversarial prompts. Scorers may read it for framing or
+    use it as criterion text through ``MatchesObjective``.
 
     ``conditions`` carry the criteria: typed objects routed by type to the scorers that
     match them. Attacks forward them without inspecting them, and a scorer matches at
     most one of them. Their tuple order is part of the persisted expectation and its
     fingerprint. ``SerializeAsAny`` keeps each condition serialized as its own subtype,
     so subclass fields survive a round trip.
+
+    Seeds can author these criteria; execution parameters transport the resolved
+    expectation. Seed types and condition types need not map one-to-one.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -46,6 +49,20 @@ class ScoringExpectation(BaseModel):
 
     objective: str | None = None
     conditions: tuple[SerializeAsAny[Condition], ...] = ()
+
+    @staticmethod
+    def validate_type(value: object) -> None:
+        """
+        Check a runtime input without parsing or copying it.
+
+        Args:
+            value (object): The expectation input.
+
+        Raises:
+            TypeError: If the input is not a ``ScoringExpectation`` or None.
+        """
+        if value is not None and not isinstance(value, ScoringExpectation):
+            raise TypeError("expectation must be a ScoringExpectation or None.")
 
     @model_validator(mode="before")
     @classmethod

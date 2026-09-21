@@ -1,9 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import pickle
+import threading
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, call, patch, sentinel
 
@@ -41,6 +45,21 @@ default_implementations_mod = pytest.importorskip(
     reason="GCG optional dependencies not installed",
 )
 LengthPreservingFilter = default_implementations_mod.LengthPreservingFilter
+StandardGCGSampling = default_implementations_mod.StandardGCGSampling
+
+import numpy as np  # noqa: E402
+
+generator_mod = pytest.importorskip(
+    "pyrit.executor.promptgen.gcg.generator",
+    reason="GCG optional dependencies not installed",
+)
+GCGGenerator = generator_mod.GCGGenerator
+
+from unit.executor.promptgen.gcg.trajectory_stubs import (  # noqa: E402
+    RecordingGCGAttack,
+    TrajectoryPromptManager,
+    TrajectoryWorker,
+)
 
 
 @dataclass
@@ -1393,3 +1412,368 @@ def test_token_gradients_raises_when_coordinate_gradient_missing() -> None:
 def test_length_preserving_filter_rejects_unknown_option() -> None:
     with pytest.raises(TypeError, match="Unexpected LengthPreservingFilter option: unexpected"):
         LengthPreservingFilter(unexpected=True)
+
+
+# (attack class, n_workers, n_goals, constructor kwargs) for every execution
+# topology #2490 requires coverage of.
+_TRAJECTORY_TOPOLOGIES: dict[str, tuple[type, int, int, dict[str, bool]]] = {
+    "individual-1w-1g": (IndividualPromptAttack, 1, 1, {}),
+    "individual-1w-2g": (IndividualPromptAttack, 1, 2, {}),
+    "progressive-goals-1w-2g": (
+        ProgressiveMultiPromptAttack,
+        1,
+        2,
+        {"progressive_goals": True, "progressive_models": False},
+    ),
+    "progressive-goals-models-2w-2g": (
+        ProgressiveMultiPromptAttack,
+        2,
+        2,
+        {"progressive_goals": True, "progressive_models": True},
+    ),
+    "multi-2w-2g": (
+        ProgressiveMultiPromptAttack,
+        2,
+        2,
+        {"progressive_goals": False, "progressive_models": False},
+    ),
+}
+
+
+def _run_trajectory(
+    topology: str,
+    *,
+    seed: int,
+    logfile: Path,
+    run_id: str = "",
+    barrier: threading.Barrier | None = None,
+    switches: list[str] | None = None,
+) -> dict[str, Any]:
+    """Drive a real outer attack -> real GCG step loop on stub workers and return everything observable."""
+    attack_cls, n_workers, n_goals, attack_kwargs = _TRAJECTORY_TOPOLOGIES[topology]
+    events: list[Any] = []
+    bundles: list[Any] = []
+    workers = [TrajectoryWorker(i, run_id=run_id, barrier=barrier, events=switches) for i in range(n_workers)]
+    managers = {"PM": TrajectoryPromptManager, "MPA": partial(RecordingGCGAttack, events=events, bundles=bundles)}
+    attack = attack_cls(
+        [f"goal {i}" for i in range(n_goals)],
+        ["10 11", "12 13"][:n_goals],
+        workers,
+        control_init="1 2 3",
+        test_prefixes=[],
+        logfile=str(logfile),
+        managers=managers,
+        **attack_kwargs,
+    )
+    final_control, _ = attack.run(
+        n_steps=4,
+        batch_size=4,
+        topk=6,
+        allow_non_ascii=True,
+        target_weight=1.0,
+        control_weight=0.0,
+        anneal=True,
+        test_steps=1,
+        incr_control=False,
+        stop_on_success=False,
+        verbose=False,
+        random_seed=seed,
+    )
+    # A bundle rebuilt per inner phase would restart every stream; all phases must see the one object.
+    assert bundles and bundles[0] is not None and all(b is bundles[0] for b in bundles), "phases must share one bundle"
+    with open(logfile) as f:
+        log = json.load(f)
+    return {
+        "events": events,
+        "final_control": final_control,
+        "controls": log["controls"],
+        "losses": [round(loss, 6) for loss in log["losses"]],
+    }
+
+
+class TestRandomSeedDeterminism:
+    """Verify that random_seed produces reproducible results across runs."""
+
+    def test_target_augmentation_deterministic_same_seed(self) -> None:
+        """Same seed produces identical augmentation results."""
+        targets = ["Sure, here is how to hack", "Sure, here is how to pick a lock"]
+        rng1 = np.random.default_rng(42)
+        rng2 = np.random.default_rng(42)
+
+        result1, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng1)
+        result2, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng2)
+
+        assert result1 == result2
+
+    def test_target_augmentation_different_seed_can_differ(self) -> None:
+        """Different seeds can produce different augmentation results."""
+        targets = ["Sure, here is how to hack"] * 20
+        rng1 = np.random.default_rng(1)
+        rng2 = np.random.default_rng(999)
+
+        result1, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng1)
+        result2, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng2)
+
+        assert result1 != result2
+
+    def test_sampling_deterministic_same_seed(self) -> None:
+        """StandardGCGSampling produces identical candidates with same torch Generator seed."""
+        sampler = StandardGCGSampling()
+        gradient = torch.randn(5, 100)
+        control_tokens = torch.tensor([1, 2, 3, 4, 5], dtype=torch.long)
+        non_ascii = torch.tensor([50], dtype=torch.long)
+
+        gen1 = torch.Generator().manual_seed(42)
+        gen2 = torch.Generator().manual_seed(42)
+
+        result1 = sampler.sample_candidates(
+            gradient=gradient.clone(),
+            control_tokens=control_tokens.clone(),
+            batch_size=8,
+            top_k=10,
+            temperature=1.0,
+            allow_non_ascii=True,
+            non_ascii_tokens=non_ascii,
+            torch_generator=gen1,
+        )
+        result2 = sampler.sample_candidates(
+            gradient=gradient.clone(),
+            control_tokens=control_tokens.clone(),
+            batch_size=8,
+            top_k=10,
+            temperature=1.0,
+            allow_non_ascii=True,
+            non_ascii_tokens=non_ascii,
+            torch_generator=gen2,
+        )
+
+        assert torch.equal(result1, result2)
+
+    def test_sampling_different_seed_can_differ(self) -> None:
+        """Different torch Generator seeds can produce different candidates."""
+        sampler = StandardGCGSampling()
+        gradient = torch.randn(5, 100)
+        control_tokens = torch.tensor([1, 2, 3, 4, 5], dtype=torch.long)
+        non_ascii = torch.tensor([50], dtype=torch.long)
+
+        gen1 = torch.Generator().manual_seed(1)
+        gen2 = torch.Generator().manual_seed(999)
+
+        result1 = sampler.sample_candidates(
+            gradient=gradient.clone(),
+            control_tokens=control_tokens.clone(),
+            batch_size=8,
+            top_k=10,
+            temperature=1.0,
+            allow_non_ascii=True,
+            non_ascii_tokens=non_ascii,
+            torch_generator=gen1,
+        )
+        result2 = sampler.sample_candidates(
+            gradient=gradient.clone(),
+            control_tokens=control_tokens.clone(),
+            batch_size=8,
+            top_k=10,
+            temperature=1.0,
+            allow_non_ascii=True,
+            non_ascii_tokens=non_ascii,
+            torch_generator=gen2,
+        )
+
+        assert not torch.equal(result1, result2)
+
+    @staticmethod
+    def _run_annealing_with_boolean_tracking(
+        seed: int,
+    ) -> tuple[str, list[bool]]:
+        """Run annealing and capture per-step acceptance booleans.
+
+        ``run()`` sets ``self.control_str`` only when a candidate is accepted.
+        We snapshot ``control_str`` at the *start* of each ``step()`` call; a
+        change between consecutive snapshots proves the previous candidate was
+        accepted.  The last step's decision is derived from the final control.
+        """
+        steps = [("c1", 2.1), ("c2", 2.2), ("c3", 2.3)]
+        attack = object.__new__(MultiPromptAttack)
+        attack.prompts = [MagicMock(control_str="initial")]
+        attack.logfile = None
+
+        snapshots: list[str] = []
+        real_step = MagicMock(side_effect=list(steps))
+
+        def tracking_step(**kwargs: Any) -> tuple[str, float]:
+            snapshots.append(attack.control_str)
+            return real_step(**kwargs)
+
+        attack.step = MagicMock(side_effect=tracking_step)
+
+        control, _, _ = attack.run(
+            n_steps=3,
+            prev_loss=2.0,
+            stop_on_success=False,
+            anneal=True,
+            random_seed=seed,
+        )
+
+        accepted = [snapshots[i + 1] != snapshots[i] for i in range(len(snapshots) - 1)]
+        accepted.append(control != snapshots[-1])
+
+        return control, accepted
+
+    def test_annealing_exact_history_same_seed(self) -> None:
+        """Same seed reproduces the exact step-by-step acceptance booleans."""
+        for _ in range(2):
+            control, accepted = self._run_annealing_with_boolean_tracking(seed=42)
+            # seed=42: accept c1 (draw=0.64 < threshold=0.86), accept c2 (draw=0.02 < 0.74),
+            # reject c3 (draw=0.28 > threshold≈0 at temp≈1e-7) → final="c2"
+            assert accepted == [True, True, False]
+            assert control == "c2"
+
+    def test_annealing_exact_history_different_seeds(self) -> None:
+        """Different seeds produce verifiably different acceptance boolean sequences."""
+        control_1, accepted_1 = self._run_annealing_with_boolean_tracking(seed=1)
+        control_999, accepted_999 = self._run_annealing_with_boolean_tracking(seed=999)
+
+        # Pre-computed from random.Random(seed) draws against acceptance_probability.
+        # seed=1: draw=0.13<0.86→accept, draw=0.85>0.74→reject, draw=0.76>≈0→reject
+        assert accepted_1 == [True, False, False]
+        assert control_1 == "c1"
+        # seed=999: draw=0.78<0.86→accept, draw=0.08<0.74→accept, draw=0.87>≈0→reject
+        assert accepted_999 == [True, True, False]
+        assert control_999 == "c2"
+
+    @pytest.mark.parametrize("topology", list(_TRAJECTORY_TOPOLOGIES), ids=list(_TRAJECTORY_TOPOLOGIES))
+    def test_overlapping_runs_reproduce_isolated_trajectories(self, topology: str, tmp_path: Path) -> None:
+        """Two runs executing at the same time follow exactly the trajectories they follow alone.
+
+        Real ``IndividualPromptAttack`` / ``ProgressiveMultiPromptAttack`` drive the real
+        ``GCGMultiPromptAttack.step()`` (Torch sampling, length filter, cross-entropy loss,
+        Python annealing) against stub workers whose outputs are pure functions of their
+        inputs, so the seeded bundle is the only source of randomness. Each run writes a real
+        logfile. A barrier in the stub worker forces the two runs to alternate step by step,
+        so the recorded run-id sequence switches more than the single time a sequential
+        execution would.
+        """
+        baseline_42 = _run_trajectory(topology, seed=42, logfile=tmp_path / "baseline_42.json")
+        baseline_7 = _run_trajectory(topology, seed=7, logfile=tmp_path / "baseline_7.json")
+        assert _run_trajectory(topology, seed=42, logfile=tmp_path / "repeat_42.json") == baseline_42
+        assert baseline_42["events"] != baseline_7["events"]
+
+        barrier = threading.Barrier(2, timeout=10)
+        switches: list[str] = []
+        outcomes: dict[str, Any] = {}
+
+        def run(run_id: str, seed: int) -> None:
+            try:
+                outcomes[run_id] = _run_trajectory(
+                    topology,
+                    seed=seed,
+                    logfile=tmp_path / f"{run_id}.json",
+                    run_id=run_id,
+                    barrier=barrier,
+                    switches=switches,
+                )
+            except BaseException as exc:  # noqa: BLE001 - release the peer thread, then surface the error
+                barrier.abort()
+                outcomes[run_id] = exc
+
+        threads = [threading.Thread(target=run, args=("A", 42)), threading.Thread(target=run, args=("B", 7))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        for outcome in outcomes.values():
+            if isinstance(outcome, BaseException):
+                raise outcome
+        assert sum(a != b for a, b in zip(switches, switches[1:], strict=False)) > 1, switches
+        assert outcomes["A"] == baseline_42
+        assert outcomes["B"] == baseline_7
+
+    def test_run_creates_torch_gen_for_step(self) -> None:
+        """run() sets self._torch_gen so step() can access it for sampling."""
+        attack = object.__new__(MultiPromptAttack)
+        prompt_manager = MagicMock()
+        prompt_manager.control_str = "initial"
+        attack.prompts = [prompt_manager]
+        attack.logfile = None
+        attack.step = MagicMock(return_value=("result", 0.5))
+
+        attack.run(n_steps=1, stop_on_success=False, anneal=False, random_seed=123)
+
+        assert hasattr(attack, "_torch_gens")
+        assert isinstance(attack._torch_gens, dict)
+
+    def test_custom_sampler_without_torch_generator_still_works(self) -> None:
+        """Custom SamplingStrategy that doesn't accept torch_generator still functions
+        even when _torch_gen is set (the seeded run() path)."""
+        gradient = torch.randn(3, 6)
+        logits = torch.randn(2, 8, 10)
+        token_ids = torch.randint(0, 10, (2, 8))
+        control_tokens = torch.tensor([1, 2, 3], dtype=torch.long)
+        disallowed_tokens = torch.tensor([5], dtype=torch.long)
+        tokenizer = MagicMock()
+        tokenizer.decode.return_value = "decoded"
+
+        worker = _WorkerStub(gradient=gradient.clone(), logits=logits, token_ids=token_ids, tokenizer=tokenizer)
+        prompt_manager = MagicMock()
+        prompt_manager.control_toks = control_tokens
+        prompt_manager.disallowed_toks = disallowed_tokens
+
+        sampled_tokens = torch.tensor([[8, 8, 8]], dtype=torch.long)
+        sampling = _SpySampling(sampled_tokens=sampled_tokens)
+
+        attack = object.__new__(GCGMultiPromptAttack)
+        attack._sampling = sampling
+        attack.prompts = [prompt_manager]
+        attack.workers = [worker]
+        attack.models = [MagicMock(device=torch.device("cpu"))]
+        attack.control_str = "test"
+        attack._torch_gens = {0: torch.Generator(device=torch.device("cpu")).manual_seed(42)}
+
+        result = attack._sample_control_candidates(
+            worker_index=0,
+            gradient=gradient,
+            batch_size=1,
+            topk=3,
+            temp=1.0,
+            allow_non_ascii=True,
+        )
+
+        assert torch.equal(result, sampled_tokens)
+
+    def test_multi_device_generators_must_match_sampling_device(self) -> None:
+        """Regression: generators on a different device than the sampling
+        tensor make torch.randint raise.  When workers span devices, all
+        generators must live on workers[0].model.device (the sampling
+        device).  This test goes through the real MPA.run() bundle-creation
+        fallback with workers on different devices.
+
+        ``torch.Generator`` is patched to record each requested device while
+        handing back a CPU generator, because CPU-only PyTorch builds reject
+        ``torch.Generator(device="cuda:0")``. The assertion is on the device
+        each generator was requested on, which is what the regression is about.
+        """
+        attack = object.__new__(MultiPromptAttack)
+        attack.prompts = [MagicMock(control_str="initial")]
+        attack.logfile = None
+        attack.step = MagicMock(return_value=("result", 0.5))
+
+        worker0 = MagicMock()
+        worker0.model.device = torch.device("cuda:0")
+        worker1 = MagicMock()
+        worker1.model.device = torch.device("cuda:1")
+        attack.workers = [worker0, worker1]
+
+        real_generator = torch.Generator  # the patch below also replaces the test's own torch.Generator
+        with patch.object(
+            attack_manager_mod.torch, "Generator", side_effect=lambda device: real_generator()
+        ) as generator_cls:
+            attack.run(n_steps=1, stop_on_success=False, anneal=False, random_seed=42)
+
+        # Both generators must be requested on the sampling device (worker 0), not
+        # their own worker's device.  If worker 1's generator were on cuda:1,
+        # torch.randint with device=cuda:0 would raise RuntimeError.
+        sampling_device = torch.device("cuda:0")
+        assert generator_cls.call_args_list == [call(device=sampling_device), call(device=sampling_device)]
+        assert len(attack._torch_gens) == 2

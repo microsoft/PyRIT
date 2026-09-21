@@ -50,10 +50,11 @@ dependencies = [
     "openai>=2.2.0",
     "openpyxl>=3.1.5",
     "pillow>=12.2.0",
-    "pydantic>=2.11.5",
+    "pydantic>=2.12.0",
     "PyJWT[crypto]>=2.8.0",
     "pyodbc>=5.1.0",
     "pypdf>=6.10.2",
+    "pypinyin>=0.55.0",
     "python-docx>=1.1.0",
     "python-dotenv>=1.2.2",
     "reportlab>=4.4.4",
@@ -220,6 +221,12 @@ exclude = ["doc/code/"]
 include = ["pyrit/prompt_target/hugging_face/**"]
 [tool.ty.overrides.rules]
 invalid-argument-type = "ignore"
+
+# Historical Alembic revisions are immutable; retain their defensive rowcount checks.
+[[tool.ty.overrides]]
+include = ["pyrit/memory/alembic/versions/1b3d5f7a9c2e_persist_scored_expectation.py"]
+[tool.ty.overrides.rules]
+redundant-condition-strict = "ignore"
 
 # Unit tests intentionally exercise runtime validation failures, mutable test doubles,
 # and optional fields after fixtures have populated them. Keep library code strict while

@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import csv
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
-from azure.ai.contentsafety.models import TextCategory
 
+from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, Score, ScoreStatus
 from pyrit.score import (
@@ -16,6 +17,7 @@ from pyrit.score import (
     HarmScorerEvaluator,
     HarmScorerMetrics,
     HumanLabeledDataset,
+    LikertScalePaths,
     MetricsType,
     ObjectiveHumanLabeledEntry,
     ObjectiveScorerEvaluator,
@@ -958,20 +960,60 @@ class TestSelectEvaluationScore:
     def _score(*, category: list[str] | None) -> Score:
         return Score(score_type="float_scale", score_value="0.5", score_category=category)
 
-    @pytest.mark.parametrize("category", list(AzureContentFilterScorer._CATEGORY_EVAL_FILES))
+    @pytest.mark.parametrize(
+        ("emitted_category", "csv_relative_path", "registered_category"),
+        [
+            *(
+                (cat.value, files[0][0], files[2])
+                for cat, files in AzureContentFilterScorer._CATEGORY_EVAL_FILES.items()
+            ),
+            *(
+                (
+                    preset.load().category,
+                    preset.evaluation_files.human_labeled_datasets_files[0],
+                    preset.evaluation_files.harm_category,
+                )
+                for preset in LikertScalePaths
+                if preset.evaluation_files is not None
+            ),
+        ],
+    )
     @pytest.mark.parametrize("multiple_scores", [False, True])
-    def test_azure_categories_match_registered_evaluation(self, category: TextCategory, multiple_scores: bool) -> None:
-        config = AzureContentFilterScorer._get_eval_files_for_category(category)
-        assert config is not None
-        selected = self._score(category=[category.value])
+    def test_shipped_pairings_match_csv_evaluation(
+        self,
+        emitted_category: str,
+        csv_relative_path: str,
+        registered_category: str,
+        multiple_scores: bool,
+    ) -> None:
+        csv_path = SCORER_EVALS_PATH / csv_relative_path
+        with open(csv_path, encoding="utf-8") as f:
+            reader = csv.DictReader(line for line in f if not line.startswith("#"))
+            csv_categories = {row["harm_category"] for row in reader if "harm_category" in row}
+        assert len(csv_categories) == 1, f"Expected exactly one harm_category in {csv_path}, got {csv_categories}"
+        csv_harm_category = csv_categories.pop()
+
+        assert registered_category == csv_harm_category
+
+        selected = self._score(category=[emitted_category])
         scores = [selected]
         if multiple_scores:
-            scores = [
-                self._score(category=[other.value])
-                for other in AzureContentFilterScorer._CATEGORY_EVAL_FILES
-                if other != category
-            ] + scores
-        assert ScorerEvaluator._select_evaluation_score(scores=scores, harm_category=config.harm_category) is selected
+            scores = [self._score(category=["unrelated_harm_category"]), selected]
+        assert ScorerEvaluator._select_evaluation_score(scores=scores, harm_category=csv_harm_category) is selected
+
+    def test_rejects_hate_score_for_representational_dataset(self):
+        score = self._score(category=["Hate"])
+        with pytest.raises(ValueError, match="requires a score for harm category 'REPRESENTATIONAL'"):
+            ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="REPRESENTATIONAL")
+
+    def test_rejects_bias_score_for_hate_speech_dataset(self):
+        score = self._score(category=["bias"])
+        with pytest.raises(ValueError, match="requires a score for harm category 'hate_speech'"):
+            ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="hate_speech")
+
+    def test_accepts_case_insensitive_unrecognized_category(self):
+        score = self._score(category=["Jailbreak"])
+        assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="jailbreak") is score
 
     def test_returns_none_when_the_scorer_returned_nothing(self):
         assert ScorerEvaluator._select_evaluation_score(scores=[], harm_category="hate_speech") is None

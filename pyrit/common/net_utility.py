@@ -53,7 +53,7 @@ def extract_url_parameters(url: str) -> dict[str, str]:
     parsed_url = urlparse(url)
     url_params = parse_qs(parsed_url.query, keep_blank_values=True)
     # Flatten params (parse_qs returns lists)
-    return {k: v[0] if isinstance(v, list) and len(v) > 0 else "" for k, v in url_params.items()}
+    return {k: v[0] if v else "" for k, v in url_params.items()}
 
 
 def remove_url_parameters(url: str) -> str:

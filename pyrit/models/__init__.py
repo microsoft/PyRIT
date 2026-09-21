@@ -98,6 +98,7 @@ if TYPE_CHECKING:
         Parameter,
         ParameterDestination,
         RegistryReference,
+        StructuredParameterValue,
         display_choices,
     )
     from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
@@ -108,6 +109,7 @@ if TYPE_CHECKING:
     from pyrit.models.scenario_progress import (
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_PLAN_VERSION,
+        SCENARIO_RUN_STARTED_AT_METADATA_KEY,
         ScenarioAtomicGroupProgress,
         ScenarioAttackResultDelta,
         ScenarioAttackTechniqueDetails,
@@ -120,6 +122,8 @@ if TYPE_CHECKING:
         ScenarioProgressResult,
         ScenarioProgressScore,
         ScenarioProgressSummary,
+        ScenarioQueueEntry,
+        ScenarioQueueSnapshot,
         ScenarioRunPlan,
         ScenarioRunPlanAtomicGroup,
         ScenarioRunPlanSeedGroup,
@@ -130,11 +134,15 @@ if TYPE_CHECKING:
         ScenarioTechniqueProgress,
     )
     from pyrit.models.score import (
+        Acquisition,
         Condition,
         ContentEntryScorable,
         ContentScorable,
+        DivergesFromRepetition,
+        JudgmentObservationPayload,
         MatchesObjective,
         MessageScorable,
+        Observation,
         Scorable,
         ScorableUnion,
         Score,
@@ -178,6 +186,7 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "Acquisition": "pyrit.models.score",
     "ALLOWED_CHAT_MESSAGE_ROLES": "pyrit.models.messages.chat_message",
     "AtomicAttackEvaluationIdentifier": "pyrit.models.identifiers",
     "AtomicAttackIdentifier": "pyrit.models.identifiers",
@@ -208,6 +217,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ContentScorable": "pyrit.models.score",
     "construct_response_from_request": "pyrit.models.messages.conversations",
     "display_choices": "pyrit.models.parameter",
+    "DivergesFromRepetition": "pyrit.models.score",
     "EmbeddingData": "pyrit.models.embeddings",
     "EmbeddingResponse": "pyrit.models.embeddings",
     "EmbeddingSupport": "pyrit.models.embeddings",
@@ -234,6 +244,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "JSON_SCHEMA_METADATA_KEY": "pyrit.models.target",
     "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY": "pyrit.models.target",
     "JsonSchemaDefinition": "pyrit.models.target",
+    "JudgmentObservationPayload": "pyrit.models.score",
     "MatchesObjective": "pyrit.models.score",
     "MEDIA_PATH_DATA_TYPES": "pyrit.models.literals",
     "Message": "pyrit.models.messages.message",
@@ -241,6 +252,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "MessageScorable": "pyrit.models.score",
     "Modality": "pyrit.models.literals",
     "NextMessageSystemPromptPaths": "pyrit.models.seeds",
+    "Observation": "pyrit.models.score",
     "ObjectiveTargetEvaluationIdentifier": "pyrit.models.identifiers",
     "Parameter": "pyrit.models.parameter",
     "ParameterDestination": "pyrit.models.parameter",
@@ -273,6 +285,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioRunState": "pyrit.models.results.scenario_result",
     "SCENARIO_RUN_PLAN_METADATA_KEY": "pyrit.models.scenario_progress",
     "SCENARIO_RUN_PLAN_VERSION": "pyrit.models.scenario_progress",
+    "SCENARIO_RUN_STARTED_AT_METADATA_KEY": "pyrit.models.scenario_progress",
     "ScenarioAttackResultDelta": "pyrit.models.scenario_progress",
     "ScenarioAtomicGroupProgress": "pyrit.models.scenario_progress",
     "ScenarioAttackTechniqueDetails": "pyrit.models.scenario_progress",
@@ -285,6 +298,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioProgressResult": "pyrit.models.scenario_progress",
     "ScenarioProgressScore": "pyrit.models.scenario_progress",
     "ScenarioProgressSummary": "pyrit.models.scenario_progress",
+    "ScenarioQueueEntry": "pyrit.models.scenario_progress",
+    "ScenarioQueueSnapshot": "pyrit.models.scenario_progress",
     "ScenarioRunPlan": "pyrit.models.scenario_progress",
     "ScenarioRunPlanAtomicGroup": "pyrit.models.scenario_progress",
     "ScenarioRunPlanSeedPrompt": "pyrit.models.scenario_progress",
@@ -309,6 +324,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "sort_message_pieces": "pyrit.models.messages.message_piece",
     "StrategyResult": "pyrit.models.results.strategy_result",
     "StrategyResultT": "pyrit.models.results.strategy_result",
+    "StructuredParameterValue": "pyrit.models.parameter",
     "TARGET_EVAL_PARAM_FALLBACKS": "pyrit.models.identifiers",
     "TARGET_EVAL_PARAMS": "pyrit.models.identifiers",
     "TargetCapabilities": "pyrit.models.target",

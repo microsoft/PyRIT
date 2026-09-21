@@ -5,9 +5,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
+import threading
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,9 +23,6 @@ from pyrit.executor.promptgen.gcg.config import (
     GCGStrategyConfig,
 )
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 generator_mod = pytest.importorskip(
     "pyrit.executor.promptgen.gcg.generator",
     reason="GCG optional dependencies (torch, transformers, etc.) not installed",
@@ -30,6 +31,10 @@ GCGGenerator = generator_mod.GCGGenerator
 GCGContext = generator_mod.GCGContext
 GCGResult = generator_mod.GCGResult
 
+from unit.executor.promptgen.gcg.trajectory_stubs import (  # noqa: E402
+    TrajectoryPromptManager,
+    TrajectoryWorker,
+)
 
 _LLAMA_2 = "meta-llama/Llama-2-7b-chat-hf"
 
@@ -253,9 +258,10 @@ class TestApplyTargetAugmentation:
     def test_augmentation_modifies_at_least_some_targets(self) -> None:
         import numpy as np
 
-        np.random.seed(42)
         targets = ["Sure, here is how to do it"] * 100
-        result, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[])
+        result, _ = GCGGenerator._apply_target_augmentation(
+            train_targets=targets, test_targets=[], np_rng=np.random.default_rng(42)
+        )
         num_changed = sum(1 for orig, aug in zip(targets, result, strict=False) if orig != aug)
         assert num_changed > 0
 
@@ -425,3 +431,103 @@ class TestReadResult:
         result = GCGGenerator._read_result(logfile_path=str(log_path), memory_labels={})
         assert result.final_suffix == ""
         assert math.isnan(result.final_loss)
+
+
+class TestBuildLogfilePath:
+    def test_same_prefix_yields_distinct_paths(self, tmp_path: Path) -> None:
+        gen = _make_generator(output_dir=tmp_path)
+        assert gen._build_logfile_path() != gen._build_logfile_path()
+
+    def test_path_is_prefix_timestamp_and_short_id(self, tmp_path: Path) -> None:
+        path = Path(_make_generator(output_dir=tmp_path)._build_logfile_path())
+        assert path.parent == tmp_path
+        assert re.fullmatch(r"gcg_\d{8}-\d{6}_[0-9a-f]{8}\.json", path.name), path.name
+
+    def test_explicit_logfile_is_returned_unchanged(self) -> None:
+        gen = GCGGenerator(models=[GCGModelConfig(name=_LLAMA_2)], output=GCGOutputConfig(logfile="fixed.json"))
+        assert gen._build_logfile_path() == "fixed.json"
+
+
+_TRAJECTORY_STRATEGIES = {
+    "individual": GCGStrategyConfig(anneal=True),
+    "progressive": GCGStrategyConfig(transfer=True, progressive_goals=True, anneal=True),
+}
+
+
+def _trajectory_generator(*, output_dir: Path, strategy: GCGStrategyConfig, seed: int) -> GCGGenerator:
+    return GCGGenerator(
+        models=[GCGModelConfig(name=_LLAMA_2)],
+        algorithm=GCGAlgorithmConfig(
+            n_steps=4,
+            test_steps=1,
+            batch_size=4,
+            topk=6,
+            allow_non_ascii=True,
+            control_init="1 2 3",
+            control_weight=0.0,
+            random_seed=seed,
+        ),
+        strategy=strategy,
+        output=GCGOutputConfig(result_prefix=str(output_dir / "gcg"), verbose=False),
+    )
+
+
+class TestConcurrentGenerators:
+    @pytest.mark.parametrize("strategy", list(_TRAJECTORY_STRATEGIES), ids=list(_TRAJECTORY_STRATEGIES))
+    async def test_generators_sharing_a_prefix_reproduce_isolated_results(self, tmp_path: Path, strategy: str) -> None:
+        """Two ``execute_async`` calls overlapping in one process, with the same ``result_prefix``,
+        write distinct logfiles and each return exactly the result they return when run alone.
+
+        Only worker creation and the prompt manager are stubbed; the RNG bundle, the outer
+        attack, the GCG step loop, and the logfile round-trip are all real. A barrier in the
+        stub worker forces the two runs to interleave step by step.
+        """
+        goals, targets = ["goal 0", "goal 1"], ["10 11", "12 13"]
+
+        def make(seed: int) -> GCGGenerator:
+            return _trajectory_generator(output_dir=tmp_path, strategy=_TRAJECTORY_STRATEGIES[strategy], seed=seed)
+
+        def summary(result: GCGResult) -> tuple[str, list[str], list[float]]:
+            return result.final_suffix, result.control_history, [round(loss, 6) for loss in result.loss_history]
+
+        with (
+            patch.object(generator_mod, "get_workers") as get_workers,
+            patch.object(generator_mod.attack_lib, "GCGPromptManager", TrajectoryPromptManager),
+        ):
+            get_workers.return_value = ([TrajectoryWorker(0)], [])
+            baseline_42 = summary(await make(42).execute_async(goals=goals, targets=targets))
+            baseline_7 = summary(await make(7).execute_async(goals=goals, targets=targets))
+            assert baseline_42 != baseline_7
+
+            barrier = threading.Barrier(2, timeout=10)
+            get_workers.side_effect = [([TrajectoryWorker(0, barrier=barrier)], []) for _ in range(2)]
+            result_42, result_7 = await asyncio.gather(
+                make(42).execute_async(goals=goals, targets=targets),
+                make(7).execute_async(goals=goals, targets=targets),
+            )
+
+        assert result_42.log_path != result_7.log_path
+        assert summary(result_42) == baseline_42
+        assert summary(result_7) == baseline_7
+
+    async def test_augmentation_draws_from_the_run_seeded_numpy_stream(self, tmp_path: Path) -> None:
+        """Target augmentation consumes the run's own NumPy generator, seeded from ``random_seed``."""
+        import numpy as np
+
+        targets = ["10 11", "12 13"]
+        with (
+            patch.object(generator_mod, "get_workers", return_value=([TrajectoryWorker(0)], [])),
+            patch.object(generator_mod.attack_lib, "GCGPromptManager", TrajectoryPromptManager),
+            patch.object(
+                GCGGenerator, "_apply_target_augmentation", wraps=GCGGenerator._apply_target_augmentation
+            ) as augment,
+        ):
+            generator = _trajectory_generator(
+                output_dir=tmp_path, strategy=_TRAJECTORY_STRATEGIES["individual"], seed=42
+            )
+            await generator.execute_async(goals=["goal 0", "goal 1"], targets=targets)
+
+        expected = np.random.default_rng(42)
+        for _ in targets:
+            expected.random()
+        assert augment.call_args.kwargs["np_rng"].bit_generator.state == expected.bit_generator.state
