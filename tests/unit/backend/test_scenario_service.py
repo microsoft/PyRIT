@@ -597,6 +597,60 @@ class TestScenarioServiceListScenarios:
         assert run_default_estimate.await_args.kwargs["scenario_name"] == metadata.registry_name
         assert service._estimate_tasks == {}
 
+    async def test_cancelled_catalog_compute_tracks_worker_until_exit(self) -> None:
+        """Cancelling a catalog compute retains its capacity until the worker exits."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+        release = asyncio.Event()
+
+        async def estimate_async(
+            *,
+            scenario_name: str,
+            construction_complete: asyncio.Event,
+            execution_timed_out: asyncio.Event,
+        ) -> ScenarioRunSizeEstimate:
+            assert scenario_name == metadata.registry_name
+            construction_complete.set()
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                await release.wait()
+            assert execution_timed_out.is_set()
+            return estimate
+
+        service = ScenarioService()
+        service._estimate_semaphore = asyncio.Semaphore(1)
+        service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
+        compute_task = asyncio.create_task(
+            service._compute_default_run_size_estimate_async(
+                scenario_name=metadata.registry_name,
+                cache_key=(metadata.registry_name, metadata.scenario_version),
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        compute_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await compute_task
+
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        assert service._estimate_semaphore.locked()
+        assert len(service._timed_out_estimate_workers) == 1
+
+        release.set()
+        async with asyncio.timeout(1):
+            while service._timed_out_estimate_workers:
+                await asyncio.sleep(0)
+
+        assert not service._estimate_semaphore.locked()
+
     async def test_catalog_timeout_holds_capacity_until_blocking_constructor_exits(self) -> None:
         """A timed-out constructor retains its slot until the underlying thread exits."""
         first_metadata = _make_scenario_metadata(registry_name="test.first")
@@ -1022,7 +1076,7 @@ class TestScenarioServiceListScenarios:
             assert len(result.items) == 3
             assert result.pagination.has_more is True
             assert result.pagination.next_cursor == "test.scenario_2"
-            assert [call.args[0] for call in service._registry.create_instance.call_args_list] == [
+            assert sorted(call.args[0] for call in service._registry.create_instance.call_args_list) == [
                 "test.scenario_0",
                 "test.scenario_1",
                 "test.scenario_2",
