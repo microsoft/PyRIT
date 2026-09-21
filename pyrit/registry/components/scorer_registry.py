@@ -29,8 +29,7 @@ from typing import TYPE_CHECKING
 
 from pyrit.models.identifiers import ScorerIdentifier
 from pyrit.models.parameter import ComponentType
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
-from pyrit.registry.registry import Registry
+from pyrit.registry.registry import InstanceHoldingRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
@@ -59,7 +58,7 @@ class ScorerMetadata(RegistryMetadata):
         return any(p.is_reference_to(ComponentType.TARGET) for p in self.parameters)
 
 
-class ScorerRegistry(Registry["Scorer", ScorerMetadata]):
+class ScorerRegistry(InstanceHoldingRegistry["Scorer", ScorerMetadata]):
     """
     Registry that discovers, builds, and holds ``Scorer`` instances.
 
@@ -83,7 +82,6 @@ class ScorerRegistry(Registry["Scorer", ScorerMetadata]):
                 access. If False, discovery runs immediately.
         """
         super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[Scorer] = DefaultInstanceRegistry(instance_type=self._base_type)
 
     def _base_type(self) -> type[Scorer]:
         """Return the ``Scorer`` base class, imported lazily."""
@@ -99,15 +97,18 @@ class ScorerRegistry(Registry["Scorer", ScorerMetadata]):
 
     def _should_register_discovered_class(self, cls: type[Scorer]) -> bool:
         """
-        Exclude private scorer implementation classes from the buildable catalog.
+        Exclude private and function-local scorer classes from the buildable catalog.
+
+        Factory-local classes can capture a configured child scorer. Register their
+        instances instead of discovering those classes as independent constructors.
 
         Args:
             cls (type[Scorer]): The discovered scorer class.
 
         Returns:
-            bool: True for public scorer classes.
+            bool: True for public scorer classes defined outside functions.
         """
-        return not cls.__name__.startswith("_")
+        return not cls.__name__.startswith("_") and "<locals>" not in cls.__qualname__
 
     def _identifier_type(self) -> type[ScorerIdentifier]:
         """Return ``ScorerIdentifier`` so its ``Param.*`` markers drive derivation."""

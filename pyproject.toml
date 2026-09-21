@@ -222,6 +222,12 @@ include = ["pyrit/prompt_target/hugging_face/**"]
 [tool.ty.overrides.rules]
 invalid-argument-type = "ignore"
 
+# Historical Alembic revisions are immutable; retain their defensive rowcount checks.
+[[tool.ty.overrides]]
+include = ["pyrit/memory/alembic/versions/1b3d5f7a9c2e_persist_scored_expectation.py"]
+[tool.ty.overrides.rules]
+redundant-condition-strict = "ignore"
+
 # Unit tests intentionally exercise runtime validation failures, mutable test doubles,
 # and optional fields after fixtures have populated them. Keep library code strict while
 # avoiding hundreds of per-assertion ignores in tests.

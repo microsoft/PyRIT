@@ -18,6 +18,7 @@ from dotenv.main import DotEnv
 from dotenv.parser import parse_stream
 
 from pyrit.common import path
+from pyrit.common.text_helper import is_non_empty_string
 from pyrit.exceptions import KeyVaultInitializationException
 
 if TYPE_CHECKING:
@@ -415,7 +416,7 @@ async def load_environment_async(
     ordinary_candidates: dict[str, list[tuple[str, str | None]]] = {}
     override_candidates: dict[str, list[tuple[str, str | None]]] = {}
     if env_akv_ref:
-        if any(not isinstance(secret_url, str) or not secret_url.strip() for secret_url in env_akv_ref):
+        if any(not is_non_empty_string(secret_url) for secret_url in env_akv_ref):
             raise ValueError("env_akv_ref must contain only non-empty Azure Key Vault secret URLs.")
         if env_files is None:
             dotenv_file = path.CONFIGURATION_DIRECTORY_PATH / ".env"

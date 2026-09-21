@@ -57,6 +57,7 @@ class StandardGCGSampling:
         temperature: float,
         allow_non_ascii: bool,
         non_ascii_tokens: torch.Tensor,
+        torch_generator: torch.Generator | None = None,
     ) -> torch.Tensor:
         """
         Sample ``batch_size`` candidate suffix token sequences.
@@ -79,6 +80,8 @@ class StandardGCGSampling:
                 the top-k.
             non_ascii_tokens (torch.Tensor): Token ids to exclude when
                 ``allow_non_ascii`` is False.
+            torch_generator (torch.Generator | None): Optional generator for
+                deterministic sampling.
 
         Returns:
             torch.Tensor: Candidate suffix token sequences with shape
@@ -99,7 +102,7 @@ class StandardGCGSampling:
         new_token_val = torch.gather(
             top_indices[new_token_pos],
             1,
-            torch.randint(0, top_k, (batch_size, 1), device=gradient.device),
+            torch.randint(0, top_k, (batch_size, 1), device=gradient.device, generator=torch_generator),
         )
         return original_control_tokens.scatter_(1, new_token_pos.unsqueeze(-1), new_token_val)
 

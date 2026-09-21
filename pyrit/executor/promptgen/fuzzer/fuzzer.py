@@ -14,6 +14,7 @@ import numpy as np
 from colorama import Fore, Style
 from pydantic import Field
 
+from pyrit.common.text_helper import escape_control_characters
 from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.exceptions import MissingPromptPlaceholderException, pyrit_placeholder_retry
 from pyrit.executor.core.config import (
@@ -321,6 +322,8 @@ class FuzzerResultPrinter:
             text (str): The text to print.
             *colors: Variable number of colorama color constants to apply.
         """
+        # Escape the target's control characters before adding our own color codes.
+        text = escape_control_characters(text)
         if self._enable_colors and colors:
             color_prefix = "".join(colors)
             print(f"{color_prefix}{text}{Style.RESET_ALL}")
@@ -335,8 +338,9 @@ class FuzzerResultPrinter:
             text (str): The text to wrap and print.
             color (str): The color to apply to the text.
         """
-        # Split by existing newlines first to preserve line breaks
-        text_lines = text.split("\n")
+        # Split by existing newlines first to preserve line breaks. Escaping happens before
+        # wrapping so escaped sequences count toward the width and textwrap drops none of them.
+        text_lines = escape_control_characters(text.replace("\r\n", "\n")).split("\n")
 
         for text_line in text_lines:
             if text_line.strip():  # Only wrap non-empty lines
@@ -496,7 +500,7 @@ class FuzzerResultPrinter:
         if result.successful_templates:
             print("Successful Templates:")
             for template in result.successful_templates:
-                print(f"---\n{template}")
+                print(f"---\n{escape_control_characters(template)}")
         else:
             print("No successful templates found.")
 

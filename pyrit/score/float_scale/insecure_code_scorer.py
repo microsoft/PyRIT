@@ -4,6 +4,7 @@
 from collections.abc import Sequence
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
+from pyrit.common.text_helper import is_non_empty_string
 from pyrit.models import (
     ComponentIdentifier,
     JsonSchemaDefinition,
@@ -28,7 +29,7 @@ _DEFAULT_HARM_CATEGORY = "security"
 
 def _normalize_harm_categories(harm_categories: Sequence[str] | str) -> tuple[str, ...]:
     categories = (harm_categories,) if isinstance(harm_categories, str) else tuple(harm_categories)
-    if not categories or any(not isinstance(category, str) or not category.strip() for category in categories):
+    if not categories or any(not is_non_empty_string(category) for category in categories):
         raise ValueError("harm_categories must contain at least one non-empty string.")
     if len(set(categories)) != len(categories):
         raise ValueError("harm_categories must not contain duplicates.")

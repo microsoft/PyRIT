@@ -48,11 +48,9 @@ class TextJailBreak:
         Returns:
             dict[str, list[Path]]: Cached mapping of filename to list of matching paths.
         """
-        if cls._template_cache is None:
-            with cls._cache_lock:
-                # Double-checked locking: re-test after acquiring the lock
-                if cls._template_cache is None:
-                    cls._template_cache = cls._scan_template_files()
+        with cls._cache_lock:
+            if cls._template_cache is None:
+                cls._template_cache = cls._scan_template_files()
         return cls._template_cache
 
     @classmethod

@@ -22,8 +22,6 @@ from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
-_BLANK_IMAGE_PATH = str(DATASETS_PATH / "seed_datasets" / "local" / "examples" / "blank_canvas.png")
-
 
 def get_technique_factories() -> list[AttackTechniqueFactory]:
     """
@@ -57,7 +55,11 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
                     request_converters=ConverterConfiguration.from_converters(
-                        converters=[AddImageTextConverter(img_to_add=_BLANK_IMAGE_PATH)]
+                        converters=[
+                            AddImageTextConverter(
+                                img_to_add=DATASETS_PATH / "seed_datasets" / "local" / "examples" / "blank_canvas.png"
+                            )
+                        ]
                     )
                 ),
             },

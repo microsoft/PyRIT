@@ -29,6 +29,26 @@ logger = logging.getLogger(__name__)
 ResponseT = TypeVar("ResponseT", contravariant=True)
 
 
+def _read_response_text(value: object) -> str | None:
+    """
+    Read provider text, including SDK objects constructed without validation.
+
+    Returns:
+        str | None: Non-empty text, or None for missing or malformed content.
+    """
+    return value if isinstance(value, str) and value else None
+
+
+def _is_content_filter_code(code: str) -> bool:
+    """
+    Recognize the Azure error code not present in OpenAI's annotated code union.
+
+    Returns:
+        bool: Whether the code denotes content filtering.
+    """
+    return code == "content_filter"
+
+
 class OpenAIResponseAdapter(Generic[ResponseT]):
     """Base response-format behavior used by ``OpenAITarget``."""
 
@@ -137,11 +157,10 @@ class ResponsesResponseAdapter(OpenAIResponseAdapter[Response]):
                 if getattr(section, "type", None) != "message" or getattr(section, "status", None) != "completed":
                     continue
                 parts.extend(
-                    content_item.text
+                    text
                     for content_item in getattr(section, "content", None) or []
                     if isinstance(content_item, ResponseOutputText)
-                    and isinstance(content_item.text, str)
-                    and content_item.text
+                    and (text := _read_response_text(content_item.text)) is not None
                 )
         except (AttributeError, IndexError, TypeError):
             return None
@@ -173,7 +192,7 @@ class ResponsesResponseAdapter(OpenAIResponseAdapter[Response]):
             PyritException: If the provider reports an error or unexpected status.
             EmptyResponseException: If a completed response has no output.
         """
-        if response.error is not None and response.error.code != "content_filter":
+        if response.error is not None and not _is_content_filter_code(response.error.code):
             raise PyritException(message=f"Response error: {response.error.code} - {response.error.message}")
 
         if is_truncated:

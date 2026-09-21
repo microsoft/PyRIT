@@ -1,9 +1,10 @@
-import type { AddMessageResponse, BackendMessage } from "@/types";
+import type { AddMessageResponse, BackendMessage, TargetResponseStatus } from "@/types";
 
 export function makeAddMessageResponse(
   attackResultId: string,
   conversationId: string,
   messages: BackendMessage[],
+  targetResponseStatus: TargetResponseStatus | null = null,
 ): AddMessageResponse {
   return {
     attack: {
@@ -19,6 +20,10 @@ export function makeAddMessageResponse(
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     },
-    messages: { conversation_id: conversationId, messages },
+    messages: {
+      conversation_id: conversationId,
+      messages,
+      target_response_status: targetResponseStatus,
+    },
   };
 }

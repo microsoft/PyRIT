@@ -40,7 +40,7 @@ class AddImageVideoConverter(Converter):
     def __init__(
         self,
         *,
-        video_path: str,
+        video_path: Path | str,
         img_position: tuple[int, int] = (10, 10),
         img_resize_size: tuple[int, int] = (500, 500),
     ) -> None:
@@ -48,7 +48,7 @@ class AddImageVideoConverter(Converter):
         Initialize the converter with the video path and image properties.
 
         Args:
-            video_path (str): File path or Azure Blob URL of video to add image to.
+            video_path (Path | str): Local file path or Azure Blob URL of video to add image to.
             img_position (tuple): Position to place image in video. Defaults to (10, 10).
             img_resize_size (tuple): Size to resize image to. Defaults to (500, 500).
 
@@ -60,7 +60,7 @@ class AddImageVideoConverter(Converter):
 
         self._img_position = img_position
         self._img_resize_size = img_resize_size
-        self._video_path = video_path
+        self._video_path = str(video_path)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

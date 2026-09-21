@@ -83,7 +83,7 @@ describe("TargetConfig", () => {
     );
 
     expect(
-      screen.getByRole("heading", { level: 1, name: "Target Configuration" })
+      screen.getByRole("heading", { level: 1, name: "Target Registry" })
     ).toBeInTheDocument();
     expect(screen.getByText("Loading targets...")).toBeInTheDocument();
   });
