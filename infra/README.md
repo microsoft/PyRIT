@@ -666,7 +666,7 @@ Supported Azure integrations, including OpenAI, Content Safety, and Speech, can 
 - **Network outputs**: `egressPublicIpAddress`, `natGatewayId`, `acaInfrastructureSubnetId`, and `vnetName` describe the created network.
 - **PIP lock**: `protectEgressPublicIp=true` creates a resource-scoped `CanNotDelete` lock. The internal ADO workflow enables it; community examples leave it disabled unless the operator explicitly opts in.
 - **Log Analytics shared key**: `listKeys()` is the standard ACA pattern. The key is used during deployment only, not exposed to the application.
-- **Workload profiles**: Consumption tier. Defaults to 1 replica (no auto-scale).
+- **Workload profiles**: Consumption tier. Scenario FIFO admission is process-local, so deployments allow at most 1 active replica and default to 1 (no auto-scale). Supporting multiple replicas requires shared, database-backed admission or lease ownership before raising this limit.
 - **Key Vault**: Bicep requires a supplied vault resource ID. The vault is backup/audit-only for `deploy_instance.py`, but it is the editable runtime source for deployments using `envSecretName`. Those app identities require `Key Vault Secrets Officer` and a permitted network path. AcrPull is still granted separately.
 - **OpenTelemetry**: When `enableOtel=true`, configure the agent post-deploy:
   ```bash

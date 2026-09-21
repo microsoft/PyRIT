@@ -59,6 +59,7 @@ class WordLevelConverter(Converter):
         return self._create_identifier(
             params={
                 "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
+                "word_selection_strategy_params": self._word_selection_strategy.get_identifier_params(),
                 "word_split_separator": self._word_split_separator,
             }
         )

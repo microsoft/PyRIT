@@ -25,13 +25,16 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    ContentScorable,
     Message,
     Score,
+    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.score import Scorer
 
 if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
@@ -317,7 +320,9 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         logger.info(f"Combined {len(context.chunk_responses)} chunk responses")
 
         # Score the combined value if scorer is configured
-        score = await self._score_combined_value_async(combined_value=combined_value, objective=context.objective)
+        score = await self._score_combined_value_async(
+            combined_value=combined_value, objective=context.objective, expectation=context.expectation
+        )
 
         # Determine the outcome
         outcome, outcome_reason = self._determine_attack_outcome(score=score)
@@ -366,6 +371,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         *,
         combined_value: str,
         objective: str,
+        expectation: ScoringExpectation,
     ) -> Score | None:
         """
         Score the combined chunk responses against the objective.
@@ -373,22 +379,35 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         Args:
             combined_value (str): The combined text from all chunk responses.
             objective (str): The natural-language description of the attack's objective.
+            expectation (ScoringExpectation): The effective scoring question.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if
                 no objective scorer is set.
         """
-        if not self._objective_scorer:
+        if not self._objective_scorer and not self._auxiliary_scorers:
             return None
 
+        scorers: list[Scorer] = []
+        roles: list[ComponentRole] = []
+        if self._objective_scorer is not None:
+            scorers.append(self._objective_scorer)
+            roles.append(ComponentRole.OBJECTIVE_SCORER)
+        scorers.extend(self._auxiliary_scorers)
+        roles.extend([ComponentRole.AUXILIARY_SCORER] * len(self._auxiliary_scorers))
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._objective_scorer.get_identifier(),
             objective=objective,
         ):
-            scores = await self._objective_scorer.score_text_async(text=combined_value, objective=objective)
-        return scores[0] if scores else None
+            results = await Scorer.score_with_scorers_async(
+                scorable=ContentScorable(value=combined_value),
+                scorers=scorers,
+                expectation=expectation,
+                scorer_roles=roles,
+            )
+        objective_scores = results[0] if self._objective_scorer is not None else []
+        return objective_scores[0] if objective_scores else None
 
     async def _teardown_async(self, *, context: ChunkedRequestAttackContext) -> None:
         """

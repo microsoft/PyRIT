@@ -122,6 +122,11 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._scorer.required_conditions()
 
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """Validate wrapper and child criteria without checking sibling condition coverage."""
+        super()._validate_expectation(expectation=expectation)
+        self._scorer._validate_expectation(expectation=expectation)
+
     async def _score_scorable_async(
         self,
         *,

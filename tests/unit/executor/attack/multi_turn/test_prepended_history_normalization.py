@@ -31,6 +31,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import (
@@ -297,6 +298,7 @@ def _make_tap_node(*, target: PromptTarget) -> _TreeOfAttacksNode:
             objective_target=target,
         ),
         record_objective_conversation=lambda *, conversation_id: None,
+        expectation=ScoringExpectation(objective="Test objective"),
     )
 
 

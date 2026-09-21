@@ -5,20 +5,38 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
+import numpy as np
 
 from pyrit.common.utils import verify_and_resolve_path
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import numpy as np
-
     from pyrit.models import ComponentIdentifier
     from pyrit.models.harm_definition import HarmDefinition
 
 T = TypeVar("T", bound="ScorerMetrics")
 M = TypeVar("M", bound="ScorerMetrics")
+
+
+def _json_default(value: Any) -> Any:
+    """
+    Encode numpy arrays and scalars as plain JSON lists and numbers.
+
+    Args:
+        value (Any): The object ``json.dumps`` could not serialize on its own.
+
+    Returns:
+        Any: A JSON-serializable Python object.
+
+    Raises:
+        TypeError: If the value is not a numpy array or scalar.
+    """
+    if isinstance(value, (np.ndarray, np.generic)):
+        return value.tolist()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 @dataclass
@@ -55,12 +73,18 @@ class ScorerMetrics:
         This is the canonical serialization entry point for ``ScorerMetrics`` and its
         subclasses. Pair it with ``from_json_file`` (which reads a JSON file written
         from this string, optionally wrapped in a ``"metrics"`` key) for round-trip
-        (de)serialization.
+        (de)serialization. Numpy values, such as the ``trial_scores`` array that
+        ``ScorerEvaluator`` attaches to the metrics it returns, are written as nested
+        JSON lists.
 
         Returns:
             str: The JSON string representation of the metrics.
+
+        Raises:
+            TypeError: If a field holds a value that is neither JSON-serializable nor
+                a numpy array or scalar.
         """
-        return json.dumps(asdict(self))
+        return json.dumps(asdict(self), default=_json_default)
 
     @classmethod
     def from_json_file(cls: type[T], file_path: str | Path) -> T:
@@ -70,8 +94,10 @@ class ScorerMetrics:
         This is the canonical deserialization entry point for ``ScorerMetrics`` and its
         subclasses. It accepts a *file path* (string or ``Path``), not a JSON string —
         the loader opens the file, unwraps a top-level ``"metrics"`` key if present
-        (as used by evaluation result files), and filters out internal underscore-prefixed
-        fields (e.g., cached ``init=False`` attributes) before constructing the instance.
+        (as used by evaluation result files), filters out internal underscore-prefixed
+        fields (e.g., cached ``init=False`` attributes), and reads a nested-list
+        ``trial_scores`` back as a numpy array, whose dtype and shape follow the stored
+        lists rather than the array that produced them.
 
         Args:
             file_path (str | Path): The path to the JSON file.
@@ -92,6 +118,13 @@ class ScorerMetrics:
         # Filter out internal fields that shouldn't be passed to __init__
         # (e.g., _harm_definition_obj is a cached field with init=False)
         filtered_data = {k: v for k, v in metrics_data.items() if not k.startswith("_")}
+
+        # to_json() writes numpy arrays as nested lists. Decoding back into an ndarray keeps
+        # the declared field type; a value that is not a list is left alone, since only the
+        # nested-list form is what to_json() produces.
+        trial_scores = filtered_data.get("trial_scores")
+        if isinstance(trial_scores, list):
+            filtered_data["trial_scores"] = np.array(trial_scores)
 
         return cls(**filtered_data)
 

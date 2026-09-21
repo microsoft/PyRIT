@@ -61,7 +61,6 @@ const VIEW_PATHS: Record<ViewName, string> = {
   chat: '/chat',
   history: HISTORY_ATTACKS_PATH,
   registry: '/registry/targets',
-  targets: '/registry/targets',
   scenarios: '/scanner',
   configuration: '/config',
 }

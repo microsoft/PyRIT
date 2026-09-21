@@ -54,6 +54,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScoringExpectation,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
@@ -379,6 +380,7 @@ class _TreeOfAttacksNode:
         attack_strategy_name: str,
         modality_router: _ModalityFeedbackRouter,
         record_objective_conversation: Callable[..., None],
+        expectation: ScoringExpectation,
         use_score_as_feedback: bool = True,
         memory_labels: dict[str, str] | None = None,
         parent_id: str | None = None,
@@ -409,6 +411,7 @@ class _TreeOfAttacksNode:
                 messages. Typically shared across all nodes of the same attack.
             record_objective_conversation (Callable[..., None]): Records an objective-target
                 conversation ID for cleanup before each objective send.
+            expectation (ScoringExpectation): The execution's resolved scoring question.
             use_score_as_feedback (bool): Whether subsequent adversarial prompts include
                 the objective score. Defaults to True.
             memory_labels (dict[str, str] | None): Labels for memory storage.
@@ -439,6 +442,7 @@ class _TreeOfAttacksNode:
         self._record_objective_conversation = record_objective_conversation
         self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         self._use_score_as_feedback = use_score_as_feedback
+        self._expectation = expectation
 
         # Initialize utilities
         self._memory = CentralMemory.get_memory_instance()
@@ -817,7 +821,7 @@ class _TreeOfAttacksNode:
             response (Message): The response from the objective target to evaluate.
                 This contains the target's reply to the adversarial prompt.
             objective (str): The attack objective describing what the attacker wants to achieve.
-                This is passed to scorers as context for evaluation.
+                Used for execution diagnostics; the resolved expectation supplies scoring criteria.
 
         Raises:
             RuntimeError: If the scoring process returns no objective score.
@@ -833,9 +837,8 @@ class _TreeOfAttacksNode:
         """
         # Use the Scorer utility method to handle all scoring
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self._attack_strategy_name,
-            component_identifier=self._objective_scorer.get_identifier(),
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=objective,
         ):
@@ -843,7 +846,7 @@ class _TreeOfAttacksNode:
                 response=response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                objective=objective,
+                expectation=self._expectation,
             )
 
         # Extract objective score
@@ -976,6 +979,7 @@ class _TreeOfAttacksNode:
             modality_router=self._modality_router,
             record_objective_conversation=self._record_objective_conversation,
             use_score_as_feedback=self._use_score_as_feedback,
+            expectation=self._expectation,
             memory_labels=self._memory_labels,
             desired_response_prefix=self._desired_response_prefix,
             parent_id=self.node_id,
@@ -2244,6 +2248,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             modality_router=self._modality_router,
             record_objective_conversation=context._record_objective_target_invocation,
             use_score_as_feedback=self._attack_scoring_config.use_score_as_feedback,
+            expectation=context.expectation,
             memory_labels=context.memory_labels,
             desired_response_prefix=self._configuration.desired_response_prefix,
             parent_id=parent_id,
@@ -2617,6 +2622,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         self,
         *,
         objective: str,
+        expectation: ScoringExpectation | None = None,
         memory_labels: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> TAPAttackResult: ...
