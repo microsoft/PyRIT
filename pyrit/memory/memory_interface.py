@@ -3519,6 +3519,17 @@ class MemoryInterface(abc.ABC):
         new_condition_group_ids = self._get_new_condition_group_ids(
             seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
         )
+        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in new_condition_group_ids]
+        stored_groups = (
+            {
+                entry.id: entry.prompt_group_id
+                for entry in self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.id, batch_values=retained_seed_ids
+                )
+            }
+            if retained_seed_ids
+            else {}
+        )
 
         entries: MutableSequence[SeedEntry] = []
         for prompt in seeds:
@@ -3528,7 +3539,12 @@ class MemoryInterface(abc.ABC):
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
             if prompt.prompt_group_id in new_condition_group_ids:
-                entries.append(SeedEntry(entry=prompt))
+                if prompt.id in stored_groups and stored_groups[prompt.id] == prompt.prompt_group_id:
+                    continue
+                entry = SeedEntry(entry=prompt)
+                if prompt.id in stored_groups:
+                    entry.id = uuid.uuid4()
+                entries.append(entry)
                 continue
             if prompt.dataset_name:
                 if (prompt.value_sha256, prompt.dataset_name, conditions_key) in existing_pairs:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from abc import abstractmethod
 from contextlib import nullcontext
@@ -38,7 +39,6 @@ from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
-    _get_current_scoring_expectation,
     _observation_collection,
     _ObservationEvidence,
     _scoring_expectation_context,
@@ -365,7 +365,8 @@ class MessageScorer(Scorer):
                 infer_objective_from_request=infer_objective_from_request,
             )
         )
-        self._validate_expectation(expectation=resolved_expectation)
+        if not infer_objective:
+            self._validate_expectation(expectation=resolved_expectation)
         return await self._score_message_root_async(
             message=message,
             scorable=scorable,
@@ -905,6 +906,9 @@ class MessageScorer(Scorer):
                 conditions=expectation.conditions,
             )
 
+        if infer_objective_from_request:
+            self._validate_expectation(expectation=effective_expectation)
+
         if scoring_message is None:
             scores = self._build_fallback_score(message=message, objective=objective)
             self._finalize_message_scores(
@@ -1025,16 +1029,27 @@ class MessageScorer(Scorer):
         """
         Score a message after message-family policy and substitutions are applied.
 
-        Wrapping scorers override this hook to forward the complete expectation. The existing
-        call-local expectation context also carries it through legacy aggregation overrides
-        to ``_score_piece_with_expectation_async``.
+        Pass criteria through aggregation explicitly. Legacy aggregation overrides remain
+        supported for objective-only calls, but must migrate before receiving typed criteria.
 
         Returns:
             list[Score]: The scores produced from the prepared message.
+
+        Raises:
+            TypeError: If a legacy aggregation override cannot receive typed criteria.
         """
+        if "expectation" not in inspect.signature(self._score_async).parameters:
+            if expectation is not None and any(
+                not isinstance(condition, MatchesObjective) for condition in expectation.conditions
+            ):
+                raise TypeError(
+                    f"{type(self).__name__}._score_async must accept and forward expectation to score typed conditions."
+                )
+            return await self._score_async(message, objective=expectation.objective if expectation else None)
         return await self._score_async(
             message,
             objective=expectation.objective if expectation else None,
+            expectation=expectation,
         )
 
     def _get_judgment_replay_identifier(self) -> dict[str, object] | None:
@@ -1126,7 +1141,9 @@ class MessageScorer(Scorer):
         """
         raise NonReplayableObservationError(f"{type(self).__name__} does not implement judgment observation replay.")
 
-    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+    async def _score_async(
+        self, message: Message, *, objective: str | None = None, expectation: ScoringExpectation | None = None
+    ) -> list[Score]:
         """
         Score the given request response asynchronously.
 
@@ -1137,6 +1154,7 @@ class MessageScorer(Scorer):
         Args:
             message (Message): The message to score.
             objective (str | None): The objective to evaluate against. Defaults to None.
+            expectation (ScoringExpectation | None): Complete criteria passed through aggregation.
 
         Returns:
             list[Score]: The piece scores, or ``[]`` when no piece applies or produces a score.
@@ -1147,11 +1165,8 @@ class MessageScorer(Scorer):
         # Score only the supported pieces
         supported_pieces = self._get_supported_pieces(message)
 
-        expectation = _get_current_scoring_expectation()
         if expectation is None and objective is not None:
             expectation = ScoringExpectation(objective=objective)
-        elif expectation is not None and objective != expectation.objective:
-            expectation = ScoringExpectation(objective=objective, conditions=expectation.conditions)
         tasks = [
             self._score_piece_with_expectation_async(message_piece=piece, expectation=expectation)
             for piece in supported_pieces

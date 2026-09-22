@@ -146,8 +146,10 @@ class AttackParameters:
         if "objective" in valid_fields:
             params["objective"] = seed_group.objective.value
 
-        if "expectation" in valid_fields and seed_group.objective.conditions:
-            params["expectation"] = seed_group.scoring_expectation
+        if "expectation" in valid_fields:
+            params["expectation"] = AttackParameters._resolve_seed_expectation(
+                seed_group=seed_group, overrides=overrides
+            )
 
         if "memory_labels" in valid_fields:
             params["memory_labels"] = {}
@@ -205,6 +207,28 @@ class AttackParameters:
         params.update(overrides)
 
         return cls(**params)
+
+    @staticmethod
+    def _resolve_seed_expectation(
+        *, seed_group: AttackSeedGroup, overrides: dict[str, Any]
+    ) -> ScoringExpectation | None:
+        """
+        Use an explicit override, including None, before seed-authored criteria.
+
+        Returns:
+            ScoringExpectation | None: The selected criteria.
+
+        Raises:
+            TypeError: If the override is not a typed expectation or None.
+        """
+        if "expectation" in overrides:
+            expectation = overrides["expectation"]
+            if expectation is not None and not isinstance(expectation, ScoringExpectation):
+                raise TypeError("expectation must be a ScoringExpectation or None.")
+            return expectation
+        if seed_group.objective.conditions:
+            return seed_group.scoring_expectation
+        return None
 
     @classmethod
     def excluding(cls, *field_names: str) -> type[AttackParameters]:

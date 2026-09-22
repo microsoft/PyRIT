@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.executor.attack import AttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.executor.benchmark.question_answering import (
     QuestionAnsweringBenchmark,
     QuestionAnsweringBenchmarkContext,
@@ -225,11 +225,15 @@ class TestQuestionAnsweringBenchmark:
     ) -> None:
         """Test that perform_async calls the underlying PromptSendingAttack."""
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
-            mock_attack_instance = AsyncMock()
+            scoring_config = AttackScoringConfig(objective_scorer=QuestionAnswerScorer())
+            mock_attack_instance = AsyncMock(spec=PromptSendingAttack)
+            mock_attack_instance.get_attack_scoring_config.return_value = scoring_config
             mock_attack_instance.execute_async.return_value = sample_attack_result
             mock_attack_class.return_value = mock_attack_instance
 
-            benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+            benchmark = QuestionAnsweringBenchmark(
+                objective_target=mock_prompt_target, attack_scoring_config=scoring_config
+            )
 
             # Setup context first
             await benchmark._setup_async(context=sample_benchmark_context)
@@ -330,7 +334,8 @@ class TestQuestionAnsweringBenchmarkExecuteAsync:
     ) -> None:
         """Test execute_async with only required parameters."""
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
-            mock_attack_instance = AsyncMock()
+            mock_attack_instance = AsyncMock(spec=PromptSendingAttack)
+            mock_attack_instance.get_attack_scoring_config.return_value = None
             mock_attack_instance.execute_async.return_value = sample_attack_result
             mock_attack_class.return_value = mock_attack_instance
 
@@ -352,7 +357,8 @@ class TestQuestionAnsweringBenchmarkExecuteAsync:
         memory_labels: dict[str, str] = {"test": "label"}
 
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
-            mock_attack_instance = AsyncMock()
+            mock_attack_instance = AsyncMock(spec=PromptSendingAttack)
+            mock_attack_instance.get_attack_scoring_config.return_value = None
             mock_attack_instance.execute_async.return_value = sample_attack_result
             mock_attack_class.return_value = mock_attack_instance
 
@@ -450,7 +456,8 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
     ) -> None:
         """Test the full workflow integration from setup to teardown."""
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
-            mock_attack_instance = AsyncMock()
+            mock_attack_instance = AsyncMock(spec=PromptSendingAttack)
+            mock_attack_instance.get_attack_scoring_config.return_value = None
             mock_attack_instance.execute_async.return_value = sample_attack_result
             mock_attack_class.return_value = mock_attack_instance
 
@@ -510,7 +517,8 @@ class TestQuestionAnsweringBenchmarkErrorHandling:
     ) -> None:
         """Test handling of attack execution failure."""
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
-            mock_attack_instance = AsyncMock()
+            mock_attack_instance = AsyncMock(spec=PromptSendingAttack)
+            mock_attack_instance.get_attack_scoring_config.return_value = None
             mock_attack_instance.execute_async.side_effect = Exception("Attack failed")
             mock_attack_class.return_value = mock_attack_instance
 
@@ -558,15 +566,35 @@ async def test_benchmark_typed_expectation_end_to_end_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("with_scorer", [False, True])
-async def test_benchmark_rejects_incompatible_configuration_before_target_async(
-    sample_question_entry: QuestionAnsweringEntry, with_scorer: bool
+@pytest.mark.parametrize("empty_config", [False, True])
+async def test_benchmark_without_scorers_collects_response_async(
+    sample_question_entry: QuestionAnsweringEntry, empty_config: bool
 ) -> None:
     target = MockPromptTarget()
     benchmark = QuestionAnsweringBenchmark(
         objective_target=target,
+        attack_scoring_config=AttackScoringConfig() if empty_config else None,
+    )
+    result = await benchmark.execute_async(question_answering_entry=sample_question_entry)
+    assert len(target.prompt_sent) == 1
+    assert result.last_response is not None
+    assert result.outcome == AttackOutcome.UNDETERMINED
+    assert result.automated_score is None
+    assert result.outcome_reason == "No objective scorer configured"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("auxiliary_only", [False, True])
+async def test_benchmark_rejects_incompatible_configuration_before_target_async(
+    sample_question_entry: QuestionAnsweringEntry, auxiliary_only: bool
+) -> None:
+    target = MockPromptTarget()
+    scorer = SubStringScorer(substring="Paris")
+    benchmark = QuestionAnsweringBenchmark(
+        objective_target=target,
         attack_scoring_config=AttackScoringConfig(
-            objective_scorer=SubStringScorer(substring="Paris") if with_scorer else None
+            objective_scorer=None if auxiliary_only else scorer,
+            auxiliary_scorers=[scorer] if auxiliary_only else [],
         ),
     )
     with patch.object(target, "send_prompt_async", new_callable=AsyncMock) as send:

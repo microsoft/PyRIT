@@ -28,6 +28,7 @@ from pyrit.score import (
     TrueFalseInverterScorer,
     TrueFalseScoreAggregator,
 )
+from pyrit.score.observation.execution import _scoring_expectation_context
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -200,6 +201,53 @@ async def test_question_answer_concurrent_expectations_are_isolated_async() -> N
         )
     assert [scores[0].get_value() for scores in results] == [True, False, False]
     assert [scores[0].scored_expectation for scores in results] == expectations
+
+
+def test_question_answer_legacy_piece_override_fails_clearly() -> None:
+    class LegacyQuestionAnswerScorer(QuestionAnswerScorer):
+        async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+            raise AssertionError("The custom policy must not be silently skipped.")
+
+    with pytest.raises(TypeError, match="Move the custom policy to _score_piece_with_expectation_async"):
+        LegacyQuestionAnswerScorer()
+
+
+async def test_question_answer_custom_expectation_hook_runs_async(expectation: ScoringExpectation) -> None:
+    class StrictQuestionAnswerScorer(QuestionAnswerScorer):
+        async def _score_piece_with_expectation_async(
+            self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+        ) -> list[Score]:
+            scores = await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
+            scores[0].score_value = "false"
+            return scores
+
+    [score] = await StrictQuestionAnswerScorer().score_async(
+        scorable=ContentScorable(value="Paris"), expectation=expectation
+    )
+    assert score.get_value() is False
+
+
+async def test_aggregation_uses_explicit_expectation_not_observation_context_async(
+    expectation: ScoringExpectation,
+) -> None:
+    scorer = QuestionAnswerScorer()
+    unrelated = ScoringExpectation(conditions=(AnswerMatches(correct_answer="London"),))
+    with _scoring_expectation_context(unrelated):
+        [score] = await scorer._score_async(
+            Message.from_prompt(prompt="Paris", role="assistant"),
+            objective=expectation.objective,
+            expectation=expectation,
+        )
+    assert score.get_value() is True
+
+
+async def test_legacy_aggregation_override_cannot_drop_typed_criteria_async(expectation: ScoringExpectation) -> None:
+    class LegacyAggregationScorer(QuestionAnswerScorer):
+        async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+            raise AssertionError("Typed criteria must not be lost.")
+
+    with pytest.raises(RuntimeError, match="must accept and forward expectation"):
+        await LegacyAggregationScorer().score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
 
 
 async def test_question_answer_preserves_role_filter_async(expectation: ScoringExpectation) -> None:

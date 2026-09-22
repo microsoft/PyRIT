@@ -102,6 +102,8 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
             objective_target (PromptTarget): The target system to evaluate.
             attack_converter_config (AttackConverterConfig | None): Configuration for converters.
             attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
+                With no scorers, collect responses without a verdict. Otherwise, at least one
+                scorer must consume the generated ``AnswerMatches`` condition.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             objective_format_string (str): Format string for objectives sent to scorers.
             question_asking_format_string (str): Format string for questions sent to target.
@@ -198,9 +200,13 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         if not context.generated_message:
             raise ValueError("Message must be generated before executing benchmark")
 
+        scoring_config = self._prompt_sending_attack.get_attack_scoring_config()
+        has_scorers = scoring_config is not None and (
+            scoring_config.objective_scorer is not None or bool(scoring_config.auxiliary_scorers)
+        )
         return await self._prompt_sending_attack.execute_async(
             objective=context.generated_objective,
-            expectation=context.generated_expectation,
+            expectation=context.generated_expectation if has_scorers else None,
             next_message=context.generated_message,
             prepended_conversation=context.prepended_conversation,
             memory_labels=context.memory_labels,

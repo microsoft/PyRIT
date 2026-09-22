@@ -18,6 +18,10 @@ from pyrit.executor.attack import (
 )
 from pyrit.executor.attack.compound import SequentialAttack, SequentialChildAttack
 from pyrit.executor.attack.multi_turn import simulated_conversation
+from pyrit.executor.attack.multi_turn.multi_prompt_sending import (
+    MultiPromptSendingAttack,
+    MultiPromptSendingAttackParameters,
+)
 from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
@@ -122,6 +126,29 @@ seeds:
         assert params.next_message is not None
         assert params.next_message.get_value() == "Return one word"
         assert not params.next_message.get_piece().prompt_metadata
+
+    async def test_multi_prompt_seed_criteria_reach_scoring_async(self) -> None:
+        group = _group()
+        params = await MultiPromptSendingAttackParameters.from_seed_group_async(seed_group=group)
+        assert params.expectation == group.scoring_expectation
+        target = MockPromptTarget()
+        attack = MultiPromptSendingAttack(
+            objective_target=target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
+        result = await attack.execute_async(
+            objective=params.objective, user_messages=params.user_messages, expectation=params.expectation
+        )
+        assert result.outcome == AttackOutcome.SUCCESS
+        assert result.automated_score is not None
+        assert result.automated_score.scored_expectation == group.scoring_expectation
+
+    @pytest.mark.parametrize("override", [None, ScoringExpectation(objective="replacement")])
+    async def test_multi_prompt_explicit_expectation_override_async(self, override: ScoringExpectation | None) -> None:
+        params = await MultiPromptSendingAttackParameters.from_seed_group_async(
+            seed_group=_group(), expectation=override
+        )
+        assert params.expectation is override
 
     async def test_objective_override_keeps_authored_criteria_async(self) -> None:
         group = _group()

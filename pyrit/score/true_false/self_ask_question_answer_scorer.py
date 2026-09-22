@@ -137,6 +137,11 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         """
         super()._validate_expectation(expectation=expectation)
         if expectation is not None and any(isinstance(item, AnswerMatches) for item in expectation.conditions):
+            if any(isinstance(item, MatchesObjective) for item in expectation.conditions):
+                raise ValueError(
+                    "SelfAskQuestionAnswerScorer accepts AnswerMatches or MatchesObjective, not both. "
+                    "Use separate scorers with an explicit aggregator for independent checks."
+                )
             return
         if expectation is None or not expectation.objective:
             raise ValueError("SelfAskQuestionAnswerScorer requires AnswerMatches or an objective.")

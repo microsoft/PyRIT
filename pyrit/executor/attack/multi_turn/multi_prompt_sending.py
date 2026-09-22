@@ -102,7 +102,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
             objective=seed_group.objective.value,
             memory_labels=overrides.get("memory_labels", {}),
             user_messages=user_messages,
-            expectation=overrides.get("expectation"),
+            expectation=AttackParameters._resolve_seed_expectation(seed_group=seed_group, overrides=overrides),
         )
 
 

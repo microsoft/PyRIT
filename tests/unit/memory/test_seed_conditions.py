@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import hashlib
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -23,6 +24,36 @@ def _objective(*, answer: str = "Paris", dataset: str | None = "questions") -> S
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestSeedConditions:
+    @pytest.mark.parametrize("copy_to_new_group", [False, True])
+    async def test_reloaded_companion_is_retained_without_duplicate_id_async(
+        self, sqlite_instance: MemoryInterface, copy_to_new_group: bool
+    ) -> None:
+        original = SeedGroup(seeds=[SeedPrompt(value="Choose an answer.")])
+        await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[original], added_by="tester")
+        [prompt] = sqlite_instance.get_seeds()
+        original_id = prompt.id
+        original_group_id = prompt.prompt_group_id
+        group_id = uuid.uuid4() if copy_to_new_group else original_group_id
+        prompt.prompt_group_id = group_id
+        objective = _objective()
+        objective.prompt_group_id = group_id
+        missing = SeedPrompt(value="Additional context.", prompt_group_id=group_id)
+        group = SeedGroup(seeds=[prompt, objective, missing])
+
+        await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[group], added_by="tester")
+
+        [restored] = sqlite_instance.get_seed_groups(prompt_group_ids=[group_id])
+        assert len(restored.seeds) == 3
+        assert restored.scoring_expectation.conditions == objective.conditions
+        companion = next(seed for seed in restored.seeds if seed.value == prompt.value)
+        assert (companion.id != original_id) is copy_to_new_group
+        [original_prompt] = [
+            seed for seed in sqlite_instance.get_seeds(prompt_group_ids=[original_group_id]) if seed.id == original_id
+        ]
+        assert original_prompt.prompt_group_id == original_group_id
+        await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[group], added_by="tester")
+        assert len(sqlite_instance.get_seeds()) == (4 if copy_to_new_group else 3)
+
     async def test_seed_entry_roundtrip_async(self, sqlite_instance: MemoryInterface) -> None:
         objective = _objective()
         await sqlite_instance.add_seeds_to_memory_async(seeds=[objective], added_by="tester")

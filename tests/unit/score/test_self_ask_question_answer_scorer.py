@@ -118,6 +118,64 @@ def test_llm_question_answer_rejects_duplicate_answers(mock_chat_target: MagicMo
         )
 
 
+async def test_llm_question_answer_rejects_simultaneous_alternatives_async(mock_chat_target: MagicMock) -> None:
+    scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
+    expectation = ScoringExpectation(
+        objective="Answer in German.",
+        conditions=(MatchesObjective(), AnswerMatches(correct_answer="Paris")),
+    )
+    with pytest.raises(ValueError, match="not both"):
+        Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=expectation)
+    with pytest.raises(ValueError, match="not both"):
+        await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+
+
+@pytest.mark.parametrize("canonical_input", [False, True])
+async def test_inferred_objective_is_validated_after_resolution_async(
+    sqlite_instance: MemoryInterface, mock_chat_target: MagicMock, canonical_input: bool
+) -> None:
+    question = "Capital of France? The correct answer is Paris."
+    request = MessagePiece(role="user", original_value=question, conversation_id="inferred-qa", sequence=0).to_message()
+    sqlite_instance.add_message_to_memory(request=request)
+    response = MessagePiece(
+        role="assistant",
+        original_value="Paris",
+        conversation_id=request.get_piece().conversation_id,
+        sequence=1,
+    ).to_message()
+    sqlite_instance.add_message_to_memory(request=response)
+    scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
+    mock_chat_target.send_prompt_async = AsyncMock(
+        return_value=[
+            Message.from_prompt(
+                prompt='{"score_value":"true","description":"correct","rationale":"Paris matches","metadata":""}',
+                role="assistant",
+            )
+        ]
+    )
+    with pytest.warns(DeprecationWarning):
+        if canonical_input:
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(response), infer_objective_from_request=True
+            )
+        else:
+            scores = await scorer.score_async(response, infer_objective_from_request=True)
+    mock_chat_target.send_prompt_async.assert_awaited_once()
+    assert question in mock_chat_target.send_prompt_async.call_args.kwargs["message"].get_value()
+    assert scores[0].get_value() is True
+    assert scores[0].scored_expectation == ScoringExpectation(objective=question)
+    [stored] = sqlite_instance.get_scores(score_ids=[scores[0].id])
+    assert stored.scored_expectation == scores[0].scored_expectation
+
+
+async def test_missing_inferred_objective_still_fails_async(mock_chat_target: MagicMock) -> None:
+    scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
+    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="requires AnswerMatches or an objective"):
+        await scorer.score_async(
+            Message.from_prompt(prompt="Paris", role="assistant"), infer_objective_from_request=True
+        )
+
+
 async def test_typed_answer_observation_replays_full_expectation_async(
     sqlite_instance: MemoryInterface, mock_chat_target: MagicMock
 ) -> None:
