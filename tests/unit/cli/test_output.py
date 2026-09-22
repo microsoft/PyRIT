@@ -9,6 +9,7 @@ All public ``print_*`` functions accept typed ``pyrit.models`` objects
 ``ScenarioRunSummary``, ``ScenarioResult``).
 """
 
+import json
 from datetime import UTC, datetime
 from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -713,6 +714,31 @@ async def test_print_conversations_async_truncation_note(capsys):
 
     out = capsys.readouterr().out
     assert "Showing 1 of 5" in out
+
+
+async def test_print_conversations_async_json_emits_document(capsys):
+    result = _result_with_attacks({"tech_a": [("conv-1", "obj-1")]})
+
+    await _output.print_conversations_async(
+        result=result, client=_FakeMessagesClient(), scenario_result_id="SID", format="json"
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["view"] == "conversations"
+    assert payload["conversations"][0]["technique"] == "tech_a"
+
+
+async def test_print_full_async_json_emits_document(capsys):
+    result = _result_with_attacks({"tech_a": [("conv-1", "obj-1")]})
+
+    await _output.print_full_async(
+        result=result, client=_FakeMessagesClient(), scenario_result_id="SID", format="json", limit=5
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["view"] == "full"
+    assert "overview" in payload
+    assert payload["conversations"][0]["technique"] == "tech_a"
 
 
 # ---------------------------------------------------------------------------

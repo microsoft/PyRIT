@@ -35,6 +35,7 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
   .reasoning { color: #555; border-left: 3px solid #ccc; padding-left: 0.5rem; }
   .score { font-size: 0.85rem; color: #444; margin-top: 0.25rem; }
   .err { color: #b00020; }
+  .partial { color: #7a5c00; font-style: italic; }
 </style>
 </head>
 <body>
@@ -89,6 +90,9 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
         {% endif %}
         {% if p.response_error and p.response_error != "none" %}
           <div class="piece err">error: {{ p.response_error }}</div>
+        {% endif %}
+        {% if p.partial_content %}
+          <div class="piece partial">Partial content (before filter triggered): {{ p.partial_content }}</div>
         {% endif %}
         {% for s in p.scores or [] %}
           <div class="score">score: {{ s.scorer }} = {{ s.score_value }}{% if s.score_rationale %}

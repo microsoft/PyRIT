@@ -133,3 +133,39 @@ async def test_render_async_returns_valid_json():
 async def test_render_async_empty_messages_is_empty_array():
     text = await JsonConversationPrinter(source=_StubSource()).render_async([])
     assert json.loads(text) == []
+
+
+def test_memory_printer_defaults_to_memory_source(patch_central_database):
+    from pyrit.output.conversation.json import JsonConversationMemoryPrinter
+
+    printer = JsonConversationMemoryPrinter()
+    assert isinstance(printer, JsonConversationPrinter)
+
+
+async def test_build_async_includes_partial_content_for_blocked_piece():
+    piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        original_value_data_type="text",
+        conversation_id="c1",
+        sequence=0,
+        response_error="blocked",
+        prompt_metadata={"partial_content": "the beginning of the answer"},
+    )
+    structured = await JsonConversationPrinter(source=_StubSource()).build_async([_message(piece)])
+
+    assert structured[0]["pieces"][0]["partial_content"] == "the beginning of the answer"
+
+
+async def test_build_async_omits_partial_content_when_not_blocked():
+    piece = MessagePiece(
+        role="assistant",
+        original_value="ok",
+        original_value_data_type="text",
+        conversation_id="c1",
+        sequence=0,
+        prompt_metadata={"partial_content": "ignored unless blocked"},
+    )
+    structured = await JsonConversationPrinter(source=_StubSource()).build_async([_message(piece)])
+
+    assert "partial_content" not in structured[0]["pieces"][0]

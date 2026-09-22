@@ -94,6 +94,34 @@ def test_build_metrics_serialized_when_present():
     assert "trial_scores" not in payload["metrics"]
 
 
+def test_build_metrics_maps_non_finite_to_null():
+    payload = _build(
+        _scorer_identifier(),
+        metrics=_objective_metrics(accuracy=float("nan"), f1_score=float("inf"), recall=float("-inf")),
+    )
+    assert payload["metrics"]["accuracy"] is None
+    assert payload["metrics"]["f1_score"] is None
+    assert payload["metrics"]["recall"] is None
+    # Finite values are untouched.
+    assert payload["metrics"]["precision"] == 0.93
+
+
+async def test_render_async_emits_valid_json_for_nan_metrics():
+    printer = JsonScorerMemoryPrinter()
+    with (
+        patch("pyrit.models.ScorerEvaluationIdentifier") as mock_eval_id_cls,
+        patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash") as mock_find,
+    ):
+        mock_eval_id_cls.return_value = MagicMock(eval_hash="hash")
+        mock_find.return_value = _objective_metrics(accuracy=float("nan"))
+        rendered = await printer.render_async(scorer_identifier=_scorer_identifier())
+
+    # Bare NaN/Infinity tokens are invalid JSON; they must not appear in the output.
+    assert "NaN" not in rendered
+    assert "Infinity" not in rendered
+    assert json.loads(rendered)["metrics"]["accuracy"] is None
+
+
 async def test_render_async_returns_valid_json():
     printer = JsonScorerMemoryPrinter()
     with (
@@ -107,3 +135,18 @@ async def test_render_async_returns_valid_json():
     payload = json.loads(rendered)
     assert payload["class_name"] == "MyScorer"
     assert payload["metrics"]["accuracy"] == 0.92
+
+
+def test_build_harm_category_fetches_harm_metrics():
+    printer = JsonScorerMemoryPrinter()
+    with (
+        patch("pyrit.models.ScorerEvaluationIdentifier") as mock_eval_id_cls,
+        patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash") as mock_find,
+    ):
+        mock_eval_id_cls.return_value = MagicMock(eval_hash="hash")
+        mock_find.return_value = None
+        payload = printer.build(scorer_identifier=_scorer_identifier(class_name="HarmScorer"), harm_category="hate")
+
+    mock_find.assert_called_once_with(eval_hash="hash", harm_category="hate")
+    assert payload["class_name"] == "HarmScorer"
+    assert payload["metrics"] is None

@@ -147,6 +147,22 @@ async def test_html_report_omits_error_line_for_none_response_error():
     assert "error:" not in html
 
 
+async def test_html_report_renders_partial_content_for_blocked_piece():
+    payload = _payload()
+    payload["conversations"][0]["messages"][0]["pieces"][0] = {
+        "data_type": "text",
+        "original_value": "",
+        "converted_value": "",
+        "response_error": "blocked",
+        "partial_content": "the beginning before the filter",
+    }
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert "Partial content" in html
+    assert "the beginning before the filter" in html
+
+
 class _StubConversationSource:
     """Minimal ``ConversationSource`` returning canned scores per piece id."""
 

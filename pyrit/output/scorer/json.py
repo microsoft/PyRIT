@@ -3,6 +3,7 @@
 
 import dataclasses
 import json
+import math
 from typing import Any
 
 from pyrit.models import ComponentIdentifier, ScorerIdentifier, project_behavioral_identity
@@ -141,7 +142,9 @@ def _metrics_to_dict(metrics: Any | None) -> dict[str, Any] | None:
     """
     Convert a scorer metrics dataclass to a JSON-safe dict.
 
-    Drops ``trial_scores`` (a numpy array that is not JSON-serializable).
+    Drops ``trial_scores`` (a numpy array that is not JSON-serializable) and maps any
+    non-finite float (``NaN`` / ``Infinity``, which some metrics report legitimately) to
+    ``None``, since those tokens are not valid JSON and are rejected by strict parsers.
 
     Args:
         metrics (Any | None): The metrics dataclass, or None.
@@ -153,4 +156,8 @@ def _metrics_to_dict(metrics: Any | None) -> dict[str, Any] | None:
         return None
     data = dataclasses.asdict(metrics)
     data.pop("trial_scores", None)
+    # NaN / Infinity aren't valid JSON, so map non-finite floats to null for strict parsers.
+    for key, value in data.items():
+        if isinstance(value, float) and not math.isfinite(value):
+            data[key] = None
     return data

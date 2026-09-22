@@ -51,18 +51,21 @@ def test_resolve_view_passes_through_explicit_value():
 def test_limit_policy_drops_and_warns_for_overview(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.OVERVIEW, limit=5)
     assert effective is None
-    assert "no effect" in capsys.readouterr().out
+    # Advisory notices go to stderr so stdout stays a clean document.
+    assert "no effect" in capsys.readouterr().err
 
 
 def test_limit_policy_keeps_limit_for_attacks(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.ATTACKS, limit=5)
     assert effective == 5
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
 
 
 def test_limit_policy_noop_when_no_limit(capsys):
     assert apply_view_limit_policy(view=ScenarioResultView.OVERVIEW, limit=None) is None
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
 
 
 # ---------------------------------------------------------------------------
@@ -139,19 +142,21 @@ def test_resolve_view_passes_through_conversations():
 def test_limit_policy_defaults_heavy_view_when_unscoped(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.CONVERSATIONS, limit=None)
     assert effective == 5
-    assert "at most 5" in capsys.readouterr().out
+    assert "at most 5" in capsys.readouterr().err
 
 
 def test_limit_policy_heavy_view_respects_explicit_limit(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.FULL, limit=3)
     assert effective == 3
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
 
 
 def test_limit_policy_heavy_view_respects_attack_ids(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.CONVERSATIONS, limit=None, attack_result_ids=["a"])
     assert effective is None
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
 
 
 # ---------------------------------------------------------------------------
@@ -161,18 +166,19 @@ def test_limit_policy_heavy_view_respects_attack_ids(capsys):
 
 def test_html_warns_on_explicit_non_full_view(capsys):
     warn_if_view_ignored_by_html(view=ScenarioResultView.OVERVIEW)
-    out = capsys.readouterr().out
-    assert "--view overview is ignored with --format html" in out
+    assert "--view overview is ignored with --format html" in capsys.readouterr().err
 
 
 def test_html_silent_when_view_omitted(capsys):
     warn_if_view_ignored_by_html(view=None)
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
 
 
 def test_html_silent_for_explicit_full_view(capsys):
     warn_if_view_ignored_by_html(view=ScenarioResultView.FULL)
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
 
 
 # ---------------------------------------------------------------------------

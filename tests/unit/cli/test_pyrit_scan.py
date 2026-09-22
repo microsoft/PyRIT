@@ -1603,6 +1603,21 @@ class TestScenarioResults:
         assert "Conversations" in out
         assert "▼ Attack Results" not in out
 
+    def test_handle_results_full_json_stdout_stays_single_document(self, capsys):
+        import asyncio
+        import json
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.return_value = {"messages": []}
+        # No --output and no --limit: the heavy-view notice fires, but must not corrupt stdout json.
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "full", "--format", "json"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "at most 5" in captured.err  # advisory notice went to stderr
+        assert json.loads(captured.out)["view"] == "full"  # stdout is one valid json document
+
     def test_handle_results_conversations_reports_fetch_error(self, capsys):
         import asyncio
 

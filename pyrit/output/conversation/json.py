@@ -129,6 +129,10 @@ class JsonConversationPrinter(ConversationPrinterBase):
             "converted_value": piece.converted_value,
             "response_error": piece.response_error,
         }
+        if piece.is_blocked():
+            partial_content = piece.prompt_metadata.get("partial_content")
+            if partial_content:
+                data["partial_content"] = str(partial_content)
         if include_scores:
             scores = await self._source.get_scores_async(prompt_ids=[str(piece.id)])
             if scores:

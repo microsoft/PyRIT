@@ -14,6 +14,7 @@ reference it cheaply.
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 from pyrit.cli._cli_args import ScenarioResultView
@@ -77,14 +78,16 @@ def apply_view_limit_policy(
     """
     if view is ScenarioResultView.OVERVIEW:
         if limit is not None:
-            print("Note: --limit has no effect with --view overview; ignoring it.")
+            # Advisory notices go to stderr so stdout stays a single valid document (e.g. --format json).
+            print("Note: --limit has no effect with --view overview; ignoring it.", file=sys.stderr)
         return None
     if view in (ScenarioResultView.CONVERSATIONS, ScenarioResultView.FULL):
         if limit is None and not attack_result_ids:
             print(
                 f"Note: no --attack-result-ids or --limit given; showing at most "
                 f"{_DEFAULT_HEAVY_VIEW_LIMIT} conversations. Pass --limit or "
-                "--attack-result-ids to see more."
+                "--attack-result-ids to see more.",
+                file=sys.stderr,
             )
             return _DEFAULT_HEAVY_VIEW_LIMIT
         return limit
@@ -104,7 +107,10 @@ def warn_if_view_ignored_by_html(*, view: ScenarioResultView | None) -> None:
         view (ScenarioResultView | None): The raw parsed ``--view``, or ``None`` when omitted.
     """
     if view is not None and view is not ScenarioResultView.FULL:
-        print(f"Note: --view {view.value} is ignored with --format html; rendering the full report.")
+        print(
+            f"Note: --view {view.value} is ignored with --format html; rendering the full report.",
+            file=sys.stderr,
+        )
 
 
 #: Formats that ``--output`` can write to a file. Pretty is terminal-oriented
