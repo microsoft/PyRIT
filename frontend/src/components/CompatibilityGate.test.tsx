@@ -61,6 +61,14 @@ function application(children: ReactNode = <BusinessUI />) {
   return <AuthProvider><CompatibilityGate>{children}</CompatibilityGate></AuthProvider>
 }
 
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = function () { this.open = true }
+})
+
+afterAll(() => {
+  Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal')
+})
+
 beforeEach(() => {
   jest.clearAllMocks()
   mockAuthenticated = true
@@ -126,7 +134,10 @@ it.each([{}, { compatibility_id: null }, { compatibility_id: '1.2.0+gabc' }, { c
   'blocks startup without mounting business UI for %p', async (version) => {
     adapter.mockImplementation(async (config: InternalAxiosRequestConfig) => response(config, version))
     render(application())
-    await screen.findByRole('alert')
+    const notice = await screen.findByRole('alertdialog')
+    expect(notice).toHaveAttribute('open')
+    expect(fireEvent(notice, new Event('cancel', { cancelable: true }))).toBe(false)
+    expect(notice).toHaveAttribute('open')
     expect(screen.queryByRole('textbox', { hidden: true })).not.toBeInTheDocument()
     expect(adapter).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: 'Reload page' })).toBeVisible()
@@ -157,7 +168,7 @@ it('blocks startup after authentication still fails following refresh', async ()
     throw problem(config, 401, 'urn:pyrit:authentication:required')
   })
   render(application())
-  await screen.findByRole('alert')
+  await screen.findByRole('alertdialog')
   expect(adapter.mock.calls.map(([config]) => config.url)).toEqual(['/version', '/version'])
   expect(screen.queryByRole('textbox', { hidden: true })).not.toBeInTheDocument()
 })
@@ -175,8 +186,8 @@ it.each([
   await act(async () => {
     await expect(apiClient.post('/attacks', { mutation: true })).rejects.toBeInstanceOf(AxiosError)
   })
-  expect(screen.getByRole('alert')).toHaveTextContent('No failed operation will be replayed')
-  expect(screen.getByRole('alert')).toHaveTextContent(backendId)
+  expect(screen.getByRole('alertdialog')).toHaveTextContent('No failed operation will be replayed')
+  expect(screen.getByRole('alertdialog')).toHaveTextContent(backendId)
   expect(input).toHaveValue('retain my draft')
   expect(input).not.toBeVisible()
   expect(unmount).not.toHaveBeenCalled()

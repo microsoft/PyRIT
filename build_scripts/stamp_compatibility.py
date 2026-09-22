@@ -23,6 +23,8 @@ def _git(root: Path, *args: str) -> str:
 
 def _version(root: Path) -> str:
     version = runpy.run_path(str(root / "pyrit" / "_version.py"))["__version__"]
+    if not isinstance(version, str):
+        raise ValueError("Python package version must be a string")
     project_file = root / "pyproject.toml"
     if project_file.is_file():
         project_version = re.search(r'^version\s*=\s*"([^"]+)"', project_file.read_text(encoding="utf-8"), re.MULTILINE)

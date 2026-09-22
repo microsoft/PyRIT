@@ -8,8 +8,11 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PIPELINES = REPO_ROOT / "infra" / "pipelines"
@@ -58,6 +61,44 @@ def _find_bash() -> str | None:
 
 BASH = _find_bash()
 JQ = shutil.which("jq")
+
+
+@unittest.skipIf(BASH is None, "Native Bash is not installed")
+class TestPypiBuild(unittest.TestCase):
+    def test_pypi_images_require_an_explicit_coordinated_version(self) -> None:
+        pipeline = yaml.safe_load((REPO_ROOT / ".github/workflows/docker_build.yml").read_text(encoding="utf-8"))
+        steps = pipeline["jobs"]["build-production-pypi"]["steps"]
+        selection = next(step for step in steps if step.get("id") == "pypi-version")
+        assert selection["env"]["PYRIT_PYPI_VERSION"] == "${{ inputs.pypiVersion || vars.PYRIT_PYPI_VERSION }}"
+        assert "pip index" not in selection["run"]
+        assert "0.10.0" not in selection["run"]
+        assert BASH is not None
+
+        for version, valid in (
+            ("1.2.0", True),
+            ("1.2.0.dev0", True),
+            ("1.2.0rc1", True),
+            ("", False),
+            ("latest", False),
+            ("1.2.0\nGIT_MODIFIED=false", False),
+            ("1.2.0 --extra-index-url=https://example.com", False),
+        ):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "github-output"
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc", "-s"],
+                    input=selection["run"],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                    env={**os.environ, "PYRIT_PYPI_VERSION": version, "GITHUB_OUTPUT": output.as_posix()},
+                )
+                assert (result.returncode == 0) == valid, result.stdout + result.stderr
+                if valid:
+                    assert output.read_text().strip() == f"version={version}"
+                else:
+                    assert not output.exists()
 
 
 @unittest.skipIf(BASH is None or JQ is None, "Native Bash and jq are required")

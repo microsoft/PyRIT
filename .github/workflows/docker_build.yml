@@ -13,6 +13,11 @@ on:
       - "releases/**"
   merge_group:
   workflow_dispatch:
+    inputs:
+      pypiVersion:
+        description: 'Exact stamped PyPI release (overrides PYRIT_PYPI_VERSION)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -119,12 +124,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Get latest PyRIT version from PyPI
+      - name: Select coordinated PyPI release
         id: pypi-version
+        env:
+          PYRIT_PYPI_VERSION: ${{ inputs.pypiVersion || vars.PYRIT_PYPI_VERSION }}
+        shell: bash
         run: |
-          VERSION=$(pip index versions pyrit 2>/dev/null | head -1 | grep -oP '\(\K[^)]+' || echo "0.10.0")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Latest PyRIT version on PyPI: $VERSION"
+          set -euo pipefail
+          version_pattern='^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?$'
+          if [[ ! "${PYRIT_PYPI_VERSION:-}" =~ $version_pattern ]]; then
+            echo "::error::Set pypiVersion or repository variable PYRIT_PYPI_VERSION to an exact coordinated PyPI release."
+            exit 1
+          fi
+          echo "version=$PYRIT_PYPI_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Testing coordinated PyPI release: $PYRIT_PYPI_VERSION"
 
       - name: Download devcontainer image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

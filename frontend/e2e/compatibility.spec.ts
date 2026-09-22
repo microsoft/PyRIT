@@ -89,9 +89,46 @@ for (const [status, type] of [
       }
     });
     await expect(page.getByRole("heading", { name: "PyRIT compatibility blocked" })).toBeVisible();
-    await expect(page.getByRole("alert")).toContainText(getCompatibilityId());
-    await expect(page.getByRole("alert")).toContainText(otherCompatibilityId());
+    await expect(page.getByRole("alertdialog")).toContainText(getCompatibilityId());
+    await expect(page.getByRole("alertdialog")).toContainText(otherCompatibilityId());
     await expect(page.getByTitle("Chat", { exact: true })).not.toBeVisible();
     expect(mutations).toBe(1);
   });
 }
+
+test("blocks interaction with an open Fluent dialog while retaining its draft", async ({ page }) => {
+  await mockBusinessRequests(page);
+  await page.route(/\/api\/attacks$/, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await route.fulfill({ status: 409, json: {
+      type: "urn:pyrit:compatibility:mismatch",
+      expected: otherCompatibilityId(),
+      actual: getCompatibilityId(),
+    } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Feedback", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Send feedback" })).toBeVisible();
+  await page.getByRole("combobox", { name: "Category" }).selectOption("bug");
+  const draft = page.getByTestId("feedback-bug-describe-input");
+  await draft.fill("Retain this unsaved draft across the backend mismatch.");
+  await page.evaluate(async () => {
+    const modulePath = "/src/services/api.ts";
+    const { apiClient } = await import(modulePath);
+    await apiClient.post("/attacks", {}).catch(() => undefined);
+  });
+
+  const notice = page.getByRole("alertdialog", { name: "PyRIT compatibility blocked" });
+  const reload = notice.getByRole("button", { name: "Reload page" });
+  await expect(notice).toBeVisible();
+  await expect.poll(() => draft.evaluate(
+    (element) => element.closest('[aria-hidden="true"]') !== null,
+  )).toBe(true);
+  await expect(reload).toBeFocused();
+  await reload.click({ trial: true });
+  await page.keyboard.press("Escape");
+  await expect(notice).toBeVisible();
+  await draft.evaluate((element) => element.focus());
+  await expect(reload).toBeFocused();
+  await expect(draft).toHaveValue("Retain this unsaved draft across the backend mismatch.");
+});
