@@ -25,6 +25,7 @@ from pyrit.prompt_target.common.target_capabilities import (
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
+from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, target_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ class PromptTarget(Identifiable):
     # Per-instance overrides are also possible via the ``custom_configuration``
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
+    _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
 
     # Declarative auth facts consumed by the create-target service and catalog.
     # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
@@ -102,6 +104,7 @@ class PromptTarget(Identifiable):
         model_name: str = "",
         underlying_model: str | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        trace_config: TargetTraceConfig | None = None,
     ) -> None:
         """
         Initialize the PromptTarget.
@@ -119,6 +122,7 @@ class PromptTarget(Identifiable):
                 for this target instance. Useful for targets whose capabilities depend on deployment
                 configuration (e.g., Playwright, HTTP). If None, uses the class-level
                 ``_DEFAULT_CONFIGURATION``. Defaults to None.
+            trace_config: Request tracing configuration. Defaults to the target's tracing policy.
         """
         self._memory = CentralMemory.get_memory_instance()
         self._verbose = verbose
@@ -126,6 +130,7 @@ class PromptTarget(Identifiable):
         self._endpoint = endpoint
         self._model_name = model_name
         self._underlying_model = underlying_model
+        self._trace_config = trace_config or TargetTraceConfig(enabled=self._DEFAULT_TRACE_ENABLED)
         self._configuration = (
             custom_configuration
             if custom_configuration is not None
@@ -185,9 +190,12 @@ class PromptTarget(Identifiable):
             if not normalized_conversation:
                 raise ValueError("Normalization pipeline returned an empty conversation. Cannot send an empty request.")
             self._validate_request(normalized_conversation=normalized_conversation)
-            if send_context:
-                send_context.mark_target_invoked()
-            response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+            with target_trace_context(
+                config=self._trace_config, request=message, normalized_request=normalized_conversation[-1]
+            ):
+                if send_context:
+                    send_context.mark_target_invoked()
+                response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
             send_succeeded = True
             return response
         finally:

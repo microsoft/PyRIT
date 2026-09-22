@@ -24,6 +24,7 @@ from pyrit.models import (
     Conversation,
     Message,
     MessagePiece,
+    RequestTraceContext,
     Score,
     UndeterminedScoreError,
 )
@@ -391,6 +392,8 @@ class ConversationManager:
 
             for piece in message_copy.message_pieces:
                 piece.conversation_id = conversation_id
+                # Copied history did not produce a trace in this conversation.
+                piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
 
             # Count turns at message level (only assistant/simulated_assistant messages)
             # A multi-part response still counts as one turn

@@ -239,6 +239,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A target may observe an internal, caller-owned send context at the provider-invocation boundary,
   after target-side waits and immediately before irreversible provider I/O, but the caller owns any
   bootstrap-history identity, replay, or branching state.
+- HTTP targets can propagate a separate trace context for each send. `TargetTraceConfig` controls this
+  behavior, is off by default, and can use a caller-owned tracer. Enable it only for an endpoint that
+  is known to accept W3C trace context. Targets record request trace metadata; the prompt normalizer
+  persists it.
 - Because targets are so varied, it is reasonable to return multiple tool calls, or none at all.
 - One attack can have many targets (and in fact, converters and scorers can also use targets to convert/score the prompt).
 - **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), apply attack logic, or persist prompts and responses to memory (the `prompt_normalizer` owns that). Its retries stay at the target layer (e.g. `RateLimitException`).
@@ -262,10 +266,12 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - `TrueFalseScorer` and `FloatScaleScorer` define result families. `MessageScorer` adds message resolution and message-only policy on top of them.
 - A scorer declares which evidence it reads, rather than the caller filtering evidence for it. A `MessageScorer` states the conversation roles and data types it reads on its `ScorerPromptValidator`.
 - Target-backed scorers over text evidence persist an `Observation` that references and hashes the retained SCORE-conversation response. The observation and its first score are committed atomically.
-- Trace sources acquire and normalize execution evidence for caller-supplied
+- Trace sources acquire and normalize execution evidence for
   `TraceScorable` IDs through an injected `TraceClient`. `OtelToolCallScorer`
   matches tool names against the saved snapshot; incomplete absence is
-  undetermined, not false. Automatic message-to-trace correlation is deferred.
+  undetermined, not false. For a `MessageScorable`, the scoring layer resolves
+  request trace links in the conversation through the scored response. Attacks
+  pass the same message evidence and expectation to all scorers.
 - `pyrit.score.observation` owns acquisition and replay support, not evaluation.
   `ObservationSource` is typed by the scorable it accepts; sources acquire evidence
   and matchers decide whether it meets a condition. Its local SDK exporter
