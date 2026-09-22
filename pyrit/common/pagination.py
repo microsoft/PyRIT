@@ -63,7 +63,8 @@ def fingerprint_filters(*, filters: Mapping[str, Any], length: int = 16) -> str:
     Args:
         filters (Mapping[str, Any]): JSON-serializable query identity.
         length (int): Number of SHA256 hex characters retained; 16 preserves
-            History cursor compatibility, while execution keys use all 64.
+            History cursor compatibility. Callers can request all 64 characters
+            when a full-length query fingerprint is needed.
 
     Returns:
         str: A short digest stable across mapping and sequence ordering.
@@ -104,8 +105,8 @@ def decode_keyset_cursor(*, cursor: str | None, fingerprint: str) -> DecodedKeys
     Decode a filter-bound keyset cursor.
 
     An absent, malformed, or mismatched token returns no usable anchor. Callers
-    choose the error policy: History restarts its first page, while analytics
-    rejects a supplied invalid token rather than silently returning another page.
+    choose the error policy: History restarts its first page. Callers requiring
+    strict continuation must reject a supplied token when no anchor is returned.
 
     Args:
         cursor (str | None): An opaque token from a preceding response.
