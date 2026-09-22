@@ -27,7 +27,11 @@ MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
 _load_environment_files = load_environment_files
 
 
-async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
+async def _execute_initializers_async(
+    *,
+    initializers: Sequence["PyRITInitializer"],
+    raise_on_initializer_error: bool,
+) -> None:
     """
     Execute PyRITInitializer instances in the order provided.
 
@@ -35,6 +39,8 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
 
     Args:
         initializers: Sequence of PyRITInitializer instances to execute.
+        raise_on_initializer_error: Whether to raise when an initializer fails. If False,
+            log the failure and continue with the remaining initializers.
 
     Raises:
         ValueError: If an initializer is not a PyRITInitializer instance.
@@ -63,9 +69,10 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
 
             logger.debug(f"Successfully executed initializer: {type(initializer).__name__}")
 
-        except Exception as e:
-            logger.error(f"Error executing initializer {type(initializer).__name__}: {e}")
-            raise
+        except Exception:
+            logger.exception("Error executing initializer %s", type(initializer).__name__)
+            if raise_on_initializer_error:
+                raise
 
 
 async def initialize_pyrit_async(
@@ -79,6 +86,7 @@ async def initialize_pyrit_async(
     env_akv_strict: bool = True,
     silent: bool = False,
     seed: int | None = None,
+    raise_on_initializer_error: bool = True,
     **memory_instance_kwargs: Any,
 ) -> None:
     """
@@ -87,9 +95,9 @@ async def initialize_pyrit_async(
     Args:
         memory_db_type (MemoryDatabaseType): The MemoryDatabaseType string literal which indicates the memory
             instance to use for central memory. Options include "InMemory", "SQLite", and "AzureSQL".
-        initialization_scripts (Sequence[str | pathlib.Path] | None): Optional sequence of Python script paths
-            that define PyRITInitializer subclasses. Every initializer subclass defined in each file is
-            loaded and executed. Loading is handled by the InitializerRegistry.
+        initialization_scripts (Sequence[str | pathlib.Path] | None): Optional sequence of local Python script paths
+            that define PyRITInitializer subclasses. Every initializer subclass defined in each file is loaded and
+            executed. Loading is handled by the InitializerRegistry.
         initializers (Sequence[PyRITInitializer] | None): Optional sequence of PyRITInitializer instances
             to execute directly. These provide type-safe, validated configuration with clear documentation.
         load_defaults (bool): If True (default) AND the caller supplies neither ``initializers`` nor
@@ -114,6 +122,8 @@ async def initialize_pyrit_async(
         seed (int | None): Optional root seed for deterministic converter operations. Converters derive
             independent named child streams automatically. Initialize PyRIT before constructing components
             whose defaults are selected randomly. This does not control remote model output.
+        raise_on_initializer_error (bool): If True, raise when loading or executing an initializer fails.
+            If False, log each failure and continue with the remaining initializers. Defaults to True.
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
 
     Raises:
@@ -163,8 +173,15 @@ async def initialize_pyrit_async(
         from pyrit.registry import InitializerRegistry
 
         registry = InitializerRegistry.get_registry_singleton()
-        script_initializers = registry.create_from_script_paths(script_paths=initialization_scripts)
-        all_initializers.extend(script_initializers)
+        script_paths = [pathlib.Path(script_path) for script_path in initialization_scripts]
+        for script_path in script_paths:
+            try:
+                script_initializers = registry.create_from_script_paths(script_paths=[script_path])
+                all_initializers.extend(script_initializers)
+            except Exception:
+                logger.exception("Error loading initializers from script %s", script_path)
+                if raise_on_initializer_error:
+                    raise
 
     # When the caller supplies nothing, fall back to the default initializer set so a
     # bare initialize_pyrit_async(...) yields a usable environment (core techniques +
@@ -178,4 +195,7 @@ async def initialize_pyrit_async(
 
     # Execute all initializers in order
     if all_initializers:
-        await _execute_initializers_async(initializers=all_initializers)
+        await _execute_initializers_async(
+            initializers=all_initializers,
+            raise_on_initializer_error=raise_on_initializer_error,
+        )

@@ -11,12 +11,12 @@ Both are critical for scoring attack results.
 
 Scorer is now agnostic about what it scores: it takes a scorable and requires
 ``_score_scorable_async``. Every message-shaped hook, ``_score_piece_async`` included, moved
-to ``MessageScorer``. A scorer that implements ``_score_piece_async`` must therefore extend
-``MessageScorer`` instead of ``Scorer``. ``TrueFalseScorer`` already does, so
-``RAIServiceScorer`` needs no change; ``AzureRAIServiceTrueFalseScorer`` does.
+to ``MessageScorer``. ``TrueFalseScorer`` now defines the score-value axis only, so a scorer
+that implements ``_score_piece_async`` must extend ``MessageTrueFalseScorer``, which combines
+both axes. Both ``AzureRAIServiceTrueFalseScorer`` and ``RAIServiceScorer`` need that change.
 """
 
-from pyrit.score import ScorerPromptValidator
+from pyrit.score import MessageTrueFalseScorer, ScorerPromptValidator
 from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -50,9 +50,16 @@ class TestTrueFalseScorerContract:
         """RAIServiceScorer extends TrueFalseScorer which extends Scorer."""
         assert issubclass(TrueFalseScorer, Scorer)
 
-    def test_true_false_scorer_extends_message_scorer(self):
-        """RAIServiceScorer keeps its _score_piece_async hook through MessageScorer."""
-        assert issubclass(TrueFalseScorer, MessageScorer)
+    def test_true_false_scorer_defines_the_score_value_axis_only(self):
+        """TrueFalseScorer says what a score value looks like, not what evidence it reads."""
+        assert not issubclass(TrueFalseScorer, MessageScorer)
+        assert not hasattr(TrueFalseScorer, "_score_piece_async")
+
+    def test_message_true_false_scorer_combines_both_axes(self):
+        """RAIServiceScorer keeps its _score_piece_async hook through MessageTrueFalseScorer."""
+        assert issubclass(MessageTrueFalseScorer, TrueFalseScorer)
+        assert issubclass(MessageTrueFalseScorer, MessageScorer)
+        assert hasattr(MessageTrueFalseScorer, "_score_piece_async")
 
     def test_true_false_scorer_has_validate_return_scores(self):
         """TrueFalseScorer implements validate_return_scores."""

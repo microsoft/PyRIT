@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         AttackSummary,
         ConversationMessagesResponse,
         ConversationSummary,
+        ConverterConfigurationRequest,
         ConverterOptionsResponse,
         CreateAttackRequest,
         CreateAttackResponse,
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
         PrependedMessageRequest,
         ScoreView,
         TargetInfo,
+        TargetResponseStatus,
         UpdateAttackRequest,
         UpdateMainConversationRequest,
         UpdateMainConversationResponse,
@@ -50,12 +52,16 @@ if TYPE_CHECKING:
         ConverterInstanceListResponse,
         ConverterPreviewRequest,
         ConverterPreviewResponse,
+        ConverterTypeEntry,
+        ConverterTypeResponse,
         CreateConverterRequest,
-        CreateConverterResponse,
         PreviewStep,
     )
     from pyrit.backend.models.datasets import DatasetInfo, DatasetListResponse
-    from pyrit.backend.models.initializers import ListRegisteredInitializersResponse, RegisterInitializerRequest
+    from pyrit.backend.models.initializers import (
+        ListRegisteredInitializersResponse,
+        RegisterInitializerRequest,
+    )
     from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, ScenarioRunListResponse
     from pyrit.backend.models.targets import CreateTargetRequest, TargetListResponse
 
@@ -71,6 +77,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "UpdateMainConversationResponse": "pyrit.backend.models.attacks",
     "ConversationMessagesResponse": "pyrit.backend.models.attacks",
     "ConversationSummary": "pyrit.backend.models.attacks",
+    "ConverterConfigurationRequest": "pyrit.backend.models.attacks",
     "ConverterOptionsResponse": "pyrit.backend.models.attacks",
     "CreateAttackRequest": "pyrit.backend.models.attacks",
     "CreateAttackResponse": "pyrit.backend.models.attacks",
@@ -82,6 +89,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PrependedMessageRequest": "pyrit.backend.models.attacks",
     "ScoreView": "pyrit.backend.models.attacks",
     "TargetInfo": "pyrit.backend.models.attacks",
+    "TargetResponseStatus": "pyrit.backend.models.attacks",
     "UpdateAttackRequest": "pyrit.backend.models.attacks",
     "SENSITIVE_FIELD_PATTERNS": "pyrit.backend.models.common",
     "FieldError": "pyrit.backend.models.common",
@@ -92,8 +100,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ConverterInstanceListResponse": "pyrit.backend.models.converters",
     "ConverterPreviewRequest": "pyrit.backend.models.converters",
     "ConverterPreviewResponse": "pyrit.backend.models.converters",
+    "ConverterTypeEntry": "pyrit.backend.models.converters",
+    "ConverterTypeResponse": "pyrit.backend.models.converters",
     "CreateConverterRequest": "pyrit.backend.models.converters",
-    "CreateConverterResponse": "pyrit.backend.models.converters",
     "PreviewStep": "pyrit.backend.models.converters",
     "DatasetInfo": "pyrit.backend.models.datasets",
     "DatasetListResponse": "pyrit.backend.models.datasets",

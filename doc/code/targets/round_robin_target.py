@@ -249,8 +249,10 @@ response_messages = [r.last_response.to_message() for r in results if r.last_res
 scorer_target_a_hash = scorer_target_a.get_identifier().hash
 
 # Score each response individually so we can track and print which scorer target handled it
-# You may want to use `score_prompts_batch_async` like below in practice for efficiency
-# await scorer.score_prompts_batch_async(messages=response_messages)  # type: ignore
+# You may want to use `score_batch_async` like below in practice for efficiency
+# await scorer.score_batch_async(  # type: ignore
+#     scorables=[MessageScorable.from_message(m) for m in response_messages]
+# )
 for i, response_message in enumerate(response_messages):
     scores = await scorer.score_async(scorable=MessageScorable.from_message(response_message))  # type: ignore
 

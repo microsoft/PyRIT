@@ -9,6 +9,7 @@ import pytest
 
 from pyrit.models import (
     AttackSeedGroup,
+    Seed,
     SeedObjective,
     SeedPrompt,
     group_seeds_into_attack_groups,
@@ -89,3 +90,8 @@ def test_raises_when_group_has_multiple_objectives():
 
     with pytest.raises(ValueError):
         group_seeds_into_attack_groups(seeds)
+
+
+def test_raises_for_unsupported_seed_type():
+    with pytest.raises(ValueError, match="Unsupported seed type: Seed"):
+        group_seeds_into_attack_groups([Seed(value="unsupported")])

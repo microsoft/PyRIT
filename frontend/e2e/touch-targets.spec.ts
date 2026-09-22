@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { makeAddMessageResponse } from "./_attacks";
 import { makeTarget } from "./_targets";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -138,6 +139,10 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/auth/access") {
+      await route.fulfill(jsonResponse({ isAdmin: true }));
+      return;
+    }
     if (apiPath === "/version") {
       await route.fulfill(
         jsonResponse({
@@ -164,11 +169,20 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/config" && method === "GET") {
+      await route.fulfill(
+        jsonResponse({
+          content: "initializers: []\n",
+          source: "C:/Users/test/.pyrit/.pyrit_conf",
+          version: "touch-target-config-v1",
+        })
+      );
+      return;
+    }
     if (apiPath === "/initializers/settings" && method === "GET") {
       await route.fulfill(
         jsonResponse({
-          baseline: [],
-          additional: [],
+          configured: [],
         })
       );
       return;
@@ -195,7 +209,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/targets/catalog") {
+    if (apiPath === "/targets/types") {
       await route.fulfill(
         jsonResponse({
           items: [
@@ -228,7 +242,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/converters/catalog" || apiPath === "/converters") {
+    if (apiPath === "/converters/types" || apiPath === "/converters") {
       await route.fulfill(jsonResponse({ items: [] }));
       return;
     }
@@ -282,7 +296,9 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
     if (apiPath === "/attacks/mobile-attack-001/messages") {
       await route.fulfill(
         method === "POST"
-          ? jsonResponse({ messages: { messages: MESSAGES } })
+          ? jsonResponse(makeAddMessageResponse(
+              "mobile-attack-001", "mobile-conversation-001", MESSAGES,
+            ))
           : jsonResponse({ messages: MESSAGES })
       );
       return;
@@ -359,7 +375,7 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 }
 
 async function startChatWithMessages(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Configuration", exact: true }).click();
+  await page.getByRole("button", { name: "Registry", exact: true }).click();
   await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
   await page.getByRole("button", { name: "Set Active" }).first().click();
   await page.getByRole("button", { name: "Chat", exact: true }).click();
@@ -379,7 +395,34 @@ test.beforeEach(async ({ page }) => {
 test.describe("Mobile touch targets", () => {
   test.use({ viewport: MOBILE_VIEWPORT, hasTouch: true });
 
-  test("keeps Home, Configuration, and History controls at least 44px", async ({
+  test("keeps the empty-chat objective editor usable on a narrow screen", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
+    await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
+    await page.getByRole("button", { name: "Set Active" }).first().click();
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+
+    await page.getByRole("button", { name: "Add objective" }).click();
+    const objectiveInput = page.getByRole("textbox", {
+      name: "Attack objective",
+    });
+    await expectMinimumTouchTarget(objectiveInput);
+    await objectiveInput.fill(
+      "Evaluate whether the response satisfies this mobile attack objective"
+    );
+    await expectMinimumTouchTarget(
+      page.getByRole("button", { name: "Save" })
+    );
+    await expectMinimumTouchTarget(
+      page.getByRole("button", { name: "Cancel" })
+    );
+    await expectNoDocumentOverflow(page);
+  });
+
+  test("keeps Home, Registry, and History controls at least 44px", async ({
     page,
   }) => {
     await page.goto("/");
@@ -401,7 +444,7 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
 
     await page
-      .getByRole("button", { name: "Configuration", exact: true })
+      .getByRole("button", { name: "Registry", exact: true })
       .click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
 
@@ -451,10 +494,11 @@ test.describe("Mobile touch targets", () => {
   });
 
   test("keeps the Initializer selector at least 44px", async ({ page }) => {
-    await page.goto("/initializers");
+    await page.goto("/config");
+    await page.getByRole("tab", { name: "Initializers", exact: true }).click();
 
     await expectMinimumTouchTarget(
-      page.getByRole("combobox", { name: "Initializer to add" })
+      page.getByRole("button", { name: "Browse available initializers" })
     );
     await expectNoDocumentOverflow(page);
   });
@@ -476,7 +520,7 @@ test.describe("Mobile touch targets", () => {
       page.getByTestId("toggle-objective-header-btn")
     ).toBeVisible();
 
-    await page.getByRole("button", { name: "Configuration", exact: true }).click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
     await page.getByRole("button", { name: "Set Active" }).first().click();
     await page.goBack();
@@ -556,10 +600,34 @@ test.describe("Mobile touch targets", () => {
           '[data-testid="copy-to-new-conv-btn-1"]',
           '[data-testid="branch-conv-btn-1"]',
           '[data-testid="branch-attack-btn-1"]',
+          '[aria-label^="Objective achieved outcome:"]',
         ].join(",")
       )
     );
     await expectNoDocumentOverflow(page);
+
+    const outcomeButton = page.getByRole("button", {
+      name: /Objective achieved outcome:/,
+    });
+    await outcomeButton.click();
+    await page.setViewportSize({ width: 320, height: 568 });
+
+    const resultDetails = page.getByText("Attack Result Details").locator("..");
+    await expect(resultDetails).toBeVisible();
+    await expect(async () => {
+      const popoverBounds = await resultDetails.boundingBox();
+      if (!popoverBounds) {
+        throw new Error("Expected attack result details bounds");
+      }
+      expect(popoverBounds.y).toBeGreaterThanOrEqual(0);
+      expect(popoverBounds.y + popoverBounds.height).toBeLessThanOrEqual(568);
+    }).toPass();
+    await expectMinimumTouchTarget(
+      page.getByRole("button", { name: "Update" })
+    );
+    await expectNoDocumentOverflow(page);
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 320, height: MOBILE_VIEWPORT.height });
 
     await page.getByTestId("toggle-panel-btn").click();
     await expect(
@@ -641,7 +709,7 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
   );
 
   await page
-    .getByRole("button", { name: "Configuration", exact: true })
+    .getByRole("button", { name: "Registry", exact: true })
     .click();
   await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
   await expectCompactDesktopTarget(
@@ -655,9 +723,10 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
     page.getByRole("button", { name: "Expand inner targets" })
   );
 
-  await page.goto("/initializers");
+  await page.goto("/config");
+  await page.getByRole("tab", { name: "Initializers", exact: true }).click();
   await expectCompactDesktopTarget(
-    page.getByRole("combobox", { name: "Initializer to add" })
+    page.getByRole("button", { name: "Browse available initializers" })
   );
 
   await startChatWithMessages(page);

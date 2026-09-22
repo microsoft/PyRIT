@@ -193,6 +193,10 @@ class TestBuildTechniqueFactories:
         names = [f.name for f in build_technique_factories()]
         assert len(names) == len(set(names))
 
+    def test_factory_descriptions_are_available_for_catalogs(self):
+        factories = build_technique_factories()
+        assert all(factory.description for factory in factories)
+
 
 # ---------------------------------------------------------------------------
 # TechniqueInitializer class metadata
@@ -256,11 +260,12 @@ class TestPersonaCrescendoFactories:
             assert sim is not None
             assert sim.num_turns == 3
 
-    def test_seed_technique_yaml_path_resolves_to_existing_file(self):
+    def test_seed_technique_carries_resolved_adversarial_prompt(self):
         for f in self._persona_factories():
             sim = f.seed_technique.simulated_conversation_config
             assert sim is not None
-            assert sim.adversarial_chat_system_prompt_path.exists()
+            assert sim.adversarial_chat_system_prompt.value
+            assert sim.adversarial_chat_system_prompt.parameters == ["objective", "max_turns"]
 
 
 class TestPersonaCrescendoYamls:
@@ -323,10 +328,10 @@ class TestContextComplianceTechnique:
         factory = self._context_compliance_factory()
         sim = factory.seed_technique.simulated_conversation_config
         assert sim is not None
-        assert sim.simulated_target_system_prompt_path.name == "context_compliance_target.yaml"
-        assert sim.simulated_target_system_prompt_path.exists()
+        assert sim.simulated_target_system_prompt.name == "simulated_target_context_compliance"
+        assert sim.simulated_target_system_prompt.parameters == ["objective", "num_turns"]
         # No LLM-generated next message: the final turn is a fixed affirmation instead.
-        assert sim.next_message_system_prompt_path is None
+        assert sim.next_message_system_prompt is None
 
     def test_final_user_message_is_fixed_affirmation(self):
         factory = self._context_compliance_factory()
@@ -339,12 +344,12 @@ class TestContextComplianceTechnique:
         assert yes_prompt.role == "user"
         assert yes_prompt.sequence == 2
 
-    def test_adversarial_yaml_resolves_to_existing_file(self):
+    def test_adversarial_prompt_is_resolved(self):
         factory = self._context_compliance_factory()
         sim = factory.seed_technique.simulated_conversation_config
         assert sim is not None
-        assert sim.adversarial_chat_system_prompt_path.name == "context_compliance.yaml"
-        assert sim.adversarial_chat_system_prompt_path.exists()
+        assert sim.adversarial_chat_system_prompt.value
+        assert sim.adversarial_chat_system_prompt.parameters == ["objective", "max_turns"]
 
     def test_tagged_core_single_turn_light(self):
         factory = self._context_compliance_factory()
@@ -413,19 +418,20 @@ class TestRolePlayFactories:
             assert sim is not None
             assert sim.num_turns == 2
 
-    def test_seed_technique_yaml_path_resolves_to_existing_file(self):
+    def test_seed_technique_carries_resolved_adversarial_prompt(self):
         for f in self._role_play_factories():
             sim = f.seed_technique.simulated_conversation_config
             assert sim is not None
-            assert sim.adversarial_chat_system_prompt_path.exists()
+            assert sim.adversarial_chat_system_prompt.value
+            assert sim.adversarial_chat_system_prompt.parameters == ["objective", "max_turns"]
 
     def test_all_use_role_play_next_message_prompt(self):
         for f in self._role_play_factories():
             sim = f.seed_technique.simulated_conversation_config
             assert sim is not None
-            assert sim.next_message_system_prompt_path is not None
-            assert sim.next_message_system_prompt_path.name == "role_play_next_message.yaml"
-            assert sim.next_message_system_prompt_path.exists()
+            assert sim.next_message_system_prompt is not None
+            assert sim.next_message_system_prompt.name == "role_play_next_message_generator"
+            assert sim.next_message_system_prompt.parameters == ["objective", "conversation_context"]
 
 
 class TestRolePlayYamls:

@@ -123,11 +123,12 @@ await output_scenario_async(scenario_result)
 # pyrit_scan run airt.cyber \
 #   --initializers target \
 #   --target openai_chat \
-#   --techniques multi_turn \
+#   --techniques role_play_movie_script \
 #   --max-dataset-size 1
 # ```
 #
-# **Available techniques:** ALL, DEFAULT, MULTI_TURN, red_teaming
+# **Available techniques:** Use `pyrit_scan run airt.cyber --list-scenario-parameters` to inspect
+# the current registry-backed technique catalog and its aggregate selectors.
 
 # %%
 from pyrit.scenario.airt import Cyber, CyberTechnique
@@ -138,7 +139,7 @@ scenario = Cyber()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_techniques": [CyberTechnique.MULTI_TURN],
+        "scenario_techniques": [CyberTechnique.role_play_movie_script],
         "dataset_config": dataset_config,
     }
 )
@@ -186,9 +187,10 @@ scenario = Jailbreak()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_techniques": [JailbreakTechnique.DEFAULT],
+        "scenario_techniques": [JailbreakTechnique.prompt_sending],
         "jailbreak_names": ["aim.yaml"],
         "dataset_config": dataset_config,
+        "include_baseline": False,
     }
 )
 await scenario.initialize_async()  # type: ignore
@@ -232,9 +234,10 @@ scenario = Multilingual()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "languages": ["French", "Spanish", "German"],
-        "translation_strategies": ["translation", "random_translation"],
+        "languages": ["French"],
+        "translation_strategies": ["translation"],
         "dataset_config": dataset_config,
+        "include_baseline": False,
     }
 )
 await scenario.initialize_async()  # type: ignore

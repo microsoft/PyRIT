@@ -58,7 +58,7 @@ class TestBatchScorerScoreResponsesByFilters:
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
             test_score = MagicMock()
-            scorer.score_prompts_batch_async = AsyncMock(return_value=[test_score])
+            scorer.score_batch_async = AsyncMock(return_value=[test_score])
 
             batch_scorer = BatchScorer()
 
@@ -67,7 +67,7 @@ class TestBatchScorerScoreResponsesByFilters:
             )
 
             memory.get_message_pieces.assert_called_once()
-            scorer.score_prompts_batch_async.assert_called_once()
+            scorer.score_batch_async.assert_called_once()
             assert scores[0] == test_score
 
     async def test_score_responses_by_filters_with_all_parameters(
@@ -79,7 +79,7 @@ class TestBatchScorerScoreResponsesByFilters:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
-            scorer.score_prompts_batch_async = AsyncMock(return_value=[])
+            scorer.score_batch_async = AsyncMock(return_value=[])
 
             batch_scorer = BatchScorer()
 
@@ -191,7 +191,7 @@ class TestBatchScorerErrorHandling:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
-            scorer.score_prompts_batch_async = AsyncMock(return_value=[])
+            scorer.score_batch_async = AsyncMock(return_value=[])
 
             batch_scorer = BatchScorer()
 
@@ -248,7 +248,7 @@ class TestBatchScorerErrorHandling:
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
             test_scores = [MagicMock(), MagicMock(), MagicMock(), MagicMock()]
-            scorer.score_prompts_batch_async = AsyncMock(return_value=test_scores)
+            scorer.score_batch_async = AsyncMock(return_value=test_scores)
 
             batch_scorer = BatchScorer()
 
@@ -258,12 +258,12 @@ class TestBatchScorerErrorHandling:
             )
 
             # Should successfully group by conversation and sequence
-            scorer.score_prompts_batch_async.assert_called_once()
-            call_args = scorer.score_prompts_batch_async.call_args
-            messages = call_args.kwargs["messages"]
+            scorer.score_batch_async.assert_called_once()
+            call_args = scorer.score_batch_async.call_args
+            scorables = call_args.kwargs["scorables"]
 
             # Should have 4 groups: 2 sequences from conv1, 2 sequences from conv2
-            assert len(messages) == 4
+            assert len(scorables) == 4
             assert len(scores) == 4
 
     async def test_score_responses_by_filters_groups_by_sequence_within_conversation(self) -> None:
@@ -302,21 +302,21 @@ class TestBatchScorerErrorHandling:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
-            scorer.score_prompts_batch_async = AsyncMock(return_value=[MagicMock(), MagicMock()])
+            scorer.score_batch_async = AsyncMock(return_value=[MagicMock(), MagicMock()])
 
             batch_scorer = BatchScorer()
 
             await batch_scorer.score_responses_by_filters_async(scorer=scorer, conversation_id="conv1")
 
             # Verify grouping
-            call_args = scorer.score_prompts_batch_async.call_args
-            messages = call_args.kwargs["messages"]
+            call_args = scorer.score_batch_async.call_args
+            scorables = call_args.kwargs["scorables"]
 
             # Should have 3 groups: sequence 0 (with 1 pieces) and sequence 1 (with 2 pieces)
-            assert len(messages) == 3
-            assert len(messages[0].message_pieces) == 1
-            assert len(messages[1].message_pieces) == 2
-            assert len(messages[2].message_pieces) == 1
+            assert len(scorables) == 3
+            assert len(scorables[0].message_piece_ids) == 1
+            assert len(scorables[1].message_piece_ids) == 2
+            assert len(scorables[2].message_piece_ids) == 1
 
     async def test_score_responses_by_filters_removes_duplicate_message_pieces(self) -> None:
         """Test that duplicate message pieces are filtered out before batch scoring."""
@@ -344,15 +344,15 @@ class TestBatchScorerErrorHandling:
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
-            scorer.score_prompts_batch_async = AsyncMock(return_value=[])
+            scorer.score_batch_async = AsyncMock(return_value=[])
 
             batch_scorer = BatchScorer()
 
             await batch_scorer.score_responses_by_filters_async(scorer=scorer, conversation_id="conv1")
 
-            call_args = scorer.score_prompts_batch_async.call_args
-            messages = call_args.kwargs["messages"]
+            call_args = scorer.score_batch_async.call_args
+            scorables = call_args.kwargs["scorables"]
 
-            assert len(messages) == 1
-            assert len(messages[0].message_pieces) == 1
-            assert messages[0].message_pieces[0].id == original_piece_id
+            assert len(scorables) == 1
+            assert len(scorables[0].message_piece_ids) == 1
+            assert scorables[0].message_piece_ids[0] == original_piece_id

@@ -38,14 +38,19 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
         objective=None,
     )
 
+    run_llm_scoring = AsyncMock(return_value=unvalidated_score)
     # Patch _memory.add_scores_to_memory to prevent sqlite errors and check for call
     with patch.object(scorer._memory, "add_scores_to_memory", new=MagicMock()) as mock_add_scores:
         with patch(
             "pyrit.score.float_scale.insecure_code_scorer._run_llm_scoring_async",
-            new=AsyncMock(return_value=unvalidated_score),
+            new=run_llm_scoring,
         ):
             # Create a message piece object
-            message = MessagePiece(role="user", original_value="sample code").to_message()
+            message = MessagePiece(
+                role="user",
+                original_value="original code",
+                converted_value="converted code",
+            ).to_message()
 
             # Call the score_async method
             scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
@@ -55,6 +60,7 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
             assert isinstance(scores[0], Score)
             assert scores[0].score_value == "0.8"
             mock_add_scores.assert_called_once_with(scores=[scores[0]])
+            assert run_llm_scoring.call_args.kwargs["value"] == "converted code"
 
 
 async def test_insecure_code_scorer_invalid_json(mock_chat_target):
@@ -98,7 +104,7 @@ async def test_insecure_code_scorer_real_response_handler_accepts_category_snaps
     assert scores[0].get_value() == pytest.approx(0.5)
 
 
-async def test_score_async_unsupported_data_type_returns_zero(mock_chat_target, patch_central_database):
+async def test_score_async_unsupported_data_type_returns_empty(mock_chat_target, patch_central_database):
     scorer = InsecureCodeScorer.from_harm_categories(chat_target=mock_chat_target)
 
     request = MessagePiece(
@@ -108,12 +114,8 @@ async def test_score_async_unsupported_data_type_returns_zero(mock_chat_target, 
         converted_value_data_type="image_path",
     ).to_message()
 
-    # Unified FloatScaleScorer fallback: returns a single Score(0.0) when all pieces are filtered
-    # out (mirrors TrueFalseScorer's no-pieces fallback).
     scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
-    assert len(scores) == 1
-    assert scores[0].score_type == "float_scale"
-    assert scores[0].get_value() == 0.0
+    assert scores == []
 
 
 def test_insecure_code_scorer_no_chat_target_raises():

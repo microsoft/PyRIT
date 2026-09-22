@@ -16,6 +16,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackScoringConfig,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -28,11 +29,12 @@ from pyrit.models import (
     AttackSeedGroup,
     Message,
     Score,
+    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score import Scorer
+from pyrit.score import MessageScorer
 
 if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
@@ -46,7 +48,7 @@ class MultiPromptSendingAttackParameters(AttackParameters):
     Parameters for MultiPromptSendingAttack.
 
     Extends AttackParameters to include user_messages field for multi-turn attacks.
-    Only accepts objective and user_messages fields.
+    Seed preparation accepts objective, user_messages, memory_labels, and expectation.
     """
 
     user_messages: list[Message] | None = None
@@ -88,18 +90,19 @@ class MultiPromptSendingAttackParameters(AttackParameters):
             )
 
         # Validate overrides only contain valid fields
-        valid_fields = {"objective", "user_messages", "memory_labels"}
+        valid_fields = {"objective", "user_messages", "memory_labels", "expectation"}
         invalid_fields = set(overrides.keys()) - valid_fields
         if invalid_fields:
             raise ValueError(
                 f"MultiPromptSendingAttackParameters does not accept: {invalid_fields}. Only accepts: {valid_fields}"
             )
 
-        # Build parameters with only objective, user_messages, and memory_labels
+        # Retain execution criteria separately from the messages sent to the target.
         return cls(
             objective=seed_group.objective.value,
             memory_labels=overrides.get("memory_labels", {}),
             user_messages=user_messages,
+            expectation=overrides.get("expectation"),
         )
 
 
@@ -284,7 +287,9 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
 
         # Score the last response including auxiliary and objective scoring
         if response is not None:
-            score = await self._evaluate_response_async(response=response, objective=context.objective)
+            score = await self._evaluate_response_async(
+                response=response, objective=context.objective, expectation=context.expectation
+            )
         else:
             score = None
 
@@ -296,7 +301,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             objective=context.objective,
             atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             last_response=response.get_piece() if response else None,
-            last_score=score,
+            automated_score=score,
             related_conversations=context.related_conversations,
             outcome=outcome,
             outcome_reason=outcome_reason,
@@ -326,9 +331,12 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             # No scorer means we can't determine success/failure
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
 
-        if score and score.get_value():
-            # We have a positive score, so it's a success
-            return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+        if score:
+            outcome = attack_outcome_from_score(score)
+            if outcome is AttackOutcome.SUCCESS:
+                return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+            if outcome is AttackOutcome.UNDETERMINED:
+                return AttackOutcome.UNDETERMINED, score.score_rationale or "Scorer could not reach a verdict"
 
         if response:
             # We got response(s) but the final response did not achieve the objective
@@ -378,7 +386,9 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
                 send_context=context.prepended_history_send_context,
             )
 
-    async def _evaluate_response_async(self, *, response: Message, objective: str) -> Score | None:
+    async def _evaluate_response_async(
+        self, *, response: Message, objective: str, expectation: ScoringExpectation
+    ) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
 
@@ -388,6 +398,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
         Args:
             response (Message): The response from the model.
             objective (str): The natural-language description of the attack's objective.
+            expectation (ScoringExpectation): The effective scoring question.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if
@@ -395,18 +406,15 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
                 but are still executed and stored.
         """
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._objective_scorer.get_identifier() if self._objective_scorer else None,
             objective=objective,
         ):
-            scoring_results = await Scorer.score_response_async(
+            scoring_results = await MessageScorer.score_response_async(
                 response=response,
                 auxiliary_scorers=self._auxiliary_scorers,
                 objective_scorer=self._objective_scorer if self._objective_scorer else None,
-                role_filter="assistant",
-                objective=objective,
-                skip_on_error_result=True,
+                expectation=expectation,
             )
 
         objective_scores = scoring_results["objective_scores"]

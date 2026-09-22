@@ -18,12 +18,13 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from pyrit.models import ScenarioRunSizeEstimate, class_name_to_snake_case
+from pyrit.models import ScenarioRunSizeEstimate, ScenarioTechniqueSummary, class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from types import ModuleType
 
     from pyrit.models import Parameter
@@ -52,6 +53,9 @@ class ScenarioMetadata(RegistryMetadata):
 
     # All available technique names for this scenario.
     all_techniques: tuple[str, ...] = field(kw_only=True)
+
+    # Descriptions and tags for each available concrete technique.
+    technique_summaries: tuple[ScenarioTechniqueSummary, ...] = field(kw_only=True, default=())
 
     # Aggregate techniques that combine multiple attack approaches.
     aggregate_techniques: tuple[str, ...] = field(kw_only=True)
@@ -173,6 +177,14 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             technique.value for technique in instance._resolve_scenario_techniques(scenario_techniques=None)
         )
         all_techniques = tuple(s.value for s in technique_class.get_all_techniques())
+        technique_summaries = tuple(
+            ScenarioTechniqueSummary(
+                name=technique.value,
+                description=technique.description,
+                tags=sorted(technique.tags),
+            )
+            for technique in technique_class.get_all_techniques()
+        )
         aggregate_techniques = tuple(s.value for s in technique_class.get_aggregate_techniques())
         aggregate_technique_expansions = tuple(
             (
@@ -193,6 +205,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             default_techniques=default_techniques,
             description_markdown=description_markdown,
             all_techniques=all_techniques,
+            technique_summaries=technique_summaries,
             aggregate_techniques=aggregate_techniques,
             aggregate_technique_expansions=aggregate_technique_expansions,
             default_datasets=default_datasets,
@@ -233,6 +246,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         *,
         scenario_params: dict[str, Any] | None = None,
         scenario_result_id: str | None = None,
+        initial_metadata: Mapping[str, Any] | None = None,
         **initialize_kwargs: Any,
     ) -> Scenario:
         """
@@ -262,6 +276,8 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 parameters to set before initialization. Defaults to an empty mapping.
             scenario_result_id (str | None): Existing scenario-result id to resume,
                 or ``None`` to start a fresh run.
+            initial_metadata (Mapping[str, Any] | None): Caller-owned metadata to
+                persist atomically when a fresh scenario result is created.
             **initialize_kwargs (Any): Common run-resolved parameters merged into the
                 param bag (notably ``objective_target``).
 
@@ -275,5 +291,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         merged_args = {**(scenario_params or {}), **initialize_kwargs}
         scenario = self._create_and_configure(name, params=merged_args, constructor_kwargs=constructor_kwargs)
         scenario.set_scenario_registry_name(scenario_registry_name=name)
+        if initial_metadata:
+            scenario.set_initial_metadata(metadata=initial_metadata)
         await scenario.initialize_async()
         return scenario

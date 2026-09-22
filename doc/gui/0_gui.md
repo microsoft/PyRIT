@@ -16,6 +16,10 @@ pyrit_backend
 
 Then open `http://localhost:8000` in your browser.
 
+Authentication-disabled local servers deny administrator operations by default. To enable configuration and initializer
+administration for a trusted local development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use this
+setting on a network-accessible deployment.
+
 ### Docker
 
 CoPyRIT is also available as a Docker container. See the [Docker setup](https://github.com/microsoft/PyRIT/blob/main/docker/) for details.
@@ -30,7 +34,28 @@ To deploy an isolated instance for an external team, see [Deploy a New Instance]
 
 ## Views
 
-CoPyRIT has three main views, accessible from the left sidebar: **Chat**, **Attack History**, and **Target Configuration**. A dark/light theme toggle is available at the bottom of the sidebar.
+CoPyRIT has three main views, accessible from the left sidebar: **Chat**, **Attack History**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
+
+### Themes
+
+Choose **System**, **Light**, or **Dark**, or select a preset with its own palette
+and workspace background:
+
+| Preset | Appearance |
+| --- | --- |
+| Raccoon | Warm gray with broad raccoon-tail stripes |
+| Jimothy | Mist and sage with a newly drawn, round-bodied Seattle raccoon |
+| Pirate | Navy and gold with a compass and nautical chart |
+| Seattle Rain | Dark storm gray with rain and puddle ripples |
+| Evergreen | Forest green with layered fir silhouettes |
+| Blueprint | Deep blue with a subtle technical drawing grid |
+| Night Sky | Indigo with sparse stars and constellation lines |
+
+Theme choices are saved in your browser and do not change your conversations
+or configuration. System follows your operating system's light/dark setting;
+the named presets keep their own palettes. High-contrast mode takes precedence
+and hides decorative backgrounds, restoring your chosen preset when it ends.
+Select System, Light, or Dark to return to an undecorated workspace.
 
 ### Chat View
 
@@ -92,9 +117,15 @@ Export stays available for read-only historical conversations, and is disabled w
 
 #### Labels
 
-The labels bar in the ribbon displays the current attack's labels (e.g., `operator`, `operation`). Labels are key-value pairs that help organize and filter attacks. You can add, edit, and remove labels inline. The `operator` and `operation` labels are required and cannot be removed.
+The **New run labels** bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. You can add, edit, and remove labels without leaving the page. The `operator` and `operation` labels are required and cannot be removed.
 
-Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. The operation you pick is applied to attacks you start from then on; it does not change attacks that already exist.
+In Chat, the active target, Markdown toggle, export menu, conversations panel toggle, and **New Attack** button share the right side of this bar. They wrap below the labels on narrow screens.
+
+Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. On narrow screens, use the labels icon to view or edit labels that do not fit inline.
+
+Your choices persist in this browser across navigation and refreshes. Backend configuration supplies defaults for labels you have not chosen, and the signed-in account alias takes precedence over the default or remembered operator during initialization. Scanner launches receive the active labels from this bar.
+
+Changing these labels does not relabel existing attacks or scenario runs. History attribution and the **Run configuration** shown for a scenario run still describe that saved run. Operator and target restrictions on existing attacks remain in effect.
 
 #### Behavioral Guards
 
@@ -148,6 +179,12 @@ Click any row to open the attack in the Chat view.
 
 Results are paginated (25 per page) with "First" and "Next" navigation buttons.
 
+### Scenario Run Results
+
+In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.
+
+Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
+
 ### Target Configuration
 
 The Configuration view manages the targets available for attacks.
@@ -173,18 +210,45 @@ For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **
 
 Targets can also be auto-populated by adding the `target` initializer to your `~/.pyrit/.pyrit_conf` file. This reads endpoints from your `.env` and `.env.local` files. See [.pyrit_conf_example](https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example) for details.
 
-### Initializers
+### Configuration Editor
 
-The **Initializers** page (in the left navigation) lets you review and extend how PyRIT sets itself up at startup — for example, the `target` initializer's `tags` and `auto_group` settings.
+The **Configuration** page provides administrator-only editing for the files and scripts used to configure PyRIT. It has four tabs:
 
-The page has two sections:
+- **PyRIT Configuration** edits the active `.pyrit_conf` YAML file. The source may be a local file or an Azure Blob URI. Saving validates the configuration before replacing it.
+- **Environment & Secrets** lists the configured local dotenv files and Azure Key Vault bootstrap secrets. Content is loaded only after selecting a source. Saves validate the dotenv document and reject the update if the source changed since it was loaded.
+- **Initializers** shows the read-only startup sequence from the active `.pyrit_conf`, in run order, along with the catalog of registered initializers.
+- **Custom Initializers** registers or removes Python initializer scripts. This tab requires `allow_custom_initializers: true`; scripts are stored in the configured local directory or Azure Blob container and must define a concrete `PyRITInitializer` subclass.
 
-- **Baseline initializers** are read-only. They come from your active configuration file (`~/.pyrit/.pyrit_conf`) and run first, in order.
-- **Additional initializers** are added in the GUI and saved to the memory database. They run after the baseline, in the order shown. You can add more than one initializer of the same type — each is its own invocation.
-
-Use **Apply now** to re-run a single initializer immediately against the running backend — handy for picking up an environment or setting change without a restart. Saved additional initializers and `.pyrit_conf` edits otherwise take effect the next time the backend starts.
+Use **Reload** to discard local edits and fetch the latest source content. Saved configuration and environment changes take effect after restarting PyRIT. Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
 
 ---
+
+## Registry API Migration Notes
+
+Use `/api/converters/types` and `/api/targets/types` for registry build metadata.
+These endpoints return all constructor parameters from the registry, including
+lists, unions, and component references. The temporary `/catalog` routes retain
+their scalar-only filtering for the current UI.
+Create requests should supply an explicit registry `name`. Converter creation
+returns the complete `ConverterInstance`; read its type from
+`identifier.class_name`, not the old top-level `converter_type` field. Treat
+returned IDs as opaque registry names, not UUIDs or identifier hashes.
+
+Constructor parameters typed as `Path` accept base64 data-URI uploads through REST,
+not server filesystem paths. Parameters typed as `Path | str` also accept Azure
+Blob URLs. This applies to `AddImageVideoConverter.video_path` and
+`ImageOverlayConverter.base_image`. Other local file inputs remain `Path`.
+Uploads stay in backend-owned temporary storage until deletion or shutdown,
+including with Azure-backed memory. Converter outputs still use configured result
+storage. Uploads can contain any file type; the media endpoint renders only
+allowlisted image, audio, and video extensions inline. Other files, including PDF,
+SVG, HTML, text, and executables, download as `application/octet-stream` attachments.
+
+**Temporary compatibility, scheduled for removal with the chat migration:**
+the `/api/converters/catalog` and `/api/targets/catalog` routes project the same
+registry metadata for the current UI. Create requests without a name receive a
+generated `compat_...` name. New clients should not depend on these routes or
+unnamed creation.
 
 ## Connection Health
 

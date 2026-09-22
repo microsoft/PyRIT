@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,7 +16,7 @@ MOCK_CONTAINER_URL = "https://storageaccountname.blob.core.windows.net/container
 
 async def test_get_user_delegation_key_async():
     mock_blob_service_client = AsyncMock(spec=BlobServiceClient)
-    expected_start_time = datetime.now(tz=timezone.utc)
+    expected_start_time = datetime.now(tz=UTC)
     expected_expiry_time = expected_start_time + timedelta(days=1)
 
     mock_user_delegation_key = UserDelegationKey()

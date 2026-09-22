@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# Portions Copyright (c) 2023 Leon Derczynski and NVIDIA CORPORATION & AFFILIATES.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
 
 from pyrit.converter.converter import Converter, ConverterResult
@@ -20,7 +23,7 @@ class BrailleConverter(Converter):
 
     The letter, digit, and core punctuation mappings are based on the
     implementation from Garak:
-    https://github.com/NVIDIA/garak/blob/main/garak/probes/encoding.py
+    https://github.com/NVIDIA/garak/blob/3f50ea5ff9cd7050099940647c15c39b07a93392/garak/probes/encoding.py
     The ASCII symbol cells follow Unified English Braille (UEB).
 
     Note: This converter is useful for testing how AI systems handle Braille-encoded
@@ -55,7 +58,8 @@ class BrailleConverter(Converter):
         """
         Retrieve the braille representation of the input text.
 
-        Taken from Garak https://github.com/NVIDIA/garak/blob/main/garak/probes/encoding.py
+        Taken from Garak:
+        https://github.com/NVIDIA/garak/blob/3f50ea5ff9cd7050099940647c15c39b07a93392/garak/probes/encoding.py
 
         Args:
             text (str): The input text to be converted to braille.

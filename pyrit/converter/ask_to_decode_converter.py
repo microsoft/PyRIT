@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# Portions Copyright (c) 2023 Leon Derczynski and NVIDIA CORPORATION & AFFILIATES.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
@@ -15,7 +18,8 @@ class AskToDecodeConverter(Converter):
     This is useful for testing whether AI systems will decode potentially harmful
     encoded content when explicitly asked.
 
-    Credit to Garak: https://github.com/NVIDIA/garak/blob/main/garak/probes/encoding.py
+    Credit to Garak:
+    https://github.com/NVIDIA/garak/blob/3f50ea5ff9cd7050099940647c15c39b07a93392/garak/probes/encoding.py
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)

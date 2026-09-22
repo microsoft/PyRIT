@@ -132,8 +132,7 @@ class OpenAITarget(PromptTarget):
             env_var_name=self.ADDITIONAL_REQUEST_HEADERS, passed_value=headers
         )
 
-        if request_headers and isinstance(request_headers, str):
-            self._headers = json.loads(request_headers)
+        self._headers = self._parse_request_headers(request_headers)
 
         self._set_openai_env_configuration_vars()
 
@@ -161,6 +160,29 @@ class OpenAITarget(PromptTarget):
         )
 
         self._initialize_openai_client()
+
+    @staticmethod
+    def _parse_request_headers(value: object) -> dict[str, str]:
+        """
+        Parse JSON string headers supplied by the caller or environment.
+
+        Returns:
+            dict[str, str]: Decoded headers, or an empty mapping for non-string input.
+
+        Raises:
+            ValueError: If the JSON does not describe string-valued headers.
+        """
+        if not isinstance(value, str) or not value:
+            return {}
+        decoded: object = json.loads(value)
+        if not isinstance(decoded, dict):
+            raise ValueError("Request headers must be a JSON object with string keys and values.")
+        headers: dict[str, str] = {}
+        for key, header_value in decoded.items():
+            if not isinstance(key, str) or not isinstance(header_value, str):
+                raise ValueError("Request headers must be a JSON object with string keys and values.")
+            headers[key] = header_value
+        return headers
 
     def _extract_deployment_from_azure_url(self, url: str) -> str:
         """
@@ -549,7 +571,7 @@ class OpenAITarget(PromptTarget):
 
         If the subclass provides partial content via ``_extract_partial_content``,
         it is attached to each response piece as ``prompt_metadata["partial_content"]``
-        so that scorers with ``score_blocked_content=True`` can evaluate it.
+        so that scorers can evaluate what the model produced before the block.
 
         Provider-reported metadata (token usage, stop reason) is captured via
         ``_capture_response_metadata`` so a filtered response records what it consumed.

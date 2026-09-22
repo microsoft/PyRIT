@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import hashlib
 import os
 import re
 import tempfile
+import uuid
 from pathlib import Path
 from typing import get_args
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -57,11 +59,28 @@ class LegacyStorageIO(StorageIO):
         return None
 
 
+class ConcurrentWriteStorageIO(LegacyStorageIO):
+    def __init__(self) -> None:
+        super().__init__()
+        self.directory_calls = 0
+        self.first_directory_call = asyncio.Event()
+        self.all_directory_calls = asyncio.Event()
+        self.allow_directory_creation = asyncio.Event()
+
+    async def create_directory_if_not_exists_async(self, path: Path | str) -> None:
+        self.directory_calls += 1
+        self.first_directory_call.set()
+        if self.directory_calls == 2:
+            self.all_directory_calls.set()
+        await self.allow_directory_creation.wait()
+
+
 def test_allowed_categories():
     entries = get_args(AllowedCategories)
-    assert len(entries) == 2
+    assert len(entries) == 3
     assert entries[0] == "seed-prompt-entries"
     assert entries[1] == "prompt-memory-entries"
+    assert entries[2] == "scorable-content-entries"
 
 
 def test_data_serializer_factory_text_no_data_throws(sqlite_instance):
@@ -114,7 +133,7 @@ async def test_data_serializer_error_save_data_throws(sqlite_instance):
 async def test_data_serializer_factory_missing_category_raises_value_error():
     expected_error_message = (
         "The 'category' argument is mandatory and must be one of the following: "
-        "('seed-prompt-entries', 'prompt-memory-entries')."
+        "('seed-prompt-entries', 'prompt-memory-entries', 'scorable-content-entries')."
     )
 
     escaped_message = re.escape(expected_error_message)
@@ -335,6 +354,38 @@ async def test_get_data_filename_preserves_dotted_basename(sqlite_instance):
     filename = await serializer.get_data_filename_async(file_name="2024.10.15_report")
 
     assert Path(filename).name == "2024.10.15_report.pdf"
+
+
+async def test_concurrent_default_filenames_are_unique_and_preserve_payloads(tmp_path: Path) -> None:
+    storage = ConcurrentWriteStorageIO()
+    mock_memory = MagicMock()
+    mock_memory.results_path = tmp_path
+    mock_memory.results_storage_io = storage
+    serializers = [
+        data_serializer_factory(category="prompt-memory-entries", data_type="image_path"),
+        data_serializer_factory(category="prompt-memory-entries", data_type="image_path"),
+    ]
+    generated_ids = [uuid.UUID(int=1), uuid.UUID(int=2)]
+    payloads = [b"first image", b"second image"]
+
+    with (
+        patch.object(type(serializers[0]), "_memory", new_callable=PropertyMock, return_value=mock_memory),
+        patch("pyrit.memory.storage.serializers.uuid.uuid4", side_effect=generated_ids) as uuid4,
+        patch("time.time", return_value=1_000_000.0) as wall_clock,
+    ):
+        first_save = asyncio.create_task(serializers[0].save_data_async(payloads[0]))
+        await storage.first_directory_call.wait()
+        second_save = asyncio.create_task(serializers[1].save_data_async(payloads[1]))
+        await storage.all_directory_calls.wait()
+        storage.allow_directory_creation.set()
+        await asyncio.gather(first_save, second_save)
+
+    paths = [Path(serializer.value) for serializer in serializers]
+    assert [path.name for path in paths] == [f"{generated_id}.png" for generated_id in generated_ids]
+    assert paths[0] != paths[1]
+    assert storage.writes == list(zip(paths, payloads, strict=True))
+    assert uuid4.call_count == 2
+    wall_clock.assert_not_called()
 
 
 async def test_save_data_supports_legacy_storage_io_write_signature():

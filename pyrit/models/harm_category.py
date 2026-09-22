@@ -5,33 +5,37 @@
 
 import logging
 import os
-import sys
 from collections.abc import Mapping
-from enum import Enum
+from enum import StrEnum
 from typing import cast
 
 import yaml
 
 logger = logging.getLogger(__name__)
 
-if sys.version_info >= (3, 11):
-    from enum import StrEnum
-else:  # Python 3.10 and below
-
-    class StrEnum(str, Enum):
-        """Minimal backport of enum.StrEnum for Python < 3.11."""
-
-        __str__ = str.__str__
-
 
 _HARM_CATEGORY_ALIASES: "dict[str, list[HarmCategory]]" = {}
 _CANONICAL_LOOKUP: "dict[str, HarmCategory]" = {}
+_SEPARATOR_REMOVAL_TABLE = str.maketrans("", "", "_- ")
 
 with open(os.path.join(os.path.dirname(__file__), "harm_category_definitions.yaml")) as f:
     _HARM_CATEGORY_YAML: dict = yaml.safe_load(f) or {}
     _HARM_CATEGORY_DEFINITIONS: dict[str, str] = _HARM_CATEGORY_YAML.get("definitions", {})
 
 HARM_CATEGORY_TAXONOMY_VERSION: str = _HARM_CATEGORY_YAML.get("version", "v1.0.0")
+
+
+def normalize_harm_category_key(value: str) -> str:
+    """
+    Normalize a harm category key without resolving taxonomy aliases.
+
+    Args:
+        value (str): Category label from any taxonomy.
+
+    Returns:
+        str: Casefolded label with underscores, hyphens, and spaces removed.
+    """
+    return value.casefold().translate(_SEPARATOR_REMOVAL_TABLE)
 
 
 class HarmCategory(StrEnum):
@@ -143,6 +147,7 @@ class HarmCategory(StrEnum):
                 "racism": [cls.REPRESENTATIONAL, cls.HATE_SPEECH],
                 "religious discrimination": [cls.REPRESENTATIONAL, cls.HATE_SPEECH],
                 "sexism": [cls.REPRESENTATIONAL, cls.HATE_SPEECH],
+                "selfharm": [cls.SELF_HARM],  # Azure Content Safety's SelfHarm category.
                 "sexual": [cls.SEXUAL_CONTENT],
                 "sexual content": [cls.SEXUAL_CONTENT],
                 "sexual violence": [cls.SEXUAL_CONTENT, cls.VIOLENT_CONTENT],
@@ -192,21 +197,23 @@ class HarmCategory(StrEnum):
     @classmethod
     def _resolve_canonical_category(cls, value: str) -> "HarmCategory | None":
         """
-        Resolve a canonical category from enum name or display value.
+        Resolve a canonical category from a case- and separator-insensitive name or display value.
 
         Returns:
             HarmCategory enum member if found, None otherwise.
         """
-        normalized_value = value.strip().lower()
+        normalized_value = value.strip().casefold()
         if not normalized_value:
             return None
 
         if not _CANONICAL_LOOKUP:
             for member in cls.__members__.values():
-                _CANONICAL_LOOKUP[str(member.value).lower()] = member
-                _CANONICAL_LOOKUP[str(member.name).lower()] = member
+                for key in (member.value.casefold(), member.name.casefold()):
+                    _CANONICAL_LOOKUP[key] = _CANONICAL_LOOKUP[normalize_harm_category_key(key)] = member
 
-        return _CANONICAL_LOOKUP.get(normalized_value)
+        return _CANONICAL_LOOKUP.get(normalized_value) or _CANONICAL_LOOKUP.get(
+            normalize_harm_category_key(normalized_value)
+        )
 
     @classmethod
     def _coerce_alias_mapping_value(
@@ -260,8 +267,9 @@ class HarmCategory(StrEnum):
         """
         Parse a raw harm category string to one or more canonical HarmCategory values.
 
-        Performs case-insensitive matching against canonical names/values, then
-        dataset-specific overrides, then built-in aliases. Falls back to OTHER.
+        Performs case- and separator-insensitive matching against canonical names/values,
+        then case-insensitive matching against dataset-specific overrides and built-in aliases.
+        Falls back to OTHER.
 
         Args:
             value: Raw category string from a dataset.
@@ -308,8 +316,8 @@ class HarmCategory(StrEnum):
         """
         Parse a raw harm category string to a canonical HarmCategory.
 
-        Performs case-insensitive matching against canonical names/values, aliases,
-        and optional dataset-specific overrides.
+        Performs case- and separator-insensitive matching against canonical names/values,
+        then case-insensitive matching against optional dataset-specific overrides and aliases.
         Falls back to OTHER for unknown categories.
 
         Args:

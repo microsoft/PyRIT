@@ -325,6 +325,10 @@ The following are already mocked globally in `src/setupTests.ts` — do NOT re-m
 - `Element.prototype.scrollTo` / `scrollIntoView`
 - `URL.createObjectURL` / `revokeObjectURL`
 - `import.meta.env` variables (`VITE_API_URL`, `MODE`)
+- JSDOM focus layout (`offsetParent` and viewport-sized body bounds). Disconnected elements and `display: none` ancestors have no simulated layout; visibility and disabled checks remain intact. This does not simulate positioning or actual dimensions.
+
+For modal timer regressions, use fake timers with `userEvent.setup({ advanceTimers: jest.advanceTimersByTime })` and advance timers inside `act`. Keep normal accessible-role queries; querying hidden dialogs or extending timeouts can mask focus-management failures.
+After navigating from a modal, wait for an accessible element on the destination page, not just a test ID. Restoring background accessibility is also deferred.
 
 ## What to Test
 

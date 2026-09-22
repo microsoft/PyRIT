@@ -86,6 +86,11 @@ await output_attack_async(result)
 
 # Captured tokens remain in memory. Supply a different `profile_path` for each persona.
 #
+# Token capture accepts WebSocket URLs under
+# `wss://substrate.svc.cloud.microsoft/m365Copilot/`, including `ChatHub` and `StreamHub`,
+# with case-insensitive path matching. Use `websocket_base_url` to override this capture
+# prefix; it does not change the target's connection endpoint.
+#
 # Install the optional dependency before using this authenticator:
 #
 # ```bash
@@ -120,9 +125,9 @@ async with BrowserSessionCopilotAuthenticator() as auth:
 # 1. Open the Copilot webapp (e.g., https://m365.cloud.microsoft/chat) in a browser.
 # 2. Open DevTools (F12 or Ctrl+Shift+I).
 # 3. Go to the Network tab.
-# 4. Filter by "Socket" connections or search for "Chathub".
+# 4. Filter by "Socket" connections or search for "m365Copilot".
 # 5. Start typing in the chat to initiate a WebSocket connection.
-# 6. Look for the latest WebSocket connection to `substrate.svc.cloud.microsoft/m365Copilot/Chathub`.
+# 6. Look for the latest WebSocket connection under `substrate.svc.cloud.microsoft/m365Copilot/` (`ChatHub` or `StreamHub`; casing may vary).
 # 7. You may find the `access_token` in the request URL or in the request payload.
 #
 # You can either pass the token directly or set the `COPILOT_ACCESS_TOKEN` environment variable.

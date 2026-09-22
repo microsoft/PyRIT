@@ -12,6 +12,7 @@ from pyrit.models.harm_category import (
     HARM_CATEGORY_TAXONOMY_VERSION,
     HarmCategory,
     HarmCategoryPillar,
+    normalize_harm_category_key,
     standardize_harm_categories,
 )
 
@@ -21,7 +22,7 @@ def test_taxonomy_version_read_from_yaml() -> None:
 
 
 def test_str_returns_display_value() -> None:
-    # StrEnum (and the <3.11 backport) must render the value, not "HarmCategory.HATE_SPEECH".
+    # StrEnum must render the value, not "HarmCategory.HATE_SPEECH".
     assert str(HarmCategory.HATE_SPEECH) == "Hate Speech"
     assert f"{HarmCategory.VIOLENT_CONTENT}" == "Graphic Violence and Gore"
 
@@ -201,3 +202,38 @@ def test_category_can_belong_to_multiple_pillars() -> None:
 
     suicide_pillars = set(HarmCategory.SUICIDE.pillars())
     assert {HarmCategoryPillar.CHILD_SAFETY, HarmCategoryPillar.SELF_INJURY} <= suicide_pillars
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("HateSpeech", "hatespeech"),
+        ("HATE_speech", "hatespeech"),
+        ("hate-speech", "hatespeech"),
+        ("hate speech", "hatespeech"),
+        ("\u017felf_Harm", "selfharm"),
+        ("PromptInjection", "promptinjection"),
+        ("prompt_injection", "promptinjection"),
+        ("bias", "bias"),
+        ("unknown_category", "unknowncategory"),
+        ("hate/speech", "hate/speech"),
+        ("", ""),
+    ],
+)
+def test_normalize_harm_category_key(*, raw: str, expected: str) -> None:
+    assert normalize_harm_category_key(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("HateSpeech", HarmCategory.HATE_SPEECH),
+        ("hate-speech", HarmCategory.HATE_SPEECH),
+        ("hate_speech", HarmCategory.HATE_SPEECH),
+        ("hate speech", HarmCategory.HATE_SPEECH),
+        ("SelfHarm", HarmCategory.SELF_HARM),
+        ("\u017felf_Harm", HarmCategory.SELF_HARM),
+    ],
+)
+def test_parse_resolves_separator_variants(raw: str, expected: HarmCategory) -> None:
+    assert HarmCategory.parse(raw) == expected

@@ -39,7 +39,7 @@ from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score import MessageScorer, TrueFalseScorer
 from tests.unit.mocks import MockPromptTarget
 
 
@@ -1426,7 +1426,7 @@ class TestAttackLifecycle:
                             outcome=AttackOutcome.SUCCESS,
                             executed_turns=1,
                             last_response=sample_response.get_piece(),
-                            last_score=success_score,
+                            automated_score=success_score,
                         )
 
                         # Execute using execute_async
@@ -1505,7 +1505,7 @@ class TestAttackLifecycle:
                             outcome=AttackOutcome.SUCCESS,
                             executed_turns=1,
                             last_response=sample_response.get_piece(),
-                            last_score=success_score,
+                            automated_score=success_score,
                         )
 
                         # Execute using execute_with_context_async
@@ -1594,7 +1594,7 @@ class TestRedTeamingConversationTracking:
         with (
             patch.object(attack._conversation_manager, "initialize_context_async") as mock_update,
             patch.object(attack._prompt_normalizer, "send_prompt_async", new_callable=AsyncMock) as mock_send,
-            patch.object(Scorer, "score_response_async", new_callable=AsyncMock) as mock_score,
+            patch.object(MessageScorer, "score_response_async", new_callable=AsyncMock) as mock_score,
             patch.object(attack, "_generate_next_prompt_async", new_callable=AsyncMock) as mock_generate,
         ):
             mock_update.return_value = ConversationState(turn_count=0, last_assistant_message_scores=[])
@@ -2144,6 +2144,7 @@ class TestModalityRouterIntegration:
             attack._validate_context(context=basic_context)
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestRedTeamingAdversarialIdentity:
     """Tests for adversarial config in the RedTeaming attack identity and inline system prompt."""
 

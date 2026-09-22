@@ -93,6 +93,8 @@ await initialize_pyrit_async("SQLite", skip_schema_migration=True)
 
 Once a migration revision is committed, it **must not be modified or deleted**. This is enforced by a pre-commit hook (`enforce_alembic_revision_immutability`). If you need to fix a migration, create a new revision instead.
 
+A release branch is the one exception. A patch release cherry-picks a fix onto a branch cut from an earlier tag, and that fix may legitimately amend a revision that has already shipped, so the hook does not compare history on a release branch. Review is the control there.
+
 ### Pre-commit hooks
 
 Two hooks run automatically when you touch memory-related files:

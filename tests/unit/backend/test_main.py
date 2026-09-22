@@ -9,6 +9,7 @@ Covers the lifespan manager and setup_frontend function.
 
 import logging
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,42 +19,103 @@ from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
+from pyrit.backend.models.converters import CreateConverterRequest
+from pyrit.backend.services.converter_service import ConverterService, get_converter_service
+from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.memory import AzureSQLMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
+
+
+@pytest.fixture
+def mock_scenario_run_lifecycle():
+    """Mock scenario scheduling lifecycle hooks."""
+    service = MagicMock(
+        reconcile_interrupted_runs_async=AsyncMock(return_value=0),
+        shutdown_async=AsyncMock(),
+    )
+    with patch("pyrit.backend.main.get_scenario_run_service", return_value=service):
+        yield service
 
 
 class TestLifespan:
     """Tests for the application lifespan context manager."""
 
-    async def test_lifespan_yields(self) -> None:
+    @pytest.mark.parametrize("fail_during_lifespan", [False, True])
+    async def test_lifespan_cleans_converter_uploads(
+        self, fail_during_lifespan: bool, mock_scenario_run_lifecycle
+    ) -> None:
+        fake_config = ConfigurationLoader()
+        created_resources: tuple[ConverterService, Path] | None = None
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+            pytest.raises(RuntimeError, match="application failed") if fail_during_lifespan else nullcontext(),
+        ):
+            async with lifespan(app):
+                service = get_converter_service()
+                await service.create_converter_async(
+                    request=CreateConverterRequest(
+                        name="lifespan-upload",
+                        type="PDFConverter",
+                        params={"existing_pdf": "data:application/pdf;base64,JVBERi0xLjQK"},
+                    )
+                )
+                entry = service._registry.instances.get_entry("lifespan-upload")
+                assert entry is not None
+                owned_path = Path(entry.metadata["owned_artifact_paths"][0])
+                created_resources = (service, owned_path)
+                assert owned_path.read_bytes() == b"%PDF-1.4\n"
+                if fail_during_lifespan:
+                    raise RuntimeError("application failed")
+
+        assert created_resources is not None
+        service, owned_path = created_resources
+        assert not owned_path.exists()
+        assert not service._upload_path.exists()
+        assert service._registry.instances.get("lifespan-upload") is None
+        assert get_converter_service.cache_info().currsize == 0
+
+    async def test_lifespan_restarts_with_fresh_upload_directory(self, mock_scenario_run_lifecycle) -> None:
+        fake_config = ConfigurationLoader()
+        paths: list[Path] = []
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            for _ in range(2):
+                async with lifespan(app):
+                    path = get_converter_service()._upload_path
+                    assert path.is_dir()
+                    paths.append(path)
+                assert not path.exists()
+        assert paths[0] != paths[1]
+
+    async def test_lifespan_yields(self, mock_scenario_run_lifecycle) -> None:
         """Test that lifespan delegates to ConfigurationLoader and yields."""
         fake_config = ConfigurationLoader()
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()) as init_mock,
-            patch(
-                "pyrit.backend.main.get_initializer_service",
-                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
-            ),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):
                 pass
 
-            init_mock.assert_awaited_once()
+            init_mock.assert_awaited_once_with(raise_on_initializer_error=False)
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False
+            mock_scenario_run_lifecycle.reconcile_interrupted_runs_async.assert_awaited_once()
+            mock_scenario_run_lifecycle.shutdown_async.assert_awaited_once()
 
-    async def test_lifespan_warns_when_custom_initializers_allowed(self) -> None:
+    async def test_lifespan_warns_when_custom_initializers_allowed(self, mock_scenario_run_lifecycle) -> None:
         """Test that lifespan logs a warning when allow_custom_initializers is enabled."""
         fake_config = ConfigurationLoader(allow_custom_initializers=True)
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
-            patch(
-                "pyrit.backend.main.get_initializer_service",
-                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
-            ),
             patch("pyrit.backend.main.setup_frontend"),
             patch.object(logging.getLogger("pyrit.backend.main"), "warning") as mock_warning,
         ):
@@ -62,16 +124,35 @@ class TestLifespan:
 
             mock_warning.assert_called_once()
 
-    async def test_lifespan_populates_default_labels_from_operator_and_operation(self) -> None:
+    async def test_lifespan_shared_memory_reconciliation_is_non_destructive(self) -> None:
+        shared_memory = MagicMock(spec=AzureSQLMemory)
+        fake_config = ConfigurationLoader()
+        with patch(
+            "pyrit.backend.services.scenario_run_service.CentralMemory.get_memory_instance",
+            return_value=shared_memory,
+        ):
+            service = ScenarioRunService()
+
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.get_scenario_run_service", return_value=service),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+        shared_memory.get_scenario_run_state_page.assert_not_called()
+        shared_memory.update_scenario_run_state.assert_not_called()
+
+    async def test_lifespan_populates_default_labels_from_operator_and_operation(
+        self, mock_scenario_run_lifecycle
+    ) -> None:
         """Test that operator and operation are exposed as default_labels."""
         fake_config = ConfigurationLoader(operator="alice", operation="op-42")
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
-            patch(
-                "pyrit.backend.main.get_initializer_service",
-                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
-            ),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):
@@ -79,24 +160,112 @@ class TestLifespan:
 
             assert app.state.default_labels == {"operator": "alice", "operation": "op-42"}
 
-    async def test_lifespan_reads_config_file_env_var(self) -> None:
-        """Test that PYRIT_CONFIG_FILE is forwarded to ConfigurationLoader.load_with_overrides."""
-        fake_config = ConfigurationLoader()
+    async def test_lifespan_exposes_configured_initializers(self, mock_scenario_run_lifecycle) -> None:
+        """Test that the active config initializer sequence is exposed to API routes."""
+        fake_config = ConfigurationLoader(
+            initializers=[
+                {"name": "target", "args": {"tags": ["default"]}},
+                "scorer",
+            ]
+        )
         with (
-            patch.dict(os.environ, {"PYRIT_CONFIG_FILE": "/tmp/foo.yaml"}, clear=False),
-            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config) as load_mock,
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
-            patch(
-                "pyrit.backend.main.get_initializer_service",
-                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
-            ),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):
                 pass
 
-            call_kwargs = load_mock.call_args.kwargs
-            assert str(call_kwargs["config_file"]).endswith("foo.yaml")
+        assert [item.initializer_name for item in app.state.configured_initializers] == ["target", "scorer"]
+        assert app.state.configured_initializers[0].parameters == {"tags": ["default"]}
+        assert [item.order_index for item in app.state.configured_initializers] == [0, 1]
+
+    async def test_lifespan_loads_explicit_config_as_override(self, mock_scenario_run_lifecycle) -> None:
+        """Test that PYRIT_CONFIG_FILE overlays the default configuration."""
+        fake_config = ConfigurationLoader()
+        with (
+            patch.dict(os.environ, {"PYRIT_CONFIG_FILE": "/tmp/foo.yaml"}, clear=False),
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config) as load_mock,
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+            assert str(load_mock.call_args.kwargs["config_file"]).endswith("foo.yaml")
+
+    async def test_lifespan_configures_custom_initializer_source_from_config(self, mock_scenario_run_lifecycle) -> None:
+        """Test that YAML config determines the custom script source."""
+        fake_config = ConfigurationLoader(custom_initializers_source="C:/yaml/initializers")
+        registry = MagicMock()
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.InitializerRegistry.get_registry_singleton", return_value=registry),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+        registry.configure_custom_scripts_source.assert_called_once_with("C:/yaml/initializers")
+        registry.register_stored_initializers.assert_not_called()
+
+    async def test_lifespan_registers_stored_initializers_when_enabled(self, mock_scenario_run_lifecycle) -> None:
+        """Test that enabled custom initializers are registered before configured initialization."""
+        fake_config = ConfigurationLoader(allow_custom_initializers=True)
+        call_order: list[str] = []
+        registry = MagicMock()
+        registry.register_stored_initializers.side_effect = lambda: call_order.append("custom")
+
+        async def initialize_async(*, raise_on_initializer_error: bool) -> None:
+            assert raise_on_initializer_error is False
+            call_order.append("configured")
+
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock(side_effect=initialize_async)),
+            patch("pyrit.backend.main.InitializerRegistry.get_registry_singleton", return_value=registry),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+        registry.register_stored_initializers.assert_called_once_with()
+        assert call_order == ["custom", "configured"]
+
+    async def test_lifespan_downloads_blob_config_to_temporary_file(self, mock_scenario_run_lifecycle) -> None:
+        """Test that an Azure Blob config URI is materialized and removed after loading."""
+        fake_config = ConfigurationLoader()
+        config_content = b"operator: blob-user\n"
+        loaded_path: Path | None = None
+
+        def load_config(*, config_file: Path, env_akv_ref: list[str] | None = None) -> ConfigurationLoader:
+            nonlocal loaded_path
+            assert env_akv_ref is None
+            loaded_path = config_file
+            assert config_file.suffix == ".yaml"
+            assert config_file.read_bytes() == config_content
+            return fake_config
+
+        with (
+            patch.dict(
+                os.environ,
+                {"PYRIT_CONFIG_FILE": "https://account.blob.core.windows.net/config/config.yaml"},
+                clear=False,
+            ),
+            patch(
+                "pyrit.backend.services.configuration_file_service._download_blob_config_async",
+                new=AsyncMock(return_value=config_content),
+            ),
+            patch.object(ConfigurationLoader, "load_with_overrides", side_effect=load_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+        assert loaded_path is not None
+        assert not loaded_path.exists()
 
 
 class TestSetupFrontend:

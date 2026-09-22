@@ -27,6 +27,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScoringExpectation,
     SeedGroup,
     SeedPrompt,
 )
@@ -641,11 +642,15 @@ class TestResponseEvaluation:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": [success_score]},
         ) as mock_score_method:
-            result = await attack._evaluate_response_async(response=sample_response, objective="Test objective")
+            result = await attack._evaluate_response_async(
+                response=sample_response,
+                objective="Test objective",
+                expectation=ScoringExpectation(objective="Test objective"),
+            )
 
             assert result == success_score
 
@@ -654,20 +659,22 @@ class TestResponseEvaluation:
                 response=sample_response,
                 auxiliary_scorers=attack._auxiliary_scorers,
                 objective_scorer=mock_true_false_scorer,
-                role_filter="assistant",
-                objective="Test objective",
-                skip_on_error_result=True,
+                expectation=ScoringExpectation(objective="Test objective"),
             )
 
     async def test_evaluate_response_without_objective_scorer_returns_none(self, mock_target, sample_response):
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": []},
         ) as mock_score_method:
-            result = await attack._evaluate_response_async(response=sample_response, objective="Test objective")
+            result = await attack._evaluate_response_async(
+                response=sample_response,
+                objective="Test objective",
+                expectation=ScoringExpectation(objective="Test objective"),
+            )
 
             assert result is None
 
@@ -676,9 +683,7 @@ class TestResponseEvaluation:
                 response=sample_response,
                 auxiliary_scorers=attack._auxiliary_scorers,
                 objective_scorer=None,
-                role_filter="assistant",
-                objective="Test objective",
-                skip_on_error_result=True,
+                expectation=ScoringExpectation(objective="Test objective"),
             )
 
     async def test_evaluate_response_with_auxiliary_scorers(
@@ -704,11 +709,15 @@ class TestResponseEvaluation:
         )
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [auxiliary_score], "objective_scores": [success_score]},
         ) as mock_score_method:
-            result = await attack._evaluate_response_async(response=sample_response, objective="Test objective")
+            result = await attack._evaluate_response_async(
+                response=sample_response,
+                objective="Test objective",
+                expectation=ScoringExpectation(objective="Test objective"),
+            )
 
             # Only objective score is returned
             assert result == success_score
@@ -718,9 +727,7 @@ class TestResponseEvaluation:
                 response=sample_response,
                 auxiliary_scorers=[auxiliary_scorer],
                 objective_scorer=mock_true_false_scorer,
-                role_filter="assistant",
-                objective="Test objective",
-                skip_on_error_result=True,
+                expectation=ScoringExpectation(objective="Test objective"),
             )
 
 
@@ -850,7 +857,7 @@ class TestAttackExecution:
         # Verify that _evaluate_response_async was called even without objective scorer
         # This ensures auxiliary scores are still collected
         attack._evaluate_response_async.assert_called_once_with(
-            response=sample_response, objective=basic_context.objective
+            response=sample_response, objective=basic_context.objective, expectation=basic_context.expectation
         )
 
     async def test_perform_attack_without_scorer_retries_on_filtered_response(
@@ -872,6 +879,31 @@ class TestAttackExecution:
         # Verify completion after retry
         assert result.last_response == sample_response.get_piece()
         assert attack._send_prompt_to_objective_target_async.call_count == 2
+
+    async def test_retry_without_response_does_not_reuse_previous_score(
+        self,
+        mock_target,
+        mock_true_false_scorer,
+        basic_context,
+        sample_response,
+        failure_score,
+    ):
+        attack = PromptSendingAttack(
+            objective_target=mock_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
+            max_attempts_on_failure=1,
+        )
+        attack._get_prompt_group = MagicMock(
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
+        )
+        attack._send_prompt_to_objective_target_async = AsyncMock(side_effect=[sample_response, None])
+        attack._evaluate_response_async = AsyncMock(return_value=failure_score)
+
+        result = await attack._perform_async(context=basic_context)
+
+        assert result.last_response is None
+        assert result.last_score is None
+        assert result.outcome is AttackOutcome.FAILURE
 
     async def test_perform_async_sets_atomic_attack_identifier(self, mock_target, basic_context, sample_response):
         """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
@@ -1330,13 +1362,15 @@ class TestEdgeCasesAndErrorHandling:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             side_effect=RuntimeError("Scorer error"),
         ):
             # Should propagate the exception
             with pytest.raises(RuntimeError, match="Scorer error"):
-                await attack._evaluate_response_async(response=sample_response, objective="Test")
+                await attack._evaluate_response_async(
+                    response=sample_response, objective="Test", expectation=ScoringExpectation(objective="Test")
+                )
 
     def test_attack_has_unique_identifier(self, mock_target):
         attack1 = PromptSendingAttack(objective_target=mock_target)

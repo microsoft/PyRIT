@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from colorama import Back, Fore, Style
@@ -9,7 +9,7 @@ from colorama import Back, Fore, Style
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, Score
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.attack_result.base import AttackResultPrinterBase
-from pyrit.output.conversation.pretty import PrettyConversationPrinter
+from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter, PrettyConversationPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.sink import Sink
 
@@ -59,7 +59,7 @@ class PrettyAttackResultPrinter(_PrettyPrinterMixin, AttackResultPrinterBase):
         self._score_printer = score_printer or PrettyScorePrinter(
             sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors
         )
-        self._conversation_printer = conversation_printer or PrettyConversationPrinter(
+        self._conversation_printer = conversation_printer or PrettyConversationMemoryPrinter(
             sink=sink,
             width=width,
             indent_size=indent_size,
@@ -233,7 +233,7 @@ class PrettyAttackResultPrinter(_PrettyPrinterMixin, AttackResultPrinterBase):
         Returns:
             str: The rendered footer text.
         """
-        timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
         lines: list[str] = []
         lines.append("\n")
         lines.append(self._format_colored("─" * self._width, Style.DIM, Fore.WHITE))

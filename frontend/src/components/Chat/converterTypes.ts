@@ -1,3 +1,7 @@
+import type { ConverterConfigurationRequest, ConverterInputPiece, MessageAttachment, PieceConversion } from '@/types'
+import { generateClientId } from '@/utils/clientId'
+import { mimeTypeToDataType } from '@/utils/messageMapper'
+
 export const PIECE_TYPE_TO_DATA_TYPE: Record<string, string> = {
   text: 'text',
   image: 'image_path',
@@ -6,70 +10,54 @@ export const PIECE_TYPE_TO_DATA_TYPE: Record<string, string> = {
   file: 'binary_path',
 }
 
-export interface PieceConversion {
-  converterInstanceId: string
-  convertedValue: string
-  originalValue: string
-  /** Input piece type the conversion came from (e.g. 'text', 'image'). */
-  pieceType: string
-  /**
-   * Backend data type of the converted value (e.g. 'text', 'image_path',
-   * 'binary_path'). May differ from the input piece type when a converter
-   * changes the data type — e.g. PDFConverter takes text and emits binary_path.
-   */
-  convertedDataType: string
+export type { PieceConversion } from '@/types'
+
+export {
+  basenameFromValue,
+  buildMediaUrl,
+  dataTypeToAttachmentKind,
+  isPathDataType,
+} from '@/utils/media'
+
+export function withDraftIdentity(attachment: MessageAttachment): MessageAttachment {
+  return { ...attachment, draftId: attachment.draftId ?? generateClientId() }
 }
 
-/**
- * True when the converter's output is a file path served via /api/media,
- * i.e. anything that ends with `_path` (image, audio, video, binary).
- */
-export function isPathDataType(dataType: string | undefined | null): boolean {
-  return typeof dataType === 'string' && dataType.endsWith('_path')
-}
-
-/**
- * Map a backend data type to the corresponding frontend MessageAttachment type.
- */
-export function dataTypeToAttachmentKind(dataType: string): 'image' | 'audio' | 'video' | 'file' {
-  if (dataType.startsWith('image')) return 'image'
-  if (dataType.startsWith('audio')) return 'audio'
-  if (dataType.startsWith('video')) return 'video'
-  return 'file'
-}
-
-/**
- * Build a /api/media URL for a stored file path. Pass-through when the value
- * is already a URL or data URI.
- */
-export function buildMediaUrl(value: string): string {
-  if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('data:')) {
-    return value
-  }
-  if (value.startsWith('/api/media')) return value
-  return `/api/media?path=${encodeURIComponent(value)}`
-}
-
-/**
- * Extract a display filename from a path/URL; falls back to a sensible default.
- */
-export function basenameFromValue(value: string, fallback: string): string {
-  if (!value) return fallback
-  // Handle /api/media?path=... form
-  if (value.startsWith('/api/media')) {
-    const match = /[?&]path=([^&]+)/.exec(value)
-    if (match) {
-      try {
-        const decoded = decodeURIComponent(match[1])
-        const parts = decoded.split(/[/\\]/)
-        return parts[parts.length - 1] || fallback
-      } catch {
-        return fallback
+export function buildConverterInputs(text: string, attachments: MessageAttachment[]): ConverterInputPiece[] {
+  return [
+    { id: 'text', pieceType: 'text', name: 'Text', dataType: 'text', value: text },
+    ...attachments.map((attachment: MessageAttachment): ConverterInputPiece => {
+      if (!attachment.draftId) throw new Error('Draft attachment is missing its identity.')
+      return {
+        id: attachment.draftId,
+        pieceType: attachment.type,
+        name: attachment.name,
+        dataType: attachment.sourceDataType ?? mimeTypeToDataType(attachment.mimeType),
+        value: attachment.sourceValue ?? attachment.url,
+        file: attachment.file,
       }
-    }
-    return fallback
-  }
-  const cleaned = value.split('?')[0]
-  const parts = cleaned.split(/[/\\]/)
-  return parts[parts.length - 1] || fallback
+    }),
+  ]
+}
+
+/** Match buildMessagePieces ordering, including its omission of empty text. */
+export function buildDraftPieceIds(text: string, attachments: MessageAttachment[]): string[] {
+  return buildConverterInputs(text, attachments)
+    .filter((input: ConverterInputPiece) => input.id !== 'text' || text.trim().length > 0)
+    .map((input: ConverterInputPiece) => input.id)
+}
+
+/** Target only applied piece identities, in their final request order. */
+export function buildRequestConverterConfigurations(
+  pieceIds: string[],
+  conversions: Record<string, PieceConversion>,
+): ConverterConfigurationRequest[] {
+  return pieceIds.flatMap((pieceId: string, index: number) => {
+    const conversion = conversions[pieceId]
+    if (!conversion || conversion.converterInstanceIds.length === 0) return []
+    return [{
+      converter_ids: conversion.converterInstanceIds,
+      indexes_to_apply: [index],
+    }]
+  })
 }

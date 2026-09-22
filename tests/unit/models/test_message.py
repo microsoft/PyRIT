@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from datetime import UTC
+
 import pytest
 
 from pyrit.models import (
@@ -153,7 +155,7 @@ class TestMessageDuplication:
 
     def test_duplicate_creates_new_timestamp(self, message: Message) -> None:
         """Test that duplicate creates new timestamps."""
-        from datetime import timedelta, timezone
+        from datetime import timedelta
         from unittest.mock import patch
 
         original_timestamps = [piece.timestamp for piece in message.message_pieces]
@@ -169,7 +171,7 @@ class TestMessageDuplication:
             # And it is strictly newer than every original timestamp.
             for orig_ts in original_timestamps:
                 assert dup_piece.timestamp > orig_ts
-        mock_datetime.now.assert_called_once_with(tz=timezone.utc)
+        mock_datetime.now.assert_called_once_with(tz=UTC)
 
     def test_duplicate_is_deep_copy(self, message: Message) -> None:
         """Test that duplicate creates a deep copy (modifications don't affect original)."""

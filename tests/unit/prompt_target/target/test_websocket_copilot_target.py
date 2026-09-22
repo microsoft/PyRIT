@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -608,7 +607,7 @@ class TestConnectAndSend:
 
     async def test_connect_and_send_timeout(self, mock_authenticator, sample_text_pieces, mock_websocket):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=1)
-        mock_websocket.recv = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_websocket.recv = AsyncMock(side_effect=TimeoutError())
 
         with patch("websockets.connect", return_value=mock_websocket):
             with pytest.raises(TimeoutError, match="Timed out waiting for Copilot response"):

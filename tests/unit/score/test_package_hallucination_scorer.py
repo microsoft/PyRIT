@@ -141,11 +141,10 @@ class TestPackageHallucinationScorerScoring:
         score = (await scorer.score_message_async(message=message))[0]
         assert score.get_value() is True
 
-    async def test_score_text_async_user_role_filtered_returns_false(self):
-        # The scorer only evaluates assistant responses; a user-role text yields the neutral fallback.
+    async def test_score_text_async_user_role_returns_empty(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
-        score = (await scorer.score_text_async("import fakepkg\n"))[0]
-        assert score.get_value() is False
+        scores = await scorer.score_text_async("import fakepkg\n")
+        assert scores == []
 
 
 @pytest.mark.usefixtures("patch_central_database")

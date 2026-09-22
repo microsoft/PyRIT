@@ -4,6 +4,7 @@ import {
   dataTypeToAttachmentType,
   buildDataUri,
   backendMessageToFrontend,
+  backendMessageToOriginalDraft,
   backendMessagesToFrontend,
   attachmentToMessagePieceRequest,
   buildMessagePieces,
@@ -91,6 +92,100 @@ describe("messageMapper", () => {
     it("should build audio data URI", () => {
       const result = buildDataUri("YXVkaW8=", "audio/wav");
       expect(result).toBe("data:audio/wav;base64,YXVkaW8=");
+    });
+  });
+
+  describe("backendMessageToOriginalDraft", () => {
+    it("restores only original text and media without converted output", () => {
+      const msg: BackendMessage = {
+        turn_number: 2,
+        role: "user",
+        message_pieces: [
+          {
+            id: "text-to-pdf",
+            original_value_data_type: "text",
+            converted_value_data_type: "binary_path",
+            original_value: "original persisted prompt",
+            converted_value: "/converted/report.pdf",
+            converted_value_mime_type: "application/pdf",
+            converted_filename: "converted.pdf",
+            scores: [],
+            response_error: "none",
+          },
+          {
+            id: "image-to-text",
+            original_value_data_type: "image_path",
+            converted_value_data_type: "text",
+            original_value: "/original/evidence.png",
+            original_value_url: "/api/media?path=%2Foriginal%2Fevidence.png",
+            original_value_mime_type: "image/png",
+            original_filename: "evidence.png",
+            converted_value: "converted image description",
+            scores: [],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-01-01T00:00:00Z",
+      };
+
+      const result = backendMessageToOriginalDraft(msg);
+
+      expect(result.content).toBe("original persisted prompt");
+      expect(result.attachments).toEqual([
+        expect.objectContaining({
+          name: "evidence.png",
+          url: "/api/media?path=%2Foriginal%2Fevidence.png",
+          sourceValue: "/original/evidence.png",
+          sourceDataType: "image_path",
+        }),
+      ]);
+      expect(result.attachments).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "converted.pdf" }),
+        ])
+      );
+    });
+
+    it("preserves a persisted attachment data type when rebuilding it for resubmission", async () => {
+      const msg: BackendMessage = {
+        turn_number: 2,
+        role: "user",
+        message_pieces: [
+          {
+            id: "binary-image",
+            original_value_data_type: "binary_path",
+            converted_value_data_type: "binary_path",
+            original_value: "/original/evidence.png",
+            original_value_url: "/api/media?path=%2Foriginal%2Fevidence.png",
+            original_value_mime_type: "image/png",
+            original_filename: "evidence.png",
+            converted_value: "/original/evidence.png",
+            scores: [],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-01-01T00:00:00Z",
+      };
+
+      const draft = backendMessageToOriginalDraft(msg);
+      const attachment = draft.attachments?.[0];
+
+      expect(attachment).toEqual(
+        expect.objectContaining({
+          mimeType: "image/png",
+          sourceDataType: "binary_path",
+        })
+      );
+      if (!attachment) {
+        throw new Error("Expected the persisted attachment to be reconstructed");
+      }
+      expect(await attachmentToMessagePieceRequest(attachment)).toEqual(
+        expect.objectContaining({
+          data_type: "binary_path",
+          original_value: "/original/evidence.png",
+          mime_type: "image/png",
+        })
+      );
     });
   });
 
@@ -472,7 +567,7 @@ describe("messageMapper", () => {
       expect(result.attachments![0].url).toBe("/api/media?path=output%2Fdoc.pdf");
     });
 
-    it("should handle error response", () => {
+    it("should preserve user-facing content for a blocked response", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
@@ -480,8 +575,8 @@ describe("messageMapper", () => {
           {
             id: "p1",
             original_value_data_type: "text",
-            converted_value_data_type: "text",
-            converted_value: "",
+            converted_value_data_type: "error",
+            converted_value: "I cannot help with that request.",
             scores: [],
             response_error: "blocked",
             response_error_description: "Content was filtered",
@@ -495,6 +590,98 @@ describe("messageMapper", () => {
       expect(result.error).toBeDefined();
       expect(result.error!.type).toBe("blocked");
       expect(result.error!.description).toBe("Content was filtered");
+      expect(result.content).toBe("I cannot help with that request.");
+    });
+
+    it("should hide stored processing diagnostics and provide a safe description", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p-processing",
+            original_value_data_type: "text",
+            converted_value_data_type: "error",
+            converted_value: "RuntimeError: target failed\nTraceback (most recent call last): ...",
+            scores: [],
+            response_error: "processing",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.content).toBe("");
+      expect(result.error).toEqual({
+        type: "processing",
+        description: "The target could not process this message.",
+      });
+    });
+
+    it("should preserve scores and provenance while redacting a processing-error piece", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        created_at: "2026-02-15T00:00:00Z",
+        message_pieces: [
+          {
+            id: "p-text",
+            original_value_data_type: "text",
+            converted_value_data_type: "text",
+            converted_value: "Visible response",
+            scores: [],
+            response_error: "none",
+          },
+          {
+            id: "p-processing",
+            original_value_data_type: "text",
+            converted_value_data_type: "error",
+            original_value: "Internal original diagnostic",
+            converted_value: "Traceback: internal converted diagnostic",
+            response_error: "processing",
+            scores: [
+              {
+                id: "older-score",
+                message_piece_id: "p-processing",
+                scorer_type: "AutomatedScorer",
+                score_type: "true_false",
+                score_value: "False",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+              {
+                id: "newer-score",
+                message_piece_id: "p-processing",
+                scorer_type: "ManualScorer",
+                score_type: "true_false",
+                score_value: "False",
+                is_objective_score: true,
+                score_rationale: "The target did not answer.",
+                timestamp: "2026-02-15T00:01:00Z",
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.content).toBe("Visible response");
+      expect(result.originalContent).toBeUndefined();
+      expect(result.displayPieces?.[1]).toEqual({
+        type: "text",
+        pieceId: "p-processing",
+        pieceIndex: 1,
+        content: "",
+        scores: [...msg.message_pieces[1].scores].reverse().map((score) => ({
+          ...score,
+          pieceIndex: 1,
+          pieceType: "error",
+          sourceLabel: "Piece 2 · error",
+        })),
+      });
+      expect(result.error?.type).toBe("processing");
+      expect(JSON.stringify(result)).not.toMatch(/Internal original diagnostic|Traceback/);
     });
 
     it("should handle multi-piece message with text + image", () => {
@@ -993,6 +1180,20 @@ describe("messageMapper", () => {
 
       expect(result.prompt_metadata).toEqual({ video_id: "sora-vid-456" });
     });
+
+    it("should resubmit the raw backend value for a reconstructed attachment", async () => {
+      const att: MessageAttachment = {
+        type: "file",
+        name: "evidence.txt",
+        url: "/api/media?path=evidence.txt",
+        sourceValue: "stored attachment value",
+        mimeType: "text/plain",
+      };
+
+      const result = await attachmentToMessagePieceRequest(att);
+
+      expect(result.original_value).toBe("stored attachment value");
+    });
   });
 
   describe("reasoning summary extraction", () => {
@@ -1028,6 +1229,56 @@ describe("messageMapper", () => {
 
       expect(result.content).toBe("Here is the answer.");
       expect(result.reasoningSummaries).toEqual(["The model thought about this."]);
+    });
+
+    it("should preserve scores attached to a reasoning piece", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "reasoning-piece",
+            original_value_data_type: "reasoning",
+            converted_value_data_type: "reasoning",
+            converted_value: JSON.stringify({
+              type: "reasoning",
+              summary: [{ type: "summary_text", text: "A concise summary." }],
+            }),
+            scores: [
+              {
+                id: "reasoning-score",
+                message_piece_id: "reasoning-piece",
+                scorer_type: "ReasoningScorer",
+                score_type: "true_false",
+                score_value: "True",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.reasoningSummaries).toEqual(["A concise summary."]);
+      expect(result.displayPieces).toEqual([
+        {
+          type: "text",
+          pieceId: "reasoning-piece",
+          pieceIndex: 0,
+          content: "",
+          scores: [
+            expect.objectContaining({
+              ...msg.message_pieces[0].scores[0],
+              pieceIndex: 0,
+              pieceType: "reasoning",
+              sourceLabel: "Piece 1 · reasoning",
+            }),
+          ],
+        },
+      ]);
     });
 
     it("should handle multiple reasoning summaries", () => {

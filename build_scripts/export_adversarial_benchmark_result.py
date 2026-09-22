@@ -5,20 +5,25 @@
 
 import argparse
 import asyncio
-import contextlib
 import csv
 import json
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pyrit.cli._output import print_attacks_table
-from pyrit.cli._results import build_attacks_table_payload
 from pyrit.memory import CentralMemory
-from pyrit.models import ScenarioResult
+from pyrit.models import AttackResult, ScenarioResult
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 from pyrit.output.sink import FileSink
 from pyrit.setup import SQLITE, initialize_pyrit_async
+
+
+@dataclass(frozen=True)
+class _BenchmarkDimensions:
+    technique_count: int
+    adversarial_model_count: int
+    combination_count: int
 
 
 async def _load_result_async(*, scenario_result_id: str) -> ScenarioResult:
@@ -38,33 +43,94 @@ async def _load_result_async(*, scenario_result_id: str) -> ScenarioResult:
 
 
 async def _write_overview_async(*, result: ScenarioResult, output_dir: Path) -> None:
-    """Write the existing scenario overview without terminal color codes."""
-    printer = PrettyScenarioResultMemoryPrinter(
-        sink=FileSink(path=output_dir / "overview.txt"),
-        enable_colors=False,
+    """Write the scenario overview with benchmark-specific matrix dimensions."""
+    printer = PrettyScenarioResultMemoryPrinter(enable_colors=False)
+    overview = await printer.render_async(result)
+    dimensions = _build_benchmark_dimensions(result=result)
+    overview = _replace_generic_technique_count(overview=overview, dimensions=dimensions)
+    await FileSink(path=output_dir / "overview.txt").write_async(overview)
+
+
+def _benchmark_groups(*, result: ScenarioResult) -> list[tuple[str, str, list[AttackResult]]]:
+    """Return persisted attack groups keyed by technique and adversarial model."""
+    atomic_attack_names = dict.fromkeys([*result.display_group_map, *result.attack_results])
+    return [
+        (
+            atomic_attack_name.split("__", 1)[0],
+            result.display_group_map.get(atomic_attack_name, "<ungrouped>"),
+            result.attack_results.get(atomic_attack_name, []),
+        )
+        for atomic_attack_name in atomic_attack_names
+    ]
+
+
+def _build_benchmark_dimensions(*, result: ScenarioResult) -> _BenchmarkDimensions:
+    """Count distinct techniques, adversarial models, and their combinations."""
+    pairs = {(technique, model) for technique, model, _ in _benchmark_groups(result=result)}
+    return _BenchmarkDimensions(
+        technique_count=len({technique for technique, _ in pairs}),
+        adversarial_model_count=len({model for _, model in pairs}),
+        combination_count=len(pairs),
     )
-    await printer.write_async(result)
 
 
-def _write_attacks(*, result: ScenarioResult, output_dir: Path) -> None:
+def _replace_generic_technique_count(*, overview: str, dimensions: _BenchmarkDimensions) -> str:
+    """Replace the display-group count with benchmark-specific matrix dimensions."""
+    lines = overview.splitlines(keepends=True)
+    summary_label = "\u2022 Total Techniques:"
+    summary_indexes = [index for index, line in enumerate(lines) if line.lstrip().startswith(summary_label)]
+    if len(summary_indexes) != 1:
+        raise ValueError("Expected exactly one 'Total Techniques' line in the scenario overview.")
+
+    index = summary_indexes[0]
+    prefix = lines[index].partition("Total Techniques:")[0]
+    newline = "\n" if lines[index].endswith("\n") else ""
+    lines[index] = (
+        f"{prefix}Distinct Techniques: {dimensions.technique_count}\n"
+        f"{prefix}Distinct Adversarial Models: {dimensions.adversarial_model_count}\n"
+        f"{prefix}Technique/Model Combinations: {dimensions.combination_count}{newline}"
+    )
+    return "".join(lines)
+
+
+def _attack_rows(*, result: ScenarioResult) -> list[dict[str, Any]]:
+    """Build machine-readable per-attack rows from the embedded attack results."""
+    rows: list[dict[str, Any]] = []
+    for atomic_attack_name, attacks in result.attack_results.items():
+        for attack in attacks:
+            score = attack.last_score
+            score_value = None
+            if score is not None:
+                score_value = score.score_value if score.score_value is not None else score.status.value
+            rows.append(
+                {
+                    "attack_result_id": attack.attack_result_id,
+                    "atomic_attack_name": atomic_attack_name,
+                    "objective": attack.objective,
+                    "outcome": attack.outcome.value,
+                    "executed_turns": attack.executed_turns,
+                    "score_value": score_value,
+                }
+            )
+    return rows
+
+
+async def _write_attacks_async(*, result: ScenarioResult, output_dir: Path) -> None:
     """Write machine-readable and console-style partial attack tables."""
-    payload = build_attacks_table_payload(
-        result=result,
-        scenario_result_id=str(result.id),
-    )
-    (output_dir / "attacks.json").write_text(payload.model_dump_json(indent=2), encoding="utf-8")
-    with open(output_dir / "attacks.txt", "w", encoding="utf-8") as output:
-        with contextlib.redirect_stdout(output):
-            print_attacks_table(payload=payload)
+    rows = _attack_rows(result=result)
+    document = {"scenario_result_id": str(result.id), "rows": rows, "total": len(rows)}
+    (output_dir / "attacks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+
+    sink = FileSink(path=output_dir / "attacks.txt")
+    printer = PrettyScenarioResultMemoryPrinter(sink=sink, enable_colors=False)
+    await printer.write_async(result, view="attacks")
 
 
 def _build_technique_metrics(*, result: ScenarioResult) -> list[dict[str, Any]]:
     """Aggregate persisted outcomes by technique and adversarial model."""
     grouped: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
     retry_records: Counter[tuple[str, str]] = Counter()
-    for atomic_attack_name, attack_results in result.attack_results.items():
-        technique_name = atomic_attack_name.split("__", 1)[0]
-        display_group = result.display_group_map.get(atomic_attack_name, "<ungrouped>")
+    for technique_name, display_group, attack_results in _benchmark_groups(result=result):
         group_key = (technique_name, display_group)
         latest_by_objective = {}
         for attack_result in attack_results:
@@ -143,7 +209,7 @@ async def _export_async(*, scenario_result_id: str, output_dir: Path) -> None:
     result = await _load_result_async(scenario_result_id=scenario_result_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     await _write_overview_async(result=result, output_dir=output_dir)
-    await asyncio.to_thread(_write_attacks, result=result, output_dir=output_dir)
+    await _write_attacks_async(result=result, output_dir=output_dir)
     await asyncio.to_thread(_write_technique_metrics, result=result, output_dir=output_dir)
 
 

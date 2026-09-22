@@ -23,11 +23,12 @@ from transformers.models.auto.tokenization_auto import AutoTokenizer
 from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 from transformers.models.gpt_neox.modeling_gpt_neox import GPTNeoXForCausalLM
 from transformers.models.gptj.modeling_gptj import GPTJForCausalLM
-from transformers.models.llama.modeling_llama import LlamaForCausalLM
-from transformers.models.mistral.modeling_mistral import MistralForCausalLM
-from transformers.models.mixtral.modeling_mixtral import MixtralForCausalLM
-from transformers.models.phi3.modeling_phi3 import Phi3ForCausalLM
 
+from pyrit.executor.promptgen.gcg.attack.base.progressive_schedule import (
+    ProgressiveScheduleController,
+    ProgressiveScheduleState,
+    ScheduleTransitionAction,
+)
 from pyrit.executor.promptgen.gcg.experiments.log import (
     log_gpu_memory,
     log_loss,
@@ -85,21 +86,60 @@ class OptimizationRunState:
 
 
 @dataclass
-class ProgressiveScheduleState:
-    """
-    Typed schedule state for ``ProgressiveMultiPromptAttack``.
+class RngBundle:
+    """Per-run RNG state bundle for deterministic GCG execution."""
 
-    Tracks how many goals and workers have been admitted so far, together with
-    the shared step counter and the loss carried between progressive rounds.
-    Exposed as ``ProgressiveMultiPromptAttack.last_schedule_state`` after a call
-    to ``ProgressiveMultiPromptAttack.run``.
-    """
+    np_rng: np.random.Generator
+    py_rng: random.Random
+    torch_gens: dict[int, torch.Generator]
+    base_seed: int
+    derived_seeds: dict[int, int]
 
-    goals_admitted: int
-    workers_admitted: int
-    steps_completed: int = 0
-    loss: float = float("inf")
-    stop_inner_on_success: bool = False
+    @classmethod
+    def from_seed(cls, *, base_seed: int, workers: list[ModelWorker]) -> RngBundle:
+        """
+        Create deterministic local RNGs for one GCG run.
+
+        Args:
+            base_seed (int): Seed shared by the Python and NumPy generators.
+            workers (list[ModelWorker]): Workers that need derived Torch generators.
+
+        Returns:
+            RngBundle: The initialized per-run RNG bundle.
+        """
+        derived_seeds = {i: base_seed + i for i in range(len(workers))}
+        return cls(
+            np_rng=np.random.default_rng(base_seed),
+            py_rng=random.Random(base_seed),
+            torch_gens=cls._create_torch_generators(workers=workers, derived_seeds=derived_seeds),
+            base_seed=base_seed,
+            derived_seeds=derived_seeds,
+        )
+
+    @staticmethod
+    def _create_torch_generators(
+        *, workers: list[ModelWorker], derived_seeds: dict[int, int]
+    ) -> dict[int, torch.Generator]:
+        """
+        Create worker generators on the shared sampling device.
+
+        Args:
+            workers (list[ModelWorker]): Workers that consume sampled candidates.
+            derived_seeds (dict[int, int]): Deterministic seed for each worker.
+
+        Returns:
+            dict[int, torch.Generator]: Generator keyed by worker index.
+        """
+        if not workers:
+            return {}
+
+        try:
+            sampling_device = workers[0].model.device
+            return {
+                i: torch.Generator(device=sampling_device).manual_seed(derived_seeds[i]) for i in range(len(workers))
+            }
+        except (TypeError, AttributeError):
+            return {i: torch.Generator().manual_seed(derived_seeds[i]) for i in range(len(workers))}
 
 
 class NpEncoder(json.JSONEncoder):
@@ -195,69 +235,52 @@ def _get_worker_log_params(worker: ModelWorker) -> dict[str, Any]:
 
 def get_embedding_layer(model: Any) -> Any:
     """
-    Return the token embedding layer for a supported causal language model.
+    Return the token embedding layer for a causal language model.
+
+    Uses the ``PreTrainedModel.get_input_embeddings`` interface, so any model that
+    ``AutoModelForCausalLM`` can load is supported rather than a fixed set of
+    architectures.
+
+    Args:
+        model (Any): A loaded causal language model.
 
     Returns:
         Any: The model's token embedding layer.
-
-    Raises:
-        ValueError: If the model architecture is unsupported.
     """
-    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
-        return model.transformer.wte
-    if isinstance(model, LlamaForCausalLM):
-        return model.model.embed_tokens
-    if isinstance(model, GPTNeoXForCausalLM):
-        return model.base_model.embed_in
-    if isinstance(model, Phi3ForCausalLM):
-        return model.model.embed_tokens
-    raise ValueError(f"Unknown model type: {type(model)}")
+    return model.get_input_embeddings()
 
 
 def get_embedding_matrix(model: Any) -> Any:
     """
-    Return the token embedding matrix for a supported causal language model.
+    Return the token embedding matrix for a causal language model.
+
+    Args:
+        model (Any): A loaded causal language model.
 
     Returns:
         Any: The model's token embedding matrix.
-
-    Raises:
-        ValueError: If the model architecture is unsupported.
     """
-    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
-        return model.transformer.wte.weight
-    if isinstance(model, LlamaForCausalLM):
-        return model.model.embed_tokens.weight
-    if isinstance(model, GPTNeoXForCausalLM):
-        return model.base_model.embed_in.weight  # type: ignore[union-attr, unused-ignore]
-    if isinstance(model, (MixtralForCausalLM, MistralForCausalLM)):
-        return model.model.embed_tokens.weight
-    if isinstance(model, Phi3ForCausalLM):
-        return model.model.embed_tokens.weight
-    raise ValueError(f"Unknown model type: {type(model)}")
+    return model.get_input_embeddings().weight
 
 
 def get_embeddings(model: Any, input_ids: torch.Tensor) -> Any:
     """
-    Embed input token ids with a supported causal language model.
+    Embed input token ids with a causal language model.
+
+    Args:
+        model (Any): A loaded causal language model.
+        input_ids (torch.Tensor): Token ids to embed.
 
     Returns:
         Any: The embedded token tensor.
-
-    Raises:
-        ValueError: If the model architecture is unsupported.
     """
-    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
-        return model.transformer.wte(input_ids).half()
-    if isinstance(model, LlamaForCausalLM):
-        return model.model.embed_tokens(input_ids)
-    if isinstance(model, GPTNeoXForCausalLM):
-        return model.base_model.embed_in(input_ids).half()  # type: ignore[operator, unused-ignore]
-    if isinstance(model, (MixtralForCausalLM, MistralForCausalLM)):
-        return model.model.embed_tokens(input_ids)
-    if isinstance(model, Phi3ForCausalLM):
-        return model.model.embed_tokens(input_ids)
-    raise ValueError(f"Unknown model type: {type(model)}")
+    embeddings = model.get_input_embeddings()(input_ids)
+    # GPT-2, GPT-J and GPT-NeoX have always returned half precision here, while
+    # the other supported architectures return the embedding dtype unchanged.
+    # That asymmetry is preserved so this change stays a compatibility fix.
+    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel, GPTNeoXForCausalLM)):
+        return embeddings.half()
+    return embeddings
 
 
 def get_nonascii_toks(tokenizer: Any, device: str = "cpu") -> torch.Tensor:
@@ -1016,6 +1039,7 @@ class MultiPromptAttack:
         log_first: bool = False,
         filter_cand: bool = True,
         verbose: bool = True,
+        random_seed: int = 42,
     ) -> tuple[str, float, int]:
         """
         Run iterative optimization.
@@ -1023,10 +1047,15 @@ class MultiPromptAttack:
         Returns:
             tuple[str, float, int]: The final control, loss, and step count.
         """
+        rng_bundle = getattr(self, "_rng_bundle", None)
+        if rng_bundle is None:
+            rng_bundle = RngBundle.from_seed(base_seed=random_seed, workers=getattr(self, "workers", []))
+        py_rng = rng_bundle.py_rng
+        self._torch_gens = rng_bundle.torch_gens
 
         def acceptance_probability(e: float, e_prime: float, k: int) -> bool:
             temperature = max(1 - float(k + 1) / (n_steps + anneal_from), 1.0e-7)
-            return e_prime < e or math.exp(-(e_prime - e) / temperature) >= random.random()
+            return e_prime < e or math.exp(-(e_prime - e) / temperature) >= py_rng.random()
 
         if target_weight is None:
 
@@ -1093,7 +1122,7 @@ class MultiPromptAttack:
                 verbose=verbose,
             )
             state.runtime = time.time() - start
-            keep_control = True if not anneal else acceptance_probability(prev_loss, loss, i + anneal_from)
+            keep_control = True if not anneal else acceptance_probability(state.loss, loss, i + anneal_from)
             if keep_control:
                 self.control_str = control
                 state.control = control
@@ -1103,7 +1132,6 @@ class MultiPromptAttack:
             # annealing rejects it, so ``state.loss`` always describes the
             # suffix in ``state.control``.
             state.candidate_loss = loss
-            prev_loss = loss
             if loss < state.best_loss:
                 state.best_loss = loss
                 state.best_control = control
@@ -1400,6 +1428,7 @@ class ProgressiveMultiPromptAttack:
         stop_on_success: bool = True,
         verbose: bool = True,
         filter_cand: bool = True,
+        random_seed: int = 42,
     ) -> tuple[str, int]:
         """
         Execute the progressive multi-prompt attack.
@@ -1431,6 +1460,8 @@ class ProgressiveMultiPromptAttack:
                 Whether to print verbose output (default is True)
             filter_cand (bool, optional):
                 Whether to filter candidates whose lengths changed after re-tokenization (default is True)
+            random_seed (int, optional):
+                Seed for deterministic random number generation (default is 42)
 
         Returns:
             tuple[str, int]: The final control suffix and completed step count.
@@ -1439,6 +1470,10 @@ class ProgressiveMultiPromptAttack:
         # while opening or parsing the logfile, the previous run's state must
         # not keep looking current.
         self.last_schedule_state = None
+
+        rng_bundle = getattr(self, "_rng_bundle", None)
+        if rng_bundle is None:
+            rng_bundle = RngBundle.from_seed(base_seed=random_seed, workers=self.workers)
 
         _update_attack_log_params(
             logfile=self.logfile,
@@ -1454,26 +1489,30 @@ class ProgressiveMultiPromptAttack:
                 "anneal": anneal,
                 "incr_control": incr_control,
                 "stop_on_success": stop_on_success,
+                "random_seed": rng_bundle.base_seed,
+                "derived_seeds": rng_bundle.derived_seeds,
             },
         )
 
-        schedule = ProgressiveScheduleState(
-            goals_admitted=1 if self.progressive_goals else len(self.goals),
-            workers_admitted=1 if self.progressive_models else len(self.workers),
-            stop_inner_on_success=self.progressive_goals,
+        controller = ProgressiveScheduleController(
+            total_goals=len(self.goals),
+            total_workers=len(self.workers),
+            progressive_goals=self.progressive_goals,
+            progressive_models=self.progressive_models,
+            n_steps=n_steps,
+            control_weight=control_weight,
+            incr_control=incr_control,
+            stop_on_success=stop_on_success,
+            verbose=verbose,
         )
-        # Whether ``schedule.loss`` currently reflects an inner run's measured
-        # loss, as opposed to the ``inf`` sentinel written when a new round is
-        # admitted. Tracked explicitly so a legitimately non-finite inner loss
-        # (non-finite model loss or numeric overflow) is not mistaken for an
-        # unupdated sentinel value.
-        loss_is_measured = False
 
-        while schedule.steps_completed < n_steps:
+        while not controller.is_complete:
+            controller.before_inner_run()
+            schedule = controller.state
             attack = self.managers["MPA"](
-                self.goals[: schedule.goals_admitted],
-                self.targets[: schedule.goals_admitted],
-                self.workers[: schedule.workers_admitted],
+                self.goals[: controller.active_goal_count],
+                self.targets[: controller.active_goal_count],
+                self.workers[: controller.active_worker_count],
                 self.control,
                 self.test_prefixes,
                 self.logfile,
@@ -1482,16 +1521,15 @@ class ProgressiveMultiPromptAttack:
                 self.test_targets,
                 self.test_workers,
             )
-            if schedule.goals_admitted == len(self.goals) and schedule.workers_admitted == len(self.workers):
-                schedule.stop_inner_on_success = False
+            attack._rng_bundle = rng_bundle
             inner_result: tuple[str, float, int] = attack.run(
-                n_steps=n_steps - schedule.steps_completed,
+                n_steps=controller.remaining_steps,
                 batch_size=batch_size,
                 topk=topk,
                 temp=temp,
                 allow_non_ascii=allow_non_ascii,
                 target_weight=target_weight,
-                control_weight=control_weight,
+                control_weight=controller.control_weight,
                 anneal=anneal,
                 anneal_from=schedule.steps_completed,
                 prev_loss=schedule.loss,
@@ -1499,30 +1537,16 @@ class ProgressiveMultiPromptAttack:
                 test_steps=test_steps,
                 filter_cand=filter_cand,
                 verbose=verbose,
+                random_seed=random_seed,
             )
             control, inner_loss, inner_steps = inner_result
-            schedule.loss = inner_loss
-            loss_is_measured = True
-
-            schedule.steps_completed += inner_steps
             self.control = control
 
-            # Once the step budget is spent, stop preparing further rounds:
-            # admissions and their sentinel resets would strand ``inf`` on
-            # ``schedule.loss`` for a run that legitimately ends right here.
-            prepare_next_round = schedule.steps_completed < n_steps
-
-            if schedule.goals_admitted < len(self.goals):
-                if prepare_next_round:
-                    schedule.goals_admitted += 1
-                    schedule.loss = np.inf
-                    loss_is_measured = False
-            elif schedule.workers_admitted < len(self.workers):
-                if prepare_next_round:
-                    schedule.workers_admitted += 1
-                    schedule.loss = np.inf
-                    loss_is_measured = False
-            elif schedule.workers_admitted == len(self.workers) and stop_on_success:
+            action = controller.advance_after_inner_run(
+                inner_loss=inner_loss,
+                inner_steps=inner_steps,
+            )
+            if action == ScheduleTransitionAction.FINALIZE_AND_STOP:
                 self._finalize_progressive_run(
                     attack=attack,
                     step=schedule.steps_completed,
@@ -1531,27 +1555,11 @@ class ProgressiveMultiPromptAttack:
                     verbose=verbose,
                 )
                 break
-            elif prepare_next_round and isinstance(control_weight, (int, float)) and incr_control:
-                if control_weight <= 0.09:
-                    control_weight += 0.01
-                    schedule.loss = np.inf
-                    loss_is_measured = False
-                    if verbose:
-                        logger.info(f"Control weight increased to {control_weight:.5}")
-                else:
-                    schedule.stop_inner_on_success = False
 
-        # The inner run must have produced a measured loss whenever any
-        # optimization happened; guards against silent carry-over regressions.
-        # Whether the loss was measured is tracked explicitly (a completed
-        # inner run may legitimately report a non-finite loss), never inferred
-        # from the numeric value.
-        if schedule.steps_completed > 0:
-            assert loss_is_measured, "schedule.loss was never updated by the inner run"
+        controller.validate_post_run()
+        self.last_schedule_state = controller.state
 
-        self.last_schedule_state = schedule
-
-        return self.control, schedule.steps_completed
+        return self.control, controller.state.steps_completed
 
 
 class IndividualPromptAttack:
@@ -1656,6 +1664,7 @@ class IndividualPromptAttack:
         stop_on_success: bool = True,
         verbose: bool = True,
         filter_cand: bool = True,
+        random_seed: int = 42,
     ) -> tuple[str, int]:
         """
         Execute the individual-prompt attack.
@@ -1687,10 +1696,16 @@ class IndividualPromptAttack:
                 Whether to print verbose output (default is True)
             filter_cand (bool, optional):
                 Whether to filter candidates (default is True)
+            random_seed (int, optional):
+                Seed for deterministic random number generation (default is 42)
 
         Returns:
             tuple[str, int]: The final control suffix and configured step count.
         """
+        rng_bundle = getattr(self, "_rng_bundle", None)
+        if rng_bundle is None:
+            rng_bundle = RngBundle.from_seed(base_seed=random_seed, workers=self.workers)
+
         _update_attack_log_params(
             logfile=self.logfile,
             params={
@@ -1705,6 +1720,8 @@ class IndividualPromptAttack:
                 "anneal": anneal,
                 "incr_control": incr_control,
                 "stop_on_success": stop_on_success,
+                "random_seed": rng_bundle.base_seed,
+                "derived_seeds": rng_bundle.derived_seeds,
             },
         )
 
@@ -1725,6 +1742,7 @@ class IndividualPromptAttack:
                 self.test_targets,
                 self.test_workers,
             )
+            attack._rng_bundle = rng_bundle
             attack.run(
                 n_steps=n_steps,
                 batch_size=batch_size,
@@ -1741,6 +1759,7 @@ class IndividualPromptAttack:
                 log_first=True,
                 filter_cand=filter_cand,
                 verbose=verbose,
+                random_seed=random_seed,
             )
 
         return self.control, n_steps

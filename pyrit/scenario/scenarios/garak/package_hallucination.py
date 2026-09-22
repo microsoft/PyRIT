@@ -1,12 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# Portions Copyright (c) 2023 Leon Derczynski and NVIDIA CORPORATION & AFFILIATES.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
 from __future__ import annotations
 
 import logging
 import random
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -71,6 +74,9 @@ _LANGUAGE_SPECS: dict[str, _LanguageSpec] = {
         language_name="Ruby", dataset_name="garak_rubygems_packages", ecosystem=PackageEcosystem.RUBY
     ),
     "rust": _LanguageSpec(language_name="Rust", dataset_name="garak_crates_packages", ecosystem=PackageEcosystem.RUST),
+    "dart": _LanguageSpec(language_name="Dart", dataset_name="garak_dart_packages", ecosystem=PackageEcosystem.DART),
+    "perl": _LanguageSpec(language_name="Perl", dataset_name="garak_perl_packages", ecosystem=PackageEcosystem.PERL),
+    "raku": _LanguageSpec(language_name="Raku", dataset_name="garak_raku_packages", ecosystem=PackageEcosystem.RAKU),
 }
 
 
@@ -106,6 +112,9 @@ class PackageHallucinationTechnique(ScenarioTechnique):
     JavaScript = ("javascript", set())
     Ruby = ("ruby", set())
     Rust = ("rust", {"default"})
+    Dart = ("dart", set())
+    Perl = ("perl", set())
+    Raku = ("raku", set())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -135,7 +144,7 @@ class PackageHallucination(Scenario):
     Reference: [@derczynski2024garak]
     """
 
-    VERSION: int = 2
+    VERSION: int = 3
 
     # The plain code request is not an adversarial baseline to compare against, so no baseline.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
@@ -281,9 +290,15 @@ class PackageHallucination(Scenario):
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by technique value (language).
+
+        Raises:
+            TypeError: If the scenario contains a technique from another catalog.
         """
-        techniques = cast("list[PackageHallucinationTechnique]", self._scenario_techniques)
-        specs_by_technique = {technique.value: _LANGUAGE_SPECS[technique.value] for technique in techniques}
+        specs_by_technique: dict[str, _LanguageSpec] = {}
+        for technique in self._scenario_techniques:
+            if not isinstance(technique, PackageHallucinationTechnique):
+                raise TypeError(f"Unexpected package hallucination technique: {type(technique).__name__}")
+            specs_by_technique[technique.value] = _LANGUAGE_SPECS[technique.value]
         dataset_names = [
             *_CORPUS_DATASETS,
             *(spec.dataset_name for spec in specs_by_technique.values()),
@@ -332,12 +347,16 @@ class PackageHallucination(Scenario):
 
         Returns:
             list[AtomicAttack]: One atomic attack per selected language.
+
+        Raises:
+            TypeError: If the scenario context contains a technique from another catalog.
         """
         atomic_attacks: list[AtomicAttack] = []
-        techniques_by_value = {
-            technique.value: technique
-            for technique in cast("list[PackageHallucinationTechnique]", context.scenario_techniques)
-        }
+        techniques_by_value: dict[str, PackageHallucinationTechnique] = {}
+        for technique in context.scenario_techniques:
+            if not isinstance(technique, PackageHallucinationTechnique):
+                raise TypeError(f"Unexpected package hallucination technique: {type(technique).__name__}")
+            techniques_by_value[technique.value] = technique
         for name, seed_groups in context.seed_groups_by_dataset.items():
             scorer = self._build_scorer_for_technique(technique=techniques_by_value[name])
             attack = PromptSendingAttack(

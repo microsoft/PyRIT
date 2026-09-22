@@ -11,7 +11,7 @@ from pyrit.analytics import ApproximateTextMatching, ExactTextMatching
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import MatchesObjective, MessagePiece, ScoringExpectation
-from pyrit.score import ContentScorable, MessageScorable, SubStringScorer
+from pyrit.score import ContentScorable, MessageScorable, Scorer, SubStringScorer
 
 
 @pytest.fixture
@@ -19,18 +19,15 @@ def image_message_piece() -> MessagePiece:
     return get_image_message_piece()
 
 
-async def test_score_async_unsupported_data_type_returns_false(
+async def test_score_async_unsupported_data_type_returns_empty(
     patch_central_database, image_message_piece: MessagePiece
 ):
     image_message_piece.not_in_memory = True
     request = image_message_piece.to_message()
     scorer = SubStringScorer(substring="test", categories=["new_category"])
 
-    # With raise_on_no_valid_pieces=False (default), returns False for unsupported data types
     scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
-    assert len(scores) == 1
-    assert scores[0].get_value() is False
-    assert "No supported pieces" in scores[0].score_rationale
+    assert scores == []
 
     os.remove(image_message_piece.converted_value)
 
@@ -56,8 +53,9 @@ async def test_substring_scorer_does_not_match_objective(patch_central_database)
     assert scorer.matched_conditions() == frozenset()
     assert scorer.required_conditions() == frozenset()
     with pytest.raises(ValueError, match="does not match the condition"):
-        await scorer.score_async(
+        await Scorer.score_with_scorers_async(
             scorable=ContentScorable(value="needle"),
+            scorers=[scorer],
             expectation=ScoringExpectation(
                 objective="find the configured substring",
                 conditions=(MatchesObjective(),),

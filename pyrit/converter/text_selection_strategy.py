@@ -9,6 +9,7 @@ from re import Pattern
 from typing import Any
 
 from pyrit.common.random_context import get_random_generator
+from pyrit.models import StructuredParameterValue
 
 # Common English function words used by ContentWordSelectionStrategy. This is a
 # dependency-free stand-in for POS filtering (no NLTK / tagger download).
@@ -193,7 +194,7 @@ class TokenSelectionStrategy(TextSelectionStrategy):
         return (0, 0)
 
 
-class WordSelectionStrategy(TextSelectionStrategy):
+class WordSelectionStrategy(TextSelectionStrategy, StructuredParameterValue):
     """
     Base class for word-level selection strategies.
 
@@ -253,6 +254,19 @@ class WordSelectionStrategy(TextSelectionStrategy):
             char_pos += len(word) + len(word_separator)
 
         return (start_char, end_char)
+
+    @classmethod
+    def get_registry_input_variants(cls) -> dict[str, type[StructuredParameterValue]]:
+        """Return the safe implementations available to registry input consumers."""
+        return {
+            "all": AllWordsSelectionStrategy,
+            "random": WordProportionSelectionStrategy,
+            "position": WordPositionSelectionStrategy,
+            "indices": WordIndexSelectionStrategy,
+            "keywords": WordKeywordSelectionStrategy,
+            "regex": WordRegexSelectionStrategy,
+            "content": ContentWordSelectionStrategy,
+        }
 
 
 class IndexSelectionStrategy(TextSelectionStrategy):
@@ -538,7 +552,12 @@ class WordIndexSelectionStrategy(WordSelectionStrategy):
 
         Args:
             indices (list[int]): The list of word indices to select.
+
+        Raises:
+            ValueError: If an index is negative.
         """
+        if any(index < 0 for index in indices):
+            raise ValueError("indices must be non-negative")
         self._indices = indices
 
     def get_identifier_params(self) -> dict[str, Any]:

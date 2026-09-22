@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -208,7 +208,7 @@ def _make_attack_with_target(
         objective="test objective",
         atomic_attack_identifier=atomic,
         outcome=outcome,
-        timestamp=timestamp or datetime.now(timezone.utc),
+        timestamp=timestamp or datetime.now(UTC),
     )
 
 
@@ -267,7 +267,7 @@ def test_get_cached_results_for_technique_returns_empty_when_no_candidates():
 def test_get_cached_results_for_technique_sorts_newest_first():
     target = _make_target_component()
     expected_hash = ObjectiveTargetEvaluationIdentifier(target).eval_hash
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     older = _make_attack_with_target(target, timestamp=now - timedelta(hours=2))
     middle = _make_attack_with_target(target, timestamp=now - timedelta(hours=1))
     newest = _make_attack_with_target(target, timestamp=now)

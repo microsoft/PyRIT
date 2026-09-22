@@ -129,6 +129,7 @@ async def test_persuasion_converter_missing_mutated_text_raises_invalid_json(sql
                 await prompt_persuasion.convert_async(prompt="testing")
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_persuasion_converter_input_supported():
     prompt_target = MockPromptTarget()
     prompt_persuasion = PersuasionConverter(

@@ -559,7 +559,7 @@ class WebSocketCopilotTarget(PromptTarget):
                             websocket.recv(),
                             timeout=self._response_timeout_seconds,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         raise TimeoutError(
                             f"Timed out waiting for Copilot response after {self._response_timeout_seconds} seconds."
                         ) from None
@@ -655,8 +655,8 @@ class WebSocketCopilotTarget(PromptTarget):
 
         return session_id, copilot_conversation_id
 
-    @limit_requests_per_minute
     @pyrit_target_retry
+    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to Microsoft Copilot using WebSocket.

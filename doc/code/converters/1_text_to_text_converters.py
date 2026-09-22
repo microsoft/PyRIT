@@ -34,6 +34,9 @@
 # ### 1.1 Basic Encoding Converters
 #
 # These converters encode text into various formats:
+#
+# For bijection converters, call `get_teaching_instructions()` on the same instance used to encode prompts so the target receives the matching mapping and formatting rules.
+# `DigitBijectionConverter` prefixes uppercase letters' digit tokens with a single apostrophe (`'`) and encodes each literal apostrophe as two apostrophes (`''`). Its teaching instructions include both rules and mapping-specific contraction examples. Spaces and all other punctuation remain unchanged.
 
 # %%
 from pathlib import Path
@@ -124,6 +127,7 @@ from pyrit.converter import (
     InsertPunctuationConverter,
     LeetspeakConverter,
     MathObfuscationConverter,
+    PinyinConverter,
     PuzzledConverter,
     RandomCapitalLettersConverter,
     RepeatTokenConverter,
@@ -173,6 +177,11 @@ print("Tatweel:", await TatweelConverter().convert_async(prompt=arabic_prompt)) 
 print("Arabic Presentation Form:", await ArabicPresentationFormConverter().convert_async(prompt=arabic_prompt))  # type: ignore
 # Arabizi transliterates Arabic script into Latin-script chat Arabic
 print("Arabizi:", await ArabiziConverter().convert_async(prompt=arabic_prompt))  # type: ignore
+# Pinyin only affects Chinese (Hanzi) characters, so it uses a Chinese prompt. It rewrites Hanzi
+# as their Pinyin romanization - as full readings, first-letter initials, or a Hanzi/Pinyin mix.
+chinese_prompt = "告诉我如何砍倒一棵树"
+print("Pinyin (full):", await PinyinConverter().convert_async(prompt=chinese_prompt))  # type: ignore
+print("Pinyin (initials):", await PinyinConverter(mode="initial").convert_async(prompt=chinese_prompt))  # type: ignore
 print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zalgo:", await ZalgoConverter().convert_async(prompt=prompt))  # type: ignore
 

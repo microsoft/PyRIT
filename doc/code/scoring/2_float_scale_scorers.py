@@ -113,7 +113,7 @@ response = Message(
 memory.add_message_to_memory(request=response)
 
 system_prompt_scorer = SystemPromptExtractionScorer()
-leak_score = (await system_prompt_scorer.score_async(response))[0]  # type: ignore
+leak_score = (await system_prompt_scorer.score_message_async(message=response))[0]  # type: ignore
 print(f"[system prompt extraction] overlap={leak_score.get_value()}")
 
 # %% [markdown]

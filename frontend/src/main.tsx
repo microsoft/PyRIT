@@ -1,20 +1,16 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter } from 'react-router'
-import App from './App'
+
+import AppRouter from './AppRouter'
 import { AuthProvider } from './auth/AuthProvider'
 import { ThemeProvider } from './hooks/useTheme'
 import './styles/global.css'
-
-document.title = 'Co-PyRIT'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
       <AuthProvider>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <AppRouter />
       </AuthProvider>
     </ThemeProvider>
   </React.StrictMode>,

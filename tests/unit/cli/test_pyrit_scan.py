@@ -7,6 +7,7 @@ Unit tests for the pyrit_scan CLI module (thin REST client).
 
 import logging
 from argparse import Namespace
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,6 +16,13 @@ from pyrit.cli import _config_reader as pyrit_scan_config_reader
 from pyrit.cli import pyrit_scan
 from pyrit.models import Parameter
 from unit.mocks import make_scenario_result
+
+# A valid UTF-8 initializer whose text is not pure ASCII. Decoded with a Windows ANSI code page
+# this either mangles the prompt (cp1252) or raises UnicodeDecodeError (cp932/936/949/950).
+UTF8_INITIALIZER_SOURCE = (
+    "from pyrit.setup.pyrit_initializer import PyRITInitializer\n"
+    'SYSTEM_PROMPT = "Réponds en français, café. 日本語でも回答してください。"\n'
+)
 
 
 def _sp(*, name, description="", default=None, param_type="str", choices=None, is_list=False) -> Parameter:
@@ -329,7 +337,7 @@ class TestExtractScenarioArgs:
 
 def _make_scenario_result():
     """Build a minimal but valid ``ScenarioResult`` for the run-results happy path."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from pyrit.models import (
         AttackOutcome,
@@ -344,7 +352,7 @@ def _make_scenario_result():
         outcome=AttackOutcome.SUCCESS,
         executed_turns=1,
         execution_time_ms=10,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
     )
     return make_scenario_result(
         scenario_name="test_scenario",
@@ -360,7 +368,7 @@ def _make_scenario_result():
 
 def _mock_api_client():
     """Create a mock PyRITApiClient with default response behaviors (typed wire-data)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from pyrit.models import ScenarioRunState, TargetCapabilities
     from pyrit.models.catalog import (
@@ -369,7 +377,7 @@ def _mock_api_client():
         TargetInstance,
     )
 
-    now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2025, 1, 1, tzinfo=UTC)
 
     client = AsyncMock()
     client.health_check_async.return_value = True
@@ -621,12 +629,12 @@ class TestMain:
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_failed_scenario(self, mock_client_class, mock_probe):
         """Test main when scenario run fails."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import ScenarioRunSummary
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         mock_client = _mock_api_client()
         mock_client.get_scenario_run_async.return_value = ScenarioRunSummary(
             scenario_result_id="test-id",
@@ -1268,6 +1276,31 @@ class TestMainExtraPaths:
         return_value=True,
     )
     @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_start_scenario_read_timeout_reports_type_and_hint(self, mock_client_class, _mock_probe, capsys):
+        """A ReadTimeout stringifies to '', so the type and a hint have to carry the message."""
+        import httpx
+
+        mock_client = _mock_api_client()
+        mock_client.start_scenario_run_async.side_effect = httpx.ReadTimeout("")
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "--request-timeout" in captured.out
+        # The server keeps initializing after the client gives up, so the outcome is unknown
+        # and must not be reported as a definite failure to start.
+        assert "unknown whether the run started" in captured.out
+        assert "could not be started" not in captured.out
+        assert "scenario-history" in captured.out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_run_results_failure_is_hard_error(self, mock_client_class, _mock_probe, capsys):
         mock_client = _mock_api_client()
         mock_client.get_scenario_run_results_async.side_effect = RuntimeError("nope")
@@ -1282,6 +1315,38 @@ class TestMainExtraPaths:
         assert "nope" in captured.out
         # The summary printer should still be used as a fallback for context.
         assert "test_scenario" in captured.out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_run_results_read_timeout_points_at_scenario_results(self, mock_client_class, _mock_probe, capsys):
+        """Results are fetched with the request timeout, unlike polling, so they can time out."""
+        import httpx
+
+        mock_client = _mock_api_client()
+        mock_client.get_scenario_run_results_async.side_effect = httpx.ReadTimeout("")
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "scenario-results" in captured.out
+        assert "--request-timeout" in captured.out
+
+    def test_print_cli_exception_surfaces_empty_read_timeout(self, capsys):
+        """A bare ReadTimeout stringifies to '', so the helper has to carry the message."""
+        import httpx
+
+        pyrit_scan._print_cli_exception(exc=httpx.ReadTimeout(""))
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "did not respond in time" in captured.out
+        # Only pyrit_scan verbs reach the helper with a timeout, and they all take the flag.
+        assert "--request-timeout" in captured.out
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -1406,9 +1471,22 @@ class TestMainExtraPaths:
             result = await pyrit_scan._handle_add_initializer_async(client=client, parsed_args=parsed_args)
 
         assert result == 0
-        open_mock.assert_called_once_with(script.resolve())
+        open_mock.assert_called_once_with(script.resolve(), encoding="utf-8")
         async_file.read.assert_awaited_once()
         assert client.register_initializer_async.await_args.kwargs["script_content"] == "# stub initializer\n"
+
+    async def test_handle_add_initializer_reads_source_as_utf8(self, tmp_path):
+        """Initializer source is UTF-8 (PEP 3120), not the machine's locale encoding."""
+        script = tmp_path / "utf8_init.py"
+        script.write_bytes(UTF8_INITIALIZER_SOURCE.encode("utf-8"))
+        client = AsyncMock()
+
+        result = await pyrit_scan._handle_add_initializer_async(
+            client=client, parsed_args=Namespace(files=[str(script)])
+        )
+
+        assert result == 0
+        assert client.register_initializer_async.await_args.kwargs["script_content"] == UTF8_INITIALIZER_SOURCE
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -1540,7 +1618,7 @@ class TestScenarioParamFlow:
 
     @staticmethod
     def _build_mock_client(supported_params=None, status="COMPLETED"):
-        from datetime import datetime, timezone
+        from datetime import datetime
         from unittest.mock import AsyncMock
 
         from pyrit.models import ScenarioRunState
@@ -1549,7 +1627,7 @@ class TestScenarioParamFlow:
             ScenarioRunSummary,
         )
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         typed_params: list[Parameter] = []
         for p in supported_params or []:
             if isinstance(p, Parameter):
@@ -1706,13 +1784,13 @@ class TestPollStreamsRetryWarnings:
     """The poll loop should stream retry warnings as attack results land."""
 
     async def test_poll_prints_retry_warnings_once(self, capsys):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import AttackRetrySummary, ScenarioRunSummary
         from pyrit.models.retry_event import RetryEvent
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         retry = RetryEvent(
             attempt_number=3,
             exception_type="RateLimitError",
@@ -1751,9 +1829,7 @@ class TestPollStreamsRetryWarnings:
         )
 
         with patch("asyncio.sleep", new=AsyncMock(return_value=None)):
-            final = await pyrit_scan._poll_until_terminal_async(
-                client=client, scenario_result_id="sr-1", total_techniques=1
-            )
+            final = await pyrit_scan._poll_until_terminal_async(client=client, scenario_result_id="sr-1")
 
         assert final.status == ScenarioRunState.COMPLETED
         out = capsys.readouterr().out

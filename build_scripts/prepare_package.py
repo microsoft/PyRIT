@@ -171,7 +171,8 @@ def main() -> int:
     print("=" * 60)
     print("\nNext steps:")
     print("  1. Build the Python package: python -m build")
-    print("  2. Upload to PyPI: python -m twine upload dist/*")
+    print("  2. Upload to PyPI by explicit filename, e.g.:")
+    print("     python -m twine upload dist/pyrit-x.y.z-py3-none-any.whl dist/pyrit-x.y.z.tar.gz")
     return 0
 
 

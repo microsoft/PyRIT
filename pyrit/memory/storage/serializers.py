@@ -8,7 +8,7 @@ import asyncio
 import base64
 import hashlib
 import tempfile
-import time
+import uuid
 import wave
 from mimetypes import guess_type
 from pathlib import Path
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.seed import Seed
 
 # Define allowed categories for validation
-AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries"]
+AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries", "scorable-content-entries"]
 
 
 def _write_wav_sync(
@@ -44,6 +44,19 @@ def _write_wav_sync(
         wav_file.setsampwidth(sample_width)
         wav_file.setframerate(sample_rate)
         wav_file.writeframes(data)
+
+
+def _validate_category(category: object) -> None:
+    """
+    Reject missing storage categories before selecting a serializer.
+
+    Raises:
+        ValueError: If the category is missing.
+    """
+    if not category:
+        raise ValueError(
+            f"The 'category' argument is mandatory and must be one of the following: {get_args(AllowedCategories)}."
+        )
 
 
 def data_serializer_factory(
@@ -69,10 +82,7 @@ def data_serializer_factory(
         ValueError: If the category is not provided or invalid.
 
     """
-    if not category:
-        raise ValueError(
-            f"The 'category' argument is mandatory and must be one of the following: {get_args(AllowedCategories)}."
-        )
+    _validate_category(category)
     if value is not None:
         if data_type in ["text", "reasoning", "function_call", "tool_call", "function_call_output"]:
             return TextDataTypeSerializer(prompt_text=value, data_type=data_type)
@@ -344,14 +354,13 @@ class DataTypeSerializer(abc.ABC):
         if not self.data_sub_directory:
             raise RuntimeError("Data sub directory not set")
 
-        ticks = int(time.time() * 1_000_000)
         if self._memory.results_path:
             results_path = str(self._memory.results_path)
         else:
             from pyrit.common.path import DB_DATA_PATH
 
             results_path = str(DB_DATA_PATH)
-        file_name = file_name if file_name else str(ticks)
+        file_name = file_name if file_name else str(uuid.uuid4())
         file_suffix = Path(file_name).suffix
         if file_suffix.casefold() == f".{self.file_extension}".casefold():
             file_name = file_name[: -len(file_suffix)]

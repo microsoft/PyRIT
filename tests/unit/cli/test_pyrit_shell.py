@@ -6,6 +6,7 @@ Unit tests for the pyrit_shell CLI module (thin REST client).
 """
 
 import asyncio
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +14,13 @@ import pytest
 from pyrit.cli import pyrit_shell
 from pyrit.models import Parameter
 from unit.mocks import make_scenario_result
+
+# A valid UTF-8 initializer whose text is not pure ASCII. Decoded with a Windows ANSI code page
+# this either mangles the prompt (cp1252) or raises UnicodeDecodeError (cp932/936/949/950).
+UTF8_INITIALIZER_SOURCE = (
+    "from pyrit.setup.pyrit_initializer import PyRITInitializer\n"
+    'SYSTEM_PROMPT = "Réponds en français, café. 日本語でも回答してください。"\n'
+)
 
 
 def _sp(*, name, description="", default=None, param_type="str", choices=None, is_list=False) -> Parameter:
@@ -513,6 +521,29 @@ class TestDoAddInitializer:
         assert "Registered initializer 'my_init'" in capsys.readouterr().out
         client.register_initializer_async.assert_awaited_once()
 
+    def test_success_path_reads_source_as_utf8(self, shell, tmp_path, capsys):
+        """Initializer source is UTF-8 (PEP 3120), not the machine's locale encoding."""
+        s, client = shell
+        script = tmp_path / "utf8_init.py"
+        script.write_bytes(UTF8_INITIALIZER_SOURCE.encode("utf-8"))
+        client.register_initializer_async = AsyncMock(return_value={"status": "ok"})
+
+        s.do_add_initializer(str(script))
+
+        assert "Registered initializer 'utf8_init'" in capsys.readouterr().out
+        assert client.register_initializer_async.await_args.kwargs["script_content"] == UTF8_INITIALIZER_SOURCE
+
+    def test_reads_script_with_explicit_utf8_encoding(self, shell, tmp_path):
+        s, client = shell
+        script = tmp_path / "utf8_init.py"
+        script.write_bytes(UTF8_INITIALIZER_SOURCE.encode("utf-8"))
+        client.register_initializer_async = AsyncMock(return_value={"status": "ok"})
+
+        with patch.object(pyrit_shell.Path, "read_text", autospec=True, return_value="x = 1") as read_text_mock:
+            s.do_add_initializer(str(script))
+
+        assert read_text_mock.call_args.kwargs.get("encoding") == "utf-8"
+
     def test_success_with_quoted_path_containing_spaces(self, shell, tmp_path, capsys):
         s, client = shell
         script_dir = tmp_path / "initializer scripts"
@@ -575,12 +606,12 @@ class TestDoRun:
     @staticmethod
     def _run_payload(status="COMPLETED"):
         """Build a typed ScenarioRunSummary for use as a mock return value."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import ScenarioRunSummary
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         return ScenarioRunSummary(
             scenario_result_id="rid-1",
             scenario_name="foo",
@@ -617,7 +648,47 @@ class TestDoRun:
             return_value={"scenario_name": "foo", "target": "t"},
         ):
             s.do_run("foo --target t")
-        assert "Error starting scenario: nope" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "The scenario could not be started." in out
+        assert "Error (RuntimeError): nope" in out
+
+    def test_run_start_failure_read_timeout_reports_type_and_hint(self, shell, capsys):
+        """A ReadTimeout stringifies to '', so the type and a hint have to carry the message."""
+        import httpx
+
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        with patch(
+            "pyrit.cli._cli_args.parse_run_arguments",
+            return_value={"scenario_name": "foo", "target": "t"},
+        ):
+            s.do_run("foo --target t")
+        out = capsys.readouterr().out
+        assert "ReadTimeout" in out
+        assert "blocked event loop" in out
+        assert "unknown whether the run started" in out
+        assert "could not be started" not in out
+        assert "scenario-history" in out
+        # The shell has no --request-timeout option, so it must not advise passing one.
+        assert "--request-timeout" not in out
+
+    def test_run_results_failure_read_timeout_omits_unsupported_flag(self, shell, capsys):
+        """The results fetch uses the request timeout, so it needs its own shell-specific hint."""
+        import httpx
+
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(return_value=self._run_payload())
+        client.get_scenario_run_async = AsyncMock(return_value=self._run_payload("COMPLETED"))
+        client.get_scenario_run_results_async = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        with patch(
+            "pyrit.cli._cli_args.parse_run_arguments",
+            return_value={"scenario_name": "foo", "target": "t"},
+        ):
+            s.do_run("foo --target t")
+        out = capsys.readouterr().out
+        assert "ReadTimeout" in out
+        assert "scenario-results" in out
+        assert "--request-timeout" not in out
 
     def test_run_completed_path_with_results(self, shell, capsys):
         s, client = shell
@@ -780,7 +851,29 @@ class TestPrintScenarioAndHelp:
         s, client = shell
         client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("oops"))
         s.do_print_scenario("rid-1")
-        assert "Error: oops" in capsys.readouterr().out
+        assert "Error (RuntimeError): oops" in capsys.readouterr().out
+
+    def test_scenario_history_read_timeout_is_not_blank(self, shell, capsys):
+        """The run hints send users here, so a bare ReadTimeout must not print an empty error."""
+        import httpx
+
+        s, client = shell
+        client.list_scenario_runs_async = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        s.do_scenario_history("")
+        out = capsys.readouterr().out
+        assert "ReadTimeout" in out
+        assert "--request-timeout" not in out
+
+    def test_scenario_results_read_timeout_is_not_blank(self, shell, capsys):
+        """Same for the results command the completed-run hint points at."""
+        import httpx
+
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        s.do_scenario_results("rid-1")
+        out = capsys.readouterr().out
+        assert "ReadTimeout" in out
+        assert "--request-timeout" not in out
 
     def test_do_help_with_arg_normalizes_hyphen(self, shell):
         s, _ = shell
@@ -1019,13 +1112,13 @@ class TestDoScenarioResults:
         client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
         client.get_conversation_messages_async = AsyncMock(side_effect=RuntimeError("nope"))
         s.do_scenario_results("rid-1 --view conversations")
-        assert "Error: nope" in capsys.readouterr().out
+        assert "Error (RuntimeError): nope" in capsys.readouterr().out
 
     def test_fetch_error_is_reported(self, shell, capsys):
         s, client = shell
         client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("nope"))
         s.do_scenario_results("rid-1")
-        assert "Error: nope" in capsys.readouterr().out
+        assert "Error (RuntimeError): nope" in capsys.readouterr().out
 
     def test_print_scenario_alias_warns_and_delegates(self, shell, capsys):
         s, client = shell

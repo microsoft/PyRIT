@@ -25,6 +25,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    UndeterminedScoreError,
 )
 from pyrit.prompt_normalizer.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
@@ -558,7 +559,14 @@ class ConversationManager:
                 self._memory.get_prompt_scores(prompt_ids=assistant_piece_ids) if assistant_piece_ids else []
             )
             for score in existing_scores:
-                if score.score_type == "true_false" and score.get_value() is False:
+                if score.score_type != "true_false":
+                    continue
+                try:
+                    # Undetermined is not a refutation, so it is not feedback-worthy here.
+                    is_false = score.get_value() is False
+                except UndeterminedScoreError:
+                    continue
+                if is_false:
                     state.last_assistant_message_scores.append(score)
                     # context.last_score gets the first matching score for single-score use cases.
                     if hasattr(context, "last_score") and context.last_score is None:

@@ -10,10 +10,10 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
-class RegexScorer(TrueFalseScorer):
+class RegexScorer(MessageTrueFalseScorer):
     """
     A scorer that evaluates text against a set of named regex patterns.
 

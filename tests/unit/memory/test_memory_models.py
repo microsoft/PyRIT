@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import uuid
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, get_origin
 from unittest.mock import MagicMock
 
@@ -143,15 +144,15 @@ def test_utcdatetime_attaches_utc_to_naive_datetime():
     naive = datetime(2024, 1, 1, 12, 0, 0, tzinfo=None)  # noqa: DTZ001
     result = UTCDateTime().process_result_value(naive, dialect=MagicMock())
     assert result is not None
-    assert result.tzinfo == timezone.utc
+    assert result.tzinfo == UTC
     assert result.year == 2024
 
 
 def test_utcdatetime_leaves_aware_datetime_unchanged():
-    aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     result = UTCDateTime().process_result_value(aware, dialect=MagicMock())
     assert result == aware
-    assert result.tzinfo == timezone.utc
+    assert result.tzinfo == UTC
 
 
 def test_utcdatetime_passes_through_none():
@@ -461,7 +462,7 @@ class TestScoreEntry:
         assert entry.id == score.id
         assert entry.score_value == "0.9"
         assert entry.score_type == "float_scale"
-        assert entry.objective == "test objective"
+        assert entry.scored_expectation == {"schema_version": 1, "objective": "test objective", "conditions": []}
 
     def test_roundtrip_get_score(self):
         score = _make_score()
@@ -619,14 +620,93 @@ class TestSeedEntry:
         assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in (recovered.metadata or {})
         assert (recovered.metadata or {}).get("owned") == "by-caller"
 
+    def test_roundtrip_seed_simulated_conversation_preserves_prompts_and_version(self):
+        """A canonical record round-trips its prompts, value, hash, and recorded version."""
+        config = SeedSimulatedConversation(
+            num_turns=2,
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+            next_message_system_prompt=SeedPrompt(value="next", response_json_schema_name="adversarial_chat"),
+            pyrit_version="1.0.0",
+        )
+        config.value_sha256 = "canonical-hash"
+
+        recovered = SeedEntry(entry=config).get_seed()
+
+        assert isinstance(recovered, SeedSimulatedConversation)
+        assert recovered.adversarial_chat_system_prompt.value == "adversarial"
+        assert recovered.next_message_system_prompt is not None
+        assert recovered.next_message_system_prompt.response_json_schema is not None
+        assert recovered.pyrit_version == "1.0.0"
+        assert recovered.value == config.value
+        assert recovered.value_sha256 == "canonical-hash"
+
+    def test_legacy_path_record_reconstructs_prompts(self, tmp_path):
+        """A record written before normalization still loads, resolving its paths to prompts."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: legacy adversarial\ndata_type: text")
+
+        seed = SeedSimulatedConversation(
+            num_turns=2,
+            adversarial_chat_system_prompt=SeedPrompt(value="placeholder"),
+        )
+        entry = SeedEntry(entry=seed)
+        entry.value = json.dumps(
+            {
+                "num_turns": 2,
+                "sequence": 0,
+                "adversarial_chat_system_prompt_path": str(adv_path),
+                "simulated_target_system_prompt_path": None,
+                "next_message_system_prompt_path": None,
+                "pyrit_version": "1.0.0",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        entry.value_sha256 = "stale-path-hash"
+
+        with pytest.warns(DeprecationWarning, match="adversarial_chat_system_prompt_path"):
+            recovered = entry.get_seed()
+
+        assert isinstance(recovered, SeedSimulatedConversation)
+        assert recovered.adversarial_chat_system_prompt.value == "legacy adversarial"
+        # The compliant default fills in for the omitted simulated target.
+        assert recovered.simulated_target_system_prompt.name == "simulated_target_compliant"
+        assert recovered.next_message_system_prompt is None
+        assert recovered.pyrit_version == "1.0.0"
+        # The stored hash described the old path-shaped value, so it is not carried over.
+        assert recovered.value_sha256 is None
+
+    def test_legacy_record_with_missing_file_names_the_record(self, tmp_path):
+        """A legacy record pointing at a file this machine lacks fails with the record identified."""
+        seed = SeedSimulatedConversation(
+            num_turns=2,
+            adversarial_chat_system_prompt=SeedPrompt(value="placeholder"),
+            name="stale-technique",
+            dataset_name="legacy-dataset",
+        )
+        entry = SeedEntry(entry=seed)
+        entry.value = json.dumps(
+            {
+                "num_turns": 2,
+                "sequence": 0,
+                "adversarial_chat_system_prompt_path": str(tmp_path / "gone.yaml"),
+                "pyrit_version": "1.0.0",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        with pytest.raises(ValueError, match="stale-technique"):
+            entry.get_seed()
+
     def test_roundtrip_seed_simulated_conversation_strips_reserved_key(self):
         """SeedSimulatedConversation also has no schema field; reserved key must still be stripped."""
         from pyrit.models import SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY
 
         config = SeedSimulatedConversation(
             num_turns=3,
-            adversarial_chat_system_prompt_path="/path/to/adversarial.yaml",
-            simulated_target_system_prompt_path="/path/to/target.yaml",
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+            simulated_target_system_prompt=SeedPrompt(value="target", parameters=["objective", "num_turns"]),
             metadata={
                 SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky",
                 "owned": "by-caller",
@@ -683,6 +763,16 @@ class TestAttackResultEntry:
         assert entry.outcome == "success"
         assert entry.outcome_reason == "jailbreak achieved"
 
+    def test_init_stores_automated_and_human_scores_separately(self):
+        automated_score = Score(id=uuid.uuid4(), score_value="False", score_type="true_false")
+        human_score = Score(id=uuid.uuid4(), score_value="True", score_type="true_false")
+        result = _make_attack_result(automated_score=automated_score, human_score=human_score)
+
+        entry = AttackResultEntry(entry=result)
+
+        assert entry.automated_score_id == automated_score.id
+        assert entry.human_score_id == human_score.id
+
     def test_init_with_pruned_conversations(self):
         refs = {
             ConversationReference(
@@ -706,6 +796,18 @@ class TestAttackResultEntry:
         result = _make_attack_result(related_conversations=refs)
         entry = AttackResultEntry(entry=result)
         assert entry.adversarial_chat_conversation_ids == ["adv1"]
+
+    def test_init_with_preparation_conversations(self):
+        refs = {
+            ConversationReference(
+                conversation_id="prep1",
+                conversation_type=ConversationType.PREPARATION,
+                description="preparation",
+            )
+        }
+        result = _make_attack_result(related_conversations=refs)
+        entry = AttackResultEntry(entry=result)
+        assert entry.preparation_conversation_ids == ["prep1"]
 
     def test_get_id_as_uuid_valid(self):
         obj = MagicMock()
@@ -770,7 +872,7 @@ class TestScenarioResultEntry:
             "scenario_run_state": "COMPLETED",
             "labels": {"env": "test"},
             "number_tries": 1,
-            "completion_time": datetime.now(tz=timezone.utc),
+            "completion_time": datetime.now(tz=UTC),
         }
         defaults.update(overrides)
         return make_scenario_result(**defaults)

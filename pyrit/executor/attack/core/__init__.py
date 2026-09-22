@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         AttackStrategy,
         AttackStrategyContextT,
         AttackStrategyResultT,
+        attack_outcome_from_score,
     )
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
@@ -37,6 +38,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AttackStrategyResultT": "pyrit.executor.attack.core.attack_strategy",
     "AttackExecutor": "pyrit.executor.attack.core.attack_executor",
     "AttackExecutorResult": "pyrit.executor.attack.core.attack_executor",
+    "attack_outcome_from_score": "pyrit.executor.attack.core.attack_strategy",
     "resolve_adversarial_json_schema": "pyrit.executor.attack.core.attack_config",
     "resolve_adversarial_system_prompt": "pyrit.executor.attack.core.attack_config",
 }

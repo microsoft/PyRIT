@@ -324,6 +324,17 @@ def test_likert_factory_applies_evaluation_metadata(patch_central_database):
 
 
 @pytest.mark.parametrize(
+    "preset",
+    [preset for preset in LikertScalePaths if preset.evaluation_files is not None],
+)
+def test_likert_presets_use_canonical_harm_categories(preset: LikertScalePaths) -> None:
+    scale = preset.load()
+    assert scale.evaluation_files is not None
+    assert scale.evaluation_files == preset.evaluation_files
+    assert scale.category == scale.evaluation_files.harm_category
+
+
+@pytest.mark.parametrize(
     "contents, expected_error",
     [
         ({"scale_descriptions": [{"score_value": 1, "description": "Level"}]}, "category"),

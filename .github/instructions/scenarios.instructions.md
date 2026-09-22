@@ -144,8 +144,8 @@ Technique members should represent **attack techniques** — the *how* of an att
 
 ```python
 class MyTechnique(ScenarioTechnique):
-    ALL = ("all", {"all"})                  # Required aggregate
-    DEFAULT = ("default", {"default"})      # Recommended default aggregate
+    ALL = ("all", {"all"})  # Required aggregate
+    DEFAULT = ("default", {"default"})  # Recommended default aggregate
     SINGLE_TURN = ("single_turn", {"single_turn"})  # Category aggregate
 
     PromptSending = ("prompt_sending", {"single_turn", "default"})
@@ -208,8 +208,7 @@ Note: `atomic_attack_name` must remain unique per `AtomicAttack` for correct res
 Every scenario implements the single abstract extension point:
 
 ```python
-async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
-    ...
+async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]: ...
 ```
 
 `initialize_async` resolves the run's inputs once (objective target, techniques, dataset
@@ -226,6 +225,7 @@ Scenarios whose construction is the plain technique × dataset cross-product del
 ```python
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 
+
 async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
     return build_matrix_atomic_attacks(
         context=context,
@@ -237,7 +237,7 @@ async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list
 `build_matrix_atomic_attacks`:
 1. Calls `resolve_technique_factories(context=context)` to map the selected techniques to their
    registered `AttackTechniqueFactory` instances (reads the `AttackTechniqueRegistry` singleton;
-   techniques with no registered factory are dropped).
+   raises ``TechniqueResolutionError`` if any selected technique has no registered factory).
 2. Iterates every (technique × dataset) pair from `context.seed_groups_by_dataset`.
 3. Calls `factory.create()` with the objective target, conditional scorer override, and any
    per-technique converters (from `--techniques <technique>:converter.<name>`) as
@@ -260,13 +260,13 @@ and is loaded into the registry by `TechniqueInitializer`.
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 AttackTechniqueFactory(
-    name="prompt_sending",                  # REQUIRED — must match the technique enum value
+    name="prompt_sending",  # REQUIRED — must match the technique enum value
     attack_class=PromptSendingAttack,
     technique_tags=["core", "single_turn", "default"],
     attack_kwargs={"max_turns": 5},
-    adversarial_chat=None,                  # None = resolve adversarial target lazily at create()
+    adversarial_chat=None,  # None = resolve adversarial target lazily at create()
     seed_technique=None,
-    uses_adversarial=None,                  # None = auto-derive from attack signature/seeds
+    uses_adversarial=None,  # None = auto-derive from attack signature/seeds
     scorer_override_policy=ScorerOverridePolicy.WARN,
 )
 ```
@@ -318,10 +318,10 @@ population — that reintroduces baseline-vs-technique population divergence und
 
 ```python
 AtomicAttack(
-    atomic_attack_name=technique_name,   # groups related attacks
+    atomic_attack_name=technique_name,  # groups related attacks
     attack_technique=AttackTechnique(attack=attack_instance),  # bundles the AttackStrategy
-    seed_groups=list(seed_groups),       # must be non-empty
-    memory_labels=context.memory_labels, # from the context snapshot
+    seed_groups=list(seed_groups),  # must be non-empty
+    memory_labels=context.memory_labels,  # from the context snapshot
 )
 ```
 

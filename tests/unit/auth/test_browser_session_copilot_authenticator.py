@@ -253,22 +253,46 @@ async def test_refresh_token_async_forces_new_capture() -> None:
     assert capture.await_count == 2
 
 
-def test_extract_access_token_from_chathub_url() -> None:
+@pytest.mark.parametrize(
+    "websocket_path",
+    [
+        "m365Copilot/Chathub",
+        "m365Copilot/ChatHub",
+        "m365Copilot/StreamHub",
+        "m365Copilot/Streamhub",
+        "m365copilot/chathub",
+        "M365COPILOT/STREAMHUB",
+        "m365CoPiLoT/sTrEaMhUb",
+    ],
+)
+def test_extract_access_token_from_copilot_websocket_url(websocket_path: str) -> None:
     authenticator = BrowserSessionCopilotAuthenticator()
-    websocket_url = "wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub/user@tenant?access_token=test-token"
+    websocket_url = (
+        f"wss://substrate.svc.cloud.microsoft/{websocket_path}/user@tenant"
+        "?access_token=MiXeD%2BToken%2FValue%3D&source=OfficeWeb"
+    )
 
     result = authenticator._extract_access_token_from_websocket_url(websocket_url=websocket_url)
 
-    assert result == "test-token"
+    assert result == "MiXeD+Token/Value="
 
 
 @pytest.mark.parametrize(
     "websocket_url",
     [
         "ws://substrate.svc.cloud.microsoft/m365Copilot/Chathub/user@tenant?access_token=test-token",
+        "https://substrate.svc.cloud.microsoft/m365Copilot/StreamHub/user@tenant?access_token=test-token",
         "wss://evil.example/m365Copilot/Chathub/user@tenant?access_token=test-token",
+        "wss://substrate.svc.cloud.microsoft.evil.example/m365Copilot/StreamHub/user@tenant?access_token=test-token",
+        "wss://not-substrate.svc.cloud.microsoft/m365Copilot/StreamHub/user@tenant?access_token=test-token",
         "wss://substrate.svc.cloud.microsoft/other/path?access_token=test-token",
+        "wss://substrate.svc.cloud.microsoft/m365CopilotOther/StreamHub/user@tenant?access_token=test-token",
+        "wss://substrate.svc.cloud.microsoft/M365COPILOTOther/StreamHub/user@tenant?access_token=test-token",
+        "wss://substrate.svc.cloud.microsoft/other/m365Copilot/StreamHub/user@tenant?access_token=test-token",
+        "wss://substrate.svc.cloud.microsoft/m365Copilot?access_token=test-token",
         "wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub/user@tenant",
+        "wss://substrate.svc.cloud.microsoft/m365Copilot/StreamHub/user@tenant?access_token=",
+        "wss://substrate.svc.cloud.microsoft/m365Copilot/StreamHub/user@tenant?ACCESS_TOKEN=test-token",
     ],
 )
 def test_extract_access_token_rejects_unexpected_url(
@@ -280,17 +304,18 @@ def test_extract_access_token_rejects_unexpected_url(
     assert result is None
 
 
-async def test_handle_websocket_url_resolves_token_future() -> None:
+@pytest.mark.parametrize("hub", ["Chathub", "StreamHub", "sTrEaMhUb"])
+async def test_handle_websocket_url_resolves_token_future(hub: str) -> None:
     authenticator = BrowserSessionCopilotAuthenticator()
     token_future = asyncio.get_running_loop().create_future()
-    websocket_url = "wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub/user@tenant?access_token=test-token"
+    websocket_url = f"wss://substrate.svc.cloud.microsoft/m365Copilot/{hub}/user@tenant?access_token=MiXeD-Token"
 
     result = authenticator._handle_websocket_url(
         websocket_url=websocket_url,
         token_future=token_future,
     )
 
-    assert await token_future == "test-token"
+    assert await asyncio.wait_for(token_future, timeout=1) == "MiXeD-Token"
 
 
 async def test_wait_for_token_async_raises_clear_timeout() -> None:
@@ -589,9 +614,51 @@ async def test_close_async_closes_resources_on_browser_thread() -> None:
     assert cleanup_thread_id == owner_thread_id
 
 
-def test_extract_access_token_accepts_trailing_slash_in_base_url() -> None:
+@pytest.mark.parametrize(
+    ("websocket_base_url", "websocket_prefix"),
+    [
+        (
+            "wss://substrate.svc.cloud.microsoft/m365Copilot/ChatHub",
+            "wss://substrate.svc.cloud.microsoft/M365COPILOT/chathub",
+        ),
+        (
+            "wss://substrate.svc.cloud.microsoft/M365COPILOT/sTrEaMhUb",
+            "wss://substrate.svc.cloud.microsoft/m365Copilot/StreamHub",
+        ),
+        ("wss://copilot.example/CuStOm/HuB", "wss://copilot.example/custom/hub"),
+    ],
+)
+def test_extract_access_token_uses_custom_prefix(
+    *,
+    websocket_base_url: str,
+    websocket_prefix: str,
+) -> None:
+    authenticator = BrowserSessionCopilotAuthenticator(websocket_base_url=websocket_base_url)
+
+    assert (
+        authenticator._extract_access_token_from_websocket_url(
+            websocket_url=f"{websocket_prefix}/user@tenant?access_token=MiXeD-Token",
+        )
+        == "MiXeD-Token"
+    )
+    assert (
+        authenticator._extract_access_token_from_websocket_url(
+            websocket_url=f"{websocket_prefix}Other/user@tenant?access_token=MiXeD-Token",
+        )
+        is None
+    )
+    assert (
+        authenticator._extract_access_token_from_websocket_url(
+            websocket_url="wss://substrate.svc.cloud.microsoft/m365Copilot/OtherHub/user@tenant?access_token=MiXeD-Token",
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("base_path", ["m365Copilot/", "m365Copilot/Chathub/", "M365COPILOT/CHATHUB///"])
+def test_extract_access_token_accepts_trailing_slash_in_base_url(base_path: str) -> None:
     authenticator = BrowserSessionCopilotAuthenticator(
-        websocket_base_url=("wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub/"),
+        websocket_base_url=f"wss://substrate.svc.cloud.microsoft/{base_path}",
     )
 
     result = authenticator._extract_access_token_from_websocket_url(

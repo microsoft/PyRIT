@@ -6,9 +6,11 @@ import textwrap
 
 from colorama import Fore, Style
 
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.common.text_helper import escape_control_characters
+from pyrit.models import Message, MessagePiece
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.conversation.base import ConversationPrinterBase
+from pyrit.output.conversation.source import ConversationSource, MemoryConversationSource
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.sink import Sink
 
@@ -19,13 +21,14 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
     """
     Pretty printer for conversation message histories with ANSI-colored formatting.
 
-    Contains all formatting logic. Subclasses implement ``_get_scores_async``
-    and ``_display_image_async`` for data fetching.
+    Contains all formatting logic; scores are fetched through the injected
+    ``ConversationSource``.
     """
 
     def __init__(
         self,
         *,
+        source: ConversationSource,
         sink: Sink | None = None,
         width: int = 100,
         indent_size: int = 2,
@@ -38,6 +41,7 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
         Initialize the pretty conversation printer.
 
         Args:
+            source (ConversationSource): Data source used to fetch inline scores.
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
@@ -51,6 +55,7 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
                 Defaults to 20.
         """
         super().__init__(sink=sink)
+        self._source = source
         self._width = width
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
@@ -161,7 +166,7 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
                 image_pieces.append(piece)
 
                 if include_scores:
-                    scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
+                    scores = await self._source.get_scores_async(prompt_ids=[str(piece.id)])
                     if scores:
                         lines.append("\n")
                         lines.append(self._format_colored(f"{self._indent}📊 Scores:", Style.DIM, Fore.MAGENTA))
@@ -197,7 +202,8 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
             replace_whitespace=False,
         )
 
-        text_lines = text.split("\n")
+        # Escape before wrapping so escaped sequences count toward the width and none are dropped.
+        text_lines = escape_control_characters(text.replace("\r\n", "\n")).split("\n")
         for line_num, line in enumerate(text_lines):
             if line.strip():
                 wrapped_lines = text_wrapper.wrap(line)
@@ -293,6 +299,7 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
                 Defaults to 20.
         """
         super().__init__(
+            source=MemoryConversationSource(),
             sink=sink,
             width=width,
             indent_size=indent_size,
@@ -301,9 +308,6 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
             blur_images=blur_images,
             blur_radius=blur_radius,
         )
-        from pyrit.memory import CentralMemory
-
-        self._memory = CentralMemory.get_memory_instance()
 
     async def render_async(
         self,
@@ -326,15 +330,6 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
         return await super().render_async(
             messages, include_scores=include_scores, include_reasoning_summaries=include_reasoning_summaries
         )
-
-    async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
-        """
-        Fetch scores from CentralMemory.
-
-        Returns:
-            list[Score]: The scores.
-        """
-        return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))
 
     async def _display_image_async(self, piece: MessagePiece) -> None:
         """

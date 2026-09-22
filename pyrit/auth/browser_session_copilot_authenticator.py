@@ -9,11 +9,10 @@ from collections.abc import Callable, Coroutine
 from contextlib import AsyncExitStack
 from pathlib import Path
 from types import TracebackType
-from typing import Any, TypeVar
+from typing import Any, Self, TypeVar
 from urllib.parse import parse_qs, urlparse
 
 import jwt
-from typing_extensions import Self
 
 from pyrit.auth.authenticator import Authenticator
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
@@ -26,7 +25,7 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
 
     DEFAULT_TOKEN_CAPTURE_TIMEOUT_SECONDS = 60
     DEFAULT_EXPIRY_BUFFER_SECONDS = 300
-    DEFAULT_WEBSOCKET_BASE_URL = "wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub"
+    DEFAULT_WEBSOCKET_BASE_URL = "wss://substrate.svc.cloud.microsoft/m365Copilot"
     DEFAULT_BROWSER_CHANNEL = "msedge"
     DEFAULT_COPILOT_URL = "https://m365.cloud.microsoft/chat"
 
@@ -48,7 +47,9 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
             profile_path (Path | None): Path to the persistent browser profile. If None, a default path is used.
             token_capture_timeout_seconds (int): Timeout in seconds for capturing the token. Must be a positive integer.
             expiry_buffer_seconds (int): Buffer time in seconds before token expiry. Must be a positive integer.
-            websocket_base_url (str): Base URL for the Copilot Chathub websocket connection. Must be a valid wss URL.
+            websocket_base_url (str): Valid wss URL prefix for token capture. The path is matched case-insensitively
+                at a slash boundary. Defaults to ``wss://substrate.svc.cloud.microsoft/m365Copilot``,
+                covering both ChatHub and StreamHub connections.
             browser_channel (str): Browser channel to use for the session. Defaults to "msedge".
             headless (bool): Whether to run the browser in headless mode. Defaults to False.
             copilot_url (str): URL for the Copilot chat interface. Must be a valid HTTPS URL.
@@ -350,7 +351,7 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
 
     def _extract_access_token_from_websocket_url(self, *, websocket_url: str) -> str | None:
         """
-        Extract the access token from a Copilot Chathub websocket URL.
+        Extract the access token from a websocket URL under the configured Copilot prefix.
 
         Args:
             websocket_url: The full websocket URL containing the access token.
@@ -364,7 +365,7 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
         if (
             parsed_url.scheme != expected_url.scheme
             or parsed_url.hostname != expected_url.hostname
-            or not parsed_url.path.startswith(f"{expected_url.path}/")
+            or not parsed_url.path.lower().startswith(f"{expected_url.path.lower()}/")
         ):
             return None
 
@@ -407,7 +408,7 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
                 token_future,
                 timeout=self._token_capture_timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise TimeoutError(
                 "Timed out waiting for access token capture. Complete sign-in in the opened browser and try again."
             ) from None

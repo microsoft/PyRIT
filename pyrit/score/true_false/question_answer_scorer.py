@@ -11,13 +11,13 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier
 
 
-class QuestionAnswerScorer(TrueFalseScorer):
+class QuestionAnswerScorer(MessageTrueFalseScorer):
     """
     A class that represents a question answering scorer.
     """

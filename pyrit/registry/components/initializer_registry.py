@@ -20,11 +20,13 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import logging
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models import class_name_to_snake_case, validate_registry_name
+from pyrit.registry.custom_initializer_storage import CustomInitializerStorage
 from pyrit.registry.discovery import discover_in_directory
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -86,7 +88,13 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         )
 
         self._builtin_names: set[str] = set()
+        self._custom_storage: CustomInitializerStorage | None = None
         super().__init__(lazy_discovery=lazy_discovery)
+
+    def configure_custom_scripts_source(self, source: str | None) -> None:
+        """Configure the local directory or Azure Blob source for custom initializers."""
+        custom_source = source or str(self._get_custom_scripts_dir())
+        self._custom_storage = CustomInitializerStorage(source=custom_source)
 
     def _metadata_class(self) -> type[InitializerMetadata]:
         """Return the concrete metadata dataclass this registry builds."""
@@ -325,7 +333,8 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
 
         Raises:
             FileNotFoundError: If a script path does not exist.
-            ValueError: If a path is not a ``.py`` file or defines no initializer.
+            ValueError: If a path is not a ``.py`` file or does not define a concrete
+                ``PyRITInitializer`` subclass.
         """
         from pyrit.setup.pyrit_initializer import PyRITInitializer
 
@@ -371,11 +380,6 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         module, discovers the first concrete ``PyRITInitializer``
         subclass, and registers it under *name*.
 
-        Note:
-            Registrations are runtime-only and are not rediscovered on
-            server restart.  Script files persist on disk as import
-            artifacts for the current process.
-
         Args:
             name: Registry name for the new initializer.
             script_content: Python source code that defines a
@@ -386,8 +390,8 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
 
         Raises:
             ValueError: If the source cannot be compiled, does not
-                contain a valid initializer class, or *name* collides
-                with an existing entry.
+                define a concrete ``PyRITInitializer`` subclass, or
+                *name* collides with an existing entry.
         """
         self._ensure_discovered()
 
@@ -396,34 +400,38 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         if name in self._classes:
             raise ValueError(f"Initializer '{name}' is already registered. Unregister it first to replace it.")
 
-        # Deferred: importing pyrit.setup triggers heavy __init__.py chain
-        from pyrit.setup.pyrit_initializer import PyRITInitializer
-
-        # Write to a managed directory so importlib can load it
-        managed_dir = self._get_custom_scripts_dir()
-        script_path = managed_dir / f"{name}.py"
+        discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
+        storage = self._get_custom_storage()
         try:
-            script_path.write_text(script_content, encoding="utf-8")
-        except OSError as e:
-            raise ValueError(f"Failed to write initializer script: {e}") from e
-
-        try:
-            module = self._load_module_from_path(file_path=script_path, module_name=f"custom_initializer.{name}")
-
-            discovered_classes = self._module_defined_initializers(module=module, base_class=PyRITInitializer)
-            if not discovered_classes:
-                raise ValueError(f"Uploaded script for '{name}' does not contain a concrete PyRITInitializer subclass.")
-            discovered = discovered_classes[0]
-        except ValueError:
-            script_path.unlink(missing_ok=True)
-            raise
-        except Exception as e:
-            script_path.unlink(missing_ok=True)
-            raise ValueError(f"Failed to load initializer script '{name}': {e}") from e
+            storage.save_script(name=name, content=script_content)
+        except OSError as error:
+            raise ValueError(f"Failed to write initializer script: {error}") from error
 
         self.register_class(discovered, name=name)
         logger.info(f"Registered custom initializer: {name} ({discovered.__name__})")
         return name
+
+    def register_stored_initializers(self) -> None:
+        """Register all valid custom initializers from the configured storage source."""
+        self._ensure_discovered()
+        for name, script_content in self._get_custom_storage().list_scripts().items():
+            try:
+                validate_registry_name(name)
+                if name in self._classes:
+                    logger.warning(f"Skipping stored custom initializer '{name}': name is already registered.")
+                    continue
+                discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
+                self.register_class(discovered, name=name)
+            except Exception:
+                logger.exception(f"Skipping stored custom initializer '{name}': registration failed.")
+
+    def list_stored_initializer_sources(self) -> tuple[str, list[tuple[str, str, str]]]:
+        """Return the configured source and its stored custom initializer scripts."""
+        storage = self._get_custom_storage()
+        scripts = storage.list_scripts()
+        return storage.display_source, [
+            (name, script_content, storage.get_script_source(name)) for name, script_content in scripts.items()
+        ]
 
     def unregister_and_cleanup(self, name: str) -> None:
         """
@@ -437,20 +445,63 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             name: The registry name to remove.
 
         Raises:
-            KeyError: If the name is not registered.
+            KeyError: If no stored custom initializer has the requested name.
             ValueError: If the name refers to a built-in initializer.
         """
         self._ensure_discovered()
-        if name in self._builtin_names:
-            raise ValueError(f"Cannot remove built-in initializer '{name}'.")
-        if name not in self._classes:
-            available = ", ".join(self.get_class_names())
-            raise KeyError(f"'{name}' not found in registry. Available: {available}")
-        del self._classes[name]
-        self._metadata_cache = None
+        storage = self._get_custom_storage()
+        stored_names = storage.list_scripts().keys()
+        if name not in stored_names:
+            if name in self._builtin_names:
+                raise ValueError(f"Cannot remove built-in initializer '{name}'.")
+            available = ", ".join(stored_names)
+            raise KeyError(f"'{name}' not found in registry or custom initializer storage. Available: {available}")
 
-        script_path = self._get_custom_scripts_dir() / f"{name}.py"
-        script_path.unlink(missing_ok=True)
+        storage.delete_script(name)
+        if name in self._classes and name not in self._builtin_names:
+            del self._classes[name]
+            self._metadata_cache = None
+
+    def _load_custom_initializer_class(
+        self,
+        *,
+        name: str,
+        script_content: str,
+    ) -> type[PyRITInitializer]:
+        """
+        Validate custom source and return its first initializer class.
+
+        Returns:
+            type[PyRITInitializer]: The first concrete initializer class in the source.
+
+        Raises:
+            ValueError: If the source cannot be loaded or has no initializer class.
+        """
+        from pyrit.setup.pyrit_initializer import PyRITInitializer
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            script_path = Path(temporary_directory) / f"{name}.py"
+            try:
+                script_path.write_text(script_content, encoding="utf-8")
+            except OSError as error:
+                raise ValueError(f"Failed to write initializer script: {error}") from error
+            try:
+                module = self._load_module_from_path(file_path=script_path, module_name=f"custom_initializer.{name}")
+                discovered_classes = self._module_defined_initializers(module=module, base_class=PyRITInitializer)
+            except Exception as error:
+                raise ValueError(f"Failed to load initializer script '{name}': {error}") from error
+
+        if not discovered_classes:
+            raise ValueError(f"Uploaded script for '{name}' does not contain a concrete PyRITInitializer subclass.")
+        return discovered_classes[0]
+
+    def _get_custom_storage(self) -> CustomInitializerStorage:
+        """Return storage for the configured custom initializer source."""
+        storage = self._custom_storage
+        if storage is None:
+            storage = CustomInitializerStorage(source=str(self._get_custom_scripts_dir()))
+            self._custom_storage = storage
+        return storage
 
     @staticmethod
     def _get_custom_scripts_dir() -> Path:

@@ -168,11 +168,11 @@ class AttackScoringConfig:
         Raises:
             ValueError: If the objective or refusal scorers are not of type TrueFalseScorer.
         """
-        # Enforce objective scorer type: must be a TrueFalseScorer if provided
+        # Enforce objective scorer type: must be a true/false scorer if provided
         if self.objective_scorer and not isinstance(self.objective_scorer, TrueFalseScorer):
             raise ValueError("Objective scorer must be a TrueFalseScorer")
 
-        # Enforce refusal scorer type: must be a TrueFalseScorer if provided
+        # Enforce refusal scorer type: must be a true/false scorer if provided
         if self.refusal_scorer and not isinstance(self.refusal_scorer, TrueFalseScorer):
             raise ValueError("Refusal scorer must be a TrueFalseScorer")
 

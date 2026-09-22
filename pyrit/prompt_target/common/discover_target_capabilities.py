@@ -252,7 +252,7 @@ async def _send_and_check_async(
     for attempt in range(attempts):
         try:
             responses = await asyncio.wait_for(target.send_prompt_async(message=message), timeout=timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             last_exc = TimeoutError(f"timed out after {timeout_s}s")
             logger.debug("%s timed out (attempt %d/%d)", label, attempt + 1, attempts)
             if attempt + 1 < attempts:

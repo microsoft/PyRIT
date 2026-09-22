@@ -32,8 +32,9 @@
 # pyrit_scan run benchmark.adversarial \
 #   --initializers target \
 #   --target openai_chat \
-#   --adversarial-targets adversarial_chat_singleturn adversarial_chat_multiturn \
-#   --max-dataset-size 4
+#   --adversarial-targets adversarial_chat \
+#   --techniques role_play_video_game \
+#   --max-dataset-size 1
 # ```
 #
 # Pass multiple `--adversarial-targets` values to compare across models in a single run.
@@ -64,13 +65,16 @@ await initialize_pyrit_async(  # type: ignore
 objective_target = OpenAIChatTarget()
 
 # %%
-dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4)
+from pyrit.scenario.benchmark import AdversarialBenchmarkTechnique
+
+dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
 
 scenario = AdversarialBenchmark()
 scenario.set_params_from_args(
     args={
-        "adversarial_targets": ["adversarial_chat_singleturn", "adversarial_chat_multiturn"],
+        "adversarial_targets": ["adversarial_chat"],
         "objective_target": objective_target,
+        "scenario_techniques": [AdversarialBenchmarkTechnique.role_play_video_game],
         "dataset_config": dataset_config,
     }
 )

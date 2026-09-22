@@ -6,9 +6,9 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer import Scorer
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
 @dataclass(frozen=True)
@@ -92,9 +92,9 @@ def get_scorer_info() -> list[_ScorerInfo]:
             if not isinstance(obj, type) or not issubclass(obj, Scorer) or inspect.isabstract(obj):
                 continue
 
-            if issubclass(obj, FloatScaleScorer):
+            if issubclass(obj, MessageFloatScaleScorer):
                 score_type = "float_scale"
-            elif issubclass(obj, TrueFalseScorer):
+            elif issubclass(obj, MessageTrueFalseScorer):
                 score_type = "true_false"
             else:
                 continue

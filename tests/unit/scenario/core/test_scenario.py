@@ -9,11 +9,6 @@ from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-try:
-    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
-except ImportError:  # pragma: no cover - 3.10 only
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
-
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -170,7 +165,7 @@ class ConcreteScenario(Scenario):
         # Add required technique_class if not provided
 
         class TestTechnique(ScenarioTechnique):
-            TEST = ("test", {"concrete"})  # Tagged as concrete, not aggregate
+            TEST = ("test", {"concrete"}, "Test technique description.")  # Tagged as concrete, not aggregate
             ALL = ("all", {"all"})
 
             @classmethod
@@ -275,6 +270,7 @@ class TestScenarioInitialization2:
         assert scenario.atomic_attack_count == 0
 
         scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        scenario.set_initial_metadata(metadata={"scheduler_managed_by": "test"})
         await scenario.initialize_async()
 
         assert scenario.atomic_attack_count == len(mock_atomic_attacks)
@@ -282,6 +278,7 @@ class TestScenarioInitialization2:
         [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
         assert stored.metadata["run_plan"]["version"] == 1
         assert len(stored.metadata["run_plan"]["atomic_groups"]) == len(mock_atomic_attacks)
+        assert stored.metadata["scheduler_managed_by"] == "test"
 
     async def test_initialize_async_deduplicates_logical_seed_groups_in_run_plan(self, mock_objective_target) -> None:
         duplicate_seed_groups = [
@@ -307,18 +304,24 @@ class TestScenarioInitialization2:
         expected_seed_id = duplicate_seed_groups[0].logical_id
         assert persisted_plan["atomic_groups"][0]["seed_group_ids"] == [expected_seed_id]
         assert [seed_group["id"] for seed_group in persisted_plan["seed_groups"]] == [expected_seed_id]
-        assert scenario._build_run_plan().model_dump(mode="json") == persisted_plan
+        assert scenario._build_run_plan().model_dump(mode="json", exclude_none=True) == persisted_plan
         assert atomic_attack.seed_groups is duplicate_seed_groups
         assert len(atomic_attack.seed_groups) == 2
 
     async def test_build_run_plan_preserves_unique_seed_group_order(self, mock_objective_target) -> None:
         seed_groups = [
-            AttackSeedGroup(seeds=[SeedObjective(value="first objective")]),
+            AttackSeedGroup(
+                seeds=[
+                    SeedObjective(value="first objective"),
+                    SeedPrompt(value="first prompt", role="user", sequence=0),
+                ]
+            ),
             AttackSeedGroup(seeds=[SeedObjective(value="second objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
         atomic_attack.atomic_attack_name = "unique_attack"
-        atomic_attack.display_group = "unique_attack"
+        atomic_attack.display_group = "custom display group"
+        atomic_attack.technique_name = "test"
         atomic_attack.technique_eval_hash = "unique-technique"
         type(atomic_attack).seed_groups = PropertyMock(return_value=seed_groups)
         scenario = ConcreteScenario(
@@ -333,7 +336,13 @@ class TestScenarioInitialization2:
         plan = scenario._build_run_plan()
         expected_seed_ids = [seed_group.logical_id for seed_group in seed_groups]
         assert plan.atomic_groups[0].seed_group_ids == expected_seed_ids
+        assert plan.atomic_groups[0].display_group == "custom display group"
+        assert plan.atomic_groups[0].technique_name == "test"
+        assert plan.atomic_groups[0].description == "Test technique description."
+        assert plan.atomic_groups[0].tags == ["concrete"]
         assert [seed_group.id for seed_group in plan.seed_groups] == expected_seed_ids
+        assert plan.seed_groups[0].prompts[0].value == "first prompt"
+        assert plan.seed_groups[0].prompts[0].role == "user"
 
     async def test_initialize_async_sets_objective_target(self, mock_objective_target):
         """Test that initialize_async sets objective_target properly."""
@@ -349,6 +358,24 @@ class TestScenarioInitialization2:
         # Verify it's a ComponentIdentifier with the expected class_name
         assert scenario._objective_target_identifier.class_name == "MockTarget"
         assert scenario._objective_target_identifier.class_module == "test"
+
+    async def test_initial_metadata_survives_subclass_metadata_override(self, mock_objective_target):
+        scenario = ConcreteScenario(name="Test Scenario", version=1)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        scenario.set_initial_metadata(metadata={"scheduler_managed_by": "test"})
+
+        with patch.object(
+            scenario,
+            "_build_initial_scenario_metadata",
+            return_value={"scenario_owned": "value"},
+        ):
+            await scenario.initialize_async()
+
+        [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
+        assert stored.metadata == {
+            "scenario_owned": "value",
+            "scheduler_managed_by": "test",
+        }
 
     async def test_initialize_async_requires_objective_target(self):
         """Test that initialize_async raises ValueError when objective_target is None."""
@@ -1057,6 +1084,14 @@ class TestScenarioBaselineOnlyExecution:
 
         assert resolved_none == resolved_empty
         assert len(resolved_none) > 0
+
+    def test_unknown_technique_raises(self):
+        """Test that an item outside the technique catalog is rejected instead of dropped."""
+        scenario = ConcreteScenario(name="Test", version=1)
+        technique_class = scenario._technique_class
+
+        with pytest.raises(ValueError, match="unsupported techniques"):
+            technique_class.resolve(["not_a_technique"], default=scenario._default_technique)
 
 
 class TestGetDefaultObjectiveScorer:

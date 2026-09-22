@@ -7,7 +7,7 @@ from enum import Enum
 import numpy as np
 
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
@@ -19,7 +19,7 @@ class PlagiarismMetric(Enum):
     JACCARD = "jaccard"
 
 
-class PlagiarismScorer(FloatScaleScorer):
+class PlagiarismScorer(MessageFloatScaleScorer):
     """
     A scorer that measures plagiarism by computing word-level similarity
     between the AI response and a reference text.

@@ -42,11 +42,12 @@ Sample code to reproduce the problem
 Please provide the following information:
 - OS: [e.g. Windows]
 - Browser (if you're reporting a bug in jupyter): [e.g. Edge, Firefox, Chrome, Safari]
-- Python version: [e.g. 3.10.11]
+- Python version: [e.g. 3.11.9]
 - PyRIT version: [e.g. 0.1.0 or installed from main branch in editable mode]
 - version of Python packages: please run the following snippet and paste the output:
   ```python
   import pyrit
+
   pyrit.show_versions()
   ```
 -->

@@ -23,6 +23,7 @@ memory_db_type: sqlite
 #
 # Available initializers:
 # - target: Registers available prompt targets into the TargetRegistry
+# - converter: Registers the curated core converter presets
 # - scorer: Registers pre-configured scorers into the ScorerRegistry
 # - technique: Registers attack techniques into the AttackTechniqueRegistry
 # - load_default_datasets: Optionally preloads all registered datasets into memory
@@ -49,6 +50,7 @@ initializers:
       tags:
         - default
         - scorer
+  - name: converter
   - name: scorer
   - name: technique
   # Optional full preload/cache warming for offline or shared environments.
@@ -72,7 +74,7 @@ operation: op_trash_panda
 
 # Initialization Scripts
 # ----------------------
-# List of paths to custom Python scripts containing PyRITInitializer subclasses.
+# List of local paths to Python scripts containing PyRITInitializer subclasses.
 # Paths can be absolute or relative to the current working directory.
 #
 # Behavior:
@@ -122,6 +124,12 @@ max_concurrent_scenario_runs: 3
 #
 # Default: false
 allow_custom_initializers: false
+
+# Optional storage for custom initializer Python scripts. This may be a local
+# directory or an Azure Blob container URI with an optional blob prefix.
+# Container URIs may include a SAS; otherwise DefaultAzureCredential is used. Defaults to
+# ~/.pyrit/custom_initializers.
+# custom_initializers_source: https://account.blob.core.windows.net/container/custom_initializers
 
 # Local Backend Server
 # --------------------

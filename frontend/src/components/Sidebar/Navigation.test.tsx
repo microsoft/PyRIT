@@ -3,9 +3,11 @@
  * Licensed under the MIT license.
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, useTheme } from "../../hooks/useTheme";
+import { THEME_PRESETS } from "@/themes/themePresets";
+import type { ThemePreset } from "@/types";
 import Navigation from "./Navigation";
 
 const STORAGE_KEY = "pyrit.themeMode";
@@ -18,6 +20,7 @@ describe("Navigation", () => {
     currentView: "chat" as const,
     onNavigate: jest.fn(),
     onOpenFeedback: jest.fn(),
+    canManageConfiguration: true,
   };
 
   beforeEach(() => {
@@ -61,10 +64,10 @@ describe("Navigation", () => {
     expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
   });
 
-  it("renders the configuration button", () => {
+  it("renders the registry button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
     expect(
-      screen.getByRole("button", { name: "Configuration" })
+      screen.getByRole("button", { name: "Registry" })
     ).toBeInTheDocument();
   });
 
@@ -79,7 +82,18 @@ describe("Navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("chat");
   });
 
-  it("calls onNavigate with 'config' when config button is clicked", async () => {
+  it("calls onNavigate with 'registry' when registry button is clicked", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onNavigate={onNavigate} />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Registry" }));
+    expect(onNavigate).toHaveBeenCalledWith("registry");
+  });
+
+  it("navigates to configuration", async () => {
     const user = userEvent.setup();
     const onNavigate = jest.fn();
     renderWithProvider(
@@ -87,35 +101,107 @@ describe("Navigation", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Configuration" }));
-    expect(onNavigate).toHaveBeenCalledWith("config");
+    expect(onNavigate).toHaveBeenCalledWith("configuration");
   });
 
-  it("renders the attack history button", () => {
+  it("hides configuration from users without administrator access", () => {
+    renderWithProvider(
+      <Navigation {...defaultProps} canManageConfiguration={false} />
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Configuration" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the history button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
     expect(
-      screen.getByRole("button", { name: "Attack History" })
+      screen.getByRole("button", { name: "History" })
     ).toBeInTheDocument();
   });
 
-  it("renders the feedback button and forwards clicks to onOpenFeedback", () => {
+  it("renders the Scanner button", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+    expect(
+      screen.getByRole("button", { name: "Scanner" })
+    ).toBeInTheDocument();
+  });
+
+  it("renders the final primary navigation order", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+    const navigation = screen.getByRole("navigation", { name: "Primary" });
+    const labels = within(navigation)
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"));
+
+    expect(labels).toEqual([
+      "Home",
+      "Chat",
+      "History",
+      "Scanner",
+      "Registry",
+      "Configuration",
+    ]);
+  });
+
+  it("marks History current and navigates to its tabbed view", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation
+        {...defaultProps}
+        currentView="history"
+        onNavigate={onNavigate}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "History" });
+    expect(button).toHaveAttribute("aria-current", "page");
+    await user.click(button);
+    expect(onNavigate).toHaveBeenCalledWith("history");
+  });
+
+  it("calls onNavigate with 'scenarios' when the scenarios button is clicked", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onNavigate={onNavigate} />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Scanner" }));
+    expect(onNavigate).toHaveBeenCalledWith("scenarios");
+  });
+
+  it("marks the scenarios button current when it is the active view", () => {
+    renderWithProvider(
+      <Navigation {...defaultProps} currentView="scenarios" />
+    );
+    expect(screen.getByRole("button", { name: "Scanner" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+  });
+
+  it("renders one feedback button and forwards clicks to onOpenFeedback", async () => {
+    const user = userEvent.setup();
     const onOpenFeedback = jest.fn();
     renderWithProvider(
       <Navigation {...defaultProps} onOpenFeedback={onOpenFeedback} />
     );
 
-    const feedbackButton = screen.getByTitle("Feedback");
-    expect(feedbackButton).toBeInTheDocument();
-    fireEvent.click(feedbackButton);
+    const feedbackButtons = screen.getAllByRole("button", { name: "Feedback" });
+    expect(feedbackButtons).toHaveLength(1);
+    await user.click(feedbackButtons[0]);
     expect(onOpenFeedback).toHaveBeenCalledTimes(1);
   });
 
-  it("links to the public security policy", () => {
+  it("does not render a direct security link", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
 
-    expect(screen.getByRole("link", { name: "Security" })).toHaveAttribute(
-      "href",
-      "https://github.com/microsoft/PyRIT/security/policy"
-    );
+    expect(
+      screen.queryByRole("link", { name: "Security" })
+    ).not.toBeInTheDocument();
   });
 
   it("calls onNavigate with 'history' when history button is clicked", async () => {
@@ -125,7 +211,7 @@ describe("Navigation", () => {
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    await user.click(screen.getByRole("button", { name: "Attack History" }));
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(onNavigate).toHaveBeenCalledWith("history");
   });
 
@@ -136,7 +222,7 @@ describe("Navigation", () => {
     ).toBeInTheDocument();
   });
 
-  it("opens the theme menu and exposes all three modes", async () => {
+  it("opens the theme menu and exposes standard modes and every preset", async () => {
     const user = userEvent.setup();
     renderWithProvider(<Navigation {...defaultProps} />);
 
@@ -151,6 +237,10 @@ describe("Navigation", () => {
     expect(
       screen.getByRole("menuitemradio", { name: "Dark" })
     ).toBeInTheDocument();
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(Object.keys(THEME_PRESETS).length + 1);
+    for (const preset of Object.values(THEME_PRESETS)) {
+      expect(screen.getByRole("menuitemradio", { name: preset.label })).toBeInTheDocument();
+    }
   });
 
   it("changes the theme mode when a menu item is selected", async () => {
@@ -184,4 +274,24 @@ describe("Navigation", () => {
       screen.getByRole("button", { name: "Theme: Light" })
     ).toBeInTheDocument();
   });
+
+  it.each(Object.entries(THEME_PRESETS))(
+    "selects and checks %s without navigating",
+    async (id: string, preset: ThemePreset) => {
+      const user = userEvent.setup();
+      const onNavigate = jest.fn();
+      renderWithProvider(
+        <Navigation {...defaultProps} canManageConfiguration={false} onNavigate={onNavigate} />
+      );
+
+      await user.click(screen.getByRole("button", { name: "Theme: System" }));
+      await user.click(screen.getByRole("menuitemradio", { name: preset.label }));
+      expect(window.localStorage.getItem(STORAGE_KEY)).toBe(id);
+      expect(onNavigate).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole("button", { name: `Theme: ${preset.label}` }));
+      expect(screen.getByRole("menuitemradio", { name: preset.label, checked: true })).toBeInTheDocument();
+    }
+  );
+
 });

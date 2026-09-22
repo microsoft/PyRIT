@@ -2,11 +2,11 @@
 # Licensed under the MIT license.
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyrit.models import AttackResult, ConversationType, Message, Score
 from pyrit.output.attack_result.base import AttackResultPrinterBase
-from pyrit.output.conversation.markdown import MarkdownConversationPrinter
+from pyrit.output.conversation.markdown import MarkdownConversationMemoryPrinter, MarkdownConversationPrinter
 from pyrit.output.score.markdown import MarkdownScorePrinter
 from pyrit.output.sink import Sink
 
@@ -52,7 +52,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
         super().__init__(sink=sink)
         self._display_inline = display_inline
         self._score_printer = score_printer or MarkdownScorePrinter(sink=sink)
-        self._conversation_printer = conversation_printer or MarkdownConversationPrinter(
+        self._conversation_printer = conversation_printer or MarkdownConversationMemoryPrinter(
             sink=sink,
             score_printer=self._score_printer,
             blur_images=blur_images,
@@ -127,7 +127,7 @@ class MarkdownAttackResultPrinter(AttackResultPrinterBase):
                     pass
 
         markdown_lines.append("\n---")
-        timestamp_utc = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        timestamp_utc = datetime.now(tz=UTC).isoformat().replace("+00:00", "Z")
         markdown_lines.append(f"*Report generated at {timestamp_utc}*")
 
         return "\n".join(markdown_lines)

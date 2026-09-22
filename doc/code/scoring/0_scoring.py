@@ -62,31 +62,41 @@ print(df.to_string(index=False))
 # %% [markdown]
 # ## The class hierarchy
 #
-# Every scorer derives from the abstract `Scorer` class through one of three intermediate
-# bases: `TrueFalseScorer`, `FloatScaleScorer`, or `ConversationScorer`.
+# `Scorer` separates the evidence to inspect from the result family. `TrueFalseScorer` and
+# `FloatScaleScorer` define the two result families. `MessageScorer` adds message resolution
+# and message-only policy. Most built-in scorers combine one result-family base with
+# `MessageScorer`.
 
 # %% [markdown] class="col-page-right"
 #
 # ```mermaid
 # classDiagram
 #     class Scorer { <<abstract>> }
+#     class MessageScorer { <<abstract>> }
 #     class FloatScaleScorer { <<abstract>> }
 #     class TrueFalseScorer { <<abstract>> }
+#     class MessageFloatScaleScorer { <<abstract>> }
+#     class MessageTrueFalseScorer { <<abstract>> }
 #     class ConversationScorer { <<abstract>> }
 #
+#     Scorer <|-- MessageScorer
 #     Scorer <|-- FloatScaleScorer
 #     Scorer <|-- TrueFalseScorer
-#     Scorer <|-- ConversationScorer
+#     MessageScorer <|-- MessageFloatScaleScorer
+#     FloatScaleScorer <|-- MessageFloatScaleScorer
+#     MessageScorer <|-- MessageTrueFalseScorer
+#     TrueFalseScorer <|-- MessageTrueFalseScorer
+#     MessageScorer <|-- ConversationScorer
 #
-#     FloatScaleScorer <|-- AzureContentFilterScorer
-#     FloatScaleScorer <|-- SelfAskLikertScorer
-#     FloatScaleScorer <|-- SelfAskScaleScorer
-#     FloatScaleScorer <|-- InsecureCodeScorer
+#     MessageFloatScaleScorer <|-- AzureContentFilterScorer
+#     MessageFloatScaleScorer <|-- SelfAskLikertScorer
+#     MessageFloatScaleScorer <|-- SelfAskScaleScorer
+#     MessageFloatScaleScorer <|-- InsecureCodeScorer
 #
-#     TrueFalseScorer <|-- SubStringScorer
-#     TrueFalseScorer <|-- RegexScorer
-#     TrueFalseScorer <|-- SelfAskRefusalScorer
-#     TrueFalseScorer <|-- SelfAskCategoryScorer
+#     MessageTrueFalseScorer <|-- SubStringScorer
+#     MessageTrueFalseScorer <|-- RegexScorer
+#     MessageTrueFalseScorer <|-- SelfAskRefusalScorer
+#     MessageTrueFalseScorer <|-- SelfAskCategoryScorer
 #     TrueFalseScorer <|-- TrueFalseCompositeScorer
 #     TrueFalseScorer <|-- FloatScaleThresholdScorer
 # ```
@@ -94,9 +104,89 @@ print(df.to_string(index=False))
 # %% [markdown]
 #
 # `ConversationScorer` is never instantiated directly. `create_conversation_scorer()`
-# builds a subclass that mixes it with a `TrueFalseScorer` or `FloatScaleScorer` so the
-# wrapped scorer can run over a whole conversation — covered in
+# accepts a `MessageTrueFalseScorer` or `MessageFloatScaleScorer` and builds a compatible
+# subclass that evaluates a whole conversation.
+#
+# Generic family scorers consume a `Scorable` without assuming that it resolves to a
+# message. Message scorers also support message-specific entry points and policy. Generic
+# wrappers do not inherit those message APIs from their children; use their canonical
+# `score_async(scorable=..., expectation=...)` entry point. See
 # [Combining & stacking scorers](3_combining_scorers.ipynb).
+# %% [markdown]
+# ## Evidence and score status
+#
+# A `Scorable` identifies what a scorer evaluates. `MessageScorable` refers to message pieces
+# in memory. `ContentScorable` carries loose text or media. When a file-backed
+# `ContentScorable` is persisted with a score, PyRIT copies the file to configured results
+# storage and stores its SHA-256 digest. The score remains resolvable after the source file is
+# removed.
+#
+# Target-backed scorers over text evidence also persist an `Observation` that references and hashes
+# the retained response in the SCORE conversation. The observation and its first score are
+# committed together. Capture requires durable scored evidence. A custom general-scorer template
+# that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
+# In-hand messages keep their score-to-message links when storage rounds timestamps. Observation
+# evidence checks remain exact: a content-only snapshot cannot replay a metadata-dependent judgment.
+# `Score.scored_expectation` records the complete expectation used for the verdict, while
+# `Score.objective` remains a read-only compatibility view. `score_observation_async()` can
+# parse that stored judgment again without calling the target. Replay requires unchanged scored
+# evidence and response content, plus the exact original expectation, scorer configuration, and
+# response-handler contract. `ScorerTargetResponsePayload` references the scorer's target response;
+# the target need not be a language model. Its kind is `scorer_target_response`.
+# Media observation capture remains deferred until its evidence can be snapshotted.
+# Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb).
+#
+# Replaying a judgment is different from evaluating a stored run against a new expectation.
+# A retained target judgment answers the original expectation; changing that expectation
+# requires a new judgment, not just parsing the old response. Use
+# `score_async(scorable=stored_scorable, expectation=new_expectation)` to evaluate the same
+# stored attack evidence again. This does not rerun the attack, but a target-backed scorer
+# calls its scoring target again. The exact-expectation restriction applies to judgment
+# observations, not to the general `Scorer` contract.
+#
+# Replay is an explicit contract for each concrete class, not an inherited promise.
+# A custom scorer declares `_judgment_replay_identifier()` and shares pure judgment logic
+# between live scoring and `_score_judgment_observation()` (for example, in `_convert_score()`).
+# Async-only postprocessing is not replayed. A custom response handler declares
+# `_replay_identifier()`. Both identifiers must include a behavior version and every added
+# setting that changes the judgment or parsing. Subclasses without their own declaration
+# can still capture observations, but replay raises `NonReplayableObservationError`.
+#
+# Deleting a score through `memory.get_session()` and ORM `session.delete()` removes its
+# observation only after the final score reference is gone. Removing an ORM observation link
+# also triggers this cleanup, including when a collection is cleared before its score is deleted.
+# Cleanup uses persisted links and removed relationship history, not just cached collections.
+# Cleanup and the reference removal share one transaction; shared observations remain available.
+# Bulk SQL deletes do not use this ORM cleanup path.
+#
+# Response helpers accept `expectation=`; their bare `objective=` input is deprecated until 2.0.
+# Objective and auxiliary scorers receive the complete expectation, with condition routing checked
+# across the group. Each scorer root keeps its own score/observation persistence boundary.
+# Direct scorers check required and duplicate criteria but ignore condition types they do not use.
+# Empty conditions retain legacy objective-only behavior and skip required-condition checks.
+# Data-bearing required conditions will need explicit validation before their scorer types are added.
+# Use a group helper, even with one scorer, when every condition must have a consumer.
+# `Scorer.score_with_scorers_async` accepts optional `scorer_roles`, one per scorer, for execution
+# context. Its result lists follow scorer input order, including empty lists.
+#
+# Scoring APIs return `list[Score]`. An empty list means that the scorer does not apply to the
+# evidence, such as a message with no supported role or data type. A non-empty list contains
+# completed or undetermined scores.
+#
+# A complete score has `status="complete"` and a typed domain verdict. An undetermined score
+# has `status="undetermined"` and no value because supported evidence failed to load. A fully
+# blocked response is a complete negative result by default: `False` for message true/false
+# scorers and `0.0` for message float-scale scorers. `SelfAskRefusalScorer` is the intentional
+# exception because a content-filter block is a refusal, so it returns `True`.
+#
+# A scorer declares which evidence it reads; the caller does not filter evidence on its behalf.
+# A message scorer names the conversation roles it reads with `supported_roles` on its
+# `ScorerPromptValidator`. Prepended (`simulated_assistant`) turns are fabricated history, so a
+# scorer must opt in to read them. Every scorer still receives a failed response, because a
+# scorer whose evidence never came from the response must run even when the response failed.
+# Explicit `role_filter` and `skip_on_error_result` values remain supported until removal.
+# Callers that rely on their historical defaults must now pass them explicitly. New code
+# should use `supported_roles` and the scorer's unreadable-evidence fallback instead.
 # %% [markdown]
 # ## Scoring directly
 #

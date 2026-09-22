@@ -11,6 +11,7 @@ from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
+from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackContext,
     SingleTurnAttackStrategy,
@@ -23,10 +24,12 @@ from pyrit.models import (
     ConversationType,
     Message,
     Score,
+    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import Scorer
+from pyrit.score import MessageScorer
+from pyrit.score.score_utils import score_is_true
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +196,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Execute with retries
         for attempt in range(self._max_attempts_on_failure + 1):
             self._logger.debug(f"Attempt {attempt + 1}/{self._max_attempts_on_failure + 1}")
+            score = None
 
             # Prepare a fresh message for each attempt to avoid duplicate ID errors in database
             message = self._get_message(context)
@@ -204,14 +208,16 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 continue  # Retry if no response (filtered or error)
 
             # Score the response including auxiliary and objective scoring
-            score = await self._evaluate_response_async(response=response, objective=context.objective)
+            score = await self._evaluate_response_async(
+                response=response, objective=context.objective, expectation=context.expectation
+            )
 
             # If there is no objective, we have a response but can't determine success
             if not self._objective_scorer:
                 break
 
             # On success, return immediately
-            if bool(score and score.get_value()):
+            if score_is_true(score):
                 break
 
             # On failure, store and create new conversation if there are more attempts remaining
@@ -232,7 +238,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             objective=context.objective,
             atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             last_response=response.get_piece() if response else None,
-            last_score=score,
+            automated_score=score,
             related_conversations=context.related_conversations,
             outcome=outcome,
             outcome_reason=outcome_reason,
@@ -258,9 +264,12 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             # No scorer means we can't determine success/failure
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
 
-        if score and score.get_value():
-            # We have a positive score, so it's a success
-            return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+        if score:
+            outcome = attack_outcome_from_score(score)
+            if outcome is AttackOutcome.SUCCESS:
+                return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+            if outcome is AttackOutcome.UNDETERMINED:
+                return AttackOutcome.UNDETERMINED, score.score_rationale or "Scorer could not reach a verdict"
 
         if response:
             # We got response(s) but none achieved the objective
@@ -335,6 +344,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         *,
         response: Message,
         objective: str,
+        expectation: ScoringExpectation,
     ) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
@@ -345,6 +355,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         Args:
             response (Message): The response from the model.
             objective (str): The natural-language description of the attack's objective.
+            expectation (ScoringExpectation): The effective scoring question.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if
@@ -352,18 +363,15 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 but are still executed and stored.
         """
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._objective_scorer.get_identifier() if self._objective_scorer else None,
             objective=objective,
         ):
-            scoring_results = await Scorer.score_response_async(
+            scoring_results = await MessageScorer.score_response_async(
                 response=response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                role_filter="assistant",
-                objective=objective,
-                skip_on_error_result=True,
+                expectation=expectation,
             )
 
         if not self._objective_scorer:

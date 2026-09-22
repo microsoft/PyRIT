@@ -12,13 +12,12 @@ from fastapi import APIRouter, HTTPException, status
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.converters import (
-    ConverterCatalogResponse,
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
     ConverterPreviewResponse,
+    ConverterTypeResponse,
     CreateConverterRequest,
-    CreateConverterResponse,
 )
 from pyrit.backend.services.converter_service import get_converter_service
 
@@ -43,29 +42,29 @@ async def list_converters() -> ConverterInstanceListResponse:  # pyrit-async-suf
 
 
 @router.get(
-    "/catalog",
-    response_model=ConverterCatalogResponse,
+    "/types",
+    response_model=ConverterTypeResponse,
 )
-async def list_converter_catalog() -> ConverterCatalogResponse:  # pyrit-async-suffix-exempt
+async def list_converter_types() -> ConverterTypeResponse:  # pyrit-async-suffix-exempt
     """
-    List all available converter types from the backend converter registry.
+    List converter types projected from ``ConverterRegistry`` metadata.
 
     Returns:
-        ConverterCatalogResponse: List of available converter types.
+        ConverterTypeResponse: Available converter types and build parameters.
     """
     service = get_converter_service()
-    return await service.list_converter_catalog_async()
+    return await service.list_converter_types_async()
 
 
 @router.post(
     "",
-    response_model=CreateConverterResponse,
+    response_model=ConverterInstance,
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {"model": ProblemDetail, "description": "Invalid converter type or parameters"},
     },
 )
-async def create_converter(request: CreateConverterRequest) -> CreateConverterResponse:  # pyrit-async-suffix-exempt
+async def create_converter(request: CreateConverterRequest) -> ConverterInstance:  # pyrit-async-suffix-exempt
     """
     Create a new converter instance.
 
@@ -73,7 +72,7 @@ async def create_converter(request: CreateConverterRequest) -> CreateConverterRe
     Supports nested converters via converter_id references in params.
 
     Returns:
-        CreateConverterResponse: The created converter instance details.
+        ConverterInstance: The created converter instance details.
     """
     service = get_converter_service()
 
@@ -115,6 +114,23 @@ async def get_converter(converter_id: str) -> ConverterInstance:  # pyrit-async-
         )
 
     return converter
+
+
+@router.delete(
+    "/{converter_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        404: {"model": ProblemDetail, "description": "Converter not found"},
+    },
+)
+async def delete_converter(converter_id: str) -> None:  # pyrit-async-suffix-exempt
+    """Delete a converter instance by registry name."""
+    service = get_converter_service()
+    if not await service.delete_converter_async(converter_id=converter_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Converter '{converter_id}' not found",
+        )
 
 
 @router.post(

@@ -196,13 +196,13 @@ async function createConversation(
   return body.conversation_id;
 }
 
-/** Activate an exact target instance via the Configuration view. */
+/** Activate an exact target instance through the target registry. */
 async function activateTarget(
   page: Page,
   targetRegistryName: string,
 ): Promise<void> {
-  await page.getByTitle("Configuration").click();
-  await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10_000 });
+  await page.getByTitle("Registry").click();
+  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10_000 });
   const row = page.getByTestId(`target-row-${targetRegistryName}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
   const setActiveButton = row.getByRole("button", { name: /set active/i });
@@ -218,7 +218,7 @@ async function openAttackInHistory(
   page: Page,
   attackResultId: string,
 ): Promise<void> {
-  await page.getByTitle("Attack History").click();
+  await page.getByTitle("History").click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({
     timeout: 10_000,
   });

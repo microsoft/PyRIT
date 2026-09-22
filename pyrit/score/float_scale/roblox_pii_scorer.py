@@ -15,7 +15,7 @@ from pyrit.score._classifiers.hugging_face import (
     _HuggingFaceSequenceClassificationResult,
     _HuggingFaceSequenceClassifier,
 )
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ class _RobloxPiiClassifier(_HuggingFaceSequenceClassifier):
         )
 
 
-class RobloxPiiScorer(FloatScaleScorer):
+class RobloxPiiScorer(MessageFloatScaleScorer):
     """Return one Roblox PII Classifier v2 probability per PII behavior."""
 
     SPEAKER_ID_METADATA_KEY: ClassVar[str] = "speaker_id"
@@ -151,21 +151,26 @@ class RobloxPiiScorer(FloatScaleScorer):
             for index, (label, probability) in enumerate(zip(self._LABELS, probabilities, strict=True))
         ]
 
-    def _build_fallback_score(
-        self,
-        *,
-        message: Message,
-        objective: str | None,
-        scorer_response_blocked: bool = False,
-    ) -> list[Score]:
-        fallback = super()._build_fallback_score(
-            message=message,
-            objective=objective,
-            scorer_response_blocked=scorer_response_blocked,
-        )[0]
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+        """
+        Spread an applicable fallback across every PII label.
+
+        Args:
+            message (Message): The message whose first piece tells why nothing was scored.
+            objective (str | None): The objective associated with this scoring call.
+
+        Returns:
+            list[Score]: ``[]`` for non-applicable evidence; otherwise, one completed or
+                undetermined fallback score per label.
+        """
+        fallback_scores = super()._build_fallback_score(message=message, objective=objective)
+        if not fallback_scores:
+            return []
+        fallback = fallback_scores[0]
         return [
             Score(
-                score_value="0.0",
+                score_value=fallback.score_value,
+                status=fallback.status,
                 score_value_description=fallback.score_value_description,
                 score_type="float_scale",
                 score_category=[label],

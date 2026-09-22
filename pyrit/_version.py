@@ -7,4 +7,4 @@
 # as component identifiers and memory models reference ``pyrit.__version__``
 # and can be imported transitively while the package is still initializing.
 # Remove the development suffix when releasing and keep this value in sync with pyproject.toml.
-__version__ = "1.1.0.dev0"
+__version__ = "1.2.0.dev0"

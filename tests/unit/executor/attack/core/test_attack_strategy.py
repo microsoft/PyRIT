@@ -8,11 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-try:
-    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
-except ImportError:  # pragma: no cover - exercised only on 3.10
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
-
 from pyrit.exceptions.retry_collector import RetryCollector, get_retry_collector
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
@@ -21,6 +16,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategy,
     _DefaultAttackStrategyEventHandler,
     _ObjectiveTargetConversationLifecycle,
+    attack_outcome_from_score,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import ConversationSession, MultiTurnAttackContext
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackContext
@@ -30,7 +26,11 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    ConversationReference,
+    ConversationType,
     Message,
+    Score,
+    ScoreStatus,
     SeedPrompt,
 )
 from pyrit.models.identifiers import (
@@ -47,6 +47,18 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
         class_name=name,
         class_module="test",
     )
+
+
+@pytest.mark.parametrize(
+    "score,expected",
+    [
+        (Score(score_value="true", score_type="true_false"), AttackOutcome.SUCCESS),
+        (Score(score_value="false", score_type="true_false"), AttackOutcome.FAILURE),
+        (Score(status=ScoreStatus.UNDETERMINED, score_type="true_false"), AttackOutcome.UNDETERMINED),
+    ],
+)
+def test_attack_outcome_from_score(score: Score, expected: AttackOutcome):
+    assert attack_outcome_from_score(score) is expected
 
 
 @pytest.fixture
@@ -393,6 +405,53 @@ class TestAttackStrategyExecution:
 
         assert result is not None
 
+    async def test_execute_async_can_skip_completed_result_persistence(self, mock_attack_strategy):
+        """A transient helper attack returns its result without creating a history row."""
+        with patch.object(mock_attack_strategy._default_event_handler, "_persist_result") as persist:
+            result = await mock_attack_strategy.execute_async(
+                objective="Test objective",
+                persist_attack_result=False,
+            )
+
+        assert result.outcome is AttackOutcome.SUCCESS
+        persist.assert_not_called()
+
+    async def test_execute_async_can_skip_error_result_persistence(self, mock_attack_strategy):
+        """A transient helper attack propagates its error without creating a history row."""
+        memory = mock_attack_strategy._default_event_handler._memory
+        with (
+            patch.object(
+                mock_attack_strategy,
+                "_perform_async",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("helper failed"),
+            ),
+            patch.object(memory, "add_attack_results_to_memory") as persist,
+            pytest.raises(RuntimeError),
+        ):
+            await mock_attack_strategy.execute_async(
+                objective="Test objective",
+                persist_attack_result=False,
+            )
+
+        persist.assert_not_called()
+
+    def test_attack_context_copies_source_conversations(self):
+        """Preparation-time references become part of the primary attack context."""
+        preparation = ConversationReference(
+            conversation_id="preparation-1",
+            conversation_type=ConversationType.PREPARATION,
+        )
+
+        context = AttackContext(
+            params=AttackParameters(
+                objective="Test objective",
+                source_conversations=frozenset({preparation}),
+            )
+        )
+
+        assert context.related_conversations == {preparation}
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestDefaultAttackStrategyEventHandler:
@@ -609,6 +668,30 @@ class TestDefaultAttackStrategyEventHandler:
 
             assert sample_attack_result.retry_events == [retry_event]
             assert sample_attack_result.total_retries == 1
+
+    async def test_on_post_execute_attaches_context_conversations(
+        self,
+        event_handler,
+        sample_attack_context,
+        sample_attack_result,
+    ):
+        """The shared lifecycle retains preparation references on every result type."""
+        preparation = ConversationReference(
+            conversation_id="preparation-1",
+            conversation_type=ConversationType.PREPARATION,
+        )
+        sample_attack_context.related_conversations.add(preparation)
+        event_data = StrategyEventData(
+            event=StrategyEvent.ON_POST_EXECUTE,
+            strategy_name="TestStrategy",
+            strategy_id="test-id",
+            context=sample_attack_context,
+            result=sample_attack_result,
+        )
+
+        await event_handler.on_event_async(event_data)
+
+        assert preparation in sample_attack_result.related_conversations
 
     async def test_on_post_execute_no_retry_events_when_collector_empty(
         self, sample_attack_context, sample_attack_result, mock_memory

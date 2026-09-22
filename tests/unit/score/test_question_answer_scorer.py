@@ -31,22 +31,19 @@ def text_message_piece(patch_central_database) -> MessagePiece:
     return piece
 
 
-async def test_score_async_unsupported_image_type_returns_false(
+async def test_score_async_unsupported_image_type_returns_empty(
     patch_central_database, image_message_piece: MessagePiece
 ):
     scorer = QuestionAnswerScorer(category=["new_category"])
     message = Message(message_pieces=[image_message_piece])
 
-    # With raise_on_no_valid_pieces=False (default), returns False for unsupported data types
     scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
-    assert len(scores) == 1
-    assert scores[0].get_value() is False
-    assert "No supported pieces" in scores[0].score_rationale
+    assert scores == []
 
     os.remove(image_message_piece.converted_value)
 
 
-async def test_score_async_missing_metadata_returns_false(patch_central_database):
+async def test_score_async_missing_metadata_returns_empty(patch_central_database):
     request = MessagePiece(
         role="user",
         original_value="test content",
@@ -56,11 +53,8 @@ async def test_score_async_missing_metadata_returns_false(patch_central_database
     ).to_message()
     scorer = QuestionAnswerScorer(category=["new_category"])
 
-    # With raise_on_no_valid_pieces=False (default), returns False for missing metadata
     scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
-    assert len(scores) == 1
-    assert scores[0].get_value() is False
-    assert "No supported pieces" in scores[0].score_rationale
+    assert scores == []
 
 
 @pytest.mark.parametrize(

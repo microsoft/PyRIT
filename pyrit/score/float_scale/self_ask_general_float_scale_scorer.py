@@ -6,8 +6,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
-from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
+from pyrit.score.llm_scoring import (
+    _format_string_references_message_piece,
+    _parse_judgment_observation,
+    _run_llm_scoring_async,
+)
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -16,13 +20,17 @@ if TYPE_CHECKING:
         ComponentIdentifier,
         JsonSchemaDefinition,
         MessagePiece,
+        Observation,
         Score,
+        ScoringExpectation,
+        UnvalidatedScore,
     )
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.float_scale.numeric_scale import NumericRange
+    from pyrit.score.observation.execution import _ObservationEvidence
 
 
-class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
+class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
     """
     A general-purpose self-ask float-scale scorer that uses a chat target and a configurable
     system prompt and prompt format. The final score is normalized to [0, 1].
@@ -162,11 +170,46 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             data_type=message_piece.converted_value_data_type,
             scored_prompt_id=message_piece.id,
             scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
             category=self._scale.category,
-            objective=objective,
+            requires_message_piece_evidence=(
+                _format_string_references_message_piece(self._system_prompt_format_string)
+                or _format_string_references_message_piece(self._prompt_format_string)
+            ),
         )
 
-        score = unvalidated.to_score(
+        return [self._convert_score(unvalidated)]
+
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared general float-scale conversion contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained general float-scale judgment evidence.
+
+        Returns:
+            list[Score]: The normalized replay score.
+        """
+        unvalidated = _parse_judgment_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
+            expectation=expectation,
+            category=self._scale.category,
+        )
+        return [self._convert_score(unvalidated)]
+
+    def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
+        return unvalidated.to_score(
             score_value=str(
                 self.scale_value_float(
                     float(unvalidated.raw_score_value),
@@ -176,4 +219,3 @@ class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
             ),
             score_type="float_scale",
         )
-        return [score]

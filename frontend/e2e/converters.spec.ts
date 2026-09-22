@@ -1,11 +1,23 @@
-import { test, expect, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+import { test, expect, type APIRequestContext, type Page, type Request } from "@playwright/test";
+
+import type {
+  AddMessageRequest,
+  AddMessageResponse,
+  BackendMessage,
+  ConverterPreviewRequest,
+  TargetInstance,
+} from "@/types";
+
 import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
 // Mock data
 // ---------------------------------------------------------------------------
 
-const MOCK_CATALOG = {
+const MOCK_CONVERTER_TYPES = {
   items: [
     {
       converter_type: "Base64Converter",
@@ -93,18 +105,41 @@ const IMAGE_OUTPUT_CONVERTERS: Record<string, string> = {
  */
 async function mockBackendAPIs(page: Page) {
   let accumulatedMessages: Record<string, unknown>[] = [];
-  // Track the converter type for each created converter instance so the
+  // Track the converter type for each registered converter instance so the
   // preview mock can decide between text and image_path output.
-  const converterTypeById: Record<string, string> = {};
+  const converterTypeById: Record<string, string> = Object.fromEntries(
+    MOCK_CONVERTER_TYPES.items.map((item) => [item.converter_type, item.converter_type]),
+  );
+  let registeredConverters = MOCK_CONVERTER_TYPES.items.map((item) => ({
+    converter_id: item.converter_type,
+    identifier: {
+      class_name: item.converter_type,
+      class_module: `pyrit.converter.${item.converter_type}`,
+      hash: `${item.converter_type}-hash`,
+      pyrit_version: "0.0.0",
+      supported_input_types: item.supported_input_types,
+      supported_output_types: item.supported_output_types,
+    },
+    is_llm_based: item.is_llm_based,
+    description: item.description,
+  }));
 
-  // ── Converter-specific routes ──────────────────────────────────────────
-
-  // Converter catalog
-  await page.route(/\/api\/converters\/catalog/, async (route) => {
+  await page.route(/\/api\/auth\/config$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(MOCK_CATALOG),
+      body: JSON.stringify({ auth_enabled: false }),
+    });
+  });
+
+  // ── Converter-specific routes ──────────────────────────────────────────
+
+  // Converter class metadata from ConverterRegistry
+  await page.route(/\/api\/converters\/types/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(MOCK_CONVERTER_TYPES),
     });
   });
 
@@ -113,58 +148,85 @@ async function mockBackendAPIs(page: Page) {
     if (route.request().method() === "POST") {
       const body = JSON.parse(route.request().postData() ?? "{}");
       const converterIds: string[] = body.converter_ids ?? [];
-      const converterType = converterTypeById[converterIds[0] ?? ""] ?? "";
+      let currentValue = body.original_value ?? "";
+      let currentDataType = body.original_value_data_type ?? "text";
+      const steps = converterIds.map((converterId) => {
+        const converterType = converterTypeById[converterId] ?? "";
+        const inputValue = currentValue;
+        const inputDataType = currentDataType;
+        currentValue = IMAGE_OUTPUT_CONVERTERS[converterType]
+          ?? Buffer.from(currentValue).toString("base64");
+        currentDataType = IMAGE_OUTPUT_CONVERTERS[converterType] ? "image_path" : "text";
+        return {
+          converter_id: converterId,
+          converter_type: converterType,
+          input_value: inputValue,
+          input_data_type: inputDataType,
+          output_value: currentValue,
+          output_data_type: currentDataType,
+        };
+      });
 
-      // Image-output converters emit a file path the frontend renders via
-      // /api/media → triggers the convertedFileChip + inline preview branch.
-      if (IMAGE_OUTPUT_CONVERTERS[converterType]) {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({
-            original_value: body.original_value,
-            original_value_data_type: body.original_value_data_type ?? "text",
-            converted_value: IMAGE_OUTPUT_CONVERTERS[converterType],
-            converted_value_data_type: "image_path",
-            steps: [],
-          }),
-        });
-        return;
-      }
-
-      const converted = Buffer.from(body.original_value ?? "").toString("base64");
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           original_value: body.original_value,
           original_value_data_type: body.original_value_data_type ?? "text",
-          converted_value: converted,
-          converted_value_data_type: "text",
-          steps: [],
+          converted_value: currentValue,
+          converted_value_data_type: currentDataType,
+          steps,
         }),
       });
     }
   });
 
-  // Create converter instance
+  // List and create registered converter instances
   await page.route(/\/api\/converters$/, async (route) => {
     if (route.request().method() === "POST") {
       const body = JSON.parse(route.request().postData() ?? "{}");
-      const converterId = `mock-converter-${body.type}`;
+      const converterId = body.name;
       converterTypeById[converterId] = body.type;
+      const converterType = MOCK_CONVERTER_TYPES.items.find((item) => item.converter_type === body.type);
+      const converter = {
+        converter_id: converterId,
+        identifier: {
+          class_name: body.type,
+          class_module: `pyrit.converter.${body.type}`,
+          hash: `${converterId}-hash`,
+          pyrit_version: "0.0.0",
+          supported_input_types: converterType?.supported_input_types ?? [],
+          supported_output_types: converterType?.supported_output_types ?? [],
+        },
+        is_llm_based: converterType?.is_llm_based ?? false,
+        description: converterType?.description,
+      };
+      registeredConverters.push(converter);
       await route.fulfill({
         status: 201,
         contentType: "application/json",
-        body: JSON.stringify({
-          converter_id: converterId,
-          converter_type: body.type,
-          display_name: null,
-        }),
+        body: JSON.stringify(converter),
+      });
+    } else if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: registeredConverters }),
       });
     } else {
       await route.continue();
     }
+  });
+
+  await page.route(/\/api\/converters\/[^/]+$/, async (route) => {
+    if (route.request().method() !== "DELETE") {
+      await route.fallback();
+      return;
+    }
+    const converterId = decodeURIComponent(route.request().url().split("/").pop() ?? "");
+    registeredConverters = registeredConverters.filter((item) => item.converter_id !== converterId);
+    delete converterTypeById[converterId];
+    await route.fulfill({ status: 204 });
   });
 
   // Media route — serves the generated image referenced by the preview
@@ -225,13 +287,15 @@ async function mockBackendAPIs(page: Page) {
         );
         userText = textPiece?.original_value || "your message";
         convertedText = textPiece?.converted_value || null;
-        converterIds = body?.converter_ids || [];
+        converterIds = body?.request_converter_configurations
+          ?.flatMap((configuration: { converter_ids?: string[] }) => configuration.converter_ids ?? [])
+          ?? body?.converter_ids
+          ?? [];
       } catch {
         // ignore
       }
 
-      // Simulate backend conversion: when converter_ids are provided but no
-      // converted_value was set client-side, the backend applies the converter.
+      // Simulate backend conversion when the request carries converter configurations.
       if (!convertedText && converterIds.length > 0) {
         convertedText = Buffer.from(userText).toString("base64");
       }
@@ -407,10 +471,10 @@ async function mockBackendAPIs(page: Page) {
   });
 }
 
-/** Navigate to config, set the mock target as active, then return to chat. */
+/** Navigate to the target registry, set the mock target as active, then return to chat. */
 async function activateMockTarget(page: Page) {
-  await page.getByTitle("Configuration").click();
-  await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
+  await page.getByTitle("Registry").click();
+  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 
   const setActiveBtn = page.getByRole("button", { name: /set active/i });
   await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
@@ -420,24 +484,283 @@ async function activateMockTarget(page: Page) {
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
-/** Open converter panel and select a converter by name. */
+/** Open converter panel and add a registered converter to the active pipeline. */
 async function selectConverter(page: Page, converterName: string) {
   // Open panel
   await page.getByTestId("toggle-converter-panel-btn").click();
   await expect(page.getByTestId("converter-panel")).toBeVisible({ timeout: 5000 });
 
-  // Open combobox and select
+  // Open the picker and add the registered instance
   const combobox = page.getByTestId("converter-panel-select");
   await combobox.click();
   await page.getByTestId(`converter-option-${converterName}`).click();
 
-  // Wait for detail card
+  // Wait for the pipeline card
   await expect(page.getByTestId(`converter-item-${converterName}`)).toBeVisible({ timeout: 5000 });
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+async function registerConverter(
+  request: APIRequestContext,
+  type: string,
+  params: Record<string, unknown> = {},
+): Promise<string> {
+  const name = `e2e-${randomUUID()}`;
+  const response = await request.post("/api/converters", { data: { name, type, params } });
+  expect(response.status()).toBe(201);
+  return name;
+}
+
+async function addPipelineConverter(page: Page, converterId: string): Promise<void> {
+  await page.getByTestId("converter-panel-select").click();
+  await page.getByTestId(`converter-option-${converterId}`).click();
+  await expect(page.getByTestId(`converter-item-${converterId}`)).toBeVisible();
+}
+
+test.describe("Shared per-piece converter pipelines @seeded", () => {
+  test.setTimeout(90_000);
+
+  let targetRegistryName: string;
+  let base64Id: string;
+  let caesarId: string;
+  let imageId: string;
+  const registeredConverters: string[] = [];
+  const image = readFileSync(new URL("../public/roakey.png", import.meta.url));
+
+  test.beforeAll(async ({ request }) => {
+    const targetResponse = await request.post("/api/targets", {
+      data: { type: "TextTarget", name: `e2e-converters-${randomUUID()}`, params: {} },
+    });
+    expect(targetResponse.status()).toBe(201);
+    const target: TargetInstance = await targetResponse.json();
+    targetRegistryName = target.target_registry_name;
+
+    base64Id = await registerConverter(request, "Base64Converter");
+    registeredConverters.push(base64Id);
+    caesarId = await registerConverter(request, "CaesarConverter", { caesar_offset: 1 });
+    registeredConverters.push(caesarId);
+    imageId = await registerConverter(request, "ImageCompressionConverter", {
+      output_format: "PNG",
+      min_compression_threshold: 0,
+      fallback_to_original: false,
+    });
+    registeredConverters.push(imageId);
+  });
+
+  test.afterAll(async ({ request }) => {
+    for (const converterId of registeredConverters) {
+      const response = await request.delete(`/api/converters/${encodeURIComponent(converterId)}`);
+      expect(response.status()).toBe(204);
+    }
+  });
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.getByTitle("Registry", { exact: true }).click();
+    await page.getByTestId(`target-row-${targetRegistryName}`)
+      .getByRole("button", { name: "Set Active", exact: true }).click();
+    await page.getByTitle("Chat", { exact: true }).click();
+    await expect(page.getByTestId("chat-input")).toBeEnabled();
+  });
+
+  test("should keep the same stage focused through repeated keyboard moves, including duplicates", async ({ page }) => {
+    await page.getByTestId("chat-input").fill("hello");
+    await selectConverter(page, base64Id);
+    await addPipelineConverter(page, caesarId);
+    await addPipelineConverter(page, base64Id);
+
+    const handles = page.getByRole("button", { name: /^Reorder converter/ });
+    await handles.nth(2).focus();
+    const focusedStage = await handles.nth(2).elementHandle();
+    expect(focusedStage).not.toBeNull();
+    for (const key of ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowUp", "ArrowUp"]) {
+      await page.keyboard.press(key);
+      expect(await focusedStage?.evaluate((element: HTMLElement) => document.activeElement === element)).toBe(true);
+    }
+    expect(await handles.evaluateAll((elements: HTMLElement[]) => (
+      elements.map((element: HTMLElement) => element.getAttribute("aria-label"))
+    ))).toEqual([
+      `Reorder converter ${base64Id}, stage 1 of 2`,
+      `Reorder converter ${base64Id}, stage 2 of 2`,
+      `Reorder converter ${caesarId}`,
+    ]);
+    const previewResponse = page.waitForResponse((response) => (
+      response.request().method() === "POST" && new URL(response.url()).pathname === "/api/converters/preview"
+    ));
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    const response = await previewResponse;
+    expect(response.ok()).toBeTruthy();
+    expect(response.request().postDataJSON().converter_ids).toEqual([base64Id, base64Id, caesarId]);
+    await expect(page.getByTestId("converter-preview-result")).toBeVisible();
+  });
+
+  test("should upload attachments and create pipeline stages without crypto.randomUUID", async ({ page }) => {
+    await page.evaluate(() => {
+      Object.defineProperty(crypto, "randomUUID", { configurable: true, value: undefined });
+    });
+    await page.locator('input[type="file"]').setInputFiles([
+      { name: "first.png", mimeType: "image/png", buffer: image },
+      { name: "second.png", mimeType: "image/png", buffer: image },
+    ]);
+    await expect(page.getByTestId("remove-attachment-0")).toBeVisible();
+    await expect(page.getByTestId("remove-attachment-1")).toBeVisible();
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    await page.getByRole("tab", { name: "Image", exact: true }).click();
+    await addPipelineConverter(page, imageId);
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    await expect(page.getByTestId("converter-preview-result")).toHaveCount(2);
+    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(2);
+  });
+
+  test("should preserve an ordered pipeline and its output across close and reopen, then persist the send", async ({
+    page, request,
+  }) => {
+    await page.getByTestId("chat-input").fill("hello");
+    await selectConverter(page, base64Id);
+    await addPipelineConverter(page, caesarId);
+
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+    await expect(page.getByTestId("converter-panel")).toHaveCount(0);
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    await expect(page.getByTestId(`converter-item-${base64Id}`)).toBeVisible();
+    await expect(page.getByTestId(`converter-item-${caesarId}`)).toBeVisible();
+    await expect(page.getByTestId("converter-preview-result")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    await expect(page.getByTestId("converter-stage-output-0")).toContainText("aGVsbG8=");
+    await expect(page.getByTestId("converter-stage-output-1")).toContainText("bHWtcH9=");
+    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await expect(page.getByTestId("converted-value-input")).toHaveValue("bHWtcH9=");
+
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    await expect(page.getByTestId("converter-preview-result")).toContainText("bHWtcH9=");
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+
+    const [response] = await Promise.all([
+      page.waitForResponse((candidate) => candidate.request().method() === "POST"
+        && /\/api\/attacks\/[^/]+\/messages$/.test(new URL(candidate.url()).pathname)),
+      page.getByRole("button", { name: "Send message", exact: true }).click(),
+    ]);
+    expect(response.status()).toBe(200);
+    const sentRequest: AddMessageRequest = response.request().postDataJSON();
+    expect(sentRequest.pieces).toHaveLength(1);
+    expect(sentRequest.pieces[0]).toMatchObject({ data_type: "text", original_value: "hello" });
+    expect(sentRequest.pieces[0]).not.toHaveProperty("converted_value");
+    expect(sentRequest.request_converter_configurations).toEqual([
+      { converter_ids: [base64Id, caesarId], indexes_to_apply: [0] },
+    ]);
+
+    const sent: AddMessageResponse = await response.json();
+    const historyResponse = await request.get(
+      `/api/attacks/${sent.attack.attack_result_id}/messages?conversation_id=${sent.attack.conversation_id}`,
+    );
+    expect(historyResponse.ok()).toBeTruthy();
+    const history: AddMessageResponse["messages"] = await historyResponse.json();
+    const userMessage = history.messages.find((message: BackendMessage) => message.role === "user");
+    expect(userMessage?.message_pieces).toEqual([
+      expect.objectContaining({
+        original_value: "hello",
+        converted_value: "bHWtcH9=",
+        converted_value_data_type: "text",
+      }),
+    ]);
+  });
+
+  test("should convert every configured input and keep duplicate image pieces independent", async ({ page }) => {
+    const previewRequests: ConverterPreviewRequest[] = [];
+    page.on("request", (request: Request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/converters/preview") {
+        previewRequests.push(request.postDataJSON());
+      }
+    });
+    await page.getByTestId("chat-input").fill("hello");
+    await page.locator('input[type="file"]').setInputFiles([
+      { name: "duplicate.png", mimeType: "image/png", buffer: image },
+      { name: "duplicate.png", mimeType: "image/png", buffer: image },
+    ]);
+    await selectConverter(page, base64Id);
+    await page.getByRole("tab", { name: "Image", exact: true }).click();
+    await expect(page.getByTestId("converter-input-value")).toHaveCount(2);
+    await addPipelineConverter(page, imageId);
+
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    const results = page.getByTestId("converter-preview-result");
+    await expect(results).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Add converted value", exact: true })).toBeEnabled();
+    expect(previewRequests).toHaveLength(3);
+    expect(previewRequests.filter((preview: ConverterPreviewRequest) => preview.original_value_data_type === "text"))
+      .toEqual([{ original_value: "hello", original_value_data_type: "text", converter_ids: [base64Id] }]);
+    expect(previewRequests.filter((preview: ConverterPreviewRequest) => preview.original_value_data_type === "image_path"))
+      .toEqual([
+        { original_value: `data:image/png;base64,${image.toString("base64")}`, original_value_data_type: "image_path", converter_ids: [imageId] },
+        { original_value: `data:image/png;base64,${image.toString("base64")}`, original_value_data_type: "image_path", converter_ids: [imageId] },
+      ]);
+    for (const result of await results.all()) {
+      const preview = result.getByRole("img");
+      await expect(preview).toBeVisible();
+      await expect.poll(() => preview.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBeGreaterThan(0);
+    }
+    const firstOutput = await results.nth(0).getByRole("img").getAttribute("src");
+    const secondOutput = await results.nth(1).getByRole("img").getAttribute("src");
+    expect(firstOutput).not.toBe(secondOutput);
+
+    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+    await expect(page.getByTestId("converted-value-input")).toHaveValue("aGVsbG8=");
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(2);
+
+    await page.getByTestId("clear-media-conversion-image").nth(0).click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(1);
+    await page.getByTestId("remove-attachment-0").click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(1);
+
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    await expect(page.getByTestId("converter-preview-result")).toContainText("aGVsbG8=");
+    await page.getByRole("tab", { name: "Image (1)", exact: true }).click();
+    await expect(page.getByTestId(`converter-item-${imageId}`)).toBeVisible();
+    await expect(page.getByTestId("converter-input-value")).toHaveCount(1);
+    await expect(results).toHaveCount(1);
+    await expect(results.getByRole("img")).toHaveAttribute("src", secondOutput ?? "");
+    expect(previewRequests).toHaveLength(3);
+  });
+
+  test("should apply only successful current pieces after an image failure and a text edit", async ({ page }) => {
+    await page.getByTestId("chat-input").fill("original text");
+    await page.locator('input[type="file"]').setInputFiles([
+      { name: "valid.png", mimeType: "image/png", buffer: image },
+      { name: "broken.png", mimeType: "image/png", buffer: Buffer.from("not an image") },
+    ]);
+    await selectConverter(page, base64Id);
+    await page.getByRole("tab", { name: "Image", exact: true }).click();
+    await addPipelineConverter(page, imageId);
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+
+    await expect(page.getByTestId("converter-preview-error")).toContainText("broken.png");
+    await expect(page.getByTestId("converter-preview-result")).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "Add converted value", exact: true })).toBeEnabled();
+    await page.getByRole("tab", { name: "Text (1)", exact: true }).click();
+    await expect(page.getByTestId("converter-preview-result")).toContainText(
+      Buffer.from("original text").toString("base64"),
+    );
+    await page.getByTestId("chat-input").fill("changed after conversion");
+    await expect(page.getByTestId("converter-preview-result")).toHaveCount(0);
+    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+
+    await expect(page.getByTestId("chat-input")).toHaveValue("changed after conversion");
+    await expect(page.getByTestId("converted-value-input")).toHaveCount(0);
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(1);
+    await page.getByTestId("remove-attachment-0").click();
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
+    await expect(page.getByText("broken.png", { exact: false })).toBeVisible();
+  });
+});
 
 test.describe("Converter Panel", () => {
   test.beforeEach(async ({ page }) => {
@@ -446,45 +769,55 @@ test.describe("Converter Panel", () => {
     await activateMockTarget(page);
   });
 
-  test("should open converter panel and display converter catalog", async ({ page }) => {
+  test("should open converter panel and display registered converters", async ({ page }) => {
     // Click the converter toggle button
     await page.getByTestId("toggle-converter-panel-btn").click();
 
-    // Panel should appear with combobox
+    // Panel should appear with the picker
     await expect(page.getByTestId("converter-panel")).toBeVisible({ timeout: 5000 });
     const combobox = page.getByTestId("converter-panel-select");
     await expect(combobox).toBeVisible();
 
-    // Open dropdown — converters should be listed
+    // Open dropdown — registered converters and the create action are listed
     await combobox.click();
+    await expect(page.getByTestId("create-converter-option")).toBeVisible();
     await expect(page.getByTestId("converter-option-Base64Converter")).toBeVisible();
     await expect(page.getByTestId("converter-option-CaesarConverter")).toBeVisible();
     await expect(page.getByTestId("converter-option-TranslationConverter")).toBeVisible();
   });
 
-  test("should select a converter, show details and preview output", async ({ page }) => {
+  test("should select a converter, show details and convert output", async ({ page }) => {
     // Type text BEFORE opening panel
     await page.getByTestId("chat-input").fill("hello");
 
     // Select Base64Converter
     await selectConverter(page, "Base64Converter");
 
-    // Description should be visible
-    await expect(page.getByText("Converter that encodes text to base64 format.")).toBeVisible();
+    // The display-only input surface mirrors the chat input
+    await expect(page.getByTestId("converter-input-value")).toContainText("hello");
 
-    // Auto-preview should fire (non-LLM text converter)
-    await expect(page.getByTestId("converter-preview-result")).toBeVisible({ timeout: 10000 });
+    // Description should be visible
+    await expect(
+      page.getByTestId("converter-item-Base64Converter")
+        .getByText("Converter that encodes text to base64 format."),
+    ).toBeVisible();
+
+    // Nothing converts until Convert is pressed
+    await expect(page.getByTestId("converter-preview-result")).toHaveCount(0);
+    await page.getByTestId("converter-preview-btn").click();
+    await expect(page.getByTestId("converter-preview-result")).toContainText("aGVsbG8=");
   });
 
   test("should apply converted value and send message with original+converted sections", async ({ page }) => {
     // Type text BEFORE opening the converter panel
     await page.getByTestId("chat-input").fill("hello");
 
-    // Select converter and wait for auto-preview
+    // Select converter and convert the pipeline.
     await selectConverter(page, "Base64Converter");
+    await page.getByTestId("converter-preview-btn").click();
     await expect(page.getByTestId("converter-preview-result")).toBeVisible({ timeout: 10000 });
 
-    // Click "Use Converted Value"
+    // Click "Add converted value"
     await page.getByTestId("use-converted-btn").click();
 
     // Original badge should appear in input area
@@ -509,7 +842,8 @@ test.describe("Converter Panel", () => {
     // Type text BEFORE opening panel
     await page.getByTestId("chat-input").fill("hello");
     await selectConverter(page, "Base64Converter");
-    await expect(page.getByTestId("use-converted-btn")).toBeVisible({ timeout: 10000 });
+    await page.getByTestId("converter-preview-btn").click();
+    await expect(page.getByTestId("use-converted-btn")).toBeEnabled({ timeout: 10000 });
     await page.getByTestId("use-converted-btn").click();
 
     // Close converter panel before sending
@@ -521,29 +855,49 @@ test.describe("Converter Panel", () => {
     await expect(page.getByText(/Mock response for:/)).toBeVisible({ timeout: 15000 });
 
     // Navigate to History view
-    await page.getByTitle("Attack History").click();
+    await page.getByTitle("History").click();
 
     // Converter badge should appear in the attack table
     await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });
   });
 
-  test("should show validation error when required parameter is missing", async ({ page }) => {
-    // Type text
-    // Type text BEFORE opening panel
+  test("should select an already configured converter without showing constructor fields", async ({ page }) => {
     await page.getByTestId("chat-input").fill("hello");
 
-    // Select CaesarConverter (has required caesar_offset param)
+    // Select CaesarConverter — its constructor params were fixed at registration
     await selectConverter(page, "CaesarConverter");
 
-    // Parameters section should be visible with empty required field
-    await expect(page.getByText("Parameters")).toBeVisible();
-    await expect(page.getByTestId("param-caesar_offset")).toBeVisible();
+    await expect(page.getByTestId("converter-item-CaesarConverter")).toBeVisible();
+    await expect(page.getByTestId("converter-params")).toHaveCount(0);
+  });
 
-    // Click Preview without filling required param
+  test("should keep the picker available for an ordered converter chain", async ({ page }) => {
+    await page.getByTestId("chat-input").fill("hello");
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    const combobox = page.getByTestId("converter-panel-select");
+
+    await combobox.click();
+    await page.getByTestId("converter-option-Base64Converter").click();
+    await expect(page.getByTestId("converter-item-Base64Converter")).toBeVisible();
+
+    await combobox.click();
+    await page.getByTestId("converter-option-CaesarConverter").click();
+
+    await expect(page.getByTestId("converter-item-Base64Converter")).toBeVisible();
+    await expect(page.getByTestId("converter-item-CaesarConverter")).toBeVisible();
+    await expect(page.getByTestId("converter-stage-output-0")).toContainText(
+      "Choose Convert to see this stage output.",
+    );
+    await expect(page.getByTestId("converter-stage-output-1")).toContainText(
+      "Choose Convert to see this stage output.",
+    );
+
     await page.getByTestId("converter-preview-btn").click();
 
-    // Red "Required" validation text should appear
-    await expect(page.getByText("Required")).toBeVisible();
+    await expect(page.getByTestId("converter-stage-output-0")).toContainText("aGVsbG8=");
+    await expect(page.getByTestId("converter-stage-output-1")).toContainText(
+      Buffer.from("aGVsbG8=").toString("base64"),
+    );
   });
 
   test("should only show text-input converters when no media is attached", async ({ page }) => {
@@ -565,7 +919,7 @@ test.describe("Converter Panel", () => {
 
   test("should show converter type in history filter options", async ({ page }) => {
     // Navigate to History view
-    await page.getByTitle("Attack History").click();
+    await page.getByTitle("History").click();
 
     // The converter badge should be visible in the attack table
     await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });
@@ -578,7 +932,7 @@ test.describe("Converter Panel", () => {
     // Select AddImageTextConverter (text input → image_path output)
     await selectConverter(page, "AddImageTextConverter");
 
-    // Auto-preview only fires for text-output converters, so click Preview
+    // Convert the pipeline explicitly
     await page.getByTestId("converter-preview-btn").click();
     await expect(page.getByTestId("converter-preview-result")).toBeVisible({ timeout: 10000 });
 
