@@ -56,6 +56,14 @@ interface DialogToken {
   dialog: 'create' | 'remove'
 }
 
+// A request to hand the keyboard back, honoured after React commits the render
+// that asked for it. `trigger` is the control the dialog was opened from. Each
+// request is a fresh object so two dismissals in a row are two restores, even
+// when they aim at the same control.
+interface FocusRestore {
+  trigger: HTMLElement | null
+}
+
 interface DataTypeBadgesProps {
   dataTypes: string[] | null | undefined
 }
@@ -80,6 +88,7 @@ export default function ConverterRegistry() {
   const [createToken, setCreateToken] = useState<DialogToken | null>(null)
   const [converterToRemove, setConverterToRemove] = useState<ConverterInstance | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [focusRestore, setFocusRestore] = useState<FocusRestore | null>(null)
   // Both dialogs open from state rather than from a DialogTrigger, so mark the
   // opening controls as restore targets the way FeedbackDialog does; that is what
   // hands focus back when a dialog is dismissed. Tabster cannot restore to a
@@ -90,8 +99,9 @@ export default function ConverterRegistry() {
   const createTriggerRef = useRef<HTMLElement | null>(null)
   const removeTriggerRef = useRef<HTMLElement | null>(null)
   // The token of the dialog on screen, or null when none is. Kept in a ref
-  // because a queued restore and an in-flight create request both outlive the
-  // render that started them.
+  // because an in-flight create request outlives the render that started it,
+  // and because the restore below has to read it as of the commit it runs in
+  // rather than as of the render that requested it.
   const openDialogRef = useRef<DialogToken | null>(null)
 
   const openDialog = (dialog: DialogToken['dialog']): DialogToken => {
@@ -100,17 +110,33 @@ export default function ConverterRegistry() {
     return token
   }
 
+  const restoreFocus = (trigger: HTMLElement | null) => {
+    setFocusRestore({ trigger })
+  }
+
+  // Hand the keyboard back once React has committed the render that closed the
+  // dialog, the way a submission failure waits for the render that adds its
+  // message bar. A frame callback could not be trusted with this: React
+  // schedules its own commit, so the callback could land first, and from there
+  // the control that opened the dialog still looked connected even though the
+  // same handler had already started the refresh that unmounts it — focus went
+  // to a doomed node and ended up on <body>. An effect cannot run before that
+  // commit, so the tree it inspects is the one the user is about to see.
+  //
   // New Converter is always mounted, so it is the fallback whenever the control
   // that opened the dialog is gone: a removed row, or the empty-state button
-  // once the registry holds a converter. A restore still queued when the next
-  // dialog opens is dropped, so a slow refresh cannot pull focus out of it.
-  const restoreFocus = (trigger: HTMLElement | null) => {
-    requestAnimationFrame(() => {
-      if (openDialogRef.current) return
-      const target = trigger?.isConnected ? trigger : newConverterRef.current
-      target?.focus()
-    })
-  }
+  // once the registry holds a converter. Nothing clears `focusRestore` here —
+  // a synchronous setState in an effect is what `react-hooks/set-state-in-effect`
+  // forbids, and a stale value is harmless because only a new request can
+  // re-run this.
+  useEffect(() => {
+    if (!focusRestore) return
+    if (openDialogRef.current) return
+    const target = focusRestore.trigger?.isConnected
+      ? focusRestore.trigger
+      : newConverterRef.current
+    target?.focus()
+  }, [focusRestore])
 
   const loadConverters = useCallback(async () => {
     setLoading(true)

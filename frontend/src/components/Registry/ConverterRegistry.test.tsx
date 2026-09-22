@@ -80,6 +80,17 @@ async function settleFrame() {
   })
 }
 
+// Run frame callbacks where they are registered, so a restore scheduled on a
+// frame lands before React commits the update that requested it. Same lever as
+// `should focus a submission error even when a frame runs before React renders
+// it` in CreateConverterDialog.test.tsx.
+function runFramesImmediately() {
+  jest.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    callback(performance.now())
+    return 0
+  })
+}
+
 async function startSlowCreate(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'New Converter' }))
   const dialog = await screen.findByRole('dialog')
@@ -97,6 +108,12 @@ describe('ConverterRegistry', () => {
     mockPendingCreate = undefined
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [converter] })
     mockedConvertersApi.deleteConverter.mockResolvedValue()
+  })
+
+  // `clearAllMocks` resets calls but leaves spies installed, and these tests
+  // replace `requestAnimationFrame`.
+  afterEach(() => {
+    jest.restoreAllMocks()
   })
 
   it('lists registered converter instances and configuration', async () => {
@@ -251,6 +268,57 @@ describe('ConverterRegistry', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Create' }))
 
     expect(await screen.findByText('base64-default')).toBeInTheDocument()
+    await waitFor(() => expect(newConverter).toHaveFocus())
+  })
+
+  it('should move focus to New Converter when a frame runs before the registry refresh commits', async () => {
+    // The restore used to run on a frame, which React does not wait for: the
+    // callback could land while the empty-state button was still connected,
+    // take focus, and lose it to <body> when the refresh unmounted that button.
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [converter] })
+    const user = userEvent.setup()
+    renderRegistry()
+    // Captured before the dialog opens: Tabster hides the rest of the page from
+    // the accessibility tree while a modal is up, deferred, so re-querying here
+    // is flaky.
+    const newConverter = screen.getByRole('button', { name: 'New Converter' })
+    const firstConverter = await screen.findByRole('button', { name: 'Create First Converter' })
+
+    await user.click(firstConverter)
+    const dialog = await screen.findByRole('dialog')
+    runFramesImmediately()
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }))
+
+    expect(await screen.findByText('base64-default')).toBeInTheDocument()
+    // The trigger really was removed, so this is the doomed-node case rather
+    // than a test that would pass for the wrong reason.
+    expect(firstConverter.isConnected).toBe(false)
+    expect(document.activeElement).not.toBe(document.body)
+    await waitFor(() => expect(newConverter).toHaveFocus())
+  })
+
+  it('should move focus to New Converter when a frame runs before a removal refresh commits', async () => {
+    // Same shape on the removal path: the row that opened the dialog is about
+    // to be unmounted by the refresh.
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [converter] })
+      .mockResolvedValueOnce({ items: [] })
+    const user = userEvent.setup()
+    renderRegistry()
+    const newConverter = screen.getByRole('button', { name: 'New Converter' })
+    await screen.findByText('base64-default')
+    const remove = screen.getByRole('button', { name: 'Remove base64-default' })
+
+    await user.click(remove)
+    const dialog = await screen.findByRole('dialog')
+    runFramesImmediately()
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+
+    expect(await screen.findByText('No Converters Registered')).toBeInTheDocument()
+    expect(remove.isConnected).toBe(false)
+    expect(document.activeElement).not.toBe(document.body)
     await waitFor(() => expect(newConverter).toHaveFocus())
   })
 
