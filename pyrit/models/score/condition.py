@@ -3,14 +3,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args, get_origin
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, TypeAdapter, model_validator
 
 if TYPE_CHECKING:
     from typing import Self
 
+    from pydantic import GetJsonSchemaHandler
     from pydantic.config import ExtraValues
+    from pydantic.json_schema import JsonSchemaValue
+    from pydantic_core import CoreSchema
 
 #: Maps each condition's stable discriminator to its type. A condition is persisted under
 #: its ``condition_type`` discriminator rather than its import path, so a stored score survives
@@ -152,3 +156,56 @@ class MatchesObjective(Condition):
     """
 
     condition_type: Literal["matches_objective"] = "matches_objective"
+
+
+class AnswerMatches(Condition):
+    """The evidence answers a question with the expected choice label or answer text."""
+
+    condition_type: Literal["answer_matches"] = "answer_matches"
+    correct_answer: str = Field(min_length=1)
+    #: The choice label, for a question that offers choices.
+    correct_answer_index: str | None = Field(default=None, min_length=1)
+
+
+def _parse_conditions(value: Any) -> Any:
+    """
+    Rebuild discriminator-tagged conditions without losing subclass fields.
+
+    Returns:
+        Any: The conditions with serialized entries resolved to concrete types.
+
+    Raises:
+        ValueError: If the input is not a condition collection or names an unknown type.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes, dict)) or not isinstance(value, Iterable):
+        raise ValueError("conditions must be an iterable of typed conditions.")
+    return tuple(Condition.model_validate(item) if isinstance(item, dict) else item for item in value)
+
+
+class _ConditionTupleSchema:
+    """Describe the registered condition types on each condition-list field."""
+
+    def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Return the tuple schema with a discriminated union of concrete conditions."""
+        schema = handler(core_schema)
+        condition_schemas = [
+            handler(TypeAdapter(condition_class).core_schema) for _, condition_class in sorted(_CONDITION_TYPES.items())
+        ]
+        for condition_schema in condition_schemas:
+            required_fields = condition_schema.setdefault("required", [])
+            if "condition_type" not in required_fields:
+                required_fields.append("condition_type")
+        schema["items"] = {
+            "discriminator": {"propertyName": "condition_type"},
+            "oneOf": condition_schemas,
+        }
+        return schema
+
+
+ConditionTuple = Annotated[
+    tuple[SerializeAsAny[Condition], ...],
+    BeforeValidator(_parse_conditions),
+    _ConditionTupleSchema(),
+]

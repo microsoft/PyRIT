@@ -37,6 +37,7 @@ from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation import (
     NonReplayableObservationError,
+    _get_current_scoring_expectation,
     _observation_collection,
     _ObservationEvidence,
     _replay_message_piece_id,
@@ -1024,8 +1025,9 @@ class MessageScorer(Scorer):
         """
         Score a message after message-family policy and substitutions are applied.
 
-        Wrapping scorers override this hook to forward the complete expectation. Existing
-        leaf scorer bodies continue to receive only the objective string.
+        Wrapping scorers override this hook to forward the complete expectation. The existing
+        call-local expectation context also carries it through legacy aggregation overrides
+        to ``_score_piece_with_expectation_async``.
 
         Returns:
             list[Score]: The scores produced from the prepared message.
@@ -1143,7 +1145,15 @@ class MessageScorer(Scorer):
         # Score only the supported pieces
         supported_pieces = self._get_supported_pieces(message)
 
-        tasks = [self._score_piece_async(message_piece=piece, objective=objective) for piece in supported_pieces]
+        expectation = _get_current_scoring_expectation()
+        if expectation is None and objective is not None:
+            expectation = ScoringExpectation(objective=objective)
+        elif expectation is not None and objective != expectation.objective:
+            expectation = ScoringExpectation(objective=objective, conditions=expectation.conditions)
+        tasks = [
+            self._score_piece_with_expectation_async(message_piece=piece, expectation=expectation)
+            for piece in supported_pieces
+        ]
 
         if not tasks:
             return []
@@ -1154,9 +1164,31 @@ class MessageScorer(Scorer):
         # Flatten list[list[Score]] -> list[Score]
         return [score for sublist in piece_score_lists for score in sublist]
 
-    @abstractmethod
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        """
+        Score a piece with full criteria, retaining the legacy leaf override by default.
+
+        Returns:
+            list[Score]: The legacy leaf's scores.
+        """
+        return await self._score_piece_async(
+            message_piece=message_piece,
+            objective=expectation.objective if expectation else None,
+        )
+
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        raise NotImplementedError
+        """
+        Score a piece from the objective alone.
+
+        A leaf implements this hook, or ``_score_piece_with_expectation_async`` when it reads
+        typed criteria.
+
+        Raises:
+            NotImplementedError: If the leaf implements neither piece hook.
+        """
+        raise NotImplementedError(f"{type(self).__name__} implements no piece scoring hook.")
 
     def _build_scoring_message(self, *, message: Message) -> Message | None:
         """

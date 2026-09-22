@@ -161,6 +161,30 @@ print(system_prompt.value)
 # - `response_json_schema:` inlines a JSON schema on a seed; `response_json_schema_name:` references one bundled under `pyrit/datasets/json_schemas/` (e.g. `true_false_with_rationale`). Set at most one.
 # - Targets that support structured output (e.g. OpenAI's `json_schema` response format) enforce it natively; other targets get the schema appended to the prompt text automatically by the normalization pipeline.
 #
+# **Authoring Scoring Criteria:**
+# An objective can carry `conditions` beside its `value`. Conditions tell scorers what to check; they are not sent to the target. For example:
+#
+# ```yaml
+# name: geography_questions
+# seeds:
+#   - seed_type: objective
+#     value: Answer the geography question
+#     prompt_group_alias: france
+#     conditions:
+#       - condition_type: answer_matches
+#         correct_answer: Paris
+#         correct_answer_index: "2"
+#   - seed_type: prompt
+#     value: "What is the capital of France? 1: London; 2: Paris"
+#     prompt_group_alias: france
+# ```
+#
+# Use `QuestionAnswerScorer` or `SelfAskQuestionAnswerScorer` with this dataset. In Python, the same criterion is `AnswerMatches(correct_answer="Paris", correct_answer_index="2")` in `SeedObjective.conditions`. Quote choice indices in YAML, because both Q&A fields are strings, and omit `correct_answer_index` for an open-ended answer. Conditions are literal data, not Jinja templates.
+#
+# `SeedGroup.scoring_expectation` returns the objective text and its conditions. Load seeds into memory, retrieve their groups, and pass attack groups to `AttackExecutor.execute_attack_from_seed_groups_async`. The executor forwards the criteria to the configured scorers, and each condition must have a compatible scorer.
+#
+# A shared execution `expectation` replaces seed criteria; a per-row `field_overrides` entry takes precedence over that shared value. An explicit `expectation=None` clears seed criteria and selects the attack-objective fallback. Equal objective text with different conditions is stored separately in memory.
+#
 # #### YAML Example
 #
 # Below is an example from [`illegal-multimodal-group.prompt`](../../../pyrit/datasets/seed_datasets/local/examples/illegal-multimodal-group.prompt), available as part of `pyrit_example_dataset`. This defines a single `SeedGroup` where all seeds have `sequence` 0, meaning they're sent together:

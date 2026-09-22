@@ -4,12 +4,15 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
+from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.benchmark.question_answering import (
     QuestionAnsweringBenchmark,
     QuestionAnsweringBenchmarkContext,
 )
 from pyrit.models import (
+    AnswerMatches,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -19,6 +22,7 @@ from pyrit.models import (
     QuestionChoice,
 )
 from pyrit.prompt_target import PromptTarget
+from pyrit.score import QuestionAnswerScorer, SelfAskQuestionAnswerScorer, SubStringScorer
 
 # Fixtures at the top of the file
 
@@ -155,13 +159,16 @@ class TestQuestionAnsweringBenchmark:
         assert "Option 0: London" in sample_benchmark_context.generated_question_prompt
         assert "Option 1: Paris" in sample_benchmark_context.generated_question_prompt
 
-        # Check that message was created with metadata
+        # Ground truth belongs to the expectation, never the target's metadata.
         assert sample_benchmark_context.generated_message is not None
         message_piece = sample_benchmark_context.generated_message.get_piece()
         assert message_piece.original_value == sample_benchmark_context.generated_question_prompt
-        assert message_piece.prompt_metadata is not None
-        assert message_piece.prompt_metadata["correct_answer_index"] == "1"
-        assert message_piece.prompt_metadata["correct_answer"] == "Paris"
+        assert not message_piece.prompt_metadata
+        assert sample_benchmark_context.generated_expectation is not None
+        assert sample_benchmark_context.generated_expectation.conditions == (
+            AnswerMatches(correct_answer="Paris", correct_answer_index="1"),
+        )
+        assert sample_benchmark_context.generated_expectation.objective == sample_benchmark_context.generated_objective
 
     async def test_format_question_prompt(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
@@ -198,19 +205,17 @@ class TestQuestionAnsweringBenchmark:
     async def test_create_message(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
-        """Test message creation with metadata."""
+        """Test message creation without answer metadata."""
         benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
         question_prompt = "Test question prompt"
 
-        message = benchmark._create_message(entry=sample_question_entry, question_prompt=question_prompt)
+        message = benchmark._create_message(question_prompt=question_prompt)
 
         assert isinstance(message, Message)
         message_piece = message.get_piece()
         assert message_piece.original_value == question_prompt
         assert message_piece.api_role == "user"
-        assert message_piece.prompt_metadata is not None
-        assert message_piece.prompt_metadata["correct_answer_index"] == "1"
-        assert message_piece.prompt_metadata["correct_answer"] == "Paris"
+        assert not message_piece.prompt_metadata
 
     async def test_perform_async_calls_prompt_sending_attack(
         self,
@@ -237,6 +242,7 @@ class TestQuestionAnsweringBenchmark:
             call_kwargs = mock_attack_instance.execute_async.call_args.kwargs
 
             assert call_kwargs["objective"] == sample_benchmark_context.generated_objective
+            assert call_kwargs["expectation"] is sample_benchmark_context.generated_expectation
             # Check that next_message was passed (from generated_message)
             assert "next_message" in call_kwargs
             assert call_kwargs["prepended_conversation"] == sample_benchmark_context.prepended_conversation
@@ -434,6 +440,7 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
         assert context.generated_objective == ""
         assert context.generated_question_prompt == ""
         assert context.generated_message is None
+        assert context.generated_expectation is None
 
     async def test_full_workflow_integration(
         self,
@@ -515,3 +522,55 @@ class TestQuestionAnsweringBenchmarkErrorHandling:
             # Should propagate the exception
             with pytest.raises(Exception, match="Attack failed"):
                 await benchmark._perform_async(context=context)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scorer_kind", ["deterministic", "llm"])
+async def test_benchmark_typed_expectation_end_to_end_async(
+    sample_question_entry: QuestionAnsweringEntry, scorer_kind: str
+) -> None:
+    target = MockPromptTarget()
+    judge = MockPromptTarget()
+    scorer = (
+        QuestionAnswerScorer() if scorer_kind == "deterministic" else SelfAskQuestionAnswerScorer(chat_target=judge)
+    )
+    benchmark = QuestionAnsweringBenchmark(
+        objective_target=target,
+        attack_scoring_config=AttackScoringConfig(objective_scorer=scorer),
+        question_asking_format_string="{question}",
+    )
+    response = Message.from_prompt(prompt="Paris", role="assistant")
+    verdict = Message.from_prompt(
+        prompt='{"score_value":"true","description":"correct","rationale":"Paris matches","metadata":""}',
+        role="assistant",
+    )
+    with (
+        patch.object(target, "send_prompt_async", new_callable=AsyncMock, return_value=[response]) as send,
+        patch.object(judge, "send_prompt_async", new_callable=AsyncMock, return_value=[verdict]),
+    ):
+        result = await benchmark.execute_async(question_answering_entry=sample_question_entry)
+
+    assert result.outcome == AttackOutcome.SUCCESS
+    sent = send.call_args.kwargs["message"]
+    assert sent.get_value() == sample_question_entry.question
+    assert not sent.get_piece().prompt_metadata
+    assert "Paris" not in sent.get_value()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("with_scorer", [False, True])
+async def test_benchmark_rejects_incompatible_configuration_before_target_async(
+    sample_question_entry: QuestionAnsweringEntry, with_scorer: bool
+) -> None:
+    target = MockPromptTarget()
+    benchmark = QuestionAnsweringBenchmark(
+        objective_target=target,
+        attack_scoring_config=AttackScoringConfig(
+            objective_scorer=SubStringScorer(substring="Paris") if with_scorer else None
+        ),
+    )
+    with patch.object(target, "send_prompt_async", new_callable=AsyncMock) as send:
+        with pytest.raises(RuntimeError, match="does not match.*AnswerMatches") as error:
+            await benchmark.execute_async(question_answering_entry=sample_question_entry)
+    assert isinstance(error.value.__cause__, ValueError)
+    send.assert_not_called()

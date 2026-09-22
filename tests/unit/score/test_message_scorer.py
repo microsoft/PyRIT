@@ -274,7 +274,12 @@ class TestScorerBaseIsScorableAgnostic:
 
     def test_message_scorer_satisfies_the_scorable_contract(self):
         assert "_score_scorable_async" not in MessageScorer.__abstractmethods__
-        assert "_score_piece_async" in MessageScorer.__abstractmethods__
+        assert "_score_piece_async" not in MessageScorer.__abstractmethods__
+
+    @pytest.mark.asyncio
+    async def test_message_scorer_rejects_a_leaf_without_a_piece_hook(self):
+        with pytest.raises(NotImplementedError):
+            await MessageScorer._score_piece_async(object(), None)  # type: ignore[arg-type]
 
     def test_message_dependencies_live_on_message_scorer(self):
         # The base keeps 'validator' only as a deprecated shim for pre-2.0 subclasses; the

@@ -18,6 +18,19 @@
 # ## Q&A Benchmark
 #
 # `QuestionAnsweringBenchmark` runs a multiple-choice dataset (here, WMDP) through a target and scores each answer. Fetching the dataset can take a minute.
+#
+# The benchmark builds a `ScoringExpectation` containing `AnswerMatches` from each entry.
+# Expected answers are scoring criteria, not target-facing metadata. Choose the deterministic
+# `QuestionAnswerScorer` for case-insensitive answer text/index matching, or
+# `SelfAskQuestionAnswerScorer` for an LLM judgment. Both consume the same typed expectation.
+# A scorer configuration that cannot consume `AnswerMatches` fails before the target is called.
+#
+# **Migration:** `QuestionAnswerScorer` no longer reads `prompt_metadata["correct_answer"]`
+# or `prompt_metadata["correct_answer_index"]`. When scoring directly, pass
+# `expectation=ScoringExpectation(conditions=[AnswerMatches(correct_answer="Paris", correct_answer_index="0")])`.
+# Both fields are required nonempty strings. Custom `correct_answer_matching_patterns` still use
+# `{correct_answer}` and `{correct_answer_index}`. The LLM scorer also retains objective-only
+# scoring when no `AnswerMatches` is supplied; the benchmark always supplies the typed condition.
 
 # %%
 from pyrit.datasets.executors.question_answer.wmdp_dataset import fetch_wmdp_dataset
@@ -29,7 +42,7 @@ from pyrit.models import (
 )
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.score import SelfAskQuestionAnswerScorer
+from pyrit.score import QuestionAnswerScorer, SelfAskQuestionAnswerScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 # Initialize PyRIT (load environment files and set central memory instance)
@@ -37,6 +50,8 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 # Define the scoring configuration for the benchmark
 scoring_config = AttackScoringConfig(objective_scorer=SelfAskQuestionAnswerScorer(chat_target=OpenAIChatTarget()))
+# For deterministic scoring, pass this configuration to the benchmark instead.
+deterministic_scoring_config = AttackScoringConfig(objective_scorer=QuestionAnswerScorer())
 
 # Create the benchmark with scorer and execute with demo dataset
 benchmark = QuestionAnsweringBenchmark(

@@ -131,6 +131,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.score import (
         Acquisition,
+        AnswerMatches,
         Condition,
         ContentEntryScorable,
         ContentScorable,
@@ -182,6 +183,7 @@ if TYPE_CHECKING:
 
 _LAZY_EXPORTS: dict[str, str] = {
     "Acquisition": "pyrit.models.score",
+    "AnswerMatches": "pyrit.models.score",
     "ALLOWED_CHAT_MESSAGE_ROLES": "pyrit.models.messages.chat_message",
     "AtomicAttackEvaluationIdentifier": "pyrit.models.identifiers",
     "AtomicAttackIdentifier": "pyrit.models.identifiers",

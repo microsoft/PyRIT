@@ -1470,6 +1470,7 @@ class SeedEntry(Base):
             are stored, this is used to order the prompts.
         role (str): The role of the prompt (e.g., user, system, assistant).
         seed_type (SeedType): The type of seed - "prompt", "objective", or "simulated_conversation".
+        conditions (list[dict[str, Any]] | None): Serialized objective criteria, absent for other seeds.
 
     Methods:
         __str__(): Returns a string representation of the memory entry.
@@ -1496,6 +1497,7 @@ class SeedEntry(Base):
     sequence: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
     role: Mapped[ChatMessageRole | None] = mapped_column(String, nullable=True)
     seed_type: Mapped[SeedType] = mapped_column(String, nullable=False, default="prompt")
+    conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: Seed) -> None:
         """
@@ -1528,6 +1530,11 @@ class SeedEntry(Base):
         self.prompt_metadata = self._pack_seed_metadata(entry)
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
+        self.conditions = (
+            entry.model_dump(mode="json", include={"conditions"})["conditions"] or None
+            if isinstance(entry, SeedObjective)
+            else None
+        )
 
         # SeedPrompt-specific fields
         if isinstance(entry, SeedPrompt):
@@ -1624,7 +1631,12 @@ class SeedEntry(Base):
 
         Returns:
             Seed: The reconstructed seed object (SeedPrompt, SeedObjective, or SeedSimulatedConversation)
+
+        Raises:
+            ValueError: If persisted conditions are invalid or attached to a non-objective seed.
         """
+        if self.seed_type != "objective" and self.conditions not in (None, []):
+            raise ValueError("Only objective seeds can have persisted conditions.")
         cleaned_metadata, decoded_schema = self._unpack_seed_metadata(self.prompt_metadata)
         if self.seed_type == "objective":
             return SeedObjective(
@@ -1642,6 +1654,7 @@ class SeedEntry(Base):
                 added_by=self.added_by,
                 metadata=cleaned_metadata,
                 prompt_group_id=self.prompt_group_id,
+                conditions=self.conditions if self.conditions is not None else (),
             )
         if self.seed_type == "simulated_conversation":
             # Reconstruct SeedSimulatedConversation from JSON value

@@ -145,6 +145,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Datasets should never be retrieved from SeedDatasetProviders; SeedDatasetProviders should load into memory, and then components retrieve from memory
 - Most components should always work with seeds passed directly in (except scenarios which may package them from memory). Never use SeedDatasetProviders, file paths, etc. Either pass the seed as an argument or retrieve from memory.
 - There is a Seed hierarchy and the right types should be used (SeedObjective, SeedPrompt, SimulatedSeedPrompt, AttackSeedGroup, ...)
+- `SeedObjective.conditions` holds typed criteria beside its objective text. Seed storage and
+  identity retain those criteria; `SeedGroup.scoring_expectation` exposes them for execution.
 - **Does not own**: a dataset defines and holds seeds; it doesn't package them for an attack. Specifically not:
   - selecting or combining which seeds an attack uses (that's a scenario / attack technique)
   - rendering or parameterizing prompts at send time (converters / normalizers)

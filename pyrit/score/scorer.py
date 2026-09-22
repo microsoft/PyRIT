@@ -127,6 +127,8 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
             score_async = MessageScorer._score_async
 
         cls._score_async = score_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+        if not defines("_score_piece_with_expectation_async"):
+            cls._score_piece_with_expectation_async = MessageScorer._score_piece_with_expectation_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
         if not defines("_get_supported_pieces"):
             cls._get_supported_pieces = MessageScorer._get_supported_pieces  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
 
@@ -471,13 +473,12 @@ class Scorer(Identifiable, abc.ABC):
             ValueError: If conditions are unmatched, ambiguous, or missing required criteria.
         """
         ScoringExpectation.validate_type(expectation)
-        if expectation is None or not expectation.conditions:
-            return
-        matched = tuple({condition_type for scorer in scorers for condition_type in scorer.matched_conditions()})
-        unmatched = [condition for condition in expectation.conditions if not isinstance(condition, matched)]
-        if unmatched:
-            names = ", ".join(sorted({type(condition).__name__ for condition in unmatched}))
-            raise ValueError(f"The scorer group does not match the condition(s) {names}.")
+        if expectation is not None and expectation.conditions:
+            matched = tuple({condition_type for scorer in scorers for condition_type in scorer.matched_conditions()})
+            unmatched = [condition for condition in expectation.conditions if not isinstance(condition, matched)]
+            if unmatched:
+                names = ", ".join(sorted({type(condition).__name__ for condition in unmatched}))
+                raise ValueError(f"The scorer group does not match the condition(s) {names}.")
         for scorer in scorers:
             scorer._validate_expectation(expectation=expectation)
 

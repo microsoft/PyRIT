@@ -157,7 +157,21 @@ def test_wrapper_group_preflight_keeps_empty_condition_compatibility(
     wrapper, child = wrapper_pair
     with patch.object(child, "_validate_expectation", wraps=child._validate_expectation) as validate:
         Scorer.validate_expectation_for_scorers(scorers=[wrapper], expectation=expectation)
-    validate.assert_not_called()
+    validate.assert_called_once()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("expectation", [None, ScoringExpectation(objective="")])
+def test_wrapper_preflight_forwards_opt_in_empty_criteria_validation(
+    *, wrapper_pair: tuple[Scorer, MessageScorer], expectation: ScoringExpectation | None
+) -> None:
+    wrapper, child = wrapper_pair
+    with (
+        patch.object(child, "_validate_expectation", side_effect=ValueError("typed criteria required")) as validate,
+        pytest.raises(ValueError, match="typed criteria required"),
+    ):
+        Scorer.validate_expectation_for_scorers(scorers=[wrapper], expectation=expectation)
+    validate.assert_called_once()
 
 
 @pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested-composite"])

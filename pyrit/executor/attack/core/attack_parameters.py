@@ -146,6 +146,9 @@ class AttackParameters:
         if "objective" in valid_fields:
             params["objective"] = seed_group.objective.value
 
+        if "expectation" in valid_fields and seed_group.objective.conditions:
+            params["expectation"] = seed_group.scoring_expectation
+
         if "memory_labels" in valid_fields:
             params["memory_labels"] = {}
 
