@@ -42,14 +42,20 @@ CORE_TECHNIQUE_NAMES: list[str] = [
     "context_compliance",
     "bijection",
     "code_attack",
-    "code_attack_framed",
     "crescendo_movie_director",
     "crescendo_history_lecture",
     "crescendo_journalist_interview",
     "flip",
 ]
 
-EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "skeleton_key", "best_of_n", "violent_durian", "split_payload"]
+EXTRA_TECHNIQUE_NAMES: list[str] = [
+    "pair",
+    "skeleton_key",
+    "best_of_n",
+    "violent_durian",
+    "split_payload",
+    "code_attack_framed",
+]
 
 PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
     "crescendo_movie_director",

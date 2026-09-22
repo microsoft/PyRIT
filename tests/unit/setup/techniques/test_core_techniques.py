@@ -3,12 +3,12 @@
 
 """Tests for the ``core`` scenario attack techniques (``techniques/core.py``).
 
-Covers the ``flip``, ``code_attack``/``code_attack_framed``, and ``bijection``
-techniques. FlipAttack used to be a bespoke ``PromptSendingAttack`` subclass; it is
-now expressed purely as a ``core`` technique (``FlipConverter`` +
-``TaskFramingConverter`` + a system-prompt ``seed_technique``). These tests lock in
-the legacy behavior: the objective is sent as ``TASK is '<reversed-objective>'`` and
-the flip instruction system prompt is prepended verbatim (never flipped).
+Covers the ``flip``, ``code_attack``, and ``bijection`` techniques. FlipAttack used
+to be a bespoke ``PromptSendingAttack`` subclass; it is now expressed purely as a
+``core`` technique (``FlipConverter`` + ``TaskFramingConverter`` + a system-prompt
+``seed_technique``). These tests lock in the legacy behavior: the objective is sent
+as ``TASK is '<reversed-objective>'`` and the flip instruction system prompt is
+prepended verbatim (never flipped).
 """
 
 import pytest
@@ -37,10 +37,6 @@ def _flip_factory():
 
 def _code_attack_factory():
     return next(f for f in core.get_technique_factories() if f.name == "code_attack")
-
-
-def _code_attack_framed_factory():
-    return next(f for f in core.get_technique_factories() if f.name == "code_attack_framed")
 
 
 def _bijection_factory():
@@ -162,115 +158,6 @@ class TestCodeAttackTechnique:
         # The objective is pushed onto a stack in reverse, one word per line.
         assert "my_stack.append(" in result.output_text
         assert OBJECTIVE not in result.output_text
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestCodeAttackFramedTechnique:
-    """Tests for the ``code_attack_framed`` variant.
-
-    ``code_attack`` applies only the code-completion converter. The paper (Ren et al.,
-    arXiv:2403.07865) also frames the session with a code-completion system prompt, which
-    this variant adds via a ``seed_technique``. The converter wiring must stay identical to
-    ``code_attack``; the system framing is the only difference.
-    """
-
-    def test_factory_shape(self):
-        factory = _code_attack_framed_factory()
-        assert factory.name == "code_attack_framed"
-        assert factory._attack_class is PromptSendingAttack
-        assert factory.technique_tags == ["single_turn", "light"]
-        assert factory.description
-
-        seed_technique = factory.seed_technique
-        assert seed_technique is not None
-        assert len(seed_technique.seeds) == 1
-        seed = seed_technique.seeds[0]
-        assert seed.role == "system"
-        assert seed.is_general_technique is True
-        assert seed_technique.prompt_placement == "prepend"
-        assert "code completion assistant" in seed.value
-
-    def test_converter_wiring_matches_plain_code_attack(self):
-        """The variant differs only by the system framing, so the converters must match."""
-        framed = _wired_converters(_code_attack_framed_factory())
-        plain = _wired_converters(_code_attack_factory())
-
-        assert len(framed) == len(plain) == 1
-        assert isinstance(framed[0], CodeAttackConverter)
-        assert framed[0]._template_name == plain[0]._template_name
-        assert framed[0]._encoding is plain[0]._encoding
-
-    def test_plain_code_attack_still_has_no_system_prompt(self):
-        """Adding the variant must not retrofit framing onto the converter-only technique."""
-        assert _code_attack_factory().seed_technique is None
-
-    def test_merges_onto_group_with_user_turn_at_sequence_zero(self):
-        """The system seed must not collide with a user prompt already at sequence 0."""
-        factory = _code_attack_framed_factory()
-        base = AttackSeedGroup(
-            seeds=[
-                SeedObjective(value=OBJECTIVE),
-                SeedPrompt(value="opening user turn", data_type="text", role="user", sequence=0),
-            ]
-        )
-
-        merged = base.with_technique(technique=factory.seed_technique)
-
-        system_prompts = [p for p in merged.prompts if p.role == "system"]
-        assert len(system_prompts) == 1
-        assert system_prompts[0].sequence == 0
-        assert merged.prompts[0].role == "system"
-        assert [p.sequence for p in merged.prompts if p.role == "user"] == [1]
-
-    async def test_sends_encoded_objective_and_prepends_system_prompt(self):
-        target = MockPromptTarget()
-        factory = _code_attack_framed_factory()
-        technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
-
-        merged = AttackSeedGroup(seeds=[SeedObjective(value=OBJECTIVE)]).with_technique(
-            technique=technique.seed_technique
-        )
-
-        result = await AttackExecutor(max_concurrency=1).execute_attack_from_seed_groups_async(
-            attack=technique.attack,
-            seed_groups=[merged],
-        )
-
-        # The objective is still encoded as code, exactly as in plain code_attack.
-        sent = target.prompt_sent[-1]
-        assert "my_stack.append(" in sent
-        assert OBJECTIVE not in sent
-
-        # The framing is delivered as a separate system message, verbatim and unencoded.
-        conversation_id = result.completed_results[0].conversation_id
-        messages = CentralMemory.get_memory_instance().get_conversation_messages(conversation_id=conversation_id)
-        system_messages = [m for m in messages if m.get_piece().role == "system"]
-        assert len(system_messages) == 1
-        assert "code completion assistant" in system_messages[0].get_value()
-
-    async def test_non_editable_history_target_folds_framing_into_user_turn(self):
-        """Targets without system-prompt support get the framing squashed into the user turn.
-
-        This is the path the issue called out: rather than needing a bespoke attack class,
-        the framing rides the generic system-squash handling.
-        """
-        target = _NonEditableHistoryMockTarget()
-        factory = _code_attack_framed_factory()
-        technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
-
-        merged = AttackSeedGroup(seeds=[SeedObjective(value=OBJECTIVE)]).with_technique(
-            technique=technique.seed_technique
-        )
-
-        await AttackExecutor(max_concurrency=1).execute_attack_from_seed_groups_async(
-            attack=technique.attack,
-            seed_groups=[merged],
-        )
-
-        sent = target.prompt_sent[-1]
-        assert "code completion assistant" in sent
-        assert "my_stack.append(" in sent
-        assert OBJECTIVE not in sent
 
 
 @pytest.mark.usefixtures("patch_central_database")
