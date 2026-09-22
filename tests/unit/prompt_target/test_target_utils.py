@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import ast
 import asyncio
 import logging
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,6 +22,16 @@ from pyrit.prompt_target.common.utils import (
 
 def _request_piece(text: str = "ask") -> MessagePiece:
     return MessagePiece(role="user", conversation_id="c", original_value=text, original_value_data_type="text")
+
+
+def _decorator_name(decorator: ast.expr) -> str | None:
+    if isinstance(decorator, ast.Call):
+        decorator = decorator.func
+    if isinstance(decorator, ast.Name):
+        return decorator.id
+    if isinstance(decorator, ast.Attribute):
+        return decorator.attr
+    return None
 
 
 def test_validate_temperature_none():
@@ -199,6 +211,27 @@ async def test_target_retry_paces_every_attempt() -> None:
 
     assert attempts == 2
     assert [call.args[0] for call in mock_sleep.await_args_list].count(60.0) == 2
+
+
+def test_retrying_rate_limited_targets_pace_every_attempt() -> None:
+    prompt_target_path = Path(__file__).resolve().parents[3] / "pyrit" / "prompt_target"
+    violations: list[str] = []
+
+    for source_path in sorted(prompt_target_path.rglob("*.py")):
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            decorator_names = [_decorator_name(decorator) for decorator in node.decorator_list]
+            if "pyrit_target_retry" not in decorator_names or "limit_requests_per_minute" not in decorator_names:
+                continue
+            if decorator_names.index("pyrit_target_retry") > decorator_names.index("limit_requests_per_minute"):
+                relative_path = source_path.relative_to(prompt_target_path.parent.parent)
+                violations.append(f"{relative_path}:{node.lineno}")
+
+    assert not violations, (
+        "pyrit_target_retry must wrap limit_requests_per_minute so every retry is paced: " + ", ".join(violations)
+    )
 
 
 def test_limit_requests_per_minute_rebuilds_lock_for_new_event_loop() -> None:
