@@ -9,12 +9,23 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
-from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+    Seed,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+    DatasetConstraintError,
+    DatasetSourceKind,
+    ResolvedDataset,
+)
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import SubStringScorer, TrueFalseScorer
@@ -74,12 +85,31 @@ class ProPILEDatasetConfiguration(DatasetAttackConfiguration):
         super().__init__(**kwargs)
         self._techniques = list(techniques)
 
+    async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]:
+        """
+        Resolve records and templates together before building the record population.
+
+        Returns:
+            tuple: Record attack groups and the resolved records and templates for validation.
+        """
+        if self.source_kind is DatasetSourceKind.INLINE:
+            return await super()._build_groups_by_dataset_async()
+
+        seeds_by_dataset = await self._collect_named_seeds_async()
+        seeds = [seed for dataset_seeds in seeds_by_dataset.values() for seed in dataset_seeds]
+        resolved = ResolvedDataset(
+            seeds=seeds,
+            source_kind=self.source_kind,
+            dataset_names=tuple(seeds_by_dataset),
+        )
+        return {self.PII_DATASET_NAME: self._build_attack_groups(seeds)}, resolved
+
     def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """
         Build attack groups from the record dataset.
 
         Args:
-            seeds (list[Seed]): Seeds from one configured dataset.
+            seeds (list[Seed]): Resolved records and prompt templates.
 
         Returns:
             list[AttackSeedGroup]: Compatible ProPILE prompts and expected values.
@@ -91,7 +121,7 @@ class ProPILEDatasetConfiguration(DatasetAttackConfiguration):
         if not records:
             return []
 
-        templates = self._load_templates()
+        templates = self._group_templates(seeds)
         groups: list[AttackSeedGroup] = []
         for technique in self._techniques:
             technique_groups = self._build_groups_for_technique(
@@ -106,9 +136,12 @@ class ProPILEDatasetConfiguration(DatasetAttackConfiguration):
             groups.extend(technique_groups)
         return groups
 
-    def _load_templates(self) -> dict[str, list[SeedPrompt]]:
+    def _group_templates(self, seeds: list[Seed]) -> dict[str, list[SeedPrompt]]:
         """
-        Load ProPILE prompt templates grouped by category.
+        Group the resolved ProPILE prompt templates by category.
+
+        Args:
+            seeds (list[Seed]): Resolved records and prompt templates.
 
         Returns:
             dict[str, list[SeedPrompt]]: Templates keyed by ProPILE category.
@@ -116,11 +149,10 @@ class ProPILEDatasetConfiguration(DatasetAttackConfiguration):
         Raises:
             DatasetConstraintError: If the template dataset is unavailable or empty.
         """
-        seeds = CentralMemory.get_memory_instance().get_seeds(dataset_name=self.TEMPLATE_DATASET_NAME)
         templates: dict[str, list[SeedPrompt]] = {}
         for seed in seeds:
             category = (seed.metadata or {}).get("category")
-            if isinstance(seed, SeedPrompt) and category:
+            if seed.dataset_name == self.TEMPLATE_DATASET_NAME and isinstance(seed, SeedPrompt) and category:
                 templates.setdefault(str(category), []).append(seed)
         if not templates:
             raise DatasetConstraintError(
@@ -309,10 +341,7 @@ class ProPILE(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=ProPILETechnique,
-            default_dataset_config=DatasetAttackConfiguration(
-                dataset_names=[ProPILEDatasetConfiguration.PII_DATASET_NAME],
-                max_dataset_size=ProPILEDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
-            ),
+            default_dataset_config=DatasetAttackConfiguration(),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
@@ -358,6 +387,25 @@ class ProPILE(Scenario):
         self._dataset_config = config
         return await config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
 
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+        """
+        Count each selected record/template group once, not once per technique.
+
+        Returns:
+            ScenarioRunSizeEstimate: The selected prompt count and dataset summary.
+        """
+        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
+        count = sum(len(groups) for groups in selected_groups.values())
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=count,
+            components=[ScenarioRunSizeComponent(label="ProPILE prompts", count=count)],
+            datasets=datasets,
+            note=(
+                "Each selected group already belongs to one technique and produces one prompt-sending attack. "
+                "The size cap is shared across selected techniques; retries are excluded."
+            ),
+        )
+
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Build one expected-value-scored atomic attack per sampled record/template group.
@@ -366,7 +414,7 @@ class ProPILE(Scenario):
             list[AtomicAttack]: Bounded attacks with record-specific scorers.
         """
         atomic_attacks: list[AtomicAttack] = []
-        for index, group in enumerate(context.seed_groups):
+        for group in context.seed_groups:
             metadata = group.objective.metadata or {}
             expected_value = str(metadata["expected_value"])
             technique_name = str(metadata["technique"])
@@ -390,7 +438,7 @@ class ProPILE(Scenario):
             )
             atomic_attacks.append(
                 AtomicAttack(
-                    atomic_attack_name=f"{technique_name}__expected_{index}",
+                    atomic_attack_name=f"{technique_name}__{group.logical_id}",
                     display_group=technique_name,
                     attack_technique=AttackTechnique(attack=attack),
                     seed_groups=[group],

@@ -277,6 +277,11 @@ await output_scenario_async(sysprompt_result)
 # Twin and a limited number of Triplet combinations; selecting Quadruplet or Unstructured with those
 # records raises an error instead of reporting an empty successful scan.
 #
+# `LoadDefaultDatasets` does not load the ProPILE datasets unless they are selected explicitly.
+# After record selection, the scenario loads the template dataset automatically. The default cap
+# is 12 generated prompts in total across the selected techniques, not 12 per technique.
+# Resume keeps the original prompt selection.
+#
 # **CLI example:**
 #
 # ```bash
