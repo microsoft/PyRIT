@@ -103,16 +103,36 @@ def test_run_size_estimate_rejects_conflicting_total_aliases() -> None:
 
 
 def test_run_size_estimate_accepts_canonical_total_input() -> None:
-    """The canonical total parses to the single stored compatibility value."""
-    estimate = ScenarioRunSizeEstimate.model_validate(
-        {
-            "total_attack_count": 2,
-            "components": [{"label": "Techniques", "count": 2}],
-        }
+    """The canonical total is the stored model field."""
+    estimate = ScenarioRunSizeEstimate(
+        total_attack_count=2,
+        components=[ScenarioRunSizeComponent(label="Techniques", count=2)],
     )
 
     assert estimate.total_attack_count == 2
     assert estimate.estimated_attack_count == 2
+    assert "total_attack_count" in ScenarioRunSizeEstimate.model_json_schema(mode="validation")["properties"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"total_attack_count": 3, "estimated_attack_count": None},
+        {"total_attack_count": None, "estimated_attack_count": 3},
+    ],
+)
+def test_run_size_estimate_normalizes_null_compatibility_totals(payload: dict[str, int | None]) -> None:
+    """A null duplicate total cannot hide the known value from another accepted spelling."""
+    estimate = ScenarioRunSizeEstimate.model_validate(
+        {
+            **payload,
+            "components": [{"label": "Techniques", "count": 3}],
+        }
+    )
+
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
+    assert estimate.total_attack_count == 3
+    assert estimate.estimated_attack_count == 3
 
 
 def test_run_size_estimate_requires_exact_total_to_match_components() -> None:
@@ -234,6 +254,31 @@ def test_non_exact_run_size_rejects_total(status: ScenarioRunSizeEstimateStatus)
             status=status,
             estimated_attack_count=1,
             components=[ScenarioRunSizeComponent(label="Candidate", count=1)],
+        )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        ScenarioRunSizeEstimateStatus.Exact,
+        ScenarioRunSizeEstimateStatus.Unavailable,
+    ],
+)
+def test_non_conditional_run_size_rejects_condition(status: ScenarioRunSizeEstimateStatus) -> None:
+    """Only conditional estimates can carry a reason that their total is unresolved."""
+    kwargs: dict[str, object] = {}
+    if status is ScenarioRunSizeEstimateStatus.Exact:
+        kwargs = {
+            "total_attack_count": 1,
+            "components": [ScenarioRunSizeComponent(label="Candidate", count=1)],
+        }
+
+    message = f"{status.value.capitalize()} run-size estimates cannot include condition"
+    with pytest.raises(ValidationError, match=message):
+        ScenarioRunSizeEstimate(
+            status=status,
+            condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
+            **kwargs,
         )
 
 

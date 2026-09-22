@@ -840,6 +840,9 @@ async def test_adversarial_benchmark_resolves_targets_and_filters_each_technique
     assert estimate.status is (
         ScenarioRunSizeEstimateStatus.Exact if expected_total is not None else ScenarioRunSizeEstimateStatus.Conditional
     )
+    assert estimate.condition is (
+        None if expected_total is not None else ScenarioRunSizeEstimateCondition.PriorExecutionResults
+    )
     assert [(component.label, component.count) for component in estimate.components] == [("one", 4), ("two", 2)]
     assert [[factor.count for factor in component.factors] for component in estimate.components] == [
         [1, 2, 2],

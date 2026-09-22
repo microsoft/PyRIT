@@ -72,6 +72,7 @@ class ScenarioRunSizeEstimateCondition(str, Enum):
 
     TargetCapabilities = "target_capabilities"
     LaunchConfiguration = "launch_configuration"
+    PriorExecutionResults = "prior_execution_results"
 
 
 class ScenarioRunSizeFactor(BaseModel):
@@ -151,10 +152,10 @@ class ScenarioRunSizeEstimate(BaseModel):
     """
 
     status: ScenarioRunSizeEstimateStatus = ScenarioRunSizeEstimateStatus.Conditional
-    estimated_attack_count: int | None = Field(
+    total_attack_count: int | None = Field(
         default=None,
         ge=0,
-        validation_alias=AliasChoices("estimated_attack_count", "total_attack_count", "total"),
+        validation_alias=AliasChoices("total_attack_count", "estimated_attack_count", "total"),
     )
     minimum_attack_count: int | None = Field(default=None, ge=0)
     maximum_attack_count: int | None = Field(default=None, ge=0)
@@ -169,9 +170,9 @@ class ScenarioRunSizeEstimate(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def total_attack_count(self) -> int | None:
-        """The canonical projection of ``estimated_attack_count``."""
-        return self.estimated_attack_count
+    def estimated_attack_count(self) -> int | None:
+        """Compatibility projection of ``total_attack_count``."""
+        return self.total_attack_count
 
     @model_validator(mode="before")
     @classmethod
@@ -189,13 +190,15 @@ class ScenarioRunSizeEstimate(BaseModel):
             return data
 
         normalized = dict(data)
-        total_values = [
-            normalized[key]
-            for key in ("total_attack_count", "estimated_attack_count", "total")
-            if normalized.get(key) is not None
-        ]
+        total_field_names = ("total_attack_count", "estimated_attack_count", "total")
+        present_total_fields = [key for key in total_field_names if key in normalized]
+        total_values = [normalized[key] for key in present_total_fields if normalized[key] is not None]
         if total_values and any(value != total_values[0] for value in total_values[1:]):
             raise ValueError("total_attack_count and compatibility total fields must match")
+        if present_total_fields:
+            normalized["total_attack_count"] = total_values[0] if total_values else None
+            normalized.pop("estimated_attack_count", None)
+            normalized.pop("total", None)
         if "status" not in normalized:
             normalized["status"] = (
                 ScenarioRunSizeEstimateStatus.Exact if total_values else ScenarioRunSizeEstimateStatus.Conditional
@@ -223,6 +226,9 @@ class ScenarioRunSizeEstimate(BaseModel):
             ValueError: If the estimate contains contradictory values.
         """
         component_total = sum(component.count for component in self.components)
+        if self.status is not ScenarioRunSizeEstimateStatus.Conditional and self.condition is not None:
+            raise ValueError(f"{self.status.value.capitalize()} run-size estimates cannot include condition")
+
         if self.status is ScenarioRunSizeEstimateStatus.Exact:
             if self.total_attack_count is None:
                 raise ValueError("Exact run-size estimates require total_attack_count")

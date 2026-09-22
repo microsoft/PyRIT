@@ -285,7 +285,7 @@ class AdversarialBenchmark(Scenario):
                 status=ScenarioRunSizeEstimateStatus.Conditional,
                 minimum_attack_count=0,
                 maximum_attack_count=per_target_maximum * target_count if per_target_maximum is not None else None,
-                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
+                condition=ScenarioRunSizeEstimateCondition.PriorExecutionResults,
                 components=components,
                 datasets=datasets,
                 note=(
@@ -324,7 +324,7 @@ class AdversarialBenchmark(Scenario):
             )
         return ScenarioRunSizeEstimate(
             status=ScenarioRunSizeEstimateStatus.Exact,
-            estimated_attack_count=sum(component.count for component in components),
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note="Baseline is forbidden; retries and internal attack turns are excluded.",

@@ -274,7 +274,7 @@ class ApiKey(Scenario):
         ]
         return ScenarioRunSizeEstimate(
             status=ScenarioRunSizeEstimateStatus.Exact,
-            estimated_attack_count=sum(component.count for component in components),
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
         )

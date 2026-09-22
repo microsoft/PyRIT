@@ -284,7 +284,7 @@ class AdaptiveScenario(Scenario):
                 "selected seed group."
             )
         return ScenarioRunSizeEstimate(
-            estimated_attack_count=estimated_attack_count,
+            total_attack_count=estimated_attack_count,
             minimum_attack_count=minimum_attack_count,
             maximum_attack_count=maximum_attack_count,
             components=components,
