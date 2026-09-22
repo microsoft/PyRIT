@@ -64,6 +64,35 @@ JQ = shutil.which("jq")
 
 
 @unittest.skipIf(BASH is None, "Native Bash is not installed")
+class TestLocalDockerBuild(unittest.TestCase):
+    def test_only_dirty_local_builds_use_development_preparation(self) -> None:
+        assert BASH is not None
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        local_build = dockerfile.split('elif [ "$PYRIT_SOURCE" = "local" ]; then', 1)[1].split("\n    else", 1)[0]
+        script = (
+            'set -eu\nuv() { :; }\npython() { printf "prepare:%s\\n" "$*"; }\n'
+            + local_build.replace("/opt/venv/bin/python", "python")
+            + "\n"
+        )
+
+        for dirty in ("true", "false"):
+            with self.subTest(dirty=dirty):
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc", "-s"],
+                    input=script,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                    env={**os.environ, "GIT_COMMIT": "a" * 40, "GIT_MODIFIED": dirty},
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                preparation = [line for line in result.stdout.splitlines() if line.startswith("prepare:")]
+                expected = "prepare:-m build_scripts.prepare_package" + (" --development" if dirty == "true" else "")
+                assert preparation == [expected]
+
+
+@unittest.skipIf(BASH is None, "Native Bash is not installed")
 class TestPypiBuild(unittest.TestCase):
     def test_pypi_images_require_an_explicit_coordinated_version(self) -> None:
         pipeline = yaml.safe_load((REPO_ROOT / ".github/workflows/docker_build.yml").read_text(encoding="utf-8"))
