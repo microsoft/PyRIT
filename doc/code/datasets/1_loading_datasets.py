@@ -46,6 +46,7 @@
 # OR-Bench [@cui2024orbench],
 # PKU-SafeRLHF [@ji2024pkusaferlhf],
 # SALAD-Bench [@li2024saladbench],
+# SemGuard [@abughallous2026semguard],
 # SimpleSafetyTests [@vidgen2023simplesafetytests],
 # SIUO [@wang2025siuo],
 # SORRY-Bench [@xie2024sorrybench],
@@ -68,7 +69,11 @@
 # (`garak_pypi_packages`, `garak_npm_packages`, `garak_crates_packages`,
 # `garak_rubygems_packages`, `garak_dart_packages`, `garak_perl_packages`,
 # `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
-# `garak_tm_system_prompts`), an audio jailbreak set
+# `garak_tm_system_prompts`), PromptInject context and technique templates
+# (`prompt_inject_contexts`, `prompt_inject_techniques`), API-key probe corpora (`garak_api_key_services`,
+# `garak_api_key_templates`, `garak_api_key_partial_keys`, `garak_api_key_safe_placeholders`),
+# the API-key service-to-pattern map (`garak_api_key_service_patterns`),
+# an audio jailbreak set
 # (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 
 # %%

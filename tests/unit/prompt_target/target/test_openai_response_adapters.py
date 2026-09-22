@@ -23,6 +23,43 @@ from pyrit.prompt_target.openai._response_adapter import (
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
 from pyrit.prompt_target.openai.openai_completion_target import OpenAICompletionTarget
 from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
+from pyrit.prompt_target.openai.openai_target import OpenAITarget
+
+
+@pytest.mark.parametrize("text", [None, 123, [], "", " ", "retained"])
+def test_responses_adapter_defensively_reads_unvalidated_text(text):
+    response = _responses_response(status="completed")
+    response.output[0].content = [ResponseOutputText.model_construct(annotations=[], text=text, type="output_text")]
+    expected = text if isinstance(text, str) and text else None
+    assert ResponsesResponseAdapter().extract_partial_content(response=response) == expected
+
+
+@pytest.mark.parametrize("code", ["content_filter", "server_error"])
+def test_responses_adapter_accepts_azure_content_filter_code(code):
+    response = _responses_response(status="completed")
+    from openai.types.responses.response_error import ResponseError
+
+    response.error = ResponseError.model_construct(code=code, message="provider error")
+    if code == "content_filter":
+        ResponsesResponseAdapter().validate(response=response, is_truncated=False)
+    else:
+        with pytest.raises(PyritException, match="provider error"):
+            ResponsesResponseAdapter().validate(response=response, is_truncated=False)
+
+
+@pytest.mark.parametrize("value", [None, 12, {}, ""])
+def test_openai_request_headers_ignore_non_string_input(value):
+    assert OpenAITarget._parse_request_headers(value) == {}
+
+
+@pytest.mark.parametrize("value", ["[]", "null", '{"x-header": 12}'])
+def test_openai_request_headers_reject_malformed_mapping(value):
+    with pytest.raises(ValueError, match="string keys and values"):
+        OpenAITarget._parse_request_headers(value)
+
+
+def test_openai_request_headers_parse_string_mapping():
+    assert OpenAITarget._parse_request_headers('{"x-header": "test"}') == {"x-header": "test"}
 
 
 def _piece() -> MessagePiece:

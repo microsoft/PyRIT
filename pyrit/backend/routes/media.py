@@ -8,6 +8,12 @@ Serves locally stored media files (images, audio, video, etc.) via HTTP
 so the frontend can reference them by URL instead of requiring inline
 base64 data URIs.  For Azure deployments, media is served directly from
 Azure Blob Storage via signed URLs and this endpoint is not used.
+
+This route is the only place PyRIT hands stored bytes to a browser, so it controls
+whether the browser renders or downloads them. Storage and download support stay
+unrestricted on purpose: any file type is a legitimate attack payload. Only
+explicitly allowlisted media types render inline; every other type downloads as
+opaque bytes.
 """
 
 import logging
@@ -26,8 +32,9 @@ router = APIRouter()
 # Only serve files from known media subdirectories under results_path.
 _ALLOWED_SUBDIRECTORIES = {"prompt-memory-entries", "seed-prompt-entries"}
 
-# Only serve known media file types (allowlist approach).
-_ALLOWED_EXTENSIONS = {
+# Only these known-safe media types render inline. Every other extension is
+# served as an application/octet-stream attachment.
+_INLINE_EXTENSIONS = {
     # Images
     ".png",
     ".jpg",
@@ -35,7 +42,6 @@ _ALLOWED_EXTENSIONS = {
     ".gif",
     ".bmp",
     ".webp",
-    ".svg",
     ".ico",
     ".tiff",
     # Audio
@@ -51,12 +57,6 @@ _ALLOWED_EXTENSIONS = {
     ".mov",
     ".avi",
     ".mkv",
-    # Text / documents
-    ".txt",
-    ".md",
-    ".csv",
-    ".pdf",
-    ".html",
 }
 
 
@@ -92,10 +92,6 @@ def _validate_media_path(*, path: str, allowed_root: Path) -> Path:
     if not relative_parts or relative_parts[0] not in _ALLOWED_SUBDIRECTORIES:
         raise HTTPException(status_code=403, detail="Access denied: path is not in a media subdirectory.")
 
-    # Only allow known media file extensions
-    if real_path.suffix.lower() not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=403, detail="Access denied: file type is not allowed.")
-
     return real_path
 
 
@@ -110,6 +106,11 @@ async def serve_media_async(
     configured results directory (e.g. ``dbdata/prompt-memory-entries/``)
     to prevent path traversal attacks and exfiltration of sensitive files.
 
+    Upload storage and downloads accept any file type. Extensions in
+    ``_INLINE_EXTENSIONS`` use their inferred media type and can render inline.
+    Every other extension is returned as an ``application/octet-stream``
+    attachment with ``nosniff`` so the browser downloads rather than renders it.
+
     Args:
         path: Absolute path to the file.
 
@@ -117,7 +118,7 @@ async def serve_media_async(
         FileResponse with the file content and inferred MIME type.
 
     Raises:
-        HTTPException 403: If the path is outside the allowed directory or has a blocked extension.
+        HTTPException 403: If the path is outside the allowed directory.
         HTTPException 404: If the file does not exist.
         HTTPException 500: If memory is not initialized.
     """
@@ -134,8 +135,13 @@ async def serve_media_async(
     if not validated_path.is_file():
         raise HTTPException(status_code=404, detail="File not found.")
 
-    mime_type, _ = mimetypes.guess_type(validated_path)
+    extension = validated_path.suffix.lower()
+    render_inline = extension in _INLINE_EXTENSIONS
+    guessed_type, _ = mimetypes.guess_type(validated_path) if render_inline else (None, None)
     return FileResponse(
         path=validated_path,
-        media_type=mime_type or "application/octet-stream",
+        media_type=guessed_type or "application/octet-stream",
+        filename=None if render_inline else validated_path.name,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
     )

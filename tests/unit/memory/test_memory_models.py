@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -619,14 +620,93 @@ class TestSeedEntry:
         assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in (recovered.metadata or {})
         assert (recovered.metadata or {}).get("owned") == "by-caller"
 
+    def test_roundtrip_seed_simulated_conversation_preserves_prompts_and_version(self):
+        """A canonical record round-trips its prompts, value, hash, and recorded version."""
+        config = SeedSimulatedConversation(
+            num_turns=2,
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+            next_message_system_prompt=SeedPrompt(value="next", response_json_schema_name="adversarial_chat"),
+            pyrit_version="1.0.0",
+        )
+        config.value_sha256 = "canonical-hash"
+
+        recovered = SeedEntry(entry=config).get_seed()
+
+        assert isinstance(recovered, SeedSimulatedConversation)
+        assert recovered.adversarial_chat_system_prompt.value == "adversarial"
+        assert recovered.next_message_system_prompt is not None
+        assert recovered.next_message_system_prompt.response_json_schema is not None
+        assert recovered.pyrit_version == "1.0.0"
+        assert recovered.value == config.value
+        assert recovered.value_sha256 == "canonical-hash"
+
+    def test_legacy_path_record_reconstructs_prompts(self, tmp_path):
+        """A record written before normalization still loads, resolving its paths to prompts."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: legacy adversarial\ndata_type: text")
+
+        seed = SeedSimulatedConversation(
+            num_turns=2,
+            adversarial_chat_system_prompt=SeedPrompt(value="placeholder"),
+        )
+        entry = SeedEntry(entry=seed)
+        entry.value = json.dumps(
+            {
+                "num_turns": 2,
+                "sequence": 0,
+                "adversarial_chat_system_prompt_path": str(adv_path),
+                "simulated_target_system_prompt_path": None,
+                "next_message_system_prompt_path": None,
+                "pyrit_version": "1.0.0",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        entry.value_sha256 = "stale-path-hash"
+
+        with pytest.warns(DeprecationWarning, match="adversarial_chat_system_prompt_path"):
+            recovered = entry.get_seed()
+
+        assert isinstance(recovered, SeedSimulatedConversation)
+        assert recovered.adversarial_chat_system_prompt.value == "legacy adversarial"
+        # The compliant default fills in for the omitted simulated target.
+        assert recovered.simulated_target_system_prompt.name == "simulated_target_compliant"
+        assert recovered.next_message_system_prompt is None
+        assert recovered.pyrit_version == "1.0.0"
+        # The stored hash described the old path-shaped value, so it is not carried over.
+        assert recovered.value_sha256 is None
+
+    def test_legacy_record_with_missing_file_names_the_record(self, tmp_path):
+        """A legacy record pointing at a file this machine lacks fails with the record identified."""
+        seed = SeedSimulatedConversation(
+            num_turns=2,
+            adversarial_chat_system_prompt=SeedPrompt(value="placeholder"),
+            name="stale-technique",
+            dataset_name="legacy-dataset",
+        )
+        entry = SeedEntry(entry=seed)
+        entry.value = json.dumps(
+            {
+                "num_turns": 2,
+                "sequence": 0,
+                "adversarial_chat_system_prompt_path": str(tmp_path / "gone.yaml"),
+                "pyrit_version": "1.0.0",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        with pytest.raises(ValueError, match="stale-technique"):
+            entry.get_seed()
+
     def test_roundtrip_seed_simulated_conversation_strips_reserved_key(self):
         """SeedSimulatedConversation also has no schema field; reserved key must still be stripped."""
         from pyrit.models import SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY
 
         config = SeedSimulatedConversation(
             num_turns=3,
-            adversarial_chat_system_prompt_path="/path/to/adversarial.yaml",
-            simulated_target_system_prompt_path="/path/to/target.yaml",
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+            simulated_target_system_prompt=SeedPrompt(value="target", parameters=["objective", "num_turns"]),
             metadata={
                 SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky",
                 "owned": "by-caller",

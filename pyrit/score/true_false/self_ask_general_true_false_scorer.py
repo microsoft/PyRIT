@@ -29,7 +29,7 @@ if TYPE_CHECKING:
         ScoringExpectation,
     )
     from pyrit.prompt_target import PromptTarget
-    from pyrit.score.observation import _ObservationEvidence
+    from pyrit.score.observation.execution import _ObservationEvidence
 
 
 class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):

@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
 
-    from pyrit.score.observation import _ObservationEvidence
+    from pyrit.score.observation.execution import _ObservationEvidence
 
 _DEFAULT_LIKERT_SYSTEM_PROMPT_PATH = SCORER_LIKERT_PATH / "likert_system_prompt.yaml"
 

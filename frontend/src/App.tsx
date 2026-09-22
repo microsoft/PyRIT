@@ -8,6 +8,8 @@ import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
+import ConverterRegistry from './components/Registry/ConverterRegistry'
+import RegistryLayout from './components/Registry/RegistryLayout'
 import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
 import HistoryPage from './components/History/HistoryPage'
@@ -58,7 +60,7 @@ const VIEW_PATHS: Record<ViewName, string> = {
   home: '/',
   chat: '/chat',
   history: HISTORY_ATTACKS_PATH,
-  targets: '/targets',
+  registry: '/registry/targets',
   scenarios: '/scanner',
   configuration: '/config',
 }
@@ -72,6 +74,9 @@ const VIEW_PATHS: Record<ViewName, string> = {
 function viewFromPath(pathname: string): ViewName {
   if (pathname === '/history' || pathname.startsWith('/history/') || pathname.startsWith('/scanner-history/')) {
     return 'history'
+  }
+  if (pathname === '/targets' || pathname.startsWith('/registry')) {
+    return 'registry'
   }
   if (
     pathname === VIEW_PATHS.scenarios
@@ -158,6 +163,7 @@ function App() {
   const routeConversationId = conversationMatch?.params.conversationId ?? null
   const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
   const [canManageConfiguration, setCanManageConfiguration] = useState(false)
+  const [chatToolbarContainer, setChatToolbarContainer] = useState<HTMLDivElement | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -530,6 +536,7 @@ function App() {
     />
   ) : (
     <ChatWindow
+      toolbarContainer={chatToolbarContainer}
       onNewAttack={handleNewAttack}
       activeTarget={activeTarget}
       attackResultId={readyAttack ? readyAttack.id : null}
@@ -541,7 +548,6 @@ function App() {
       onHumanScoreChange={handleHumanScoreChange}
       onAttackChange={handleAttackChange}
       labels={globalLabels}
-      onLabelsChange={handleGlobalLabelsChange}
       onNavigate={handleNavigate}
       attackOperator={readyAttack ? readyAttack.operator : null}
       attackTarget={readyAttack ? readyAttack.target : null}
@@ -579,14 +585,15 @@ function App() {
             onOpenFeedback={() => setFeedbackOpen(true)}
             canManageConfiguration={canManageConfiguration}
             onStartTour={startTour}
+            labels={globalLabels}
+            onLabelsChange={handleGlobalLabelsChange}
+            toolbarRef={setChatToolbarContainer}
           >
             <Routes>
               <Route
                 path="/"
                 element={
                   <Home
-                    labels={globalLabels}
-                    onLabelsChange={handleGlobalLabelsChange}
                     activeTarget={activeTarget}
                     onNavigate={handleNavigate}
                     onOpenAttack={handleOpenAttack}
@@ -605,15 +612,20 @@ function App() {
                 path="/attacks/:attackId/conversations/:conversationId"
                 element={chatElement}
               />
-              <Route
-                path="/targets"
-                element={
-                  <TargetConfig
-                    activeTarget={activeTarget}
-                    onSetActiveTarget={handleSetActiveTarget}
-                  />
-                }
-              />
+              <Route path="/registry" element={<RegistryLayout />}>
+                <Route index element={<Navigate to="/registry/targets" replace />} />
+                <Route
+                  path="targets"
+                  element={
+                    <TargetConfig
+                      activeTarget={activeTarget}
+                      onSetActiveTarget={handleSetActiveTarget}
+                    />
+                  }
+                />
+                <Route path="converters" element={<ConverterRegistry />} />
+              </Route>
+              <Route path="/targets" element={<Navigate to="/registry/targets" replace />} />
               <Route path="/scanner" element={<ScenarioCatalog />} />
               <Route
                 path="/scanner/:scenarioName"

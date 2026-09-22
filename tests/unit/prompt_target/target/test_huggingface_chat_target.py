@@ -180,6 +180,7 @@ async def test_hf_initialization_with_necessary_files(patch_central_database, mo
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_is_model_id_valid_true():
     # Simulate valid model ID
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
@@ -189,6 +190,7 @@ async def test_is_model_id_valid_true():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_is_model_id_valid_false():
     # Simulate invalid model ID by causing an exception
     with patch("transformers.PretrainedConfig.from_pretrained", side_effect=Exception("Invalid model")):
@@ -199,6 +201,7 @@ async def test_is_model_id_valid_false():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_load_model_and_tokenizer():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
     await hf_chat.load_model_and_tokenizer_async()
@@ -298,6 +301,7 @@ async def test_missing_chat_template_error():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_invalid_prompt_request_validation():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
     # Await the background task to prevent warnings
@@ -327,6 +331,7 @@ async def test_invalid_prompt_request_validation():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_load_with_missing_files():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, necessary_files=["file1", "file2"])
     await hf_chat.load_model_and_tokenizer_async()
@@ -350,6 +355,7 @@ def test_enable_disable_cache():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_load_model_with_model_path():
     """Test loading a model from a local directory (`model_path`)."""
     model_path = "./mock_local_model_path"
@@ -360,6 +366,7 @@ async def test_load_model_with_model_path():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_load_model_with_trust_remote_code():
     """Test loading a remote model requiring `trust_remote_code=True`."""
     model_id = "mock_remote_model"
@@ -370,6 +377,7 @@ async def test_load_model_with_trust_remote_code():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_init_with_both_model_id_and_model_path_raises():
     """Ensure providing both `model_id` and `model_path` raises an error."""
     with pytest.raises(ValueError) as excinfo:
@@ -378,6 +386,7 @@ def test_init_with_both_model_id_and_model_path_raises():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_load_model_without_model_id_or_path():
     """Ensure initializing without `model_id` or `model_path` raises an error."""
     with pytest.raises(ValueError) as excinfo:
@@ -386,6 +395,7 @@ def test_load_model_without_model_id_or_path():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_optional_kwargs_args_passed_when_loading_model(mock_transformers):
     """Test loading a model from a local directory (`model_path`) with optional keyword arguments."""
     mock_tokenizer_from_pretrained, mock_model_from_pretrained = mock_transformers
@@ -421,6 +431,7 @@ async def test_hugging_face_chat_sets_endpoint_and_rate_limit(patch_central_data
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_identifier_includes_generation_params():
     """New generation params (top_k, do_sample, repetition_penalty, random_seed) appear in the identifier."""
     target = HuggingFaceChatTarget(
@@ -441,6 +452,7 @@ def test_identifier_includes_generation_params():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_identifier_excludes_none_generation_params():
     """None-valued generation params are excluded from the identifier (backward compatibility)."""
     target = HuggingFaceChatTarget(
@@ -508,6 +520,7 @@ async def test_generate_omits_none_params():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_random_seed_calls_manual_seed_at_init():
     """When random_seed is set, torch.manual_seed is called during construction."""
     with patch("torch.manual_seed") as mock_manual_seed:
@@ -520,6 +533,7 @@ def test_random_seed_calls_manual_seed_at_init():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_no_random_seed_does_not_call_manual_seed():
     """When random_seed is None, torch.manual_seed is not called."""
     with patch("torch.manual_seed") as mock_manual_seed:
@@ -531,6 +545,7 @@ def test_no_random_seed_does_not_call_manual_seed():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_set_random_seed_reseeds_rng():
     """Calling set_random_seed updates the seed and immediately re-seeds the RNG."""
     target = HuggingFaceChatTarget(
@@ -544,6 +559,7 @@ def test_set_random_seed_reseeds_rng():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_sampling_params_without_do_sample_warns():
     """Setting temperature != 1.0 without do_sample=True emits a warning."""
     with pytest.warns(UserWarning, match="do_sample is not True"):
@@ -555,6 +571,7 @@ def test_sampling_params_without_do_sample_warns():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_sampling_params_with_do_sample_no_warning():
     """Setting temperature != 1.0 with do_sample=True does not warn."""
     import warnings
@@ -570,6 +587,7 @@ def test_sampling_params_with_do_sample_no_warning():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_default_params_no_warning():
     """Default parameters (temperature=1.0, top_p=1.0) do not trigger warning."""
     import warnings

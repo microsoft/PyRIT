@@ -11,15 +11,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from pyrit.backend.models.common import REGISTRY_INSTANCE_NAME_PATTERN
 from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
 
 __all__ = [
-    "ConverterCatalogEntry",
-    "ConverterCatalogResponse",
     "ConverterInstance",
     "ConverterInstanceListResponse",
+    "ConverterTypeEntry",
+    "ConverterTypeResponse",
     "CreateConverterRequest",
-    "CreateConverterResponse",
     "ConverterPreviewRequest",
     "ConverterPreviewResponse",
     "PreviewStep",
@@ -27,11 +27,11 @@ __all__ = [
 
 
 # ============================================================================
-# Converter Catalog (Available Types)
+# Converter Types
 # ============================================================================
 
 
-class ConverterCatalogEntry(BaseModel):
+class ConverterTypeEntry(BaseModel):
     """A converter type available from the backend registry."""
 
     converter_type: str = Field(..., description="Converter class name (e.g., 'Base64Converter')")
@@ -48,10 +48,10 @@ class ConverterCatalogEntry(BaseModel):
     description: str | None = Field(None, description="Short description of the converter from its docstring")
 
 
-class ConverterCatalogResponse(BaseModel):
+class ConverterTypeResponse(BaseModel):
     """Response for listing available converter types from the registry."""
 
-    items: list[ConverterCatalogEntry] = Field(..., description="List of available converter types")
+    items: list[ConverterTypeEntry] = Field(..., description="List of available converter types")
 
 
 # ============================================================================
@@ -68,8 +68,10 @@ class ConverterInstance(BaseModel):
     for the converter's class, supported data types, and constructor params.
     """
 
-    converter_id: str = Field(..., description="Unique converter instance identifier")
+    converter_id: str = Field(..., description="Converter instance registry name")
     identifier: ConverterIdentifier = Field(..., description="The converter's identity/configuration projection")
+    is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
+    description: str | None = Field(None, description="Short description of the converter type")
 
 
 class ConverterInstanceListResponse(BaseModel):
@@ -81,20 +83,17 @@ class ConverterInstanceListResponse(BaseModel):
 class CreateConverterRequest(BaseModel):
     """Request to create a new converter instance."""
 
+    name: str = Field(
+        ...,
+        min_length=1,
+        pattern=REGISTRY_INSTANCE_NAME_PATTERN,
+        description="Unique registry name for the converter instance",
+    )
     type: str = Field(..., description="Converter type (e.g., 'Base64Converter')")
-    display_name: str | None = Field(None, description="Human-readable display name")
     params: dict[str, Any] = Field(
         default_factory=dict,
         description="Converter constructor parameters",
     )
-
-
-class CreateConverterResponse(BaseModel):
-    """Response after creating a converter instance."""
-
-    converter_id: str = Field(..., description="Unique converter instance identifier")
-    converter_type: str = Field(..., description="Converter class name")
-    display_name: str | None = Field(None, description="Human-readable display name")
 
 
 # ============================================================================

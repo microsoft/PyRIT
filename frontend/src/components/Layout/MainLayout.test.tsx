@@ -6,12 +6,16 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { ThemeProvider, useTheme } from "@/hooks/useTheme";
 import MainLayout from "./MainLayout";
 
 // Mock the api module
 jest.mock("../../services/api", () => ({
   versionApi: {
     getVersion: jest.fn(),
+  },
+  labelsApi: {
+    getLabels: jest.fn().mockResolvedValue({ labels: {} }),
   },
 }));
 
@@ -26,7 +30,7 @@ jest.mock("../Sidebar/Navigation", () => {
   }) => {
     return (
       <div data-testid="navigation" data-current-view={currentView}>
-        <button onClick={() => onNavigate("targets")}>Targets</button>
+        <button onClick={() => onNavigate("registry")}>Registry</button>
       </div>
     );
   };
@@ -48,6 +52,7 @@ const renderWithProvider = (ui: React.ReactElement) => {
 describe("MainLayout", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
   });
 
   const defaultProps = {
@@ -55,6 +60,8 @@ describe("MainLayout", () => {
     onNavigate: jest.fn(),
     onOpenFeedback: jest.fn(),
     canManageConfiguration: true,
+    labels: { operator: 'alice', operation: 'test_op' },
+    onLabelsChange: jest.fn(),
   };
 
   it("renders the header with title and subtitle", async () => {
@@ -257,5 +264,41 @@ describe("MainLayout", () => {
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
     });
+  });
+
+  it("changes decoration without remounting workspace content or the shared labels editor", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
+    const user = userEvent.setup();
+
+    function Workspace() {
+      const { setMode } = useTheme();
+      return (
+        <MainLayout {...defaultProps}>
+          <input aria-label="Draft" defaultValue="" />
+          <button onClick={() => setMode("jimothy")}>Use Jimothy</button>
+          <button onClick={() => setMode("dark")}>Use Dark</button>
+        </MainLayout>
+      );
+    }
+
+    render(<ThemeProvider><Workspace /></ThemeProvider>);
+    await screen.findByText("Co-PyRIT 1.0.0");
+    const draft = screen.getByRole("textbox", { name: "Draft" });
+    const labels = screen.getByRole("region", { name: "New run labels" });
+    await user.type(draft, "draft");
+    expect(screen.queryByTestId("workspace-background")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Use Jimothy" }));
+    expect(screen.getByTestId("workspace-background")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("textbox", { name: "Draft" })).toBe(draft);
+    expect(draft).toHaveValue("draft");
+    expect(screen.getByRole("region", { name: "New run labels" })).toBe(labels);
+    expect(screen.getAllByTestId("labels-bar")).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "Use Dark" }));
+    expect(screen.queryByTestId("workspace-background")).not.toBeInTheDocument();
+    expect(draft).toHaveValue("draft");
+    expect(screen.getByRole("region", { name: "New run labels" })).toBe(labels);
+    expect(screen.getAllByTestId("labels-bar")).toHaveLength(1);
   });
 });

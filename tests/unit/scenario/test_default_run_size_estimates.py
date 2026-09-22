@@ -292,7 +292,7 @@ async def test_matrix_estimate_filters_each_technique_seed_population_like_execu
     conversation_factory.seed_technique = AttackTechniqueSeedGroup(
         seeds=[
             SeedSimulatedConversation(
-                adversarial_chat_system_prompt_path="fake.yaml",
+                adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                 num_turns=3,
             )
         ]
@@ -409,7 +409,7 @@ async def test_matrix_estimate_with_binding_cap_reports_compatibility_bounds() -
     conversation_factory.seed_technique = AttackTechniqueSeedGroup(
         seeds=[
             SeedSimulatedConversation(
-                adversarial_chat_system_prompt_path="fake.yaml",
+                adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                 num_turns=3,
             )
         ]
@@ -811,7 +811,7 @@ async def test_adversarial_benchmark_resolves_targets_and_filters_each_technique
     conversation_factory.seed_technique = AttackTechniqueSeedGroup(
         seeds=[
             SeedSimulatedConversation(
-                adversarial_chat_system_prompt_path="fake.yaml",
+                adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                 num_turns=3,
             )
         ]

@@ -19,7 +19,7 @@ from pyrit.models import (
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.score.observation import _merge_observation_ids
+from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -113,6 +113,12 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         for scorer in self._scorers:
             conditions.update(scorer.required_conditions())
         return frozenset(conditions)
+
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """Validate every child before any runs, leaving coverage to the root scorer group."""
+        super()._validate_expectation(expectation=expectation)
+        for scorer in self._scorers:
+            scorer._validate_expectation(expectation=expectation)
 
     async def _score_scorable_async(
         self,
