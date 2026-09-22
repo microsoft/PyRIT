@@ -16,13 +16,26 @@ logger = logging.getLogger(__name__)
 
 _HARM_CATEGORY_ALIASES: "dict[str, list[HarmCategory]]" = {}
 _CANONICAL_LOOKUP: "dict[str, HarmCategory]" = {}
-_SEP_TRANS = str.maketrans("", "", "_- ")
+_SEPARATOR_REMOVAL_TABLE = str.maketrans("", "", "_- ")
 
 with open(os.path.join(os.path.dirname(__file__), "harm_category_definitions.yaml")) as f:
     _HARM_CATEGORY_YAML: dict = yaml.safe_load(f) or {}
     _HARM_CATEGORY_DEFINITIONS: dict[str, str] = _HARM_CATEGORY_YAML.get("definitions", {})
 
 HARM_CATEGORY_TAXONOMY_VERSION: str = _HARM_CATEGORY_YAML.get("version", "v1.0.0")
+
+
+def normalize_harm_category_key(value: str) -> str:
+    """
+    Normalize a harm category key without resolving taxonomy aliases.
+
+    Args:
+        value (str): Category label from any taxonomy.
+
+    Returns:
+        str: Casefolded label with underscores, hyphens, and spaces removed.
+    """
+    return value.casefold().translate(_SEPARATOR_REMOVAL_TABLE)
 
 
 class HarmCategory(StrEnum):
@@ -184,21 +197,23 @@ class HarmCategory(StrEnum):
     @classmethod
     def _resolve_canonical_category(cls, value: str) -> "HarmCategory | None":
         """
-        Resolve a canonical category from enum name or display value.
+        Resolve a canonical category from a case- and separator-insensitive name or display value.
 
         Returns:
             HarmCategory enum member if found, None otherwise.
         """
-        normalized_value = value.strip().lower()
+        normalized_value = value.strip().casefold()
         if not normalized_value:
             return None
 
         if not _CANONICAL_LOOKUP:
             for member in cls.__members__.values():
-                for key in (member.value.lower(), member.name.lower()):
-                    _CANONICAL_LOOKUP[key] = _CANONICAL_LOOKUP[key.translate(_SEP_TRANS)] = member
+                for key in (member.value.casefold(), member.name.casefold()):
+                    _CANONICAL_LOOKUP[key] = _CANONICAL_LOOKUP[normalize_harm_category_key(key)] = member
 
-        return _CANONICAL_LOOKUP.get(normalized_value) or _CANONICAL_LOOKUP.get(normalized_value.translate(_SEP_TRANS))
+        return _CANONICAL_LOOKUP.get(normalized_value) or _CANONICAL_LOOKUP.get(
+            normalize_harm_category_key(normalized_value)
+        )
 
     @classmethod
     def _coerce_alias_mapping_value(
@@ -252,8 +267,9 @@ class HarmCategory(StrEnum):
         """
         Parse a raw harm category string to one or more canonical HarmCategory values.
 
-        Performs case-insensitive matching against canonical names/values, then
-        dataset-specific overrides, then built-in aliases. Falls back to OTHER.
+        Performs case- and separator-insensitive matching against canonical names/values,
+        then case-insensitive matching against dataset-specific overrides and built-in aliases.
+        Falls back to OTHER.
 
         Args:
             value: Raw category string from a dataset.
@@ -300,8 +316,8 @@ class HarmCategory(StrEnum):
         """
         Parse a raw harm category string to a canonical HarmCategory.
 
-        Performs case-insensitive matching against canonical names/values, aliases,
-        and optional dataset-specific overrides.
+        Performs case- and separator-insensitive matching against canonical names/values,
+        then case-insensitive matching against optional dataset-specific overrides and aliases.
         Falls back to OTHER for unknown categories.
 
         Args:

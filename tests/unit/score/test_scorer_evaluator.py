@@ -1026,12 +1026,25 @@ class TestSelectEvaluationScore:
             ("ProtectedMaterial", "protected_material"),
             ("protected-material", "protected_material"),
             ("PromptInjection", "prompt_injection"),
+            ("prompt_injection", "PromptInjection"),
             ("jailbreak-attempt", "jailbreak_attempt"),
         ],
     )
-    def test_accepts_separator_insensitive_category(self, emitted: str, labeled: str):
+    @pytest.mark.parametrize("multiple_scores", [False, True])
+    def test_accepts_separator_insensitive_category(self, *, emitted: str, labeled: str, multiple_scores: bool) -> None:
         score = self._score(category=[emitted])
-        assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category=labeled) is score
+        scores = [score]
+        if multiple_scores:
+            scores.insert(0, self._score(category=["unrelated_category"]))
+        assert ScorerEvaluator._select_evaluation_score(scores=scores, harm_category=labeled) is score
+
+    def test_rejects_multiple_separator_equivalent_categories(self) -> None:
+        scores = [
+            self._score(category=["PromptInjection"]),
+            self._score(category=["prompt-injection"]),
+        ]
+        with pytest.raises(ValueError, match="found 2 category matches"):
+            ScorerEvaluator._select_evaluation_score(scores=scores, harm_category="prompt_injection")
 
     @pytest.mark.parametrize(
         ("emitted", "labeled"),
