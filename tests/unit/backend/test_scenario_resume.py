@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.backend.models.scenarios import ResumeScenarioRunRequest
 from pyrit.backend.services.scenario_run_service import (
+    _LAUNCH_REQUEST_FIELDS,
     _LAUNCH_REQUEST_METADATA_KEY,
     ScenarioRunConflictError,
     ScenarioRunNotFoundError,
@@ -43,7 +43,6 @@ _DATASET_NAME = "offline-resume-objectives"
 _FIRST_OBJECTIVE = "Say hello"
 _SECOND_OBJECTIVE = "Say goodbye"
 _LABELS = {"operator": "offline-tester", "operation": "resume-fixture"}
-_EXECUTION_OPTIONS = ResumeScenarioRunRequest(max_concurrency=1, max_retries=0)
 
 
 class _OfflineTechnique(ScenarioTechnique):
@@ -169,18 +168,17 @@ async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) ->
     return result
 
 
-@pytest.mark.parametrize("legacy", [True, False])
 async def test_resume_preserves_completed_objectives_and_original_id_async(
-    resume_environment: tuple[ScenarioRunService, MockPromptTarget], legacy: bool
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
     service, target = resume_environment
-    stored = await _create_failed_run_async(target=target, legacy=legacy)
+    stored = await _create_failed_run_async(target=target, legacy=False)
     run_id = str(stored.id)
     before = CentralMemory.get_memory_instance().get_attack_results(scenario_result_id=run_id)
     completed_ids = {result.attack_result_id for result in before if result.outcome != AttackOutcome.ERROR}
     assert len(completed_ids) == 1
     failed_result = next(result for result in before if result.outcome == AttackOutcome.ERROR)
-    assert (_LAUNCH_REQUEST_METADATA_KEY in stored.metadata) is not legacy
+    assert _LAUNCH_REQUEST_METADATA_KEY in stored.metadata
     original_plan = stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
     target.prompt_sent.clear()
     # New objectives and changed current parameter defaults must not alter the saved run.
@@ -188,14 +186,18 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
         seeds=[SeedObjective(value="A newly added objective", dataset_name=_DATASET_NAME)],
         added_by="offline-test",
     )
-    with patch.object(_OfflineResumeScenario, "DEFAULT_MARKER", "changed-default"):
-        options = await service.get_resume_options_async(scenario_result_id=run_id)
-        assert options.requires_execution_options is legacy
-        assert target.prompt_sent == []
-        response = await service.resume_run_async(
-            scenario_result_id=run_id, execution_options=_EXECUTION_OPTIONS if legacy else None
-        )
+    with (
+        patch.object(_OfflineResumeScenario, "DEFAULT_MARKER", "changed-default"),
+        patch.object(service, "_start_run_locked_async", wraps=service._start_run_locked_async) as start,
+    ):
+        response = await service.resume_run_async(scenario_result_id=run_id)
         await _wait_for_idle_async(service)
+    request = start.await_args.kwargs["request"]
+    assert request.max_concurrency == 1
+    assert request.max_retries == 0
+    assert request.include_baseline is False
+    assert request.scenario_params == {"marker": "original"}
+    assert request.labels == _LABELS
     assert response.scenario_result_id == run_id
     assert target.prompt_sent == [_SECOND_OBJECTIVE]
     after = CentralMemory.get_memory_instance().get_scenario_results(scenario_result_ids=[run_id])[0]
@@ -230,14 +232,23 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
     assert summary.error_attacks == detail.error_attacks == 1
 
 
-async def test_legacy_resume_requires_explicit_execution_settings_async(
+async def test_resume_without_launch_metadata_is_rejected_without_initialization_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
     service, target = resume_environment
     stored = await _create_failed_run_async(target=target, legacy=True)
+    run_id = str(stored.id)
     target.prompt_sent.clear()
-    with pytest.raises(ValueError, match="Choose both execution settings"):
-        await service.resume_run_async(scenario_result_id=str(stored.id))
+    with patch.object(service, "_prepare_run_blocking") as prepare:
+        with pytest.raises(ScenarioRunConflictError, match="older run.*cannot be resumed through the GUI"):
+            await service.resume_run_async(scenario_result_id=run_id)
+        prepare.assert_not_called()
+    after = await asyncio.to_thread(
+        CentralMemory.get_memory_instance().get_scenario_results, scenario_result_ids=[run_id]
+    )
+    assert after[0].model_dump() == stored.model_dump()
+    assert service.get_queue_snapshot().active is None
+    assert service.get_queue_snapshot().queued == []
     assert target.prompt_sent == []
 
 
@@ -302,17 +313,32 @@ async def test_resume_missing_run_async(resume_environment: tuple[ScenarioRunSer
         await service.resume_run_async(scenario_result_id="00000000-0000-0000-0000-000000000001")
 
 
-@pytest.mark.parametrize("legacy", [True, False])
 async def test_resume_rejects_missing_target_async(
-    resume_environment: tuple[ScenarioRunService, MockPromptTarget], legacy: bool
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
     service, target = resume_environment
-    stored = await _create_failed_run_async(target=target, legacy=legacy)
+    stored = await _create_failed_run_async(target=target, legacy=False)
     TargetRegistry.get_registry_singleton().instances.unregister(_TARGET_NAME)
     with pytest.raises(ValueError, match="[Tt]arget"):
-        await service.resume_run_async(
-            scenario_result_id=str(stored.id), execution_options=_EXECUTION_OPTIONS if legacy else None
-        )
+        await service.resume_run_async(scenario_result_id=str(stored.id))
+
+
+async def test_resume_rejects_target_drift_without_changing_saved_results_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    run_id = str(stored.id)
+    changed_identifier = target.get_identifier().model_copy(update={"class_name": "ChangedMockTarget"})
+    target.prompt_sent.clear()
+    with patch.object(target, "get_identifier", return_value=changed_identifier):
+        with pytest.raises(ValueError, match="does not match the current"):
+            await service.resume_run_async(scenario_result_id=run_id)
+    after = await asyncio.to_thread(
+        CentralMemory.get_memory_instance().get_scenario_results, scenario_result_ids=[run_id]
+    )
+    assert after[0].model_dump() == stored.model_dump()
+    assert target.prompt_sent == []
 
 
 async def test_overlapping_resume_requests_only_initialize_once_async(
@@ -408,47 +434,140 @@ async def test_resumed_run_uses_existing_fifo_scheduler_async(
         hold_active.set()
 
 
-@pytest.mark.parametrize("legacy", [True, False])
 async def test_resume_missing_scenario_registration_is_explicit_async(
-    resume_environment: tuple[ScenarioRunService, MockPromptTarget], legacy: bool
-) -> None:
-    service, target = resume_environment
-    stored = await _create_failed_run_async(target=target, legacy=legacy)
-    registry = ScenarioRegistry.get_registry_singleton()
-    with patch.object(registry, "get_class", side_effect=KeyError("Scenario is no longer registered")):
-        with pytest.raises(ValueError, match="no longer registered"):
-            await service.resume_run_async(
-                scenario_result_id=str(stored.id), execution_options=_EXECUTION_OPTIONS if legacy else None
-            )
-
-
-async def test_legacy_target_match_must_be_unambiguous_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
     service, target = resume_environment
-    stored = await _create_failed_run_async(target=target, legacy=True)
-    TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="duplicate-target")
-    with pytest.raises(ScenarioRunConflictError, match="Multiple registered targets"):
-        await service.get_resume_options_async(scenario_result_id=str(stored.id))
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    registry = ScenarioRegistry.get_registry_singleton()
+    with patch.object(registry, "get_class", side_effect=KeyError("Scenario is no longer registered")):
+        with pytest.raises(ValueError, match="no longer registered"):
+            await service.resume_run_async(scenario_result_id=str(stored.id))
 
 
-@pytest.mark.parametrize("missing", ["plan", "execution_settings"])
+@pytest.mark.parametrize("missing", _LAUNCH_REQUEST_FIELDS)
 async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
-    resume_environment: tuple[ScenarioRunService, MockPromptTarget], missing: str
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], missing: str
 ) -> None:
     service, target = resume_environment
-    stored = await _create_failed_run_async(target=target, legacy=missing == "plan")
-    if missing == "plan":
-        del stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
-    else:
-        del stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["max_concurrency"]
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    del stored.metadata[_LAUNCH_REQUEST_METADATA_KEY][missing]
     CentralMemory.get_memory_instance().update_scenario_metadata(
         scenario_result_id=str(stored.id), metadata=stored.metadata
     )
     with patch.object(service, "_prepare_run_blocking") as prepare:
-        with pytest.raises(ScenarioRunConflictError, match="no valid saved execution plan|incomplete"):
-            await service.get_resume_options_async(scenario_result_id=str(stored.id))
+        with pytest.raises(ScenarioRunConflictError, match="incomplete"):
+            await service.resume_run_async(scenario_result_id=str(stored.id))
         prepare.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_concurrency", None),
+        ("max_concurrency", 0),
+        ("max_concurrency", "1"),
+        ("max_retries", None),
+        ("max_retries", -1),
+        ("include_baseline", None),
+        ("include_baseline", "false"),
+        ("scenario_name", ""),
+        ("target_name", " "),
+        ("techniques", "direct"),
+        ("dataset_names", "dataset"),
+        ("max_dataset_size", 0),
+        ("dataset_filters", {"unsupported": ["value"]}),
+    ],
+)
+async def test_resume_invalid_saved_configuration_is_rejected_before_initialization_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], field: str, value: object
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    stored.metadata[_LAUNCH_REQUEST_METADATA_KEY][field] = value
+    with (
+        patch.object(service._memory, "get_scenario_result_header", return_value=stored),
+        patch.object(service, "_prepare_run_blocking") as prepare,
+    ):
+        with pytest.raises(ScenarioRunConflictError, match="incomplete|invalid|empty"):
+            await service.resume_run_async(scenario_result_id=str(stored.id))
+        prepare.assert_not_called()
+
+
+@pytest.mark.parametrize("missing", ["techniques", "datasets"])
+async def test_resume_missing_canonical_selection_never_uses_current_defaults_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], missing: str
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    stored.scenario_identifier = stored.scenario_identifier.model_copy(update={missing: None})
+    with (
+        patch.object(service._memory, "get_scenario_result_header", return_value=stored),
+        patch.object(service, "_prepare_run_blocking") as prepare,
+    ):
+        with pytest.raises(ScenarioRunConflictError, match="missing techniques or datasets"):
+            await service.resume_run_async(scenario_result_id=str(stored.id))
+        prepare.assert_not_called()
+
+
+async def test_restore_launch_request_keeps_saved_settings_and_canonical_params_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    saved = stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]
+    saved.update(
+        techniques=["direct:converter.saved"],
+        dataset_names=["saved-dataset"],
+        max_dataset_size=7,
+        dataset_filters={"harm_categories": ["test"]},
+        max_concurrency=3,
+        max_retries=2,
+        include_baseline=False,
+        scenario_result_id="different-result-id",
+        initializers=["do-not-rerun"],
+        initializer_args={"do-not-rerun": {"value": "do-not-use"}},
+        scenario_params={"marker": "do-not-use"},
+        labels={"operation": "do-not-use"},
+    )
+
+    request = service._restore_launch_request(stored=stored)
+
+    assert {name: getattr(request, name) for name in _LAUNCH_REQUEST_FIELDS} == {
+        name: saved[name] for name in _LAUNCH_REQUEST_FIELDS
+    }
+    assert request.scenario_result_id == str(stored.id)
+    assert request.scenario_params == {"marker": "original"}
+    assert request.labels == _LABELS
+    assert request.initializers is None
+    assert request.initializer_args is None
+
+
+async def test_explicit_start_still_resumes_older_runs_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=True)
+    target.prompt_sent.clear()
+    response = await service.start_run_async(
+        request=RunScenarioRequest(
+            scenario_result_id=str(stored.id),
+            scenario_name=_SCENARIO_NAME,
+            target_name=_TARGET_NAME,
+            max_concurrency=1,
+            max_retries=0,
+            include_baseline=False,
+            labels=_LABELS,
+        )
+    )
+    await _wait_for_idle_async(service)
+    assert response.scenario_result_id == str(stored.id)
+    assert target.prompt_sent == [_SECOND_OBJECTIVE]
+    detail = await asyncio.to_thread(service.get_run, scenario_result_id=str(stored.id))
+    assert detail is not None
+    assert detail.status == ScenarioRunState.COMPLETED
+    assert detail.error is None
+    assert len(detail.failed_attacks) == 1
 
 
 @pytest.mark.parametrize("state", [ScenarioRunState.IN_PROGRESS, ScenarioRunState.QUEUED, ScenarioRunState.COMPLETED])

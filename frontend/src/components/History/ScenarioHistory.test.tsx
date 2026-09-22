@@ -14,7 +14,6 @@ jest.mock('@/services/api', () => ({
     listCatalog: jest.fn(),
     listRuns: jest.fn(),
     resumeRun: jest.fn(),
-    getResumeRequirements: jest.fn(),
   },
   labelsApi: {
     getLabels: jest.fn(),
@@ -80,7 +79,6 @@ function renderHistory(props = defaultProps) {
 describe('ScenarioHistory', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockedScenariosApi.getResumeRequirements.mockResolvedValue({ requires_execution_options: false })
     mockUseScenarioQueue.mockReturnValue({
       snapshot: { revision: 0, snapshot_at: '2026-01-01T00:00:00Z', active: null, queued: [] },
       loading: false,
@@ -167,7 +165,6 @@ describe('ScenarioHistory', () => {
       resumeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(mockedScenariosApi.getResumeRequirements).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1))
     expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
     expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
@@ -267,37 +264,30 @@ describe('ScenarioHistory', () => {
       await screen.findByRole('table', { name: 'Scanner history' })
       expect(screen.queryByRole('button', { name: /Resume/ })).not.toBeInTheDocument()
       expect(mockedScenariosApi.resumeRun).not.toHaveBeenCalled()
-      expect(mockedScenariosApi.getResumeRequirements).not.toHaveBeenCalled()
     },
   )
 
-  it('uses the shared legacy dialog from history and keeps submit conflicts visible after refresh', async () => {
+  it('keeps missing launch configuration conflicts visible after refresh without opening a dialog', async () => {
     const user = userEvent.setup()
+    const detail = 'This run has no saved launch configuration and cannot be resumed.'
     mockedScenariosApi.listRuns.mockResolvedValue({
       items: [{ ...RUN, status: 'FAILED' }],
       pagination: { limit: 25, has_more: false },
     })
-    mockedScenariosApi.getResumeRequirements.mockResolvedValueOnce({ requires_execution_options: true })
     mockedScenariosApi.resumeRun.mockRejectedValueOnce({
-      isAxiosError: true, response: { status: 409, data: { detail: 'This run is already queued.' } },
+      isAxiosError: true, response: { status: 409, data: { detail } },
     })
     renderHistory()
     await user.click(await screen.findByRole('button', { name: /Resume foundry/ }))
 
-    const dialog = await screen.findByRole('dialog', { name: 'Resume run with execution options' })
-    expect(mockedScenariosApi.resumeRun).not.toHaveBeenCalled()
-    expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
-    expect(within(dialog).getByRole('spinbutton', { name: 'Max concurrency' })).toHaveValue('1')
-    expect(within(dialog).getByRole('spinbutton', { name: 'Max retries' })).toHaveValue('0')
-    await user.click(within(dialog).getByRole('button', { name: 'Resume', exact: true }))
-
-    expect(mockedScenariosApi.resumeRun).toHaveBeenCalledWith('run-1', { max_concurrency: 1, max_retries: 0 })
-    expect(await within(dialog).findByText('This run is already queued.')).toBeInTheDocument()
+    expect(await screen.findByText(detail)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /Resume foundry/ })).toBeEnabled()
+    expect(mockedScenariosApi.resumeRun).toHaveBeenCalledWith('run-1')
+    expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
     expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
-    expect(await screen.findByText('This run is already queued.')).toBeInTheDocument()
   })
 
   it('renders safe run metadata and opens rows by click or keyboard', async () => {

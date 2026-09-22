@@ -18,8 +18,6 @@ from starlette.concurrency import run_in_threadpool
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
-    ResumeScenarioRunRequest,
-    ScenarioResumeOptions,
     ScenarioRunListResponse,
 )
 from pyrit.backend.routes.common import parse_label_query_params
@@ -190,45 +188,15 @@ async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
         409: {"model": ProblemDetail, "description": "Run is ineligible or has no saved launch configuration"},
     },
 )
-async def resume_scenario_run_async(
-    *, scenario_result_id: str, request: ResumeScenarioRunRequest | None = None
-) -> ScenarioRunSummary:
+async def resume_scenario_run_async(*, scenario_result_id: str) -> ScenarioRunSummary:
     """
-    Resume a failed run from stored inputs, accepting execution settings only for older runs.
+    Resume a failed run using its complete saved launch configuration.
 
     Returns:
         ScenarioRunSummary: Scheduled continuation under the saved result ID.
     """
     try:
-        return await get_scenario_run_service().resume_run_async(
-            scenario_result_id=scenario_result_id, execution_options=request
-        )
-    except ScenarioRunNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
-    except ScenarioRunConflictError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
-
-
-@router.get(
-    "/runs/{scenario_result_id}/resume",
-    response_model=ScenarioResumeOptions,
-    responses={
-        400: {"model": ProblemDetail, "description": "Saved configuration is unavailable"},
-        404: {"model": ProblemDetail, "description": "Saved run not found"},
-        409: {"model": ProblemDetail, "description": "Run cannot be resumed"},
-    },
-)
-async def get_scenario_resume_options_async(scenario_result_id: str) -> ScenarioResumeOptions:
-    """
-    Check saved configuration without starting or initializing a scenario.
-
-    Returns:
-        ScenarioResumeOptions: Whether execution settings must be selected.
-    """
-    try:
-        return await get_scenario_run_service().get_resume_options_async(scenario_result_id=scenario_result_id)
+        return await get_scenario_run_service().resume_run_async(scenario_result_id=scenario_result_id)
     except ScenarioRunNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
     except ScenarioRunConflictError as e:

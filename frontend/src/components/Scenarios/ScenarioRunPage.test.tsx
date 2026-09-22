@@ -20,7 +20,6 @@ import type {
   ScenarioRunProgress,
   ScenarioRunState,
   ScenarioRunSummary,
-  ScenarioResumeRequirements,
 } from '@/types'
 import {
   INITIAL_SCENARIO_RUN_PROGRESS_STATE,
@@ -41,7 +40,6 @@ jest.mock('@/services/api', () => ({
   scenariosApi: {
     cancelRun: jest.fn(),
     resumeRun: jest.fn(),
-    getResumeRequirements: jest.fn(),
     getRunProgress: jest.fn(),
   },
 }))
@@ -50,7 +48,6 @@ const mockUseScenarioRunProgress = useScenarioRunProgress as jest.Mock
 const mockUseScenarioQueue = useScenarioQueue as jest.Mock
 const mockCancelRun = scenariosApi.cancelRun as jest.Mock
 const mockResumeRun = scenariosApi.resumeRun as jest.Mock
-const mockGetResumeRequirements = scenariosApi.getResumeRequirements as jest.Mock
 const mockGetRunProgress = scenariosApi.getRunProgress as jest.Mock
 const mockQueueRetry = jest.fn()
 const mockRetry = jest.fn()
@@ -300,7 +297,6 @@ function renderPage(
 describe('ScenarioRunPage', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockGetResumeRequirements.mockResolvedValue({ requires_execution_options: false })
     mockUseScenarioQueue.mockReturnValue({
       snapshot: { revision: 0, snapshot_at: '2026-01-01T00:00:00Z', active: null, queued: [] },
       loading: false,
@@ -581,8 +577,6 @@ describe('ScenarioRunPage', () => {
     expect(screen.getByRole('button', { name: 'Resuming...' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Resuming...' }))
     expect(mockResumeRun).toHaveBeenCalledTimes(1)
-    expect(mockGetResumeRequirements).toHaveBeenCalledTimes(1)
-    expect(mockGetResumeRequirements).toHaveBeenCalledWith(SCENARIO_RESULT_ID)
     expect(mockResumeRun).toHaveBeenCalledWith(SCENARIO_RESULT_ID)
     expect(screen.getByRole('progressbar', { name: 'Overall scenario run progress' }))
       .toHaveAttribute('aria-valuetext', '1 of 2 executable units completed')
@@ -634,169 +628,113 @@ describe('ScenarioRunPage', () => {
       renderPage()
       expect(screen.queryByRole('button', { name: 'Resume run' })).not.toBeInTheDocument()
       expect(mockResumeRun).not.toHaveBeenCalled()
-      expect(mockGetResumeRequirements).not.toHaveBeenCalled()
     },
   )
 
-  it.each([false, true])(
-    'keeps request errors separate when the persisted execution error has the same text (preflight: %s)',
-    async (preflight: boolean) => {
-      const user = userEvent.setup()
-      const detail = 'The saved target rejected execution.'
-      const failedState = makeState({
-        run: {
-          scenario_result_id: SCENARIO_RESULT_ID,
-          scenario_name: 'TestScenario',
-          scenario_version: 1,
-          created_at: '2026-01-01T00:00:00Z',
-          status: 'FAILED',
-          error: detail,
-          error_type: 'ValueError',
-        },
-      })
-      mockHookState(failedState)
-      const request = preflight ? mockGetResumeRequirements : mockResumeRun
-      request.mockRejectedValueOnce({ isAxiosError: true, response: { status: 409, data: { detail } } })
-      mockRetry.mockImplementationOnce(() => { mockHookState(failedState) })
-      renderPage()
-
-      await user.click(screen.getByRole('button', { name: 'Resume run' }))
-
-      expect(await screen.findByText(detail)).toBeInTheDocument()
-      expect(screen.getAllByText(/The saved target rejected execution\./)).toHaveLength(2)
-      expect(mockRetry).toHaveBeenCalledTimes(1)
-      expect(mockQueueRetry).toHaveBeenCalledTimes(1)
-      expect(mockApplyRunSummary).not.toHaveBeenCalled()
-      expect(mockResumeRun).toHaveBeenCalledTimes(preflight ? 0 : 1)
-    },
-  )
-
-  it('requires explicit legacy limit confirmation and sends only the chosen limits', async () => {
+  it('keeps request errors separate when the persisted execution error has the same text', async () => {
     const user = userEvent.setup()
-    mockHookState(makeState({
-      run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
-        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
-    }))
-    mockGetResumeRequirements.mockResolvedValueOnce({ requires_execution_options: true })
-    let resolveResume: ((run: ScenarioRunSummary) => void) | undefined
-    mockResumeRun.mockImplementationOnce(() => new Promise<ScenarioRunSummary>((resolve) => {
-      resolveResume = resolve
-    }))
-    renderPage()
-    expect(mockGetResumeRequirements).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Resume run' }))
-
-    const dialog = await screen.findByRole('dialog', { name: 'Resume run with execution options' })
-    expect(within(dialog).getByText(/did not save its concurrency and retry limits/i)).toBeInTheDocument()
-    expect(within(dialog).getByText(/restored by the server/i)).toBeInTheDocument()
-    const concurrency = within(dialog).getByRole('spinbutton', { name: 'Max concurrency' })
-    const retries = within(dialog).getByRole('spinbutton', { name: 'Max retries' })
-    expect(concurrency).toHaveValue('1')
-    expect(retries).toHaveValue('0')
-    expect(mockResumeRun).not.toHaveBeenCalled()
-    expect(mockQueueRetry).not.toHaveBeenCalled()
-    await user.clear(concurrency)
-    await user.type(concurrency, '3')
-    await user.tab()
-    await user.clear(retries)
-    await user.type(retries, '2')
-    await user.tab()
-    const confirmButton = within(dialog).getByRole('button', { name: 'Resume', exact: true })
-    act(() => {
-      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      confirmButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-
-    expect(mockResumeRun).toHaveBeenCalledTimes(1)
-    expect(mockResumeRun).toHaveBeenCalledWith(SCENARIO_RESULT_ID, { max_concurrency: 3, max_retries: 2 })
-    expect(within(dialog).getByRole('button', { name: 'Resuming...' })).toBeDisabled()
-    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
-    expect(concurrency).toBeDisabled()
-    await act(async () => {
-      resolveResume?.({
+    const detail = 'The saved target rejected execution.'
+    const failedState = makeState({
+      run: {
         scenario_result_id: SCENARIO_RESULT_ID,
         scenario_name: 'TestScenario',
         scenario_version: 1,
-        status: 'QUEUED',
         created_at: '2026-01-01T00:00:00Z',
-        updated_at: '2026-01-01T00:01:00Z',
-        techniques_used: [],
-        total_attacks: 2,
-        completed_attacks: 1,
-        objective_achieved_rate: 100,
-        failed_attacks: [],
-        attack_retries: [],
-        total_retries: 0,
-        labels: {},
-      })
+        status: 'FAILED',
+        error: detail,
+        error_type: 'ValueError',
+      },
     })
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(mockApplyRunSummary).toHaveBeenCalledWith(expect.objectContaining({
-      scenario_result_id: SCENARIO_RESULT_ID, completed_attacks: 1,
-    }))
+    mockHookState(failedState)
+    mockResumeRun.mockRejectedValueOnce({ isAxiosError: true, response: { status: 409, data: { detail } } })
+    mockRetry.mockImplementationOnce(() => { mockHookState(failedState) })
+    renderPage()
+
+    await user.click(screen.getByRole('button', { name: 'Resume run' }))
+
+    expect(await screen.findByText(detail)).toBeInTheDocument()
+    expect(screen.getAllByText(/The saved target rejected execution\./)).toHaveLength(2)
+    expect(mockRetry).toHaveBeenCalledTimes(1)
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+    expect(mockApplyRunSummary).not.toHaveBeenCalled()
+    expect(mockResumeRun).toHaveBeenCalledTimes(1)
   })
 
-  it('cancels legacy confirmation without submitting and resets the limits on reopening', async () => {
+  it('shows a missing launch configuration conflict without opening a dialog or retrying automatically', async () => {
     const user = userEvent.setup()
+    const detail = 'This run has no saved launch configuration and cannot be resumed.'
     mockHookState(makeState({
       run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
         scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
     }))
-    mockGetResumeRequirements.mockResolvedValue({ requires_execution_options: true })
-    renderPage()
-    await user.click(screen.getByRole('button', { name: 'Resume run' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Resume run with execution options' })
-    const concurrency = within(dialog).getByRole('spinbutton', { name: 'Max concurrency' })
-    await user.clear(concurrency)
-    await user.type(concurrency, '10')
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
-    await user.click(await screen.findByRole('button', { name: 'Resume run' }))
-
-    const reopened = await screen.findByRole('dialog', { name: 'Resume run with execution options' })
-    expect(within(reopened).getByRole('spinbutton', { name: 'Max concurrency' })).toHaveValue('1')
-    expect(mockGetResumeRequirements).toHaveBeenCalledTimes(2)
-    expect(mockResumeRun).not.toHaveBeenCalled()
-    expect(mockQueueRetry).not.toHaveBeenCalled()
-  })
-
-  it.each([400, 404, 409])('refreshes and displays a preflight HTTP %s error without submitting', async (status: number) => {
-    const user = userEvent.setup()
-    mockHookState(makeState({
-      run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
-        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
-    }))
-    mockGetResumeRequirements.mockRejectedValueOnce({
-      isAxiosError: true, response: { status, data: { detail: 'This run cannot be restored safely.' } },
+    mockResumeRun.mockRejectedValueOnce({
+      isAxiosError: true, response: { status: 409, data: { detail } },
     })
     renderPage()
     await user.click(screen.getByRole('button', { name: 'Resume run' }))
 
-    expect(await screen.findByText('This run cannot be restored safely.')).toBeInTheDocument()
-    expect(mockResumeRun).not.toHaveBeenCalled()
+    expect(await screen.findByText(detail)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Resume run' })).toBeEnabled()
+    expect(mockResumeRun).toHaveBeenCalledWith(SCENARIO_RESULT_ID)
+    expect(mockResumeRun).toHaveBeenCalledTimes(1)
+    expect(mockApplyRunSummary).not.toHaveBeenCalled()
     expect(mockRetry).toHaveBeenCalledTimes(1)
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
   })
 
-  it('does not start a run if the user leaves while the read-only preflight is pending', async () => {
+  it.each([false, true])('ignores a pending resume after leaving the run page (rejected: %s)', async (rejected: boolean) => {
     const user = userEvent.setup()
     mockHookState(makeState({
       run: { scenario_result_id: SCENARIO_RESULT_ID, scenario_name: 'TestScenario',
         scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
     }))
-    let resolvePreflight: ((requirements: ScenarioResumeRequirements) => void) | undefined
-    mockGetResumeRequirements.mockImplementationOnce(() => new Promise<ScenarioResumeRequirements>((resolve) => {
-      resolvePreflight = resolve
+    let resolveResume: ((run: ScenarioRunSummary) => void) | undefined
+    let rejectResume: ((error: Error) => void) | undefined
+    mockResumeRun.mockImplementationOnce(() => new Promise<ScenarioRunSummary>((resolve, reject) => {
+      resolveResume = resolve
+      rejectResume = reject
     }))
     const { unmount } = renderPage()
     await user.click(screen.getByRole('button', { name: 'Resume run' }))
     expect(screen.getByRole('button', { name: 'Resuming...' })).toBeDisabled()
     unmount()
-    await act(async () => { resolvePreflight?.({ requires_execution_options: false }) })
+    const nextRunId = 'another-run'
+    mockHookState(makeState({
+      run: { scenario_result_id: nextRunId, scenario_name: 'AnotherScenario',
+        scenario_version: 1, created_at: '2026-01-01T00:00:00Z', status: 'FAILED' },
+    }))
+    renderPage(`/scanner-history/${nextRunId}`)
+    await act(async () => {
+      if (rejected) {
+        rejectResume?.(new Error('The previous resume request failed.'))
+      } else {
+        resolveResume?.({
+          scenario_result_id: SCENARIO_RESULT_ID,
+          scenario_name: 'TestScenario',
+          scenario_version: 1,
+          status: 'QUEUED',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:01:00Z',
+          techniques_used: [],
+          total_attacks: 2,
+          completed_attacks: 1,
+          objective_achieved_rate: 100,
+          failed_attacks: [],
+          attack_retries: [],
+          total_retries: 0,
+          labels: {},
+        })
+      }
+    })
 
-    expect(mockResumeRun).not.toHaveBeenCalled()
+    expect(mockResumeRun).toHaveBeenCalledTimes(1)
     expect(mockApplyRunSummary).not.toHaveBeenCalled()
     expect(mockQueueRetry).not.toHaveBeenCalled()
+    expect(mockRetry).not.toHaveBeenCalled()
+    expect(screen.getByText(nextRunId)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Resume run' })).toBeEnabled()
+    expect(screen.queryByText('The previous resume request failed.')).not.toBeInTheDocument()
   })
 
   it('shows one failure banner for an immediately failed resume and its matching progress update', async () => {
@@ -856,7 +794,6 @@ describe('ScenarioRunPage', () => {
     expect(screen.getByTestId('run-state-badge')).toHaveTextContent('Failed')
     expect(screen.getByRole('button', { name: 'Resume run' })).toBeEnabled()
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
-    expect(mockGetResumeRequirements).toHaveBeenCalledTimes(1)
     expect(mockResumeRun).toHaveBeenCalledTimes(1)
   })
 

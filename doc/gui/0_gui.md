@@ -185,15 +185,13 @@ Resume restores the original scenario configuration, target, sampled execution
 plan, and labels, rather than using the current launch form or active chat target.
 Refreshing the GUI does not automatically resume a run.
 
-Older failed runs can recover from their saved scenario identity and execution
-plan. Because they did not save concurrency and retry limits, a dialog asks you
-to choose both before continuing. Its suggested values of one concurrent operation
-and zero automatic retries are **not** recovered original settings.
+Resume requires a saved launch configuration. Runs created before that
+configuration was recorded cannot resume through the GUI; an error explains
+the limitation without changing their saved progress.
 
 If the saved configuration cannot be restored, Resume shows an error without
 discarding progress or starting a replacement run. Restore any missing target,
-technique, or dataset before trying again; runs without sufficient saved identity
-or a valid execution plan cannot be recovered automatically.
+technique, or dataset before trying again.
 
 ### Target Configuration
 

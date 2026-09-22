@@ -29,7 +29,6 @@ import {
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
-import ScenarioResumeDialog from '@/components/Scenarios/ScenarioResumeDialog'
 import { labelsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { ScenarioQueueSnapshot, ScenarioRunListItem, ScenarioRunState, ScenarioRunSummary } from '@/types'
@@ -338,17 +337,6 @@ export default function ScenarioHistory({
           </MessageBar>
         )}
       </header>
-
-      {resume.legacyRunId !== null && (
-        <ScenarioResumeDialog
-          key={resume.legacyRunId}
-          scenarioResultId={resume.legacyRunId}
-          pending={resume.pendingRunId !== null}
-          error={resume.error}
-          onCancel={resume.cancel}
-          onConfirm={resume.confirmResume}
-        />
-      )}
 
       <div className={styles.content}>
         {displayLoading ? (

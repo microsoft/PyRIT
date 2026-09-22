@@ -27,7 +27,7 @@ from urllib.parse import urlsplit, urlunsplit
 from pydantic import TypeAdapter, ValidationError
 
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
-from pyrit.backend.models.scenarios import ResumeScenarioRunRequest, ScenarioResumeOptions, ScenarioRunListResponse
+from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -47,7 +47,6 @@ from pyrit.models import (
     SCENARIO_RUN_STARTED_AT_METADATA_KEY,
     AttackOutcome,
     ComponentIdentifier,
-    ObjectiveTargetEvaluationIdentifier,
     ScenarioAttackResultDelta,
     ScenarioIdentifier,
     ScenarioProgressHeader,
@@ -70,7 +69,7 @@ from pyrit.models.catalog.scenario import (
     ScenarioTargetSummary,
     ScenarioTechniqueSummary,
 )
-from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.resolution import resolve_declared_params
 from pyrit.scenario import Scenario
 
@@ -218,26 +217,7 @@ class ScenarioRunService:
             await self._validate_resume_admission_async(scenario_result_id=request.scenario_result_id)
             return await self._start_run_locked_async(request=request)
 
-    async def get_resume_options_async(self, *, scenario_result_id: str) -> ScenarioResumeOptions:
-        """
-        Inspect resumability without initializing scenarios or executing any work.
-
-        Returns:
-            ScenarioResumeOptions: Whether execution settings must be chosen.
-        """
-        stored = await self._validate_resume_admission_async(scenario_result_id=scenario_result_id, failed_only=True)
-        assert stored is not None
-        legacy = _LAUNCH_REQUEST_METADATA_KEY not in stored.metadata
-        await asyncio.to_thread(
-            self._restore_launch_request,
-            stored=stored,
-            execution_options=ResumeScenarioRunRequest(max_concurrency=1, max_retries=0) if legacy else None,
-        )
-        return ScenarioResumeOptions(requires_execution_options=legacy)
-
-    async def resume_run_async(
-        self, *, scenario_result_id: str, execution_options: ResumeScenarioRunRequest | None = None
-    ) -> ScenarioRunSummary:
+    async def resume_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary:
         """
         Resume a failed run with its saved launch configuration through the normal scheduler.
 
@@ -249,9 +229,7 @@ class ScenarioRunService:
                 scenario_result_id=scenario_result_id, failed_only=True
             )
             assert stored is not None
-            request = await asyncio.to_thread(
-                self._restore_launch_request, stored=stored, execution_options=execution_options
-            )
+            request = await asyncio.to_thread(self._restore_launch_request, stored=stored)
             return await self._start_run_locked_async(request=request)
 
     @contextlib.asynccontextmanager
@@ -297,35 +275,40 @@ class ScenarioRunService:
             )
         return stored
 
-    def _restore_launch_request(
-        self, *, stored: ScenarioResult, execution_options: ResumeScenarioRunRequest | None
-    ) -> RunScenarioRequest:
+    def _restore_launch_request(self, *, stored: ScenarioResult) -> RunScenarioRequest:
         """
         Restore persisted inputs, never the browser's or current catalog's defaults.
 
         Returns:
             RunScenarioRequest: Saved launch inputs and canonical scenario parameters.
         """
-        raw_request = stored.metadata.get(_LAUNCH_REQUEST_METADATA_KEY)
         if _LAUNCH_REQUEST_METADATA_KEY not in stored.metadata:
-            if execution_options is None:
-                raise ValueError(
-                    "This older run did not save max_concurrency or max_retries. "
-                    "Choose both execution settings explicitly to resume."
-                )
-            request = self._restore_legacy_launch_request(stored=stored, execution_options=execution_options)
-        else:
-            if execution_options is not None:
-                raise ValueError("This run has saved execution settings; resume without overriding them.")
-            if not isinstance(raw_request, dict) or any(name not in raw_request for name in _LAUNCH_REQUEST_FIELDS):
-                raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
-            try:
-                request = RunScenarioRequest.model_validate(raw_request)
-            except ValidationError as exc:
-                raise ScenarioRunConflictError(
-                    "The saved launch configuration is invalid; resume was not started."
-                ) from exc
+            raise ScenarioRunConflictError(
+                "This older run has no saved launch configuration and cannot be resumed through the GUI. "
+                "Use the SDK or run API with the original configuration and scenario_result_id."
+            )
+        raw_request = stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]
+        if (
+            not isinstance(raw_request, dict)
+            or any(name not in raw_request for name in _LAUNCH_REQUEST_FIELDS)
+            or raw_request["include_baseline"] is None
+        ):
+            raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
+        try:
+            request = RunScenarioRequest.model_validate(
+                {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS}, strict=True
+            )
+        except ValidationError as exc:
+            raise ScenarioRunConflictError(
+                "The saved launch configuration is invalid; resume was not started."
+            ) from exc
+        if not request.scenario_name.strip() or not request.target_name.strip():
+            raise ScenarioRunConflictError("The saved scenario or target registration name is empty.")
         identifier = stored.scenario_identifier
+        if (request.techniques is None and identifier.techniques is None) or (
+            request.dataset_names is None and identifier.datasets is None
+        ):
+            raise ScenarioRunConflictError("The saved scenario identity is missing techniques or datasets.")
         custom_params = {
             name: value
             for name, value in identifier.params.items()
@@ -337,71 +320,11 @@ class ScenarioRunService:
                 "initializers": None,
                 "initializer_args": None,
                 "scenario_params": custom_params,
-                "techniques": request.techniques or identifier.techniques,
-                "dataset_names": request.dataset_names or identifier.datasets,
+                "techniques": request.techniques if request.techniques is not None else identifier.techniques,
+                "dataset_names": request.dataset_names if request.dataset_names is not None else identifier.datasets,
                 "labels": dict(stored.labels),
             },
             deep=True,
-        )
-
-    def _restore_legacy_launch_request(
-        self, *, stored: ScenarioResult, execution_options: ResumeScenarioRunRequest
-    ) -> RunScenarioRequest:
-        """
-        Recover pre-feature runs from canonical identity and the persisted execution plan.
-
-        Returns:
-            RunScenarioRequest: Recovered inputs with explicitly chosen execution settings.
-        """
-        try:
-            plan = ScenarioRunPlan.model_validate(stored.metadata.get(SCENARIO_RUN_PLAN_METADATA_KEY))
-        except ValidationError as exc:
-            raise ScenarioRunConflictError(
-                "This older run has no valid saved execution plan. "
-                "Resume through the run API with the original configuration and scenario_result_id."
-            ) from exc
-        identifier = stored.scenario_identifier
-        if identifier.techniques is None or identifier.datasets is None or identifier.objective_target is None:
-            raise ScenarioRunConflictError("The saved scenario identity is missing techniques, datasets, or target.")
-        registry = ScenarioRegistry.get_registry_singleton()
-        scenario_name = plan.scenario_registry_name
-        if not scenario_name:
-            matches = [
-                name
-                for name in registry.get_class_names()
-                if (candidate := registry.get_class(name)).__name__ == identifier.class_name
-                and candidate.__module__ == identifier.class_module
-            ]
-            if len(matches) != 1:
-                raise ScenarioRunConflictError("The original scenario registration could not be uniquely recovered.")
-            scenario_name = matches[0]
-        scenario_class = self._configuration_resolver.resolve_scenario_class(scenario_name=scenario_name)
-        target_hash = ObjectiveTargetEvaluationIdentifier(identifier.objective_target).eval_hash
-        target_names = sorted(
-            entry.name
-            for entry in TargetRegistry.get_registry_singleton().instances.get_all_instances()
-            if ObjectiveTargetEvaluationIdentifier(entry.instance.get_identifier()).eval_hash == target_hash
-        )
-        if not target_names:
-            raise ScenarioRunConflictError(
-                "The original target is not registered with its saved configuration. "
-                "Restore that target before resuming."
-            )
-        if len(target_names) != 1:
-            raise ScenarioRunConflictError(
-                "Multiple registered targets match the saved target identity. "
-                "Use the run API with the original target registration name and scenario_result_id."
-            )
-        # Older rows omit filters, sampling caps, and the baseline flag. Initialize a
-        # superset; the framework validates and retains only the exact persisted plan.
-        return RunScenarioRequest(
-            scenario_name=scenario_name,
-            target_name=target_names[0],
-            techniques=identifier.techniques,
-            dataset_names=identifier.datasets or None,
-            include_baseline=scenario_class.BASELINE_ATTACK_POLICY.value != "forbidden",
-            max_concurrency=execution_options.max_concurrency,
-            max_retries=execution_options.max_retries,
         )
 
     async def _start_run_locked_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:

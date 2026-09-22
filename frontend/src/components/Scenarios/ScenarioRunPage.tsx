@@ -73,7 +73,6 @@ import AttackExecutionTable from './AttackExecutionTable'
 import { ObjectiveDetailsDialog, TechniqueDetailsDialog } from './ScenarioRunDialogs'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 import ScenarioQueue from './ScenarioQueue'
-import ScenarioResumeDialog from './ScenarioResumeDialog'
 
 const CLOCK_REFRESH_INTERVAL_MS = 1_000
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
@@ -364,16 +363,6 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
           <MessageBar intent="error">
             <MessageBarBody>{resume.error}</MessageBarBody>
           </MessageBar>
-        )}
-        {resume.legacyRunId !== null && (
-          <ScenarioResumeDialog
-            key={resume.legacyRunId}
-            scenarioResultId={resume.legacyRunId}
-            pending={resume.pendingRunId !== null}
-            error={resume.error}
-            onCancel={resume.cancel}
-            onConfirm={resume.confirmResume}
-          />
         )}
 
         <div className={styles.metadata} aria-label="Run metadata">

@@ -16,8 +16,8 @@ decorations without forgetting the selected preset.
 ## Resuming a scenario run
 
 Failed runs offer **Resume run** on the run page and **Resume** in Scanner History.
-See the [GUI guide](../doc/gui/0_gui.md#resuming-a-failed-scanner-run) for recovery
-behavior and the execution-settings dialog for older runs.
+See the [GUI guide](../doc/gui/0_gui.md#resuming-a-failed-scanner-run) for resume
+behavior and the saved launch configuration requirement.
 
 ## Development
 

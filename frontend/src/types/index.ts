@@ -828,15 +828,6 @@ export interface AttackRetrySummary {
 
 export type ScenarioRunState = 'CREATED' | 'QUEUED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
 
-export interface ScenarioResumeRequirements {
-  requires_execution_options: boolean
-}
-
-export interface ScenarioResumeExecutionOptions {
-  max_concurrency: number
-  max_retries: number
-}
-
 export interface ScenarioOverloadSummary {
   component_role: string
   count: number
