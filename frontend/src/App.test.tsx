@@ -5,7 +5,7 @@
 
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation, useNavigate } from "react-router";
 import App from "./App";
 import { ThemeProvider } from "./hooks/useTheme";
 
@@ -100,13 +100,16 @@ jest.mock("./components/Layout/MainLayout", () => {
     children,
     currentView,
     onNavigate,
+    labels,
   }: {
     children: React.ReactNode;
     currentView: string;
     onNavigate: (view: string) => void;
+    labels: Record<string, string>;
   }) => {
     return (
       <div data-testid="main-layout" data-current-view={currentView}>
+        <span data-testid="global-labels-json">{JSON.stringify(labels)}</span>
         <button onClick={() => onNavigate("home")} data-testid="nav-home">
           Home
         </button>
@@ -315,17 +318,14 @@ jest.mock("./components/Home/Home", () => {
     activeTarget,
     onNavigate,
     onOpenAttack,
-    labels,
   }: {
     activeTarget: unknown;
     onNavigate: (view: string) => void;
     onOpenAttack: (attackResultId: string) => void;
-    labels: Record<string, string>;
   }) => {
     return (
       <div data-testid="home-view">
         <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
-        <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
         <button onClick={() => onNavigate("registry")} data-testid="home-go-config">
           Go to registry
         </button>
@@ -407,6 +407,18 @@ jest.mock("./components/History/ScenarioHistory", () => {
   };
 });
 
+function RouterProbe() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  return (
+    <>
+      <output aria-label="Current URL">{location.pathname}</output>
+      <button type="button" onClick={() => navigate(-1)}>Back</button>
+    </>
+  );
+}
+
 describe("App", () => {
   // App reads the active view from the URL, so every render needs a router.
   // initialPath lets a test deep-link straight to a view.
@@ -465,6 +477,30 @@ describe("App", () => {
       "data-current-view",
       "registry"
     );
+  });
+
+  it("redirects legacy /targets to the target registry without adding a history entry", async () => {
+    const user = userEvent.setup();
+    render(
+      <ThemeProvider>
+        <MemoryRouter initialEntries={["/chat", "/targets"]}>
+          <App />
+          <RouterProbe />
+        </MemoryRouter>
+      </ThemeProvider>
+    );
+
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/registry\/targets$/);
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Back", exact: true }));
+
+    expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/chat$/);
   });
 
   it("renders the converter registry from its direct URL", async () => {
@@ -940,10 +976,8 @@ describe("App", () => {
 
     renderApp();
 
-    // Home receives the same labels prop — assert there to avoid racing the
-    // async initLabels effect against a view-change re-render.
     await waitFor(() => {
-      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
       expect(labels).toContain('"operator":"test.user"');
       expect(labels).toContain('"custom":"value"');
     });
@@ -959,7 +993,7 @@ describe("App", () => {
     renderApp();
 
     await waitFor(() => {
-      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
       expect(labels).toContain('"operator":"override_user"');
       expect(labels).toContain('"custom":"value"');
     });
@@ -978,10 +1012,10 @@ describe("App", () => {
     renderApp();
 
     await waitFor(() => {
-      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
       expect(labels).toContain('"custom":"value"');
     });
-    const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+    const labels = screen.getByTestId("global-labels-json").textContent ?? "";
     expect(labels).toContain('"operation":"op_i_picked"');
   });
 
@@ -999,10 +1033,10 @@ describe("App", () => {
     renderApp();
 
     await waitFor(() => {
-      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
       expect(labels).toContain('"custom":"value"');
     });
-    const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+    const labels = screen.getByTestId("global-labels-json").textContent ?? "";
     expect(labels).toContain('"operator":"real.user"');
     expect(labels).toContain('"operation":"op_i_picked"');
   });

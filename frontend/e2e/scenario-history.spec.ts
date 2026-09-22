@@ -650,7 +650,12 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await page.reload();
     await expect(page).toHaveURL(`/scanner-history/${RUN_ID}`);
     await expect(page.getByRole("heading", { name: SCENARIO_NAME })).toBeVisible();
-    await page.getByRole("button", { name: "Expand attacks in Prompt sending" }).click();
+    const atomicGroupsToggle = page.getByRole("button", { name: /atomic attack groups$/ });
+    await expect(atomicGroupsToggle).toHaveAttribute("aria-expanded", "true");
+    const groupToggle = page.getByRole("button", { name: "Expand attacks in Prompt sending" });
+    await expect(groupToggle).toBeVisible();
+    await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
+    await groupToggle.click();
     const attemptRow = page.getByRole("row", { name: "View details for prompt_sending" });
     await attemptRow.click();
     await expect(page).toHaveURL(`/scanner-history/${RUN_ID}/${ATTACK_ID}`);

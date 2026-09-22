@@ -146,6 +146,68 @@ describe('CreateConverterDialog', () => {
     expect(mockedConvertersApi.listConverterTypes).toHaveBeenCalledTimes(1)
   })
 
+  it('hides converter types with required parameters the form cannot configure', async () => {
+    mockedConvertersApi.listConverterTypes.mockResolvedValue({
+      items: [
+        converterTypes.items[0],
+        {
+          ...converterTypes.items[0],
+          converter_type: 'TokenBijectionConverter',
+          parameters: [{
+            name: 'tokenizer',
+            type_name: '_TokenizerWithVocab',
+            required: true,
+            default: null,
+          }],
+        },
+        {
+          ...converterTypes.items[0],
+          converter_type: 'TextJailbreakConverter',
+          parameters: [{
+            name: 'jailbreak_template',
+            type_name: 'TextJailBreak',
+            required: true,
+            default: null,
+          }],
+        },
+        {
+          ...converterTypes.items[0],
+          converter_type: 'SelectiveTextConverter',
+          parameters: [{
+            name: 'selection_strategy',
+            type_name: 'TextSelectionStrategy',
+            required: true,
+            default: null,
+          }],
+        },
+      ],
+    })
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.click(await screen.findByRole('combobox', { name: /^converter type$/i }))
+
+    expect(screen.getByTestId('converter-type-option-CaesarConverter')).toBeInTheDocument()
+    expect(screen.queryByTestId('converter-type-option-TokenBijectionConverter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('converter-type-option-TextJailbreakConverter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('converter-type-option-SelectiveTextConverter')).not.toBeInTheDocument()
+  })
+
+  it('keeps converter types with optional unsupported parameters', async () => {
+    mockConverterParameters([{
+      name: 'runtime_dependency',
+      type_name: 'RuntimeDependency',
+      required: false,
+      default: null,
+    }])
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.click(await screen.findByRole('combobox', { name: /^converter type$/i }))
+
+    expect(screen.getByTestId('converter-type-option-TextConverter')).toBeInTheDocument()
+  })
+
   it('prefills an editable registry name from the selected type', async () => {
     const user = userEvent.setup()
     renderDialog()

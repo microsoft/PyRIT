@@ -1819,6 +1819,8 @@ class ScenarioRunService:
                 created_at=header_result.creation_time,
                 started_at=self._load_started_at(scenario_result=header_result),
                 completed_at=header_result.completion_time if terminal else None,
+                error=header_result.error_message,
+                error_type=header_result.error_type,
                 pyrit_version=header_result.pyrit_version,
                 target=target,
                 techniques_used=techniques_used,

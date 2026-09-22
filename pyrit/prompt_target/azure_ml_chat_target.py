@@ -215,6 +215,7 @@ class AzureMLChatTarget(PromptTarget):
             "authentication is used automatically. Pass an api_key or a token provider callable instead."
         )
 
+    @pyrit_target_retry
     @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
@@ -259,7 +260,6 @@ class AzureMLChatTarget(PromptTarget):
         logger.info("Received the following response from the prompt target" + f"{response_entry.get_value()}")
         return [response_entry]
 
-    @pyrit_target_retry
     async def _complete_chat_async(
         self,
         messages: list[Message],

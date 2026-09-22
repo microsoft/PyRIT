@@ -1085,6 +1085,14 @@ class TestScenarioBaselineOnlyExecution:
         assert resolved_none == resolved_empty
         assert len(resolved_none) > 0
 
+    def test_unknown_technique_raises(self):
+        """Test that an item outside the technique catalog is rejected instead of dropped."""
+        scenario = ConcreteScenario(name="Test", version=1)
+        technique_class = scenario._technique_class
+
+        with pytest.raises(ValueError, match="unsupported techniques"):
+            technique_class.resolve(["not_a_technique"], default=scenario._default_technique)
+
 
 class TestGetDefaultObjectiveScorer:
     """Tests for Scenario._get_default_objective_scorer method."""
