@@ -244,6 +244,32 @@ class TestAtomicConversationBranching:
         )
         assert sqlite_instance._get_conversation(conversation_id=branch.conversation_id) is None
 
+    def test_source_target_conflict_rolls_back_branch(self, sqlite_instance: SQLiteMemory) -> None:
+        attack, source = _store_attack(sqlite_instance)
+        conflicting_source = source.model_copy(
+            update={
+                "target_identifier": TargetIdentifier(
+                    class_name="ExampleTarget",
+                    class_module="tests.unit",
+                    params={"endpoint": "different"},
+                )
+            }
+        )
+        branch = source.model_copy(update={"conversation_id": str(uuid.uuid4())})
+
+        with pytest.raises(ValueError, match="already registered with a different target"):
+            sqlite_instance.add_conversation_branches_to_attack(
+                attack_result_id=attack.attack_result_id,
+                source_conversation=conflicting_source,
+                conversations=[branch],
+                message_pieces=[],
+            )
+
+        assert sqlite_instance._get_conversation(conversation_id=branch.conversation_id) is None
+        assert sqlite_instance._get_conversation(conversation_id=source.conversation_id) == source
+        current = sqlite_instance.get_attack_results(attack_result_ids=[attack.attack_result_id])[0]
+        assert current.get_active_conversation_ids() == {source.conversation_id}
+
     @pytest.mark.parametrize("invalid", ["duplicate_id", "source_replacement", "wrong_piece_conversation"])
     def test_invalid_prepared_payload_rolls_back(self, *, sqlite_instance: SQLiteMemory, invalid: str) -> None:
         attack, source = _store_attack(sqlite_instance)

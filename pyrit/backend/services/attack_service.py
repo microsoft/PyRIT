@@ -630,13 +630,17 @@ class AttackService:
                 f"Conversation '{request.source_conversation_id}' is not part of attack '{attack_result_id}'"
             )
 
+        attack_identifier = ar.get_attack_strategy_identifier()
+        objective_target = attack_identifier.get_child("objective_target") if attack_identifier else None
         source_metadata: Conversation | None = None
         all_pieces: Sequence[MessagePiece] = []
         if request.source_conversation_id is not None and request.cutoff_index is not None:
             source_metadata = await asyncio.to_thread(
                 self._memory._get_conversation, conversation_id=request.source_conversation_id
             )
-            source_metadata = source_metadata or Conversation(conversation_id=request.source_conversation_id)
+            source_metadata = source_metadata or Conversation(
+                conversation_id=request.source_conversation_id, target_identifier=objective_target
+            )
             conversation, all_pieces = await asyncio.to_thread(
                 self._prepare_conversation_up_to,
                 source_conversation_id=request.source_conversation_id,
@@ -644,10 +648,9 @@ class AttackService:
                 target_identifier=source_metadata.target_identifier,
             )
         else:
-            attack_identifier = ar.get_attack_strategy_identifier()
             conversation = Conversation(
                 conversation_id=str(uuid.uuid4()),
-                target_identifier=attack_identifier.get_child("objective_target") if attack_identifier else None,
+                target_identifier=objective_target,
             )
 
         stored = await asyncio.to_thread(

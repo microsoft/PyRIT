@@ -7,6 +7,7 @@ Tests for attack service.
 The attack service uses PyRIT memory with AttackResult as the source of truth.
 """
 
+import asyncio
 import base64
 import json
 import uuid
@@ -17,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import pyrit
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AttackSummary,
@@ -41,8 +43,11 @@ from pyrit.backend.services.pagination import (
     normalize_label_filters,
 )
 from pyrit.common.utils import to_sha256
+from pyrit.memory import SQLiteMemory
+from pyrit.memory.memory_models import ConversationEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     ChatMessageRole,
@@ -54,9 +59,11 @@ from pyrit.models import (
     MessagePiece,
     PromptResponseError,
     Score,
+    TargetIdentifier,
 )
 from pyrit.models.conversation_stats import ConversationStats
-from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+from unit.mocks import MockPromptTarget
 
 
 @pytest.fixture
@@ -2758,6 +2765,95 @@ class TestGetConversations:
 class TestCreateRelatedConversation:
     """Tests for create_related_conversation_async."""
 
+    async def test_empty_history_branch_preserves_target_on_first_send_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = AttackService()
+        target = MockPromptTarget()
+        target_identifier = target.get_identifier()
+        attack = AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective="Branch an empty history",
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
+                attack_identifier=AttackIdentifier(
+                    class_name="ManualAttack",
+                    class_module="pyrit.backend",
+                    objective_target=target_identifier,
+                )
+            ),
+        )
+        await asyncio.to_thread(sqlite_instance.add_attack_results_to_memory, attack_results=[attack])
+        assert (
+            await asyncio.to_thread(sqlite_instance._get_conversation, conversation_id=attack.conversation_id) is None
+        )
+
+        branch = await service.create_related_conversation_async(
+            attack_result_id=attack.attack_result_id,
+            request=CreateConversationRequest(source_conversation_id=attack.conversation_id, cutoff_index=0),
+        )
+
+        assert branch is not None
+        normalizer = PromptNormalizer()
+        for conversation_id in [attack.conversation_id, branch.conversation_id]:
+            await normalizer.send_prompt_async(
+                message=Message.from_prompt(prompt="Hello", role="user"),
+                target=target,
+                conversation_id=conversation_id,
+            )
+            metadata = await asyncio.to_thread(sqlite_instance._get_conversation, conversation_id=conversation_id)
+            assert metadata is not None
+            assert metadata.target_identifier == target_identifier
+            rows = await asyncio.to_thread(
+                sqlite_instance._query_entries,
+                ConversationEntry,
+                conditions=ConversationEntry.conversation_id == conversation_id,
+            )
+            assert rows[0].target_identifier_hash == target_identifier.hash
+        assert target.prompt_sent == ["Hello", "Hello"]
+
+    async def test_nested_branching_preserves_target_after_version_change_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = AttackService()
+        target = TargetIdentifier(class_name="ExampleTarget", class_module="tests.unit", pyrit_version="1.1.0")
+        source = Conversation(conversation_id=str(uuid.uuid4()), target_identifier=target)
+        attack = AttackResult(conversation_id=source.conversation_id, objective="Branch older history")
+        await asyncio.to_thread(sqlite_instance.add_attack_results_to_memory, attack_results=[attack])
+        with patch.object(pyrit, "__version__", "1.1.0"):
+            await asyncio.to_thread(sqlite_instance.add_conversation_to_memory, conversation=source)
+        original = MessagePiece(
+            conversation_id=source.conversation_id, role="user", original_value="Original", sequence=0
+        )
+        await asyncio.to_thread(sqlite_instance.add_message_pieces_to_memory, message_pieces=[original])
+        expected_rows = [(source.conversation_id, "1.1.0", target.model_dump())]
+
+        source_id = source.conversation_id
+        for _ in range(2):
+            branch = await service.create_related_conversation_async(
+                attack_result_id=attack.attack_result_id,
+                request=CreateConversationRequest(source_conversation_id=source_id, cutoff_index=0),
+            )
+            assert branch is not None
+            rows = await asyncio.to_thread(
+                sqlite_instance._query_entries,
+                ConversationEntry,
+                conditions=ConversationEntry.conversation_id == branch.conversation_id,
+            )
+            expected_rows.append((branch.conversation_id, rows[0].pyrit_version, rows[0].target_identifier))
+            pieces = await asyncio.to_thread(sqlite_instance.get_message_pieces, conversation_id=branch.conversation_id)
+            assert [piece.original_prompt_id for piece in pieces] == [original.id]
+            source_id = branch.conversation_id
+
+        rows = await asyncio.to_thread(sqlite_instance._query_entries, ConversationEntry)
+        assert {row.conversation_id: (row.pyrit_version, row.target_identifier) for row in rows} == {
+            conversation_id: (version, identifier) for conversation_id, version, identifier in expected_rows
+        }
+        assert all(row.target_identifier_hash == target.hash for row in rows)
+        current = await asyncio.to_thread(
+            sqlite_instance.get_attack_results, attack_result_ids=[attack.attack_result_id]
+        )
+        assert current[0].get_active_conversation_ids() == {row.conversation_id for row in rows}
+
     async def test_returns_none_when_attack_not_found(self, attack_service, mock_memory):
         """Should return None when the attack doesn't exist."""
         from pyrit.backend.models.attacks import CreateConversationRequest
@@ -3228,17 +3324,28 @@ class TestAttackServiceAdditionalCoverage:
 
     @pytest.mark.parametrize("has_metadata", [False, True])
     @pytest.mark.parametrize("has_pieces", [False, True])
+    @pytest.mark.parametrize("has_target", [False, True])
     async def test_create_related_conversation_uses_duplicate_branch(
-        self, *, attack_service: AttackService, mock_memory: MagicMock, has_metadata: bool, has_pieces: bool
+        self,
+        *,
+        attack_service: AttackService,
+        mock_memory: MagicMock,
+        has_metadata: bool,
+        has_pieces: bool,
+        has_target: bool,
     ) -> None:
         """Prepare the history without committing it before the atomic branch insertion."""
         from pyrit.backend.models.attacks import CreateConversationRequest
         from pyrit.models import Conversation
 
-        ar = make_attack_result(conversation_id="attack-1")
+        ar = make_attack_result(conversation_id="attack-1", has_target=has_target)
         mock_memory.get_attack_results.return_value = [ar]
         expected_target = (
-            ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target") if has_metadata else None
+            ComponentIdentifier(
+                class_name="SourceTarget" if has_metadata else "TextTarget", class_module="pyrit.prompt_target"
+            )
+            if has_metadata or has_target
+            else None
         )
         source = Conversation(conversation_id="attack-1", target_identifier=expected_target)
         mock_memory._get_conversation.return_value = source if has_metadata else None

@@ -671,9 +671,9 @@ class MemoryInterface(abc.ABC):
         rather than threaded through every write.
 
         Registration is idempotent only for an identical conversation: re-registering the
-        same ``conversation_id`` with the same target is a no-op (so repeated per-turn
-        registration is safe). Re-registering an existing ``conversation_id`` with a
-        different target is a conflict and raises ``ValueError`` -- a conversation is held
+        same ``conversation_id`` with the same target identity is a no-op, even across
+        PyRIT versions (so repeated per-turn registration is safe). Re-registering an existing
+        ``conversation_id`` with a different target is a conflict and raises ``ValueError`` -- a conversation is held
         with exactly one target and is never re-targeted.
 
         Args:
@@ -832,7 +832,7 @@ class MemoryInterface(abc.ABC):
         elif (
             entry.target_identifier is not None
             and existing.target_identifier is not None
-            and existing.target_identifier != entry.target_identifier
+            and ComponentIdentifier.model_validate(existing.target_identifier) != conversation.target_identifier
         ):
             raise ValueError(
                 f"Conversation {conversation.conversation_id} is already registered with a different "
