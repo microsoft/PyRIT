@@ -41,6 +41,9 @@ from pyrit.models import (
     ScenarioRunPlanSeedPrompt,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
+    ScenarioRunSizeEstimateCondition,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
     ScenarioRunState,
     config_hash,
 )
@@ -612,6 +615,9 @@ class Scenario(ABC):
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=seed_group_count,
+                    factors=[
+                        ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count),
+                    ],
                     is_baseline=True,
                     note="One unmodified prompt-sending unit per selected seed group.",
                 )
@@ -637,10 +643,21 @@ class Scenario(ABC):
                 else:
                     estimated_attack_count = None
                     note += " The range covers every compatibility mix that the randomized per-dataset caps can select."
+        status = (
+            ScenarioRunSizeEstimateStatus.Exact
+            if estimated_attack_count is not None
+            else ScenarioRunSizeEstimateStatus.Conditional
+        )
         return ScenarioRunSizeEstimate(
+            status=status,
             estimated_attack_count=estimated_attack_count,
             minimum_attack_count=minimum_attack_count,
             maximum_attack_count=maximum_attack_count,
+            condition=(
+                ScenarioRunSizeEstimateCondition.LaunchConfiguration
+                if status is ScenarioRunSizeEstimateStatus.Conditional
+                else None
+            ),
             components=components,
             datasets=datasets,
             note=note,
@@ -664,6 +681,10 @@ class Scenario(ABC):
                 ScenarioRunSizeComponent(
                     label="Default technique sweep",
                     count=seed_group_count * technique_count,
+                    factors=[
+                        ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count),
+                        ScenarioRunSizeFactor(label="selected concrete techniques", count=technique_count),
+                    ],
                 )
             ]
 
@@ -689,6 +710,10 @@ class Scenario(ABC):
                 ScenarioRunSizeComponent(
                     label=technique.value,
                     count=compatible_count,
+                    factors=[
+                        ScenarioRunSizeFactor(label="selected concrete techniques", count=1),
+                        ScenarioRunSizeFactor(label="compatible logical seed groups", count=compatible_count),
+                    ],
                 )
             )
         return components

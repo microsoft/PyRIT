@@ -18,6 +18,9 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
+    ScenarioRunSizeEstimateCondition,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
 )
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
@@ -227,6 +230,10 @@ class AdversarialBenchmark(Scenario):
                 ScenarioRunSizeComponent(
                     label=technique.value,
                     count=compatible_count,
+                    factors=[
+                        ScenarioRunSizeFactor(label="selected concrete techniques", count=1),
+                        ScenarioRunSizeFactor(label="compatible logical seed groups", count=compatible_count),
+                    ],
                     note="Count per adversarial target.",
                 )
             )
@@ -247,7 +254,9 @@ class AdversarialBenchmark(Scenario):
         target_names = self.params.get("adversarial_targets") or []
         if not target_names:
             return ScenarioRunSizeEstimate(
+                status=ScenarioRunSizeEstimateStatus.Conditional,
                 minimum_attack_count=per_target_minimum,
+                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
                 components=per_target_components,
                 datasets=datasets,
                 note=(
@@ -259,13 +268,24 @@ class AdversarialBenchmark(Scenario):
         resolved_targets = self._resolve_adversarial_targets(target_names=target_names)
         target_count = len(resolved_targets)
         components = [
-            component.model_copy(update={"count": component.count * target_count, "note": None})
+            ScenarioRunSizeComponent(
+                label=component.label,
+                count=component.count * target_count,
+                factors=[
+                    *component.factors[:1],
+                    ScenarioRunSizeFactor(label="adversarial targets", count=target_count),
+                    *component.factors[1:],
+                ],
+                is_baseline=component.is_baseline,
+            )
             for component in per_target_components
         ]
         if self._use_cached:
             return ScenarioRunSizeEstimate(
+                status=ScenarioRunSizeEstimateStatus.Conditional,
                 minimum_attack_count=0,
                 maximum_attack_count=per_target_maximum * target_count if per_target_maximum is not None else None,
+                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
                 components=components,
                 datasets=datasets,
                 note=(
@@ -275,6 +295,8 @@ class AdversarialBenchmark(Scenario):
             )
         if self._estimate_has_binding_size_cap and compatibility_bounds is None:
             return ScenarioRunSizeEstimate(
+                status=ScenarioRunSizeEstimateStatus.Conditional,
+                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
                 components=components,
                 datasets=datasets,
                 note=(
@@ -289,8 +311,10 @@ class AdversarialBenchmark(Scenario):
             and per_target_minimum != per_target_maximum
         ):
             return ScenarioRunSizeEstimate(
+                status=ScenarioRunSizeEstimateStatus.Conditional,
                 minimum_attack_count=per_target_minimum * target_count,
                 maximum_attack_count=per_target_maximum * target_count,
+                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
                 components=components,
                 datasets=datasets,
                 note=(
@@ -299,6 +323,7 @@ class AdversarialBenchmark(Scenario):
                 ),
             )
         return ScenarioRunSizeEstimate(
+            status=ScenarioRunSizeEstimateStatus.Exact,
             estimated_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
