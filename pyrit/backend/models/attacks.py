@@ -366,6 +366,11 @@ class MessagePieceRequest(BaseModel):
         None,
         description="Final converted value's data type. Defaults to data_type; requires converted_value.",
     )
+    applied_converter_ids: list[str] | None = Field(
+        None,
+        description="Registry IDs of converters already applied, in execution order, including duplicates. "
+        "Requires converted_value. Use an empty list for manual edits.",
+    )
     mime_type: str | None = Field(None, description="MIME type for media content")
     prompt_metadata: dict[str, Any] | None = Field(
         None,
@@ -390,6 +395,8 @@ class MessagePieceRequest(BaseModel):
         """
         if self.converted_value_data_type is not None and self.converted_value is None:
             raise ValueError("converted_value_data_type requires converted_value")
+        if self.applied_converter_ids is not None and self.converted_value is None:
+            raise ValueError("applied_converter_ids requires converted_value")
         return self
 
 

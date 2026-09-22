@@ -2215,10 +2215,7 @@ describe("ChatWindow Integration", () => {
     expect(mockedAttacksApi.addMessage).toHaveBeenLastCalledWith(
       props.attackResultId,
       expect.objectContaining({
-        request_converter_configurations: [{
-          converter_ids: ["preserved-image-converter"],
-          indexes_to_apply: [0],
-        }],
+        pieces: [expect.objectContaining({ applied_converter_ids: ["preserved-image-converter"] })],
       }),
     );
 
@@ -2250,11 +2247,9 @@ describe("ChatWindow Integration", () => {
       props.attackResultId,
       expect.objectContaining({
         target_conversation_id: "conv-media-recovery",
-        request_converter_configurations: [{
-          converter_ids: ["preserved-image-converter"],
-          indexes_to_apply: [0],
-        }],
-        pieces: [expect.objectContaining({ data_type: "image_path" })],
+        pieces: [expect.objectContaining({
+          data_type: "image_path", applied_converter_ids: ["preserved-image-converter"],
+        })],
       }),
     );
   });
@@ -2885,10 +2880,7 @@ describe("ChatWindow Integration", () => {
         props.attackResultId,
         expect.objectContaining({
           target_conversation_id: "conv-matching-recovery",
-          request_converter_configurations: [{
-            converter_ids: ["live-pdf-converter"],
-            indexes_to_apply: [0],
-          }],
+          pieces: expect.arrayContaining([expect.objectContaining({ applied_converter_ids: ["live-pdf-converter"] })]),
         })
       );
     });
@@ -3098,14 +3090,11 @@ describe("ChatWindow Integration", () => {
         "ar-persisted-processing",
         expect.objectContaining({
           target_conversation_id: "conv-persisted-recovery",
-          request_converter_configurations: [{
-            converter_ids: ["recovered-media-converter"],
-            indexes_to_apply: [1],
-          }],
           pieces: expect.arrayContaining([
             expect.objectContaining({
               data_type: originalDataType,
               original_value: "/original/evidence.png",
+              applied_converter_ids: ["recovered-media-converter"],
             }),
           ]),
         })
@@ -5370,10 +5359,11 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => expect(mockedAttacksApi.addMessage).toHaveBeenCalledWith("ar-pieces", expect.objectContaining({
-      request_converter_configurations: [{ converter_ids: ["compress"], indexes_to_apply: [removeFailed ? 0 : 1] }],
+      pieces: expect.arrayContaining([expect.objectContaining({ applied_converter_ids: ["compress"] })]),
     })));
     const request = mockedAttacksApi.addMessage.mock.calls[0][1];
     expect(request.pieces[removeFailed ? 0 : 1].original_value).toBe("c2Vjb25k");
+    expect(request.pieces[removeFailed ? 0 : 1].applied_converter_ids).toEqual(["compress"]);
     expect(request.pieces).toHaveLength(removeFailed ? 1 : 2);
   });
 
@@ -5410,9 +5400,8 @@ describe("ChatWindow Integration", () => {
     await user.type(screen.getByTestId("chat-input"), "next");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockedAttacksApi.addMessage).toHaveBeenCalledTimes(2));
-    expect(mockedAttacksApi.addMessage.mock.calls[0][1].request_converter_configurations)
-      .toEqual([{ converter_ids: ["base64"], indexes_to_apply: [0] }]);
-    expect(mockedAttacksApi.addMessage.mock.calls[1][1].request_converter_configurations).toBeUndefined();
+    expect(mockedAttacksApi.addMessage.mock.calls[0][1].pieces[0].applied_converter_ids).toEqual(["base64"]);
+    expect(mockedAttacksApi.addMessage.mock.calls[1][1].pieces[0].applied_converter_ids).toBeUndefined();
   });
 
   it.each(["Working input - Text", "Stage 1 output - Text"])(
@@ -5503,8 +5492,8 @@ describe("ChatWindow Integration", () => {
       pieces: [{
         data_type: "text", original_value: original,
         converted_value: "final manual result", converted_value_data_type: "text",
+        applied_converter_ids: ["base64"],
       }],
-      request_converter_configurations: [{ converter_ids: ["base64"], indexes_to_apply: [0] }],
     })));
     expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1);
   });
@@ -5534,8 +5523,8 @@ describe("ChatWindow Integration", () => {
         original_value: "original chat",
         converted_value: "manual result",
         converted_value_data_type: "text",
+        applied_converter_ids: [],
       }],
-      request_converter_configurations: undefined,
     })));
     expect(mockedConvertersApi.previewConversion).not.toHaveBeenCalled();
   });

@@ -1,5 +1,5 @@
 import type {
-  ConverterConfigurationRequest, ConverterInputPiece, MessageAttachment, MessagePieceRequest, PieceConversion,
+  ConverterInputPiece, MessageAttachment, MessagePieceRequest, PieceConversion,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { mimeTypeToDataType } from '@/utils/messageMapper'
@@ -53,21 +53,6 @@ export function buildDraftPieceIds(
     .map((input: ConverterInputPiece) => input.id)
 }
 
-/** Target only applied piece identities, in their final request order. */
-export function buildRequestConverterConfigurations(
-  pieceIds: string[],
-  conversions: Record<string, PieceConversion>,
-): ConverterConfigurationRequest[] {
-  return pieceIds.flatMap((pieceId: string, index: number) => {
-    const conversion = conversions[pieceId]
-    if (!conversion || conversion.converterInstanceIds.length === 0) return []
-    return [{
-      converter_ids: conversion.converterInstanceIds,
-      indexes_to_apply: [index],
-    }]
-  })
-}
-
 /** Attach applied results by draft identity without changing each piece's original value. */
 export function applyConvertedValues(
   pieces: MessagePieceRequest[],
@@ -82,6 +67,7 @@ export function applyConvertedValues(
       ...piece,
       converted_value: conversion.convertedValue,
       converted_value_data_type: conversion.convertedDataType,
+      applied_converter_ids: conversion.converterInstanceIds,
     } : piece
   })
 }

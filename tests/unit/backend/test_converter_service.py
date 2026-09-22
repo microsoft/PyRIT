@@ -1050,7 +1050,20 @@ class TestPreviewConversion:
         assert result.converted_value == base64.b64encode(partial.encode()).decode()
         assert result.converted_value_data_type == "text"
 
-    @pytest.mark.parametrize("prompt", ["⟪unclosed", "⟫reversed⟪", "⟪outer⟪inner⟫⟫", "⟪⟫"])
+    async def test_preview_conversion_accepts_empty_marked_region_async(
+        self, *, upload_service: ConverterService
+    ) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="selected")
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value="before ⟪⟫ after",
+                original_value_data_type="text",
+                converter_ids=["selected"],
+            )
+        )
+        assert result.converted_value == "before  after"
+
+    @pytest.mark.parametrize("prompt", ["⟪unclosed", "⟫reversed⟪", "⟪outer⟪inner⟫⟫"])
     async def test_preview_conversion_rejects_invalid_selection_before_conversion_async(
         self, *, upload_service: ConverterService, prompt: str
     ) -> None:

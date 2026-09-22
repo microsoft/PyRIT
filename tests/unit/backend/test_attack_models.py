@@ -61,3 +61,16 @@ def test_message_piece_ignores_client_converter_identifiers() -> None:
     )
 
     assert "converter_identifiers" not in piece.model_dump()
+
+
+@pytest.mark.parametrize("converter_ids", [[], ["first", "second", "first"]])
+def test_message_piece_accepts_applied_converter_order(converter_ids: list[str]) -> None:
+    piece = MessagePieceRequest(original_value="source", converted_value="", applied_converter_ids=converter_ids)
+
+    assert piece.applied_converter_ids == converter_ids
+
+
+@pytest.mark.parametrize("converter_ids", [[], ["first"]])
+def test_message_piece_rejects_applied_converters_without_value(converter_ids: list[str]) -> None:
+    with pytest.raises(ValidationError, match="applied_converter_ids requires converted_value"):
+        MessagePieceRequest(original_value="source", applied_converter_ids=converter_ids)

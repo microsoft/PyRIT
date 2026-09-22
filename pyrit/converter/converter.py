@@ -264,7 +264,7 @@ class Converter(Identifiable):
             The start and end offsets for each marked region.
 
         Raises:
-            ValueError: If the marker sequence is unmatched, nested, or empty.
+            ValueError: If the marker sequence is unmatched or nested.
         """
         tokens = sorted({start_token, end_token}, key=len, reverse=True)
         pattern = "|".join(re.escape(token) for token in tokens)
@@ -279,8 +279,6 @@ class Converter(Identifiable):
             else:
                 if region_start is None:
                     raise ValueError(f"Unmatched end token at position {token.start()}.")
-                if token.start() == region_start + len(start_token):
-                    raise ValueError(f"Empty marked region at position {region_start} is not allowed.")
                 spans.append((region_start, token.end()))
                 region_start = None
         if region_start is not None:

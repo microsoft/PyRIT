@@ -838,6 +838,35 @@ describe('ConverterPanel', () => {
       }))
   })
 
+  it.each(['', '   '])('continues from an empty or whitespace stage %j', async (value: string) => {
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [textConverter, makeConverter('suffix', 'SuffixAppendConverter')],
+    })
+    mockedConvertersApi.previewConversion
+      .mockResolvedValueOnce(makePreviewResponse(['base64-default', 'suffix'], ['first', 'first tail']))
+      .mockResolvedValueOnce(makePreviewResponse(['suffix'], [`${value} tail`], value))
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await selectConverter('suffix')
+    const resume = screen.getByRole('button', { name: 'Convert Text from stage 2 to end' })
+    expect(resume).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
+    const output = screen.getByRole('textbox', { name: 'Stage 1 output - Text' })
+    await user.clear(output)
+    if (value) await user.type(output, value)
+    expect(screen.queryByRole('textbox', { name: 'Stage 2 output - Text' })).not.toBeInTheDocument()
+    expect(resume).toBeEnabled()
+    await user.click(resume)
+    expect(mockedConvertersApi.previewConversion).toHaveBeenLastCalledWith({
+      original_value: value, original_value_data_type: 'text', converter_ids: ['suffix'],
+    })
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(2)
+    expect(output).toHaveValue(value)
+    expect(screen.getByRole('textbox', { name: 'Stage 2 output - Text' })).toHaveValue(`${value} tail`)
+  })
+
   it.each(['manual final', ''])('applies an edited final value %j without another conversion', async (value: string) => {
     mockedConvertersApi.previewConversion.mockResolvedValue(makePreviewResponse(['base64-default'], ['output']))
     const user = userEvent.setup()

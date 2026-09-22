@@ -79,7 +79,8 @@ attachment shown on that tab.
 
 Each text stage output is also editable. After changing an intermediate output, use
 the **Convert** button below it to run **all remaining stages** from that value,
-without rerunning earlier stages. Editing a value invalidates its downstream results
+without rerunning earlier stages. Empty and whitespace-only intermediate values can
+also be passed to the remaining stages. Editing a value invalidates its downstream results
 until you convert again. The final output has no Convert or selection-only button;
 you can edit it directly before applying it.
 
@@ -88,16 +89,24 @@ This wraps the selection in `⟪` and `⟫`. The next converter transforms only 
 regions and removes their markers, preserving everything outside them. Marked regions
 have a colored highlight while their markers stay visible. Later stages convert the
 whole result unless you select another region. Multiple and multiline
-regions are supported; unmatched, nested, and empty regions are rejected. Partial
+regions are supported; unmatched and nested regions are rejected. Empty regions
+pass an empty string to the converter. Partial
 conversion requires text input and text output. Without markers, converters retain
 their normal whole-value behavior, including media conversions.
 
 Click **Add converted value** to apply the final result, then **Send**. The exact
 applied value is sent and stored alongside the unchanged original; the backend does
-not rerun the pipeline. Converter configuration is retained as provenance, and
+not rerun the pipeline. The exact ordered list of applied converters is retained
+as provenance, including duplicates and converters that change the data type, and
 reloading the conversation shows the same original and converted values. You can
 also edit only the top working input and apply it as a manual conversion without
 adding or running a registered converter.
+
+API clients submit this list as `applied_converter_ids` on each preconverted
+message piece. The backend resolves the IDs through the registry. An empty list
+represents a manual conversion. `request_converter_configurations` controls
+conversion of pieces without a preconverted value; it does not describe which
+converters already ran.
 
 #### Attachments
 

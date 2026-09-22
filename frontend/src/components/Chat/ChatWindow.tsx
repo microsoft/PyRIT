@@ -35,7 +35,6 @@ import {
   basenameFromValue,
   applyConvertedValues,
   buildMediaUrl,
-  buildRequestConverterConfigurations,
   buildDraftPieceIds,
   dataTypeToAttachmentKind,
   isPathDataType,
@@ -632,12 +631,6 @@ export default function ChatWindow({
         conversions,
       )
 
-      // Keep registered converter provenance without rerunning an applied result.
-      const requestConverterConfigurations = buildRequestConverterConfigurations(
-        pieceIds,
-        conversions,
-      )
-
       // Create attack lazily on first message
       let currentAttackResultId = attackResultId
       let currentConversationId = conversationId
@@ -692,9 +685,6 @@ export default function ChatWindow({
         send: true,
         target_registry_name: activeTarget.target_registry_name,
         target_conversation_id: effectiveConvId,
-        request_converter_configurations: requestConverterConfigurations.length > 0
-          ? requestConverterConfigurations
-          : undefined,
       }
       const response = await attacksApi.addMessage(currentAttackResultId, addMessageRequest)
       onAttackChange?.(response.attack)

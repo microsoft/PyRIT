@@ -1,6 +1,6 @@
 import type { PieceConversion } from '@/components/Chat/converterTypes'
 import {
-  applyConvertedValues, buildConverterInputs, buildDraftPieceIds, buildRequestConverterConfigurations, withDraftIdentity,
+  applyConvertedValues, buildConverterInputs, buildDraftPieceIds, withDraftIdentity,
 } from '@/components/Chat/converterTypes'
 import type { MessageAttachment } from '@/types'
 import { buildMessagePieces } from '@/utils/messageMapper'
@@ -39,9 +39,12 @@ function makeConversion(
   }
 }
 
-describe('buildRequestConverterConfigurations', () => {
+describe('converter draft mapping', () => {
   it('targets only applied pieces and retains converter order across type changes', () => {
-    const configurations = buildRequestConverterConfigurations(
+    const pieces = applyConvertedValues(
+      ['text', 'image_path', 'audio_path', 'image_path'].map((data_type: string) => ({
+        data_type, original_value: 'original',
+      })),
       ['text', 'first-image', 'audio', 'second-image'],
       {
         text: makeConversion('text', ['base64']),
@@ -50,16 +53,10 @@ describe('buildRequestConverterConfigurations', () => {
       },
     )
 
-    expect(configurations).toEqual([
-      {
-        converter_ids: ['base64'],
-        indexes_to_apply: [0],
-      },
-      {
-        converter_ids: ['compress', 'caption', 'base64'],
-        indexes_to_apply: [3],
-      },
-    ])
+    expect(pieces[0].applied_converter_ids).toEqual(['base64'])
+    expect(pieces[1].applied_converter_ids).toBeUndefined()
+    expect(pieces[2].applied_converter_ids).toBeUndefined()
+    expect(pieces[3].applied_converter_ids).toEqual(['compress', 'caption', 'base64'])
   })
 
   describe('applyConvertedValues', () => {
@@ -74,9 +71,15 @@ describe('buildRequestConverterConfigurations', () => {
         second: { ...makeConversion('second', ['caption']), convertedValue: '' },
       })
       expect(result).toEqual([
-        { ...original[0], converted_value: 'result.pdf', converted_value_data_type: 'binary_path' },
+        {
+          ...original[0], converted_value: 'result.pdf', converted_value_data_type: 'binary_path',
+          applied_converter_ids: ['pdf'],
+        },
         original[1],
-        { ...original[2], converted_value: '', converted_value_data_type: 'text' },
+        {
+          ...original[2], converted_value: '', converted_value_data_type: 'text',
+          applied_converter_ids: ['caption'],
+        },
       ])
       expect(original[0]).not.toHaveProperty('converted_value')
     })
@@ -87,13 +90,14 @@ describe('buildRequestConverterConfigurations', () => {
     })
   })
 
-  it('skips modalities with an empty pipeline', () => {
-    const configurations = buildRequestConverterConfigurations(
+  it('retains an empty converter list for a manual conversion', () => {
+    const pieces = applyConvertedValues(
+      [{ data_type: 'text', original_value: 'original' }],
       ['text'],
       { text: makeConversion('text', []) },
     )
 
-    expect(configurations).toEqual([])
+    expect(pieces[0].applied_converter_ids).toEqual([])
   })
 
   it.each(['hello', '   '])('maps duplicate filenames in exactly the message order with text %j', async (text: string) => {
@@ -107,15 +111,18 @@ describe('buildRequestConverterConfigurations', () => {
     }))
     const pieces = await buildMessagePieces(text, attachments)
     const pieceIds = buildDraftPieceIds(text, attachments)
-    const configurations = buildRequestConverterConfigurations(pieceIds, {
+    const converted = applyConvertedValues(pieces, pieceIds, {
       second: makeConversion('second', ['compress']),
     })
     expect(pieceIds).toHaveLength(pieces.length)
-    expect(pieces[configurations[0].indexes_to_apply![0]].original_value).toBe('second.png')
+    expect(converted.find((piece) => piece.applied_converter_ids)?.original_value).toBe('second.png')
 
     const afterRemoval = buildDraftPieceIds(text, attachments.slice(1))
-    expect(buildRequestConverterConfigurations(afterRemoval, { second: makeConversion('second', ['compress']) }))
-      .toEqual([{ converter_ids: ['compress'], indexes_to_apply: [text.trim() ? 1 : 0] }])
+    const remaining = await buildMessagePieces(text, attachments.slice(1))
+    const convertedRemaining = applyConvertedValues(remaining, afterRemoval, {
+      second: makeConversion('second', ['compress']),
+    })
+    expect(convertedRemaining[text.trim() ? 1 : 0].applied_converter_ids).toEqual(['compress'])
   })
 
   it('retains actual input data types for generic files and recovered pieces', () => {

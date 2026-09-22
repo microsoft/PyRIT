@@ -40,6 +40,7 @@ from pyrit.converter import (
     RepeatTokenConverter,
     ROT13Converter,
     SearchReplaceConverter,
+    SelectiveTextConverter,
     StringJoinConverter,
     SuffixAppendConverter,
     TranslationConverter,
@@ -50,6 +51,7 @@ from pyrit.converter import (
     VariationConverter,
     VigenereConverter,
 )
+from pyrit.converter.text_selection_strategy import IndexSelectionStrategy
 from pyrit.executor.promptgen.fuzzer import FuzzerConverter
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import PromptDataType, SeedPrompt
@@ -162,11 +164,9 @@ async def test_convert_tokens_custom_delimiters_leave_default_markers_literal_as
         ("unmatched end⟫", "Unmatched end token"),
         ("⟫reversed⟪", "Unmatched end token"),
         ("⟪outer ⟪inner⟫ outer⟫", "Nested start token"),
-        ("⟪⟫", "Empty marked region"),
         ("⟪valid⟫ then ⟪unclosed", "Unmatched start token"),
         ("⟪valid⟫ then unmatched⟫", "Unmatched end token"),
         ("⟪valid⟫ then ⟪outer ⟪inner⟫⟫", "Nested start token"),
-        ("⟪valid⟫ then ⟪⟫", "Empty marked region"),
     ],
 )
 async def test_convert_tokens_validates_all_regions_before_conversion_async(*, prompt: str, error: str) -> None:
@@ -184,6 +184,26 @@ async def test_convert_tokens_rejects_empty_delimiters_async(*, start_token: str
         with pytest.raises(ValueError, match="tokens must be non-empty"):
             await converter.convert_tokens_async(prompt="plain text", start_token=start_token, end_token=end_token)
     convert.assert_not_awaited()
+
+
+async def test_convert_tokens_empty_regions_reach_converter_async() -> None:
+    converter = SuffixAppendConverter(suffix="tail")
+    result = await converter.convert_tokens_async(prompt="before ⟪⟫ after ⟪x⟫")
+
+    assert result.output_text == "before  tail after x tail"
+
+
+async def test_selective_converter_empty_output_can_continue_async() -> None:
+    converter = SelectiveTextConverter(
+        sub_converter=SearchReplaceConverter(pattern="hello", replace=""),
+        selection_strategy=IndexSelectionStrategy(start=0, end=5),
+        preserve_tokens=True,
+    )
+    selected = await converter.convert_async(prompt="hello world")
+    assert selected.output_text == "⟪⟫ world"
+
+    result = await SuffixAppendConverter(suffix="tail").convert_tokens_async(prompt=selected.output_text)
+    assert result.output_text == " tail world"
 
 
 async def test_convert_tokens_assembles_original_spans_without_rematching_output_async() -> None:

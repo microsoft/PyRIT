@@ -76,7 +76,6 @@ from pyrit.models import (
     ConversationStats,
     ConversationType,
     ConverterIdentifier,
-    Message,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
@@ -762,6 +761,7 @@ class AttackService:
         preconverted_indexes = {
             index for index, piece in enumerate(request.pieces) if piece.converted_value is not None
         }
+        applied_converter_identifiers = self._resolve_applied_converter_identifiers(request.pieces)
         last_response_id: str | None = None
 
         # Get existing messages to determine sequence.
@@ -783,6 +783,7 @@ class AttackService:
                     request_converter_configurations=request_converter_configs,
                     response_converter_configurations=response_converter_configs,
                     preconverted_indexes=preconverted_indexes,
+                    applied_converter_identifiers=applied_converter_identifiers,
                 )
             except Exception:
                 # PromptNormalizer persists a full error piece (response_error +
@@ -816,14 +817,20 @@ class AttackService:
                 request=request,
                 sequence=sequence,
                 target_identifier=existing_metadata.target_identifier if existing_metadata else None,
+                applied_converter_identifiers=applied_converter_identifiers,
             )
 
         await self._update_attack_after_message_async(
             attack_result_id=attack_result_id,
             ar=ar,
             last_response_id=last_response_id,
-            request_converter_configurations=request_converter_configs,
+            request_converter_configurations=self._exclude_preconverted_piece_indexes(
+                configurations=request_converter_configs,
+                preconverted_indexes=preconverted_indexes,
+                piece_count=len(request.pieces),
+            ),
             response_converter_configurations=response_converter_configs,
+            applied_converter_identifiers=applied_converter_identifiers,
         )
 
         attack_detail = await self.get_attack_async(attack_result_id=attack_result_id)
@@ -876,6 +883,7 @@ class AttackService:
         last_response_id: str | None,
         request_converter_configurations: list[ConverterConfiguration],
         response_converter_configurations: list[ConverterConfiguration],
+        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
     ) -> None:
         """
         Update attack recency and converter tracking after a message is added.
@@ -889,12 +897,16 @@ class AttackService:
             last_response_id: The latest target response piece ID, if one was stored.
             request_converter_configurations: Resolved request converter configurations used for this message.
             response_converter_configurations: Resolved response converter configurations used for this message.
+            applied_converter_identifiers: Registered converters already applied to each preconverted piece.
         """
         update_fields: dict[str, Any] = {"timestamp": datetime.now(UTC)}
         if last_response_id:
             update_fields["last_response_id"] = last_response_id
 
-        request_converter_ids = self._get_converter_identifiers(configurations=request_converter_configurations)
+        request_converter_ids = [
+            identifier for identifiers in applied_converter_identifiers.values() for identifier in identifiers
+        ]
+        request_converter_ids.extend(self._get_converter_identifiers(configurations=request_converter_configurations))
         response_converter_ids = self._get_converter_identifiers(configurations=response_converter_configurations)
         if request_converter_ids or response_converter_ids:
             attack_strategy_identifier = ar.get_attack_strategy_identifier()
@@ -1141,17 +1153,19 @@ class AttackService:
         """Store prepended conversation messages in memory."""
         if not prepended:
             return
+        applied_by_message = [self._resolve_applied_converter_identifiers(msg.pieces) for msg in prepended]
         self._memory.add_conversation_to_memory(
             conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
         )
         for seq, msg in enumerate(prepended):
-            for p in msg.pieces:
+            for index, p in enumerate(msg.pieces):
                 piece = request_piece_to_pyrit_message_piece(
                     piece=p,
                     role=msg.role,
                     conversation_id=conversation_id,
                     sequence=seq,
                 )
+                piece.converter_identifiers.extend(applied_by_message[seq].get(index, []))
                 self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     async def _send_and_store_message_async(
@@ -1164,6 +1178,7 @@ class AttackService:
         request_converter_configurations: list[ConverterConfiguration],
         response_converter_configurations: list[ConverterConfiguration],
         preconverted_indexes: set[int],
+        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
     ) -> None:
         """Send message to target via normalizer and store response."""
         target_obj = get_target_service().get_target_object(target_registry_name=target_registry_name)
@@ -1179,11 +1194,8 @@ class AttackService:
             conversation_id=conversation_id,
             sequence=sequence,
         )
-        self._set_preconverted_converter_identifiers(
-            message=pyrit_message,
-            configurations=request_converter_configurations,
-            preconverted_indexes=preconverted_indexes,
-        )
+        for index, identifiers in applied_converter_identifiers.items():
+            pyrit_message.message_pieces[index].converter_identifiers.extend(identifiers)
 
         request_converter_configurations = self._exclude_preconverted_piece_indexes(
             configurations=request_converter_configurations,
@@ -1207,6 +1219,7 @@ class AttackService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
+        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
@@ -1214,13 +1227,14 @@ class AttackService:
         self._memory.add_conversation_to_memory(
             conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
         )
-        for p in request.pieces:
+        for index, p in enumerate(request.pieces):
             piece = request_piece_to_pyrit_message_piece(
                 piece=p,
                 role=request.role,
                 conversation_id=conversation_id,
                 sequence=sequence,
             )
+            piece.converter_identifiers.extend(applied_converter_identifiers.get(index, []))
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     def _resolve_video_remix_metadata(self, request: AddMessageRequest) -> None:
@@ -1303,23 +1317,25 @@ class AttackService:
         ]
 
     @staticmethod
-    def _set_preconverted_converter_identifiers(
-        *,
-        message: Message,
-        configurations: list[ConverterConfiguration],
-        preconverted_indexes: set[int],
-    ) -> None:
-        """Record registered preview pipelines, selecting by the original input type."""
-        for index in preconverted_indexes:
-            piece = message.message_pieces[index]
-            for configuration in configurations:
-                indexes = configuration.indexes_to_apply
-                data_types = configuration.prompt_data_types_to_apply
-                if indexes is not None and index not in indexes:
-                    continue
-                if data_types is not None and piece.original_value_data_type not in data_types:
-                    continue
-                piece.converter_identifiers.extend(converter.get_identifier() for converter in configuration.converters)
+    def _resolve_applied_converter_identifiers(
+        pieces: list[MessagePieceRequest],
+    ) -> dict[int, list[ConverterIdentifier]]:
+        """
+        Resolve client-reported execution order without inferring type transitions.
+
+        Returns:
+            Registry-validated converter identifiers by message piece index, preserving order and duplicates.
+        """
+        return {
+            index: [
+                ConverterIdentifier.from_component_identifier(converter.get_identifier())
+                for converter in get_converter_service().get_converter_objects_for_ids(
+                    converter_ids=piece.applied_converter_ids
+                )
+            ]
+            for index, piece in enumerate(pieces)
+            if piece.applied_converter_ids
+        }
 
     @staticmethod
     def _exclude_preconverted_piece_indexes(

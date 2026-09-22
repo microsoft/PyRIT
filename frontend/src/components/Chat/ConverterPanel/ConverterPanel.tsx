@@ -559,7 +559,7 @@ export default function ConverterPanel({
                               size="small"
                               icon={<PlayRegular />}
                               className={styles.previewButton}
-                              disabled={isConverting || !stage?.value.trim()}
+                              disabled={isConverting || stage === undefined}
                               aria-label={`Convert ${input.name} from stage ${index + 2} to end`}
                               title="Convert all remaining stages from this value."
                               onClick={() => void controller.convertRemaining(input.id, converter.stageId)}

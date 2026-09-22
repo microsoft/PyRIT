@@ -563,6 +563,7 @@ export interface MessagePieceRequest {
   original_value: string
   converted_value?: string
   converted_value_data_type?: string
+  applied_converter_ids?: string[]
   mime_type?: string
   original_prompt_id?: string
   prompt_metadata?: Record<string, unknown>

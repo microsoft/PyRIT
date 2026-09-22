@@ -247,7 +247,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
       const start = boundary + 1
       const value = boundary < 0 ? state.workingInputs[input.id] ?? input.value : previous[boundary].value
       const dataType = boundary < 0 ? input.dataType : previous[boundary].generated.output_data_type
-      if (start >= pipeline.length || !value.trim()) return []
+      if (start >= pipeline.length || (boundary < 0 && !value.trim())) return []
       return [{ input, pipeline, prefix: previous.slice(0, start), start, value, dataType }]
     })
     if (selected.length === 0) return

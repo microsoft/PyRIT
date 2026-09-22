@@ -286,8 +286,8 @@ async function mockBackendAPIs(page: Page) {
           (p: Record<string, string>) => p.data_type === "text",
         );
         userText = textPiece?.original_value || "your message";
-        convertedText = textPiece?.converted_value || null;
-        converterIds = body?.request_converter_configurations
+        convertedText = textPiece?.converted_value ?? null;
+        converterIds = textPiece?.applied_converter_ids ?? body?.request_converter_configurations
           ?.flatMap((configuration: { converter_ids?: string[] }) => configuration.converter_ids ?? [])
           ?? body?.converter_ids
           ?? [];
@@ -296,7 +296,7 @@ async function mockBackendAPIs(page: Page) {
       }
 
       // Simulate backend conversion when the request carries converter configurations.
-      if (!convertedText && converterIds.length > 0) {
+      if (convertedText === null && converterIds.length > 0) {
         convertedText = Buffer.from(userText).toString("base64");
       }
 
@@ -537,6 +537,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
   let targetRegistryName: string;
   let base64Id: string;
   let caesarId: string;
+  let suffixId: string;
   let imageId: string;
   const registeredConverters: string[] = [];
   const image = readFileSync(new URL("../public/roakey.png", import.meta.url));
@@ -553,6 +554,8 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     registeredConverters.push(base64Id);
     caesarId = await registerConverter(request, "CaesarConverter", { caesar_offset: 1 });
     registeredConverters.push(caesarId);
+    suffixId = await registerConverter(request, "SuffixAppendConverter", { suffix: "tail" });
+    registeredConverters.push(suffixId);
     imageId = await registerConverter(request, "ImageCompressionConverter", {
       output_format: "PNG",
       min_compression_threshold: 0,
@@ -700,9 +703,8 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
       converted_value: "bHWtcH9=",
       converted_value_data_type: "text",
     });
-    expect(sentRequest.request_converter_configurations).toEqual([
-      { converter_ids: [base64Id, caesarId], indexes_to_apply: [0] },
-    ]);
+    expect(sentRequest.pieces[0].applied_converter_ids).toEqual([base64Id, caesarId]);
+    expect(sentRequest.request_converter_configurations).toBeUndefined();
 
     const sent: AddMessageResponse = await response.json();
     const historyResponse = await request.get(
@@ -718,6 +720,27 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
         converted_value_data_type: "text",
       }),
     ]);
+  });
+
+  test("should resume an empty edited stage without rerunning its prefix", async ({ page }) => {
+    await page.getByTestId("chat-input").fill("hello");
+    await selectConverter(page, base64Id);
+    await addPipelineConverter(page, suffixId);
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    const first = page.getByRole("textbox", { name: "Stage 1 output - Text", exact: true });
+    await expect(first).toHaveValue("aGVsbG8=");
+    await first.fill("");
+    const responsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST" && new URL(response.url()).pathname === "/api/converters/preview"
+    ));
+    await page.getByRole("button", { name: "Convert Text from stage 2 to end", exact: true }).click();
+    const response = await responsePromise;
+    expect(response.ok()).toBeTruthy();
+    expect(response.request().postDataJSON()).toEqual({
+      original_value: "", original_value_data_type: "text", converter_ids: [suffixId],
+    });
+    await expect(first).toHaveValue("");
+    await expect(page.getByRole("textbox", { name: "Stage 2 output - Text", exact: true })).toHaveValue(" tail");
   });
 
   test("should partially convert editable drafts through the remaining chain and send the exact applied result", async ({
@@ -799,9 +822,8 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
       converted_value: appliedOutput,
       converted_value_data_type: "text",
     })]);
-    expect(sentRequest.request_converter_configurations).toEqual([
-      { converter_ids: [base64Id, caesarId, base64Id], indexes_to_apply: [0] },
-    ]);
+    expect(sentRequest.pieces[0].applied_converter_ids).toEqual([base64Id, caesarId, base64Id]);
+    expect(sentRequest.request_converter_configurations).toBeUndefined();
     expect(previewRequests).toHaveLength(2);
     const sent: AddMessageResponse = await response.json();
     const expectedPiece = expect.objectContaining({
