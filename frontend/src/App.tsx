@@ -61,7 +61,6 @@ const VIEW_PATHS: Record<ViewName, string> = {
   chat: '/chat',
   history: HISTORY_ATTACKS_PATH,
   registry: '/registry/targets',
-  targets: '/registry/targets',
   scenarios: '/scanner',
   configuration: '/config',
 }
@@ -76,7 +75,7 @@ function viewFromPath(pathname: string): ViewName {
   if (pathname === '/history' || pathname.startsWith('/history/') || pathname.startsWith('/scanner-history/')) {
     return 'history'
   }
-  if (pathname.startsWith('/registry')) {
+  if (pathname === '/targets' || pathname.startsWith('/registry')) {
     return 'registry'
   }
   if (
@@ -164,6 +163,7 @@ function App() {
   const routeConversationId = conversationMatch?.params.conversationId ?? null
   const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
   const [canManageConfiguration, setCanManageConfiguration] = useState(false)
+  const [chatToolbarContainer, setChatToolbarContainer] = useState<HTMLDivElement | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -536,6 +536,7 @@ function App() {
     />
   ) : (
     <ChatWindow
+      toolbarContainer={chatToolbarContainer}
       onNewAttack={handleNewAttack}
       activeTarget={activeTarget}
       attackResultId={readyAttack ? readyAttack.id : null}
@@ -547,7 +548,6 @@ function App() {
       onHumanScoreChange={handleHumanScoreChange}
       onAttackChange={handleAttackChange}
       labels={globalLabels}
-      onLabelsChange={handleGlobalLabelsChange}
       onNavigate={handleNavigate}
       attackOperator={readyAttack ? readyAttack.operator : null}
       attackTarget={readyAttack ? readyAttack.target : null}
@@ -585,14 +585,15 @@ function App() {
             onOpenFeedback={() => setFeedbackOpen(true)}
             canManageConfiguration={canManageConfiguration}
             onStartTour={startTour}
+            labels={globalLabels}
+            onLabelsChange={handleGlobalLabelsChange}
+            toolbarRef={setChatToolbarContainer}
           >
             <Routes>
               <Route
                 path="/"
                 element={
                   <Home
-                    labels={globalLabels}
-                    onLabelsChange={handleGlobalLabelsChange}
                     activeTarget={activeTarget}
                     onNavigate={handleNavigate}
                     onOpenAttack={handleOpenAttack}
@@ -624,6 +625,7 @@ function App() {
                 />
                 <Route path="converters" element={<ConverterRegistry />} />
               </Route>
+              <Route path="/targets" element={<Navigate to="/registry/targets" replace />} />
               <Route path="/scanner" element={<ScenarioCatalog />} />
               <Route
                 path="/scanner/:scenarioName"

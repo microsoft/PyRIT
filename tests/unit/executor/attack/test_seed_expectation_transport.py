@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -26,11 +27,16 @@ from pyrit.models import (
     MatchesObjective,
     ScoringExpectation,
     SeedDataset,
+    SeedGroup,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
+    ToolCallRequirement,
+    ToolsCalled,
+    TraceScorable,
+    TraceSpan,
 )
-from pyrit.score import QuestionAnswerScorer
+from pyrit.score import InMemoryTraceClient, OtelToolCallScorer, OtelTraceSource, QuestionAnswerScorer, Scorer
 
 
 def _group(answer: str = "default") -> AttackSeedGroup:
@@ -47,6 +53,65 @@ def _group(answer: str = "default") -> AttackSeedGroup:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestSeedExpectationTransport:
+    async def test_tool_seed_round_trip_and_explicit_trace_replay_async(
+        self, *, tmp_path: Path, sqlite_instance: SQLiteMemory
+    ) -> None:
+        path = tmp_path / "tool_expectations.yaml"
+        await asyncio.to_thread(
+            path.write_text,
+            """\
+name: tool_expectations
+seeds:
+  - seed_type: objective
+    value: Read the file
+    conditions:
+      - condition_type: tools_called
+        tools:
+          - name: read_file
+""",
+            encoding="utf-8",
+        )
+        dataset = SeedDataset.from_yaml_file(path)
+        await sqlite_instance.add_seeds_to_memory_async(seeds=dataset.seeds, added_by="test")
+        [stored_group] = sqlite_instance.get_seed_groups(dataset_name="tool_expectations")
+        params = await AttackParameters.from_seed_group_async(seed_group=AttackSeedGroup(seeds=stored_group.seeds))
+        assert params.expectation == ScoringExpectation(
+            objective="Read the file", conditions=(ToolsCalled(tools=(ToolCallRequirement(name="read_file"),)),)
+        )
+
+        client = InMemoryTraceClient()
+        now = datetime.now(tz=UTC)
+        scope = TraceScorable(trace_ids=("1" * 32,))
+        client.add_span(
+            TraceSpan(
+                trace_id=scope.trace_ids[0],
+                span_id="2" * 16,
+                start_time=now,
+                end_time=now,
+                attributes={"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "read_file"},
+            )
+        )
+        client.mark_complete(trace_ids=scope.trace_ids)
+        scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+        Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=params.expectation)
+        with pytest.raises(ValueError, match="ToolsCalled"):
+            Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=None)
+        [score] = await scorer.score_async(scorable=scope, expectation=params.expectation)
+        assert score.get_value() is True
+        [stored_score] = sqlite_instance.get_scores(score_ids=[score.id])
+        assert stored_score.scored_expectation == params.expectation
+        [observation] = sqlite_instance.get_observations(observation_ids=score.observation_ids)
+        client.close()
+
+        changed_seed = SeedObjective(
+            value="Write the file", conditions=(ToolsCalled(tools=(ToolCallRequirement(name="write_file"),)),)
+        )
+        [replayed] = await scorer.score_observation_async(
+            observation=observation, expectation=SeedGroup(seeds=[changed_seed]).scoring_expectation
+        )
+        assert replayed.get_value() is False
+        assert replayed.observation_ids == score.observation_ids
+
     async def test_seed_criteria_reach_parameters_async(self) -> None:
         group = _group()
 

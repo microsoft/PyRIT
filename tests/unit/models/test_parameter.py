@@ -86,6 +86,7 @@ class TestParameterSerialization:
             "choices": None,
             "is_list": False,
             "reference_type": None,
+            "variants": None,
         }
 
     def test_excludes_live_only_fields(self) -> None:
@@ -164,6 +165,14 @@ class TestParameterSerialization:
         dumped = Parameter(name="n", description="d", param_type=int | None).model_dump()
 
         assert dumped["type_name"] == "int"
+
+    def test_optional_list_preserves_display_and_coercion(self) -> None:
+        parameter = Parameter(name="values", description="", param_type=list[int] | None)
+        parameter.validate()
+        assert parameter.type_name == "list[int]"
+        assert parameter.is_list
+        assert parameter.coerce_value(None) is None
+        assert parameter.coerce_value(["1"]) == [1]
 
     def test_path_round_trip_preserves_coercion(self) -> None:
         dumped = Parameter(name="input_path", description="d", param_type=Path).model_dump()
@@ -488,7 +497,7 @@ class TestValidate:
 
 
 class TestCoercionParity:
-    """Derivation feeds ``coerce_value`` the unwrapped type, so coercion round-trips."""
+    """Derived annotations use the same coercion as declared parameters."""
 
     @pytest.mark.parametrize(
         "annotation, raw, expected",

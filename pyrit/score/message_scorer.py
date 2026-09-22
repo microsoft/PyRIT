@@ -29,18 +29,18 @@ from pyrit.models import (
     Scorable,
     ScorableUnion,
     Score,
+    ScorerTargetResponsePayload,
     ScoringExpectation,
 )
 from pyrit.models.score.observation import _message_piece_digest
 from pyrit.models.score.scorable import SCORABLE_TYPES
 from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
-from pyrit.score.observation import (
+from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _get_current_scoring_expectation,
     _observation_collection,
     _ObservationEvidence,
-    _replay_message_piece_id,
     _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
@@ -1076,6 +1076,8 @@ class MessageScorer(Scorer):
         Raises:
             NonReplayableObservationError: If no explicit replay contract exists or policy differs.
         """
+        if not isinstance(observation.payload, ScorerTargetResponsePayload):
+            raise NonReplayableObservationError("A message scorer requires a judgment observation.")
         if self._get_judgment_replay_identifier() is None:
             raise NonReplayableObservationError(
                 f"{type(self).__name__} must explicitly declare a judgment replay contract "
@@ -1099,7 +1101,7 @@ class MessageScorer(Scorer):
                 self._build_undetermined_score(
                     rationale="The stored scorer judgment acquisition failed, so no verdict was reachable.",
                     description="Stored scorer response was unavailable.",
-                    message_piece_id=_replay_message_piece_id(observation),
+                    message_piece_id=observation.scored_message_piece_id,
                     scorable=observation.scorable,
                 )
             ]

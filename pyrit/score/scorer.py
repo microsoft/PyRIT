@@ -32,7 +32,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score.observation import (
+from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _observation_collection,
     _ObservationEvidence,
@@ -281,6 +281,7 @@ class Scorer(Identifiable, abc.ABC):
         score_aggregator: str | None = None,
         prompt_target: ComponentIdentifier | None = None,
         sub_scorers: list[ComponentIdentifier] | None = None,
+        children: dict[str, ComponentIdentifier] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the scorer identifier.
@@ -303,6 +304,8 @@ class Scorer(Identifiable, abc.ABC):
                 scorer calls, promoted to ``ScorerIdentifier.prompt_target``.
             sub_scorers (list[ComponentIdentifier] | None): Nested scorers a
                 composite wraps, promoted to ``ScorerIdentifier.sub_scorers``.
+            children (dict[str, ComponentIdentifier] | None): Additional component
+                dependencies not covered by the promoted child slots.
 
         Returns:
             ComponentIdentifier: The identifier for this scorer.
@@ -314,6 +317,7 @@ class Scorer(Identifiable, abc.ABC):
             score_aggregator=score_aggregator,
             prompt_target=prompt_target,
             sub_scorers=sub_scorers,
+            children=children,
         )
 
     async def score_async(

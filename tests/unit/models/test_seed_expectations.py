@@ -12,12 +12,15 @@ from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
     Condition,
+    DivergesFromRepetition,
     MatchesObjective,
     ScoringExpectation,
     SeedDataset,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
+    ToolCallRequirement,
+    ToolsCalled,
 )
 
 
@@ -37,6 +40,25 @@ def test_seed_expectation_round_trip_preserves_concrete_conditions() -> None:
     assert isinstance(restored.conditions[0], AnswerMatches)
     assert isinstance(restored.conditions[1], _SeedCondition)
     assert group.scoring_expectation == ScoringExpectation(objective=seed.value, conditions=conditions)
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        ToolsCalled(tools=(ToolCallRequirement(name="read_file"),)),
+        DivergesFromRepetition(text="repeat"),
+    ],
+)
+def test_seed_expectation_round_trip_preserves_other_builtin_conditions(condition: Condition) -> None:
+    seed = SeedObjective(value="objective", conditions=(condition,))
+
+    restored = SeedObjective.model_validate_json(seed.model_dump_json())
+
+    assert restored.conditions == (condition,)
+    assert type(restored.conditions[0]) is type(condition)
+    expectation = SeedGroup(seeds=[restored]).scoring_expectation
+    assert expectation is not None
+    assert ScoringExpectation.model_validate_json(expectation.model_dump_json()).conditions == (condition,)
 
 
 def test_seed_group_without_objective_has_no_expectation() -> None:
@@ -91,6 +113,8 @@ def test_condition_fields_share_schema_and_iterable_support() -> None:
         "correct_answer",
     }
     assert "test_seed_expectation" in variants
+    assert "tools_called" in variants
+    assert "diverges_from_repetition" in variants
     assert ScoringExpectation.model_validate({"conditions": iter([MatchesObjective()])}).conditions == (
         MatchesObjective(),
     )
