@@ -150,6 +150,11 @@ E2E tests use `dev.py` to automatically start both frontend and backend servers.
 The frontend proxies API requests to `http://localhost:8000` in development.
 Configure this in `vite.config.ts` if needed.
 
+The Vite development server disables its own CORS handling. Use the frontend's
+same-origin `/api` proxy for API requests. Cross-origin API preflights pass to
+the backend, which applies its configured origin policy. Do not enable
+unrestricted Vite CORS: it can bypass the backend's preflight checks.
+
 ## Adding a theme preset
 
 The catalog in `src/themes/themePresets.ts` is the source of truth for preset
