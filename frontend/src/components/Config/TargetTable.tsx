@@ -338,7 +338,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
     activeTarget?.target_registry_name === target.target_registry_name
 
   const setTargetHidden = (target: TargetInstance, hidden: boolean): void => {
-    const nextHiddenTargetRegistryNames = new Set(hiddenTargetRegistryNames)
+    const nextHiddenTargetRegistryNames = readStoredHiddenTargetRegistryNames()
     if (hidden) {
       nextHiddenTargetRegistryNames.add(target.target_registry_name)
     } else {
@@ -346,6 +346,9 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
     }
     setHiddenTargetRegistryNames(nextHiddenTargetRegistryNames)
     persistHiddenTargetRegistryNames(nextHiddenTargetRegistryNames)
+    if (!targets.some((candidate) => nextHiddenTargetRegistryNames.has(candidate.target_registry_name))) {
+      setShowHiddenTargets(false)
+    }
   }
 
   return (

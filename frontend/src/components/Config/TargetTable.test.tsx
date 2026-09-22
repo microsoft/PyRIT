@@ -386,6 +386,31 @@ describe('TargetTable', () => {
 
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Show hidden targets (0)' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+
+    expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+  })
+
+  it('should merge a visibility change with the latest stored choices', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    window.localStorage.setItem(
+      'pyrit.hiddenTargetRegistryNames',
+      JSON.stringify(['azure_image_dalle']),
+    )
+    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+
+    expect(JSON.parse(window.localStorage.getItem('pyrit.hiddenTargetRegistryNames') ?? '[]')).toEqual([
+      'azure_image_dalle',
+      'openai_chat_gpt4',
+    ])
   })
 
   it('should hide registry entries independently when they share an identifier', async () => {

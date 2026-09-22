@@ -38,7 +38,6 @@ export const useTargetTableStyles = makeStyles({
   },
   hiddenRow: {
     backgroundColor: tokens.colorNeutralBackground2,
-    opacity: 0.65,
   },
   endpointCell: {
     overflowWrap: 'break-word',
