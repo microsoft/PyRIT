@@ -659,7 +659,9 @@ class TestScenarioServiceListScenarios:
             estimated_attack_count=1,
             components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
         )
-        first_started = threading.Event()
+        loop = asyncio.get_running_loop()
+        first_started = asyncio.Event()
+        second_waiting = asyncio.Event()
         second_started = threading.Event()
         release_first = threading.Event()
         active_lock = threading.Lock()
@@ -672,8 +674,8 @@ class TestScenarioServiceListScenarios:
                 active += 1
                 maximum_active = max(maximum_active, active)
             if name == first_metadata.registry_name:
-                first_started.set()
-                release_first.wait(timeout=2)
+                loop.call_soon_threadsafe(first_started.set)
+                release_first.wait()
             else:
                 second_started.set()
             with active_lock:
@@ -686,20 +688,41 @@ class TestScenarioServiceListScenarios:
         service._registry = MagicMock()
         service._registry.create_instance.side_effect = create_instance
         service._estimate_semaphore = asyncio.Semaphore(1)
+        acquire = service._estimate_semaphore.acquire
 
-        with patch("pyrit.backend.services.scenario_service._DEFAULT_ESTIMATE_TIMEOUT_SECONDS", 0.02):
-            first_result = await service._get_default_run_size_estimate_async(metadata=first_metadata)
-            second_task = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=second_metadata))
-            await asyncio.sleep(0.05)
+        async def acquire_second_async() -> bool:
+            second_waiting.set()
+            return await acquire()
 
-            assert first_started.is_set()
-            assert not second_started.is_set()
-            assert not second_task.done()
+        second_task = None
+        with patch("pyrit.backend.services.scenario_service._DEFAULT_ESTIMATE_TIMEOUT_SECONDS", 10):
+            try:
+                with patch("pyrit.backend.services.scenario_service._DEFAULT_ESTIMATE_TIMEOUT_SECONDS", 0.02):
+                    first_result = await service._get_default_run_size_estimate_async(metadata=first_metadata)
+                await asyncio.wait_for(first_started.wait(), timeout=10)
 
-            release_first.set()
-            second_result = await asyncio.wait_for(second_task, timeout=1)
+                with patch.object(service._estimate_semaphore, "acquire", side_effect=acquire_second_async):
+                    second_task = asyncio.create_task(
+                        service._get_default_run_size_estimate_async(metadata=second_metadata)
+                    )
+                    await asyncio.wait_for(second_waiting.wait(), timeout=10)
+
+                    assert first_started.is_set()
+                    assert service._estimate_semaphore.locked()
+                    assert not second_started.is_set()
+                    assert not second_task.done()
+
+                    release_first.set()
+                    second_result = await asyncio.wait_for(second_task, timeout=10)
+            finally:
+                release_first.set()
+                tasks = [*service._estimate_tasks.values(), *service._timed_out_estimate_workers]
+                if second_task is not None:
+                    tasks.append(second_task)
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10)
 
         assert first_result.estimated_attack_count is None
+        assert first_result.note is not None and "timed out" in first_result.note
         assert second_result == estimate
         assert maximum_active == 1
 

@@ -1069,8 +1069,8 @@ def test_seed_dataset_dict_to_seed_simulated_conversation_all_base_params(tmp_pa
 
     # Verify SeedSimulatedConversation-specific fields
     assert seed.num_turns == 5
-    assert seed.adversarial_chat_system_prompt_path == pathlib.Path(adv_path)
-    assert seed.simulated_target_system_prompt_path == pathlib.Path(sim_path)
+    assert seed.adversarial_chat_system_prompt.value == "You are adversarial"
+    assert seed.simulated_target_system_prompt.parameters == ["objective", "num_turns"]
 
 
 def test_seed_dataset_uses_dataset_defaults_for_missing_params():

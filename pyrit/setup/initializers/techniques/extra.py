@@ -13,6 +13,7 @@ from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
 from pyrit.converter import (
     CharNoiseConverter,
     CharSwapConverter,
+    CodeAttackConverter,
     RandomCapitalLettersConverter,
     WordProportionSelectionStrategy,
 )
@@ -24,7 +25,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     SkeletonKeyAttack,
 )
-from pyrit.models import SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
@@ -87,6 +88,22 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             technique_tags=["multi_turn"],
             adversarial_system_prompt=SeedPrompt.from_yaml_file(
                 EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "split_payload.yaml"
+            ),
+        ),
+        AttackTechniqueFactory(
+            name="code_attack_framed",
+            attack_class=PromptSendingAttack,
+            description="Encodes the objective as code and adds optional code-completion system framing.",
+            technique_tags=["single_turn", "light"],
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(
+                        converters=[CodeAttackConverter(template=CodeAttackConverter.Template.PYTHON_STACK_VERBOSE)]
+                    )
+                ),
+            },
+            seed_technique=AttackTechniqueSeedGroup.from_system_prompt(
+                SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "code_attack.yaml").value
             ),
         ),
     ]
