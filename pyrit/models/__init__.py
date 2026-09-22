@@ -22,6 +22,29 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.models.analytics import (
+        AttackAnalyticsCell,
+        AttackAnalyticsConverterDirection,
+        AttackAnalyticsDimension,
+        AttackAnalyticsDimensionName,
+        AttackAnalyticsFacetQuery,
+        AttackAnalyticsFacets,
+        AttackAnalyticsFilter,
+        AttackAnalyticsFilters,
+        AttackAnalyticsGroup,
+        AttackAnalyticsMatchMode,
+        AttackAnalyticsOption,
+        AttackAnalyticsQuery,
+        AttackAnalyticsReport,
+        AttackAnalyticsResultRow,
+        AttackAnalyticsResults,
+        AttackAnalyticsResultsQuery,
+        AttackAnalyticsStatistics,
+        AttackAnalyticsValue,
+        AttackAnalyticsValueKind,
+        AttackResultSelection,
+        AttackStats,
+    )
     from pyrit.models.catalog import (
         ScenarioDatasetSizeCap,
         ScenarioDatasetSummary,
@@ -197,6 +220,27 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "AttackAnalyticsCell": "pyrit.models.analytics",
+    "AttackAnalyticsConverterDirection": "pyrit.models.analytics",
+    "AttackAnalyticsDimension": "pyrit.models.analytics",
+    "AttackAnalyticsDimensionName": "pyrit.models.analytics",
+    "AttackAnalyticsFacetQuery": "pyrit.models.analytics",
+    "AttackAnalyticsFacets": "pyrit.models.analytics",
+    "AttackAnalyticsFilter": "pyrit.models.analytics",
+    "AttackAnalyticsFilters": "pyrit.models.analytics",
+    "AttackAnalyticsGroup": "pyrit.models.analytics",
+    "AttackAnalyticsMatchMode": "pyrit.models.analytics",
+    "AttackAnalyticsOption": "pyrit.models.analytics",
+    "AttackAnalyticsQuery": "pyrit.models.analytics",
+    "AttackAnalyticsReport": "pyrit.models.analytics",
+    "AttackAnalyticsResultRow": "pyrit.models.analytics",
+    "AttackAnalyticsResults": "pyrit.models.analytics",
+    "AttackAnalyticsResultsQuery": "pyrit.models.analytics",
+    "AttackAnalyticsStatistics": "pyrit.models.analytics",
+    "AttackAnalyticsValue": "pyrit.models.analytics",
+    "AttackAnalyticsValueKind": "pyrit.models.analytics",
+    "AttackResultSelection": "pyrit.models.analytics",
+    "AttackStats": "pyrit.models.analytics",
     "Acquisition": "pyrit.models.score",
     "ALLOWED_CHAT_MESSAGE_ROLES": "pyrit.models.messages.chat_message",
     "AtomicAttackEvaluationIdentifier": "pyrit.models.identifiers",
