@@ -354,6 +354,98 @@ describe('ScenarioRunPage', () => {
     mockHookState(makeState())
   })
 
+  describe.each(['IN_PROGRESS', 'COMPLETED'] as const)('%s run defaults', (status: 'IN_PROGRESS' | 'COMPLETED') => {
+    it.each([20, 21])('should use the displayed group count at the %i-group boundary', (groupCount: number) => {
+      const state = makeGroupedState(groupCount)
+      mockHookState({ ...state, run: { ...RUN, status } })
+      renderPage()
+
+      const section = screen.getByRole('region', { name: 'Atomic attack groups' })
+      const expanded = groupCount <= 20
+      expect(within(section).getByRole('button', { name: /atomic attack groups$/, expanded })).toBeVisible()
+      expect(within(section).queryAllByRole('article', { hidden: true })).toHaveLength(expanded ? groupCount : 0)
+      expect(within(section).queryByRole('table', { hidden: true })).not.toBeInTheDocument()
+      if (expanded) {
+        expect(within(section).getAllByRole('button', { name: /^Expand attacks in/, expanded: false }))
+          .toHaveLength(groupCount)
+      }
+    })
+
+    it.each([20, 21])('should use legacy technique summaries at the %i-group boundary', (groupCount: number) => {
+      const state = makeGroupedState(groupCount)
+      mockHookState({
+        ...state,
+        run: { ...RUN, status },
+        planComplete: false,
+        summary: {
+          ...SUMMARY,
+          techniques: state.summary?.display_groups ?? [],
+          display_groups: undefined,
+        },
+      })
+      renderPage()
+
+      const section = screen.getByRole('region', { name: 'Atomic attack groups' })
+      const expanded = groupCount <= 20
+      expect(within(section).getByRole('button', { name: /atomic attack groups$/, expanded })).toBeVisible()
+      expect(within(section).queryAllByRole('article', { hidden: true })).toHaveLength(expanded ? groupCount : 0)
+    })
+  })
+
+  it.each([20, 21])('should derive the default after asynchronously loading %i groups', (groupCount: number) => {
+    mockHookState({ ...INITIAL_SCENARIO_RUN_PROGRESS_STATE })
+    const { rerender } = renderPage()
+    expect(screen.getByLabelText('Loading scenario run')).toBeVisible()
+
+    mockHookState(makeGroupedState(groupCount))
+    rerender(<TestWrapper />)
+
+    const section = screen.getByRole('region', { name: 'Atomic attack groups' })
+    const expanded = groupCount <= 20
+    expect(within(section).getByRole('button', { name: /atomic attack groups$/, expanded })).toBeVisible()
+    expect(within(section).queryAllByRole('article', { hidden: true })).toHaveLength(expanded ? groupCount : 0)
+  })
+
+  it('should follow the current group count across the threshold until the user chooses', () => {
+    mockHookState(makeGroupedState(0))
+    const { rerender } = renderPage()
+    expect(screen.getByRole('button', { name: 'Collapse atomic attack groups', expanded: true })).toBeVisible()
+
+    for (const groupCount of [21, 20, 21, 0]) {
+      mockHookState(makeGroupedState(groupCount))
+      rerender(<TestWrapper />)
+
+      const section = screen.getByRole('region', { name: 'Atomic attack groups' })
+      const expanded = groupCount <= 20
+      expect(within(section).getByRole('button', { name: /atomic attack groups$/, expanded })).toBeVisible()
+      expect(within(section).queryAllByRole('article', { hidden: true })).toHaveLength(expanded ? groupCount : 0)
+    }
+  })
+
+  describe.each([20, 21])('explicit choices starting with %i groups', (initialGroupCount: number) => {
+    it.each([true, false])('should preserve expanded=%s across threshold changes and completion', async (expanded: boolean) => {
+      const user = userEvent.setup()
+      mockHookState(makeGroupedState(initialGroupCount))
+      const { rerender } = renderPage()
+      const toggle = screen.getByRole('button', { name: /atomic attack groups$/ })
+      await user.click(toggle)
+      if (expanded === (initialGroupCount <= 20)) {
+        await user.click(toggle)
+      }
+      expect(toggle).toHaveAttribute('aria-expanded', String(expanded))
+
+      for (const groupCount of [21, 20, 22, 19]) {
+        const state = makeGroupedState(groupCount)
+        mockHookState({ ...state, run: { ...RUN, status: groupCount === 19 ? 'COMPLETED' : 'IN_PROGRESS' } })
+        rerender(<TestWrapper />)
+
+        const section = screen.getByRole('region', { name: 'Atomic attack groups' })
+        expect(within(section).getByRole('button', { name: /atomic attack groups$/, expanded })).toBeVisible()
+        expect(within(section).queryAllByRole('article', { hidden: true })).toHaveLength(expanded ? groupCount : 0)
+      }
+    })
+  })
+
   it.each(['IN_PROGRESS', 'COMPLETED'] as const)(
     'should leave a large %s run collapsed without mounting group headings or executions',
     (status: 'IN_PROGRESS' | 'COMPLETED') => {
@@ -383,6 +475,8 @@ describe('ScenarioRunPage', () => {
 
     screen.getByRole('button', { name: 'Cancel run' }).focus()
     await user.tab()
+    expect(screen.getByRole('button', { name: 'Collapse atomic attack groups' })).toHaveFocus()
+    await user.keyboard(' ')
     expect(screen.getByRole('button', { name: 'Expand atomic attack groups' })).toHaveFocus()
     await user.keyboard('{Enter}')
     expect(screen.getByRole('button', { name: 'Collapse atomic attack groups', expanded: true })).toHaveFocus()
@@ -404,12 +498,12 @@ describe('ScenarioRunPage', () => {
 
   it('should preserve expanded and collapsed choices across progress updates and completion', async () => {
     const user = userEvent.setup()
-    mockHookState(makeGroupedState(1))
+    mockHookState(makeGroupedState(21))
     const { rerender } = renderPage()
 
-    mockHookState(makeGroupedState(2))
+    mockHookState(makeGroupedState(22))
     rerender(<TestWrapper />)
-    expect(screen.getByText('2 groups, 2 executions')).toBeVisible()
+    expect(screen.getByText('22 groups, 22 executions')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Expand atomic attack groups', expanded: false })).toBeVisible()
     expect(screen.queryByText('Display group 1')).not.toBeInTheDocument()
 
@@ -438,28 +532,54 @@ describe('ScenarioRunPage', () => {
     expect(within(section).queryAllByRole('article', { hidden: true })).toHaveLength(0)
   })
 
-  it('should reset the section and individual group expansion when opening another run', async () => {
-    const user = userEvent.setup()
-    const state = makeState()
-    mockUseScenarioRunProgress.mockImplementation((scenarioResultId: string) => ({
-      state: { ...state, run: { ...RUN, scenario_result_id: scenarioResultId } },
-      retry: mockRetry,
-      applyRunSummary: mockApplyRunSummary,
-    }))
-    renderPage()
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
-    await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
-    await user.click(screen.getByRole('button', { name: 'Open another run' }))
+  it.each([[20, 21], [21, 20]])(
+    'should reset section and individual group choices when navigating from %i to %i groups',
+    async (firstGroupCount: number, secondGroupCount: number) => {
+      const user = userEvent.setup()
+      const firstState = makeGroupedState(firstGroupCount)
+      const secondState = makeGroupedState(secondGroupCount)
+      mockUseScenarioRunProgress.mockImplementation((scenarioResultId: string) => ({
+        state: {
+          ...(scenarioResultId === SCENARIO_RESULT_ID ? firstState : secondState),
+          run: { ...RUN, scenario_result_id: scenarioResultId },
+        },
+        retry: mockRetry,
+        applyRunSummary: mockApplyRunSummary,
+      }))
+      renderPage()
+      if (firstGroupCount > 20) {
+        await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
+      }
+      await user.click(screen.getByRole('button', { name: 'Expand attacks in Display group 0' }))
+      await user.click(screen.getByRole('button', { name: 'Collapse atomic attack groups' }))
+      if (firstGroupCount <= 20) {
+        await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
+      }
+      await user.click(screen.getByRole('button', { name: 'Open another run' }))
 
-    expect(mockUseScenarioRunProgress).toHaveBeenLastCalledWith(OTHER_SCENARIO_RESULT_ID)
-    expect(screen.getByRole('button', { name: 'Expand atomic attack groups', expanded: false })).toBeVisible()
-    expect(screen.queryByRole('table', { name: 'Attack executions' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
-    expect(screen.getByRole('button', { name: 'Expand attacks in Technique One', expanded: false })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Browser back' }))
-    expect(mockUseScenarioRunProgress).toHaveBeenLastCalledWith(SCENARIO_RESULT_ID)
-    expect(screen.getByRole('button', { name: 'Expand atomic attack groups', expanded: false })).toBeVisible()
-  })
+      expect(mockUseScenarioRunProgress).toHaveBeenLastCalledWith(OTHER_SCENARIO_RESULT_ID)
+      expect(screen.getByRole('button', { name: /atomic attack groups$/, expanded: secondGroupCount <= 20 })).toBeVisible()
+      expect(screen.queryByRole('table', { name: 'Attack executions' })).not.toBeInTheDocument()
+      if (secondGroupCount > 20) {
+        await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
+      }
+      expect(screen.getByRole('button', { name: 'Expand attacks in Display group 0', expanded: false })).toBeVisible()
+      await user.click(screen.getByRole('button', { name: 'Expand attacks in Display group 0' }))
+      await user.click(screen.getByRole('button', { name: 'Collapse atomic attack groups' }))
+      if (secondGroupCount <= 20) {
+        await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
+      }
+      await user.click(screen.getByRole('button', { name: 'Browser back' }))
+
+      expect(mockUseScenarioRunProgress).toHaveBeenLastCalledWith(SCENARIO_RESULT_ID)
+      expect(screen.getByRole('button', { name: /atomic attack groups$/, expanded: firstGroupCount <= 20 })).toBeVisible()
+      if (firstGroupCount > 20) {
+        await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
+      }
+      expect(screen.getByRole('button', { name: 'Expand attacks in Display group 0', expanded: false })).toBeVisible()
+      expect(screen.queryByRole('table', { name: 'Attack executions' })).not.toBeInTheDocument()
+    },
+  )
 
   it('should show every group without truncation and retain access to the last group details', async () => {
     const user = userEvent.setup()
@@ -489,17 +609,18 @@ describe('ScenarioRunPage', () => {
     )
   })
 
-  it('should keep an empty section concise and reveal its empty state on expansion', async () => {
+  it('should show an empty section by default and preserve a collapsed choice when groups arrive', async () => {
     const user = userEvent.setup()
     mockHookState(makeGroupedState(0))
     const { rerender } = renderPage()
     expect(screen.getByText('0 groups, 0 executions')).toBeVisible()
-    expect(screen.queryByText('No atomic attack groups have been persisted yet.')).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
     expect(screen.getByText('No atomic attack groups have been persisted yet.')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Collapse atomic attack groups' }))
+    expect(screen.queryByText('No atomic attack groups have been persisted yet.')).not.toBeInTheDocument()
     mockHookState(makeGroupedState(1))
     rerender(<TestWrapper />)
+    expect(screen.getByRole('button', { name: 'Expand atomic attack groups', expanded: false })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
     expect(screen.getByRole('button', { name: 'Collapse atomic attack groups', expanded: true })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Expand attacks in Display group 0' })).toBeVisible()
   })
@@ -627,7 +748,6 @@ describe('ScenarioRunPage', () => {
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
     expect(screen.getAllByText('1/total unavailable').length).toBeGreaterThan(0)
     expect(screen.queryByText('1/1')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
     expect(screen.getByRole('row', { name: 'View details for attack-technique' })).toBeInTheDocument()
   })
@@ -745,7 +865,6 @@ describe('ScenarioRunPage', () => {
   it('restores focus to the execution row after closing details', async () => {
     const user = userEvent.setup()
     renderPage()
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
     const detailsRow = screen.getByRole('row', { name: 'View details for attack-technique' })
 
@@ -798,7 +917,6 @@ describe('ScenarioRunPage', () => {
   it('navigates to attempt details from the whole execution row', async () => {
     const user = userEvent.setup()
     renderPage()
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
 
     expect(screen.queryByText('attack-result-1')).not.toBeInTheDocument()
@@ -822,7 +940,6 @@ describe('ScenarioRunPage', () => {
         scenarioHistorySearch: '?operator=alice',
       },
     )
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
     const executionsTable = screen.getByRole('table', { name: 'Attack executions' })
 
@@ -891,7 +1008,6 @@ describe('ScenarioRunPage', () => {
 
     renderPage()
 
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
     const groupToggle = screen.getByRole('button', { name: 'Expand attacks in Technique One' })
     expect(screen.getAllByRole('button', { name: 'Expand attacks in Technique One' })).toHaveLength(1)
     expect(groupToggle).toHaveAttribute('aria-expanded', 'false')
@@ -916,7 +1032,6 @@ describe('ScenarioRunPage', () => {
     mockHookState(makeState({ results: attempts }))
 
     renderPage()
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
 
     expect(screen.getByText('Showing the latest 100 of 105 executions in this group.')).toBeInTheDocument()
@@ -928,7 +1043,6 @@ describe('ScenarioRunPage', () => {
   it('navigates to attempt details from the keyboard-accessible execution row', async () => {
     const user = userEvent.setup()
     renderPage()
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
     const executionRow = screen.getByRole('row', { name: 'View details for attack-technique' })
 
@@ -951,7 +1065,7 @@ describe('ScenarioRunPage', () => {
       'data-location',
       `/scanner-history/${SCENARIO_RESULT_ID}`,
     )
-    expect(screen.getByRole('button', { name: 'Expand atomic attack groups', expanded: false })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Collapse atomic attack groups', expanded: true })).toBeVisible()
   })
 
   it('falls back when no score rationale was persisted', async () => {
@@ -966,7 +1080,6 @@ describe('ScenarioRunPage', () => {
       }],
     }))
     renderPage()
-    await user.click(screen.getByRole('button', { name: 'Expand atomic attack groups' }))
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
     await user.click(screen.getByRole('row', { name: 'View details for attack-technique' }))
 

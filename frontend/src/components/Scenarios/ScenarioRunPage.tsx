@@ -72,6 +72,7 @@ import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 
 const CLOCK_REFRESH_INTERVAL_MS = 1_000
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
+const AUTO_EXPAND_GROUP_LIMIT = 20
 
 const RUN_BADGE_COLORS: Record<ScenarioRunState, 'informative' | 'brand' | 'success' | 'danger' | 'warning'> = {
   CREATED: 'informative',
@@ -111,7 +112,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const [cancelError, setCancelError] = useState<string | null>(null)
   const [selectedTechnique, setSelectedTechnique] = useState<ScenarioTechniqueProgress | null>(null)
   const [selectedObjective, setSelectedObjective] = useState<ScenarioRunPlanSeedGroup | null>(null)
-  const [atomicGroupsExpanded, setAtomicGroupsExpanded] = useState(false)
+  const [atomicGroupsExpandedChoice, setAtomicGroupsExpandedChoice] = useState<boolean | null>(null)
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set())
   const detailsTriggerRef = useRef<HTMLElement | null>(null)
   const navigationState = location.state as {
@@ -279,6 +280,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     seed_groups: seedGroups,
   } = state.summary
   const displayGroups = summarizedDisplayGroups ?? techniques
+  const atomicGroupsExpanded = atomicGroupsExpandedChoice ?? displayGroups.length <= AUTO_EXPAND_GROUP_LIMIT
   const unattributedAttempts = state.summary.unattributed_attempts ?? 0
   const canCancel = run.status === 'CREATED' || run.status === 'IN_PROGRESS'
   const progressText = overall.planned === null
@@ -472,7 +474,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
                 aria-controls="atomic-groups-panel"
                 aria-label={`${atomicGroupsExpanded ? 'Collapse' : 'Expand'} atomic attack groups`}
                 data-testid="toggle-atomic-groups-btn"
-                onClick={() => setAtomicGroupsExpanded((expanded) => !expanded)}
+                onClick={() => setAtomicGroupsExpandedChoice(!atomicGroupsExpanded)}
               >
                 {atomicGroupsExpanded ? 'Collapse' : 'Expand'}
               </Button>
