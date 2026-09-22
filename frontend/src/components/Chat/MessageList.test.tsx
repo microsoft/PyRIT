@@ -2,7 +2,8 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import MessageList from "./MessageList";
-import { BackendScore, Message } from "../../types";
+import { BackendMessage, BackendScore, Message } from "../../types";
+import { backendMessageToFrontend } from "@/utils/messageMapper";
 
 const originalClientWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
 
@@ -115,6 +116,42 @@ describe("MessageList", () => {
     );
 
     expect(screen.getByText("Assistant message test")).toBeInTheDocument();
+  });
+
+  it("should show persisted scores on a redacted processing error", async () => {
+    const user = userEvent.setup();
+    const backendMessage: BackendMessage = {
+      turn_number: 1,
+      role: "assistant",
+      created_at: "2026-02-15T00:00:00Z",
+      message_pieces: [{
+        id: "processing-piece",
+        original_value_data_type: "text",
+        converted_value_data_type: "error",
+        original_value: "Internal original diagnostic",
+        converted_value: "Traceback: internal converted diagnostic",
+        response_error: "processing",
+        scores: [{
+          id: "processing-score",
+          message_piece_id: "processing-piece",
+          scorer_type: "ManualScorer",
+          score_type: "true_false",
+          score_value: "False",
+          score_rationale: "The target did not answer.",
+          timestamp: "2026-02-15T00:00:00Z",
+        }],
+      }],
+    };
+    render(
+      <TestWrapper>
+        <MessageList messages={[backendMessageToFrontend(backendMessage)]} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByText(/the target could not process this message/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /score false from manualscorer/i }));
+    expect(screen.getByText("The target did not answer.")).toBeInTheDocument();
+    expect(screen.queryByText(/Internal original diagnostic|Traceback/)).not.toBeInTheDocument();
   });
 
   it("should show the message score and its details when present", async () => {
@@ -1453,6 +1490,7 @@ describe("MessageList", () => {
   });
 
   it("should render error messages", () => {
+    const onRecover = jest.fn();
     const errorMessages: Message[] = [
       {
         role: "assistant",
@@ -1467,13 +1505,65 @@ describe("MessageList", () => {
 
     render(
       <TestWrapper>
-        <MessageList messages={errorMessages} />
+        <MessageList
+          messages={errorMessages}
+          processingErrorRecovery={{
+            messageIndex: 0,
+            actionLabel: "Edit in clean conversation",
+            description: "Recovery details",
+            onRecover,
+          }}
+        />
       </TestWrapper>
     );
 
     expect(
       screen.getByText(/Content was filtered by safety system/)
     ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /edit in clean conversation/i })).not.toBeInTheDocument();
+    expect(onRecover).not.toHaveBeenCalled();
+  });
+
+  it("should render a direct recovery action only for the current processing error", async () => {
+    const user = userEvent.setup();
+    const onRecover = jest.fn();
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        content: "",
+        timestamp: new Date().toISOString(),
+        error: {
+          type: "processing",
+          description: "The target could not process this message.",
+        },
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={messages}
+          processingErrorRecovery={{
+            messageIndex: 0,
+            actionLabel: "Edit in clean conversation",
+            description:
+              "Continue in a clean conversation so the stored error is not sent back to the target. "
+              + "Your prompt, attachments, and converter choices are preserved for editing.",
+            onRecover,
+          }}
+          onCopyToInput={jest.fn()}
+        />
+      </TestWrapper>
+    );
+
+    expect(
+      screen.getByText(/prompt, attachments, and converter choices are preserved/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/stored error is not sent back to the target/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("message-actions-0")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /edit in clean conversation/i }));
+    expect(onRecover).toHaveBeenCalledTimes(1);
   });
 
   it("should render multiple messages in order", () => {

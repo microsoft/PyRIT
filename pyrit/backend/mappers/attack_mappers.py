@@ -262,15 +262,23 @@ def _resolve_summary_timestamps(ar: AttackResult) -> tuple[datetime, datetime]:
     Returns:
         A ``(created_at, updated_at)`` tuple.
     """
-    created_str = ar.metadata.get("created_at")
+    return _resolve_timestamps(created_str=ar.metadata.get("created_at"), timestamp=ar.timestamp)
+
+
+def _resolve_timestamps(*, created_str: str | None, timestamp: datetime | None) -> tuple[datetime, datetime]:
+    """
+    Resolve display times, retaining fallbacks for unpersisted mutable results.
+
+    Returns:
+        tuple[datetime, datetime]: Creation and last-update timestamps.
+    """
     if created_str:
         created_at = datetime.fromisoformat(created_str)
-    elif ar.timestamp is not None:
-        created_at = ar.timestamp
+    elif timestamp is not None:
+        created_at = timestamp
     else:
         created_at = datetime.now(UTC)
-    updated_at = ar.timestamp if ar.timestamp is not None else created_at
-    return created_at, updated_at
+    return created_at, timestamp if timestamp is not None else created_at
 
 
 async def _summary_last_response_async(piece: MessagePiece | None) -> MessagePieceView | None:

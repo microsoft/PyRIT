@@ -655,9 +655,17 @@ class HarmScorerEvaluator(ScorerEvaluator):
 
         for entry in labeled_dataset.entries:
             harm_entry = cast("HarmHumanLabeledEntry", entry)
+            assistant_messages: list[Message] = []
             for message in harm_entry.conversation:
                 self.scorer._memory.add_message_to_memory(request=message)
-                assistant_responses.append(message)
+                if message.api_role == "assistant":
+                    assistant_messages.append(message)
+            if len(assistant_messages) != 1:
+                raise ValueError(
+                    "Each HarmHumanLabeledEntry must contain exactly one assistant message, "
+                    f"but found {len(assistant_messages)}."
+                )
+            assistant_responses.append(assistant_messages[0])
             human_scores_list.append(harm_entry.human_scores)
 
         return assistant_responses, human_scores_list, None

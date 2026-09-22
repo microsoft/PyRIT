@@ -615,6 +615,7 @@ class TestRegistryIntegration:
 
     def test_register_preserves_custom_preregistered(self):
         """Pre-registered custom techniques are not overwritten by re-registration."""
+        AttackTechniqueRegistry.reset_registry_singleton()
         registry = AttackTechniqueRegistry.get_registry_singleton()
         custom_factory = AttackTechniqueFactory(name="role_play_movie_script", attack_class=PromptSendingAttack)
         registry.register_technique(name="role_play_movie_script", factory=custom_factory, tags=["custom"])

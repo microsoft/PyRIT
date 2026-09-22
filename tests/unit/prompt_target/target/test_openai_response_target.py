@@ -136,6 +136,15 @@ def target(patch_central_database) -> OpenAIResponseTarget:
     )
 
 
+def test_parse_response_message_content_rejects_unknown_provider_part(target, dummy_text_message_piece):
+    with pytest.raises(PyritException, match="Unsupported Responses API message content type"):
+        target._parse_response_message_content(
+            content=[object()],
+            message_piece=dummy_text_message_piece,
+            error=None,
+        )
+
+
 @pytest.fixture
 def openai_response_json() -> dict:
     return openai_response_json_dict()
@@ -722,6 +731,7 @@ async def test_construct_request_body_filters_none(
     assert "top_p" not in body or body["top_p"] is None
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_set_openai_env_configuration_vars_sets_vars():
     target = OpenAIResponseTarget(model_name="gpt", endpoint="http://test", api_key="key")
     target._set_openai_env_configuration_vars()

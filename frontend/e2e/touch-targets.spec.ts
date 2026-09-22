@@ -209,7 +209,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/targets/catalog") {
+    if (apiPath === "/targets/types") {
       await route.fulfill(
         jsonResponse({
           items: [
@@ -242,7 +242,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/converters/catalog" || apiPath === "/converters") {
+    if (apiPath === "/converters/types" || apiPath === "/converters") {
       await route.fulfill(jsonResponse({ items: [] }));
       return;
     }
@@ -375,7 +375,7 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 }
 
 async function startChatWithMessages(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Targets", exact: true }).click();
+  await page.getByRole("button", { name: "Registry", exact: true }).click();
   await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
   await page.getByRole("button", { name: "Set Active" }).first().click();
   await page.getByRole("button", { name: "Chat", exact: true }).click();
@@ -400,7 +400,7 @@ test.describe("Mobile touch targets", () => {
   }) => {
     await page.setViewportSize({ width: 320, height: 568 });
     await page.goto("/");
-    await page.getByRole("button", { name: "Targets", exact: true }).click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
     await page.getByRole("button", { name: "Set Active" }).first().click();
     await page.getByRole("button", { name: "Chat", exact: true }).click();
@@ -422,7 +422,7 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
   });
 
-  test("keeps Home, Targets, and History controls at least 44px", async ({
+  test("keeps Home, Registry, and History controls at least 44px", async ({
     page,
   }) => {
     await page.goto("/");
@@ -444,7 +444,7 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
 
     await page
-      .getByRole("button", { name: "Targets", exact: true })
+      .getByRole("button", { name: "Registry", exact: true })
       .click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
 
@@ -520,7 +520,7 @@ test.describe("Mobile touch targets", () => {
       page.getByTestId("toggle-objective-header-btn")
     ).toBeVisible();
 
-    await page.getByRole("button", { name: "Targets", exact: true }).click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
     await page.getByRole("button", { name: "Set Active" }).first().click();
     await page.goBack();
@@ -709,7 +709,7 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
   );
 
   await page
-    .getByRole("button", { name: "Targets", exact: true })
+    .getByRole("button", { name: "Registry", exact: true })
     .click();
   await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
   await expectCompactDesktopTarget(

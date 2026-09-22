@@ -17,6 +17,13 @@ from pyrit.cli import pyrit_scan
 from pyrit.models import Parameter
 from unit.mocks import make_scenario_result
 
+# A valid UTF-8 initializer whose text is not pure ASCII. Decoded with a Windows ANSI code page
+# this either mangles the prompt (cp1252) or raises UnicodeDecodeError (cp932/936/949/950).
+UTF8_INITIALIZER_SOURCE = (
+    "from pyrit.setup.pyrit_initializer import PyRITInitializer\n"
+    'SYSTEM_PROMPT = "Réponds en français, café. 日本語でも回答してください。"\n'
+)
+
 
 def _sp(*, name, description="", default=None, param_type="str", choices=None, is_list=False) -> Parameter:
     """Build a real Parameter from the legacy Summary-style kwargs (param_type as a string)."""
@@ -1464,9 +1471,22 @@ class TestMainExtraPaths:
             result = await pyrit_scan._handle_add_initializer_async(client=client, parsed_args=parsed_args)
 
         assert result == 0
-        open_mock.assert_called_once_with(script.resolve())
+        open_mock.assert_called_once_with(script.resolve(), encoding="utf-8")
         async_file.read.assert_awaited_once()
         assert client.register_initializer_async.await_args.kwargs["script_content"] == "# stub initializer\n"
+
+    async def test_handle_add_initializer_reads_source_as_utf8(self, tmp_path):
+        """Initializer source is UTF-8 (PEP 3120), not the machine's locale encoding."""
+        script = tmp_path / "utf8_init.py"
+        script.write_bytes(UTF8_INITIALIZER_SOURCE.encode("utf-8"))
+        client = AsyncMock()
+
+        result = await pyrit_scan._handle_add_initializer_async(
+            client=client, parsed_args=Namespace(files=[str(script)])
+        )
+
+        assert result == 0
+        assert client.register_initializer_async.await_args.kwargs["script_content"] == UTF8_INITIALIZER_SOURCE
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",

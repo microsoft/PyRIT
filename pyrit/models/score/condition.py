@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
     from typing import Self
@@ -152,3 +154,43 @@ class MatchesObjective(Condition):
     """
 
     condition_type: Literal["matches_objective"] = "matches_objective"
+
+
+class ToolCallRequirement(BaseModel):
+    """One exact, case-sensitive tool name required as execution evidence."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: ToolName
+
+
+class ToolsCalled(Condition):
+    """Require every named tool to have an execution attempt, regardless of success."""
+
+    condition_type: Literal["tools_called"] = "tools_called"
+    tools: tuple[ToolCallRequirement, ...]
+
+    @model_validator(mode="after")
+    def _validate_tools(self) -> ToolsCalled:
+        """
+        Require a nonempty set of distinct exact names.
+
+        Returns:
+            ToolsCalled: The validated condition.
+
+        Raises:
+            ValueError: If there are no tools or an exact name repeats.
+        """
+        if not self.tools:
+            raise ValueError("ToolsCalled requires at least one tool.")
+        names = [tool.name for tool in self.tools]
+        if len(set(names)) != len(names):
+            raise ValueError("ToolsCalled requires each tool name once.")
+        return self
+
+
+class DivergesFromRepetition(Condition):
+    """The evidence continues with other content after repeating the literal text."""
+
+    condition_type: Literal["diverges_from_repetition"] = "diverges_from_repetition"
+    text: str = Field(min_length=1, pattern=r"\S")

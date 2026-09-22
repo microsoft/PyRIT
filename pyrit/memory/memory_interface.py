@@ -101,11 +101,6 @@ from pyrit.models import (
     sort_message_pieces,
 )
 from pyrit.models.results.attack_result import ATTRIBUTION_FIELDS, ATTRIBUTION_VALUE_MAX_LENGTH
-from pyrit.models.score.observation import (
-    _content_scorable_digest,
-    _message_piece_digest,
-    _response_piece_digest,
-)
 
 if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
@@ -117,7 +112,7 @@ Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
 
 
-def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[str]) -> tuple[str, ...]:
+def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[object]) -> tuple[str, ...]:
     """
     Validate and snapshot one dedicated attribution filter.
 
@@ -128,11 +123,14 @@ def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[str]
         ValueError: If any value is not a string or exceeds the column limit.
     """
     values = (raw,) if isinstance(raw, str) else tuple(raw)
-    if any(not isinstance(value, str) for value in values):
-        raise ValueError(f"{field} values must be strings")
-    if any(len(value) > ATTRIBUTION_VALUE_MAX_LENGTH for value in values):
+    validated: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError(f"{field} values must be strings")
+        validated.append(value)
+    if any(len(value) > ATTRIBUTION_VALUE_MAX_LENGTH for value in validated):
         raise ValueError(f"{field} values must be at most {ATTRIBUTION_VALUE_MAX_LENGTH} characters")
-    return values
+    return tuple(validated)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -199,6 +197,7 @@ class ScenarioHistoryRunRecord:
     scenario_registry_name: str | None
     plan_atomic_groups: str | list[dict[str, Any]] | None
     plan_seed_id_map: str | list[dict[str, str]] | None
+    started_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -239,6 +238,14 @@ class ScenarioHistoryAggregate:
             latest_attempt_timestamp=None,
             atomic_attack_names=(),
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScenarioRunStateRecord:
+    """Lightweight persisted ID/state projection used for startup reconciliation."""
+
+    scenario_result_id: str
+    state: ScenarioRunState
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1724,16 +1731,37 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_scenario_result_label_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
+    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
         """
         Return a database-specific condition for filtering ScenarioResults by labels.
 
         Args:
-            labels: Labels with OR-within-key and AND-across-key semantics.
+            labels: Legacy single-value labels with AND-across-key semantics.
 
         Returns:
             Database-specific SQLAlchemy condition.
         """
+
+    def _get_scenario_result_labels_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
+        """
+        Compose multi-value label filters through the legacy single-value hook.
+
+        Returns:
+            Any: OR-within-key and AND-across-key SQLAlchemy condition.
+        """
+        conditions = []
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if values:
+                conditions.append(
+                    or_(
+                        *(
+                            self._get_scenario_result_label_condition(labels={key: str(value)}).unique_params()
+                            for value in values
+                        )
+                    )
+                )
+        return and_(*conditions)
 
     def _get_scenario_registry_name_condition(self, *, scenario_names: Sequence[str]) -> Any:
         """
@@ -1758,6 +1786,10 @@ class MemoryInterface(abc.ABC):
             f"{type(self).__name__} must implement _get_scenario_history_plan_expressions "
             "to support Scenario history queries."
         )
+
+    def _get_scenario_started_at_expression(self) -> Any:
+        """Return a compact persisted start-time expression when the backend supports one."""
+        return literal(None)
 
     def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
         """
@@ -1919,6 +1951,7 @@ class MemoryInterface(abc.ABC):
             ValueError: If observation IDs, references, or managed anchors are invalid.
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
+        observations = [Observation.model_validate(observation.model_dump()) for observation in observations]
         new_ids, referenced_ids = self._validate_score_inputs(scores=scores, observations=observations)
         with closing(self.get_session()) as session:
             try:
@@ -1972,16 +2005,6 @@ class MemoryInterface(abc.ABC):
         unreferenced = set(observations_by_id) - referenced_observation_ids
         if unreferenced:
             raise ValueError(f"New observations are not referenced by a score: {sorted(unreferenced)}.")
-        for observation in observations:
-            if isinstance(observation.scorable, (ContentScorable, ContentEntryScorable)):
-                if observation.scorable.data_type in MEDIA_PATH_DATA_TYPES:
-                    raise ValueError(f"Media judgment observations are deferred: {observation.id}.")
-                if isinstance(
-                    observation.scorable, ContentScorable
-                ) and observation.payload.scored_evidence_digest != _content_scorable_digest(observation.scorable):
-                    raise ValueError(
-                        f"Content observations contain an invalid scored-evidence digest: {observation.id}."
-                    )
         return set(observations_by_id), referenced_observation_ids
 
     @classmethod
@@ -2073,7 +2096,7 @@ class MemoryInterface(abc.ABC):
                 message_piece_id=piece_id,
             )
             for observation in observations
-            for position, piece_id in enumerate(observation.payload.message_piece_ids)
+            for position, piece_id in enumerate(observation.response_message_piece_ids)
         ]
         score_observation_links = [
             ScoreObservationEntry(
@@ -2171,31 +2194,12 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If referenced response or scored evidence is missing or modified.
         """
-        piece_ids = {
-            piece_id
-            for observation in observations
-            for piece_id in (
-                *observation.payload.message_piece_ids,
-                *((observation.payload.scored_piece_id,) if isinstance(observation.scorable, MessageScorable) else ()),
-            )
-        }
+        piece_ids = {piece_id for observation in observations for piece_id in observation.evidence_message_piece_ids}
         pieces_by_id = cls._load_score_message_pieces(session=session, piece_ids=sorted(piece_ids, key=str))
-        missing_payload_piece_ids = {
-            str(piece_id)
-            for observation in observations
-            for piece_id in observation.payload.message_piece_ids
-            if piece_id not in pieces_by_id
-        }
-        if missing_payload_piece_ids:
-            raise ValueError(
-                f"Observation payload references message pieces not found in memory: "
-                f"{sorted(missing_payload_piece_ids)}."
-            )
-
         content_ids = {
-            observation.scorable.content_id
+            observation.scorable_content_id
             for observation in observations
-            if isinstance(observation.scorable, ContentEntryScorable)
+            if observation.scorable_content_id is not None
         }
         content_by_id: dict[uuid.UUID, tuple[ContentScorable, str]] = {}
         content_id_values = list(content_ids)
@@ -2219,10 +2223,11 @@ class MemoryInterface(abc.ABC):
             )
 
         for observation in observations:
-            cls._validate_one_observation_evidence(
-                observation=observation,
-                pieces_by_id=pieces_by_id,
-                content_by_id=content_by_id,
+            observation.validate_evidence(
+                message_pieces=pieces_by_id,
+                stored_content=content_by_id.get(observation.scorable_content_id)
+                if observation.scorable_content_id is not None
+                else None,
             )
 
     @classmethod
@@ -2244,58 +2249,6 @@ class MemoryInterface(abc.ABC):
                 statement = statement.with_hint(PromptMemoryEntry, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
             pieces_by_id.update({entry.id: entry.get_message_piece() for entry in session.scalars(statement)})
         return pieces_by_id
-
-    @staticmethod
-    def _validate_one_observation_evidence(
-        *,
-        observation: Observation,
-        pieces_by_id: Mapping[uuid.UUID, MessagePiece],
-        content_by_id: Mapping[uuid.UUID, tuple[ContentScorable, str]],
-    ) -> None:
-        """
-        Verify one observation against canonical evidence values.
-
-        Raises:
-            ValueError: If any referenced evidence is missing or has a different digest.
-        """
-        payload = observation.payload
-        for piece_id, expected_digest in zip(
-            payload.message_piece_ids,
-            payload.message_piece_digests,
-            strict=True,
-        ):
-            piece = pieces_by_id.get(piece_id)
-            if piece is None or _response_piece_digest(piece, include_id=True) != expected_digest:
-                raise ValueError(f"Observation {observation.id} references missing or modified response evidence.")
-
-        if isinstance(observation.scorable, MessageScorable):
-            scored_piece = pieces_by_id.get(payload.scored_piece_id)
-            if scored_piece and scored_piece.converted_value_data_type in MEDIA_PATH_DATA_TYPES:
-                raise ValueError(f"Media judgment observations are deferred: {observation.id}.")
-            actual_digest = _message_piece_digest(scored_piece, include_id=False) if scored_piece else None
-        elif isinstance(observation.scorable, ContentEntryScorable):
-            stored_content = content_by_id.get(observation.scorable.content_id)
-            actual_digest = (
-                stored_content[1]
-                if stored_content
-                and stored_content[0].data_type == observation.scorable.data_type
-                and stored_content[0].data_type not in MEDIA_PATH_DATA_TYPES
-                else None
-            )
-            if (
-                stored_content
-                and stored_content[0].data_type not in MEDIA_PATH_DATA_TYPES
-                and _content_scorable_digest(stored_content[0]) != stored_content[1]
-            ):
-                actual_digest = None
-        else:
-            actual_digest = (
-                _content_scorable_digest(observation.scorable)
-                if observation.scorable.data_type not in MEDIA_PATH_DATA_TYPES
-                else None
-            )
-        if actual_digest != payload.scored_evidence_digest:
-            raise ValueError(f"Observation {observation.id} references missing or modified scored evidence.")
 
     def get_scorable_content(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, ContentScorable]:
         """
@@ -4588,6 +4541,29 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
+        self.update_scenario_run_state_and_metadata_fields(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state=scenario_run_state,
+            error_message=error_message,
+            error_type=error_type,
+            metadata_fields={},
+        )
+
+    def update_scenario_run_state_and_metadata_fields(
+        self,
+        *,
+        scenario_result_id: str,
+        scenario_run_state: ScenarioRunState,
+        metadata_fields: Mapping[str, Any],
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        """
+        Update run state and merge scenario metadata in one transaction.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
         with closing(self.get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
 
@@ -4597,6 +4573,9 @@ class MemoryInterface(abc.ABC):
             entry.scenario_run_state = scenario_run_state.value
             entry.error_message = error_message
             entry.error_type = error_type
+            if metadata_fields:
+                entry.scenario_metadata = {**(entry.scenario_metadata or {}), **metadata_fields}
+                flag_modified(entry, "scenario_metadata")
             if scenario_run_state in (
                 ScenarioRunState.COMPLETED,
                 ScenarioRunState.FAILED,
@@ -4696,11 +4675,71 @@ class MemoryInterface(abc.ABC):
             entry.scenario_metadata = metadata if metadata else None
             session.commit()
 
+    def update_scenario_metadata_fields(
+        self,
+        *,
+        scenario_result_id: str,
+        fields: Mapping[str, Any],
+    ) -> None:
+        """
+        Merge selected fields into persisted scenario metadata in one transaction.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+            if not entry:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+            entry.scenario_metadata = {**(entry.scenario_metadata or {}), **fields}
+            flag_modified(entry, "scenario_metadata")
+            session.commit()
+
     def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
         with closing(self.get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
             return entry.get_scenario_result() if entry is not None else None
+
+    def get_scenario_run_state_page(
+        self,
+        *,
+        states: Sequence[ScenarioRunState],
+        after_id: str | None = None,
+        limit: int = 500,
+    ) -> tuple[list[ScenarioRunStateRecord], bool]:
+        """
+        Return one bounded ID/state page without hydrating ScenarioResults or AttackResults.
+
+        Returns:
+            tuple[list[ScenarioRunStateRecord], bool]: State records and whether another page exists.
+
+        Raises:
+            ValueError: If the limit or cursor ID is invalid.
+        """
+        if limit < 1 or limit > 500:
+            raise ValueError("Scenario run state projection limit must be between 1 and 500.")
+        conditions = [ScenarioResultEntry.scenario_run_state.in_([state.value for state in states])]
+        if after_id is not None:
+            conditions.append(ScenarioResultEntry.id > uuid.UUID(after_id))
+        statement = (
+            select(ScenarioResultEntry.id, ScenarioResultEntry.scenario_run_state)
+            .where(and_(*conditions))
+            .order_by(ScenarioResultEntry.id.asc())
+            .limit(limit + 1)
+        )
+        with closing(self.get_session()) as session:
+            rows = session.execute(statement).all()
+        return (
+            [
+                ScenarioRunStateRecord(
+                    scenario_result_id=str(row.id),
+                    state=ScenarioRunState(row.scenario_run_state),
+                )
+                for row in rows[:limit]
+            ],
+            len(rows) > limit,
+        )
 
     def get_scenario_run_history_page(
         self,
@@ -4753,7 +4792,7 @@ class MemoryInterface(abc.ABC):
                 f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
             )
         if effective_labels:
-            conditions.append(self._get_scenario_result_label_condition(labels=effective_labels))
+            conditions.append(self._get_scenario_result_labels_condition(labels=effective_labels))
         if cursor is not None:
             cursor_id = uuid.UUID(cursor.scenario_result_id)
             conditions.append(
@@ -4776,6 +4815,7 @@ class MemoryInterface(abc.ABC):
             ScenarioResultEntry.scenario_run_state,
             ScenarioResultEntry.labels,
             ScenarioResultEntry.timestamp,
+            self._get_scenario_started_at_expression().label("started_at"),
             ScenarioResultEntry.completion_time,
             ScenarioResultEntry.error_message,
             ScenarioResultEntry.error_type,
@@ -4809,6 +4849,7 @@ class MemoryInterface(abc.ABC):
                 status=row.scenario_run_state,
                 labels=row.labels or {},
                 created_at=row.timestamp,
+                started_at=self._parse_scenario_started_at(raw_value=row.started_at),
                 completed_at=row.completion_time,
                 error_message=row.error_message,
                 error_type=row.error_type,
@@ -4919,7 +4960,13 @@ class MemoryInterface(abc.ABC):
                 AttackResultEntry.objective_sha256.label("objective_sha256"),
                 AttackResultEntry.outcome.label("outcome"),
                 AttackResultEntry.timestamp.label("timestamp"),
-                func.coalesce(AttackResultEntry.total_retries, 0).label("total_retries"),
+                case(
+                    (
+                        func.coalesce(AttackResultEntry.total_retries, 0) > 0,
+                        func.coalesce(AttackResultEntry.total_retries, 0),
+                    ),
+                    else_=0,
+                ).label("total_retries"),
             )
             .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
             .subquery("history_attempts")
@@ -5070,6 +5117,22 @@ class MemoryInterface(abc.ABC):
                 else_=1,
             ).label("is_planned"),
         ).where(matched.c.match_rank == 1)
+
+    @staticmethod
+    def _parse_scenario_started_at(*, raw_value: Any) -> datetime | None:
+        """
+        Parse a persisted aware scenario start timestamp.
+
+        Returns:
+            datetime | None: Aware start timestamp, or None for legacy or malformed values.
+        """
+        if not isinstance(raw_value, str):
+            return None
+        try:
+            value = datetime.fromisoformat(raw_value)
+        except ValueError:
+            return None
+        return value if value.tzinfo is not None else None
 
     def get_unique_scenario_labels(self) -> dict[str, list[str]]:
         """Return all unique label values across scenario results."""

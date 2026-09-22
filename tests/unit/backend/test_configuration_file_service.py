@@ -13,8 +13,27 @@ from pyrit.backend.services.configuration_file_service import (
     ConfigurationFileService,
     _download_blob_config_async,
     _is_azure_blob_uri,
+    _replace_local_config_file,
     _upload_blob_config_async,
 )
+
+
+@pytest.mark.parametrize("failure_stage", ["write", "replace"])
+def test_replace_local_config_file_cleans_up_on_failure(tmp_path: Path, failure_stage: str) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("operator: before\n", encoding="utf-8")
+    content = "\ud800" if failure_stage == "write" else "operator: after\n"
+    if failure_stage == "write":
+        with pytest.raises(UnicodeEncodeError):
+            _replace_local_config_file(path=config_path, content=content)
+    else:
+        with patch(
+            "pyrit.backend.services.configuration_file_service.os.replace", side_effect=OSError("replace failed")
+        ):
+            with pytest.raises(OSError, match="replace failed"):
+                _replace_local_config_file(path=config_path, content=content)
+    assert config_path.read_text(encoding="utf-8") == "operator: before\n"
+    assert list(tmp_path.iterdir()) == [config_path]
 
 
 async def test_configuration_file_service_reads_and_updates_local_file(tmp_path: Path) -> None:

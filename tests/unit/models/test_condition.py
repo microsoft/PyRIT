@@ -6,7 +6,17 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import Condition, MatchesObjective
+from pyrit.models import (
+    Condition,
+    DivergesFromRepetition,
+    MatchesObjective,
+    ScoringExpectation,
+    ToolCall,
+    ToolCallRequirement,
+    ToolsCalled,
+    scoring_expectation_fingerprint,
+)
+from pyrit.models.messages.chat_message import ToolCall as MessageToolCall
 from pyrit.models.score.condition import _CONDITION_TYPES
 
 
@@ -99,3 +109,91 @@ def test_duplicate_discriminator_is_rejected():
 
         class _Second(Condition):
             condition_type: Literal["test_duplicate_discriminator"] = "test_duplicate_discriminator"
+
+
+def test_tool_call_requirement_does_not_replace_message_protocol() -> None:
+    assert ToolCall is MessageToolCall
+    assert ToolCallRequirement is not ToolCall
+
+
+def test_tools_called_round_trip_retains_exact_names() -> None:
+    condition = ToolsCalled(
+        tools=(
+            ToolCallRequirement(name="lookup"),
+            ToolCallRequirement(name="Lookup"),
+            ToolCallRequirement(name=" lookup"),
+        )
+    )
+    expectation = ScoringExpectation(conditions=(condition,))
+
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+    restored = ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json"))
+    assert restored == expectation
+    assert [tool.name for tool in condition.tools] == ["lookup", "Lookup", " lookup"]
+    assert _CONDITION_TYPES["tools_called"] is ToolsCalled
+
+
+@pytest.mark.parametrize("name", ["", " ", "\n\t", None, 42])
+def test_tool_call_requirement_rejects_empty_or_non_string_name(name: object) -> None:
+    with pytest.raises(ValidationError):
+        ToolCallRequirement.model_validate({"name": name})
+
+
+@pytest.mark.parametrize("names", [[], ["lookup", "lookup"]])
+def test_tools_called_requires_nonempty_unique_names(names: list[str]) -> None:
+    with pytest.raises(ValidationError, match="at least one tool|each tool name once"):
+        ToolsCalled(tools=tuple(ToolCallRequirement(name=name) for name in names))
+
+
+@pytest.mark.parametrize("field", ["arguments", "count", "order", "success"])
+def test_tool_call_requirement_rejects_unsupported_matching_fields(field: str) -> None:
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        ToolCallRequirement.model_validate({"name": "lookup", field: True})
+
+
+def test_tool_conditions_are_immutable() -> None:
+    requirement = ToolCallRequirement(name="lookup")
+    condition = ToolsCalled(tools=(requirement,))
+    with pytest.raises(ValidationError, match="frozen"):
+        requirement.name = "other"
+    with pytest.raises(ValidationError, match="frozen"):
+        condition.tools = ()
+
+
+@pytest.mark.parametrize("text", ["", " ", "\t\n"])
+def test_diverges_from_repetition_rejects_blank_text(text: str) -> None:
+    with pytest.raises(ValidationError):
+        DivergesFromRepetition(text=text)
+
+
+def test_diverges_from_repetition_preserves_literal_and_is_frozen() -> None:
+    condition = DivergesFromRepetition(text=" C++ ")
+    assert condition.text == " C++ "
+    assert condition.model_dump() == {"condition_type": "diverges_from_repetition", "text": " C++ "}
+    assert Condition.model_validate(condition.model_dump()) == condition
+    with pytest.raises(ValidationError, match="frozen"):
+        condition.text = "poem"
+
+
+def test_diverges_from_repetition_expectation_round_trip() -> None:
+    expectation = ScoringExpectation(objective="Continue repeating", conditions=(DivergesFromRepetition(text="poem"),))
+    restored = ScoringExpectation.model_validate_json(expectation.model_dump_json())
+    persisted = ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json"))
+    assert restored == persisted == expectation
+    assert isinstance(restored.conditions[0], DivergesFromRepetition)
+    other = ScoringExpectation(objective=expectation.objective, conditions=(DivergesFromRepetition(text="company"),))
+    assert scoring_expectation_fingerprint(restored) != scoring_expectation_fingerprint(other)
+
+
+def test_diverges_from_repetition_registered_without_scorer_import() -> None:
+    assert _CONDITION_TYPES["diverges_from_repetition"] is DivergesFromRepetition
+    restored = ScoringExpectation.model_validate(
+        {"conditions": [{"condition_type": "diverges_from_repetition", "text": "book"}]}
+    )
+    assert restored.conditions == (DivergesFromRepetition(text="book"),)
+
+
+@pytest.mark.parametrize("value", [{}, {"text": None}, {"text": 123}])
+def test_diverges_from_repetition_requires_string_text(value: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        DivergesFromRepetition.model_validate(value)
