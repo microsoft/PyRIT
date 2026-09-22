@@ -819,7 +819,7 @@ async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) 
             print(f"Error: File not found: {script_path}")
             return 1
         try:
-            async with aiofiles.open(script_path) as script_file:
+            async with aiofiles.open(script_path, encoding="utf-8") as script_file:
                 script_content = await script_file.read()
             await client.register_initializer_async(
                 name=script_path.stem,

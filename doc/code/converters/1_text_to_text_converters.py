@@ -34,6 +34,9 @@
 # ### 1.1 Basic Encoding Converters
 #
 # These converters encode text into various formats:
+#
+# For bijection converters, call `get_teaching_instructions()` on the same instance used to encode prompts so the target receives the matching mapping and formatting rules.
+# `DigitBijectionConverter` prefixes uppercase letters' digit tokens with a single apostrophe (`'`) and encodes each literal apostrophe as two apostrophes (`''`). Its teaching instructions include both rules and mapping-specific contraction examples. Spaces and all other punctuation remain unchanged.
 
 # %%
 from pathlib import Path

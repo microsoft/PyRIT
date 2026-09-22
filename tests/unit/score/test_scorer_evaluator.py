@@ -100,6 +100,47 @@ async def test_evaluate_dataset_async_harm(mock_harm_scorer):
     assert metrics.mae_standard_error == 0.0
 
 
+def test_validate_and_extract_harm_data_scores_only_assistant_message(mock_harm_scorer):
+    conversation_id = "conversation"
+    user_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="Test objective",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+                sequence=0,
+            )
+        ]
+    )
+    assistant_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="Test response",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+                sequence=1,
+            )
+        ]
+    )
+    dataset = HumanLabeledDataset(
+        name="test_dataset",
+        metrics_type=MetricsType.HARM,
+        entries=[HarmHumanLabeledEntry([user_message, assistant_message], [0.5], "hate_speech")],
+        version="1.0",
+        harm_definition="hate_speech.yaml",
+        harm_definition_version="1.0",
+    )
+
+    responses, human_scores, objectives = HarmScorerEvaluator(mock_harm_scorer)._validate_and_extract_data(dataset)
+
+    assert responses == [assistant_message]
+    assert human_scores == [[0.5]]
+    assert objectives is None
+    assert mock_harm_scorer._memory.add_message_to_memory.call_count == 2
+
+
 async def test_evaluate_dataset_async_objective(mock_objective_scorer):
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
