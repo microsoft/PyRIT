@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from dataclasses import asdict
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
@@ -154,6 +156,36 @@ def test_analytics_filter_keeps_additional_membership_constraints() -> None:
 def test_analytics_filters_reject_invalid_requests(data: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         AttackAnalyticsFilters.model_validate(data)
+
+
+@pytest.mark.parametrize("after_minute, before_minute", [(45, 15), (30, 30)])
+def test_analytics_filters_accept_forward_daylight_saving_interval(*, after_minute: int, before_minute: int) -> None:
+    zone = ZoneInfo("America/New_York")
+    bounds = {
+        "updated_after": datetime(2026, 11, 1, 1, after_minute, tzinfo=zone, fold=0),
+        "updated_before": datetime(2026, 11, 1, 1, before_minute, tzinfo=zone, fold=1),
+    }
+    json_bounds = json.dumps({name: value.isoformat() for name, value in bounds.items()})
+
+    from_json = AttackAnalyticsFilters.model_validate_json(json_bounds)
+    from_python = AttackAnalyticsFilters.model_validate(bounds)
+
+    assert from_python.model_dump(mode="json") == from_json.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("after_minute, before_minute", [(15, 45), (30, 30)])
+def test_analytics_filters_reject_reversed_daylight_saving_interval(*, after_minute: int, before_minute: int) -> None:
+    zone = ZoneInfo("America/New_York")
+    bounds = {
+        "updated_after": datetime(2026, 11, 1, 1, after_minute, tzinfo=zone, fold=1),
+        "updated_before": datetime(2026, 11, 1, 1, before_minute, tzinfo=zone, fold=0),
+    }
+    json_bounds = json.dumps({name: value.isoformat() for name, value in bounds.items()})
+
+    with pytest.raises(ValidationError, match="updated_after must be before updated_before"):
+        AttackAnalyticsFilters.model_validate_json(json_bounds)
+    with pytest.raises(ValidationError, match="updated_after must be before updated_before"):
+        AttackAnalyticsFilters.model_validate(bounds)
 
 
 def _filters_with_sizes(sizes: list[int]) -> AttackAnalyticsFilters:

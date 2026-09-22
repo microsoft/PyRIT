@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC
 from enum import Enum
 from typing import ClassVar, Self
 
@@ -217,7 +218,8 @@ class AttackAnalyticsFilters(_AnalyticsModel):
     No predicates and no outcomes means unrestricted saved results. All four
     outcomes normalize to the same unrestricted representation. Updated bounds
     form a half-open interval [after, before) over last-modified timestamps, not
-    attack execution time. Request-size limits bound work without sampling results.
+    attack execution time, and are compared as UTC instants across timezone changes.
+    Request-size limits bound work without sampling results.
     """
 
     MAX_PREDICATES: ClassVar[int] = 16
@@ -244,7 +246,7 @@ class AttackAnalyticsFilters(_AnalyticsModel):
         if (
             self.updated_after is not None
             and self.updated_before is not None
-            and self.updated_after >= self.updated_before
+            and self.updated_after.astimezone(UTC) >= self.updated_before.astimezone(UTC)
         ):
             raise ValueError("updated_after must be before updated_before")
         self.outcomes = sorted(set(self.outcomes), key=lambda outcome: outcome.value)
