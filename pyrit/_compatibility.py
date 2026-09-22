@@ -7,6 +7,7 @@ import json
 import re
 import warnings
 from pathlib import Path
+from typing import TypeGuard
 
 COMPATIBILITY_HEADER = "PyRIT-Compatibility-ID"
 INVALID_COMPATIBILITY_TYPE = "urn:pyrit:compatibility:invalid"
@@ -17,7 +18,7 @@ _IDENTITY_PATTERN = re.compile(
 )
 
 
-def is_valid_compatibility_id(value: object) -> bool:
+def is_valid_compatibility_id(value: object) -> TypeGuard[str]:
     """Return whether a marker contains a package version and full source commit."""
     return isinstance(value, str) and len(value) <= 256 and _IDENTITY_PATTERN.fullmatch(value) is not None
 

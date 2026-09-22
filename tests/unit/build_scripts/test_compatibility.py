@@ -55,6 +55,13 @@ def test_full_commit_identity():
     assert is_valid_compatibility_id(f"1.2.0.dev0+g{COMMIT}")
 
 
+@pytest.mark.parametrize("value", [None, 1, True, []])
+def test_package_version_must_be_a_string(source, monkeypatch, value):
+    (source / "pyrit/_version.py").write_text(f"__version__ = {value!r}\n")
+    with pytest.raises(ValueError, match="version must be a string"):
+        _stamp(source, monkeypatch)
+
+
 def test_missing_provenance_fails(source):
     with pytest.raises(ValueError, match="provenance"):
         stamp_source(source)
@@ -120,6 +127,7 @@ def test_packaged_stamp_malformed(source, monkeypatch, payload):
 
 def test_installed_identity_never_reads_git(source, monkeypatch):
     stamp = _stamp(source, monkeypatch)
+    monkeypatch.setattr("pyrit._version.__version__", stamp["version"])
     monkeypatch.setattr("pyrit._compatibility.__file__", str(source / "pyrit/_compatibility.py"))
     monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: pytest.fail("Runtime must not invoke Git"))
     assert get_compatibility_id() == stamp["compatibility_id"]

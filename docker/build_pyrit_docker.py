@@ -8,7 +8,7 @@ This script first builds the devcontainer base image, then builds the
 production image on top of it to avoid duplication.
 
 Usage:
-    python build_pyrit_docker.py --source pypi --version 0.10.0
+    python build_pyrit_docker.py --source pypi --version <stamped-version>
     python build_pyrit_docker.py --source local
 """
 
@@ -107,11 +107,11 @@ def build_image(source, version=None, rebuild_base=False):
         print(f"📦 Building from PyPI version: {version}")
         print()
         print("⚠️  IMPORTANT WARNINGS:")
-        print("   1. GUI mode may not work if this PyPI version doesn't")
-        print("      include the frontend. Jupyter mode will work.")
-        print("   2. Ensure your local branch matches the release version:")
+        print("   1. Use a coordinated, stamped release. Older unguarded wheels")
+        print("      are rejected in both GUI and Jupyter modes.")
+        print("   2. The installed wheel's identity is preserved, not replaced")
+        print("      by this checkout. Match the checkout for notebooks/docs:")
         print(f"      git checkout releases/v{version}")
-        print("      This ensures notebooks/docs match the PyRIT version.")
         print()
 
     elif source == "local":
@@ -185,8 +185,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Build from PyPI version 0.10.0
-  python docker/build_pyrit_docker.py --source pypi --version 0.10.0
+  # Build from a coordinated, stamped PyPI release
+  python docker/build_pyrit_docker.py --source pypi --version <stamped-version>
 
   # Build from local source
   python docker/build_pyrit_docker.py --source local

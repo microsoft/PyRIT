@@ -660,7 +660,7 @@ class ServerLauncher:
             base_url: Server root URL (e.g. ``http://localhost:8000``).
 
         Returns:
-            bool: ``True`` if ``GET /api/health`` returned 200.
+            bool: ``True`` if ``GET /api/health`` confirms a healthy PyRIT backend.
         """
         import httpx
 
@@ -670,7 +670,7 @@ class ServerLauncher:
                 if response.status_code != 200:
                     return False
                 payload = response.json()
-                return (
+                return bool(
                     isinstance(payload, dict)
                     and payload.get("status") == "healthy"
                     and (payload.get("service") == "pyrit-backend")

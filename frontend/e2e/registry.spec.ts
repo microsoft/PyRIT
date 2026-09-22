@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./_fixtures";
+import { mockVersion } from "./_compatibility";
 
 interface RegisteredConverter {
   converter_id: string;
@@ -83,7 +84,7 @@ async function installRegistryMocks(page: Page): Promise<void> {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ version: "0.0.0" }),
+      body: JSON.stringify(mockVersion()),
     });
   });
   await page.route(/\/api\/health$/, async (route) => {

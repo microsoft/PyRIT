@@ -42,7 +42,9 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert '-n "$(git status --porcelain)"' in self.pipeline_text
         assert '--build-arg GIT_COMMIT="$source_commit"' in self.pipeline_text
         assert "--build-arg GIT_MODIFIED=false" in self.pipeline_text
-        assert self.pipeline_text.index("source_commit=$(git rev-parse HEAD)") < self.pipeline_text.index("docker build")
+        assert self.pipeline_text.index("source_commit=$(git rev-parse HEAD)") < self.pipeline_text.index(
+            "docker build"
+        )
 
     def test_all_deployment_stages_share_one_template_and_remain_visible(self) -> None:
         stages = self.pipeline["stages"]

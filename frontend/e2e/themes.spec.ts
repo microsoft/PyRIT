@@ -1,5 +1,6 @@
-import { expect, test } from '@playwright/test'
-import type { Page, Route, TestInfo } from '@playwright/test'
+import { expect, test } from './_fixtures'
+import type { Page, Route, TestInfo } from './_fixtures'
+import { mockVersion } from './_compatibility'
 
 interface PresetCase {
   readonly id: string
@@ -29,7 +30,7 @@ const API_RESPONSES: Record<string, unknown> = {
   '/api/auth/config': { clientId: '', tenantId: '', allowedGroupIds: '' },
   '/api/auth/access': { isAdmin: true },
   '/api/health': { status: 'healthy' },
-  '/api/version': { version: 'theme-preview', display: 'theme-preview' },
+  '/api/version': mockVersion({ display: 'theme-preview' }),
   '/api/targets': EMPTY_PAGE,
   '/api/targets/catalog': { items: [] },
   '/api/attacks': EMPTY_PAGE,

@@ -46,6 +46,15 @@ checkout. PyPI Docker builds preserve and validate the installed wheel's stamp, 
 replace it with the Docker repository commit. Pre-guarded PyPI wheels intentionally
 fail this validation; use the coordinated release, not an older fallback.
 
+Before enabling the PyPI image path, publish the coordinated wheel/sdist and set the
+repository Actions variable `PYRIT_PYPI_VERSION` to that exact version. Alternatively,
+pass `pypiVersion` when manually running the Docker workflow; this supports explicitly
+selected prereleases as well as stable releases. The workflow fails if no version is
+configured, and the Docker build rejects an unguarded wheel. There is no automatic
+"latest" selection or older-version fallback. Run the PyPI image build and smoke tests
+successfully before marking the release ready; configuring a version alone is not proof
+that matching artifacts are available.
+
 These checks do not establish dependency equality or distinguish uncommitted edits.
 
 ### Customer-Facing Review

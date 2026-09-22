@@ -343,6 +343,13 @@ async def test_lifespan_identity_is_shared_by_guard_and_version(
         patch.object(_compatibility, "get_compatibility_id", return_value=startup_id),
         patch.object(ConfigurationLoader, "load_with_overrides", return_value=ConfigurationLoader()),
         patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+        patch(
+            "pyrit.backend.main.get_scenario_run_service",
+            return_value=MagicMock(
+                reconcile_interrupted_runs_async=AsyncMock(return_value=0),
+                shutdown_async=AsyncMock(),
+            ),
+        ),
         patch("pyrit.backend.main.setup_frontend"),
         patch.object(EntraAuthMiddleware, "_authenticate_with_graph_async", return_value=graph_user),
     ):
