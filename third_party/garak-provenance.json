@@ -9,71 +9,160 @@
   "redistributed_files": [
     {
       "path": "pyrit/converter/ansi_escape/ansi_attack_converter.py",
-      "sources": ["garak/probes/ansiescape.py", "garak/resources/ansi.py"]
+      "sources": [
+        "garak/probes/ansiescape.py",
+        "garak/resources/ansi.py"
+      ]
     },
     {
       "path": "pyrit/converter/ask_to_decode_converter.py",
-      "sources": ["garak/probes/encoding.py"]
+      "sources": [
+        "garak/probes/encoding.py"
+      ]
     },
     {
       "path": "pyrit/converter/braille_converter.py",
-      "sources": ["garak/probes/encoding.py"]
+      "sources": [
+        "garak/probes/encoding.py"
+      ]
     },
     {
       "path": "pyrit/datasets/converters/policy_puppetry_converter.yaml",
-      "sources": ["garak/probes/doctor.py"]
+      "sources": [
+        "garak/probes/doctor.py"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/score/mitigation/garak_mitigation_strings.yaml",
+      "sources": [
+        "garak/detectors/mitigation.py"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/access_shell_commands.prompt",
-      "sources": ["garak/data/payloads/access_shell_commands.json"]
+      "sources": [
+        "garak/data/payloads/access_shell_commands.json"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/api_key_partial_keys.prompt",
+      "sources": [
+        "garak/probes/apikey.py"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/api_key_safe_placeholders.prompt",
+      "sources": [
+        "garak/resources/apikey/regexes.py"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/api_key_service_patterns.prompt",
+      "sources": [
+        "garak/resources/apikey/regexes.py"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/api_key_services.prompt",
+      "sources": [
+        "garak/resources/apikey/regexes.py"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/api_key_templates.prompt",
+      "sources": [
+        "garak/probes/apikey.py"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/divergence.prompt",
+      "sources": [
+        "garak/probes/divergence.py"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/doctor.prompt",
-      "sources": ["garak/probes/doctor.py"]
+      "sources": [
+        "garak/probes/doctor.py"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/example_domains_xss.prompt",
-      "sources": ["garak/data/payloads/example_domains_xss.json"]
+      "sources": [
+        "garak/data/payloads/example_domains_xss.json"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/markdown_js.prompt",
-      "sources": ["garak/data/payloads/markdown_js.json"]
+      "sources": [
+        "garak/data/payloads/markdown_js.json"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/normal_instructions.prompt",
-      "sources": ["garak/data/payloads/normal_instructions.json"]
+      "sources": [
+        "garak/data/payloads/normal_instructions.json"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/package_hallucination_real_tasks.prompt",
-      "sources": ["garak/probes/packagehallucination.py"]
+      "sources": [
+        "garak/probes/packagehallucination.py"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/package_hallucination_stubs.prompt",
-      "sources": ["garak/probes/packagehallucination.py"]
+      "sources": [
+        "garak/probes/packagehallucination.py"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/package_hallucination_unreal_tasks.prompt",
-      "sources": ["garak/probes/packagehallucination.py"]
+      "sources": [
+        "garak/probes/packagehallucination.py"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/slur_terms_en.prompt",
-      "sources": ["garak/data/payloads/slur_terms_en.json"]
+      "sources": [
+        "garak/data/payloads/slur_terms_en.json"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/system_prompt_extraction.prompt",
-      "sources": ["garak/data/sysprompt_extraction/attacks.json"]
+      "sources": [
+        "garak/data/sysprompt_extraction/attacks.json"
+      ]
     },
     {
       "path": "pyrit/datasets/seed_datasets/local/garak/web_html_js.prompt",
-      "sources": ["garak/data/payloads/web_html_js.json"]
+      "sources": [
+        "garak/data/payloads/web_html_js.json"
+      ]
+    },
+    {
+      "path": "pyrit/scenario/scenarios/garak/api_key.py",
+      "sources": [
+        "garak/probes/apikey.py"
+      ]
     },
     {
       "path": "pyrit/scenario/scenarios/garak/audio_achilles_heel.py",
-      "sources": ["garak/probes/audio.py"]
+      "sources": [
+        "garak/probes/audio.py"
+      ]
+    },
+    {
+      "path": "pyrit/scenario/scenarios/garak/divergence.py",
+      "sources": [
+        "garak/probes/divergence.py"
+      ]
     },
     {
       "path": "pyrit/scenario/scenarios/garak/package_hallucination.py",
-      "sources": ["garak/probes/packagehallucination.py"]
+      "sources": [
+        "garak/probes/packagehallucination.py"
+      ]
     },
     {
       "path": "pyrit/scenario/scenarios/garak/prompt_inject.py",
@@ -81,15 +170,42 @@
     },
     {
       "path": "pyrit/scenario/scenarios/garak/web_injection.py",
-      "sources": ["garak/probes/web_injection.py", "garak/data/xss"]
+      "sources": [
+        "garak/probes/web_injection.py",
+        "garak/data/xss"
+      ]
     },
     {
       "path": "pyrit/score/float_scale/system_prompt_extraction_scorer.py",
-      "sources": ["garak/detectors/sysprompt_extraction.py"]
+      "sources": [
+        "garak/detectors/sysprompt_extraction.py"
+      ]
+    },
+    {
+      "path": "pyrit/score/true_false/regex/credential_leak_scorer.py",
+      "sources": [
+        "garak/resources/apikey/regexes.py"
+      ]
+    },
+    {
+      "path": "pyrit/score/true_false/regex/divergence_scorer.py",
+      "sources": [
+        "garak/detectors/divergence.py"
+      ]
+    },
+    {
+      "path": "pyrit/score/true_false/regex/ansi_escape_output_scorer.py",
+      "sources": ["garak/detectors/ansiescape.py", "garak/resources/ansi.py"]
+    },
+    {
+      "path": "pyrit/score/true_false/regex/escaped_ansi_output_scorer.py",
+      "sources": ["garak/detectors/ansiescape.py", "garak/resources/ansi.py"]
     },
     {
       "path": "pyrit/score/true_false/regex/package_hallucination_scorer.py",
-      "sources": ["garak/detectors/packagehallucination.py"]
+      "sources": [
+        "garak/detectors/packagehallucination.py"
+      ]
     }
   ]
 }

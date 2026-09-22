@@ -7,6 +7,7 @@ import {
   NARROW_VIEWPORT_QUERY,
   TOUCH_INPUT_QUERY,
 } from '@/styles/touchTargets'
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
 export const useScenarioDetailStyles = makeStyles({
   root: {
@@ -16,7 +17,7 @@ export const useScenarioDetailStyles = makeStyles({
     padding: tokens.spacingVerticalXXL,
     overflowX: 'hidden',
     overflowY: 'auto',
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
     [NARROW_VIEWPORT_QUERY]: {
       padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
     },

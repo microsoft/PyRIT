@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import abc
+import asyncio
 import logging
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.exceptions import PyritException
+from pyrit.exceptions import PyritException, execution_context, get_execution_context
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
@@ -31,7 +32,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score.observation import (
+from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _observation_collection,
     _ObservationEvidence,
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Awaitable, Callable, Sequence
 
+    from pyrit.exceptions import ComponentRole
     from pyrit.models import ChatMessageRole
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
@@ -152,7 +154,7 @@ class Scorer(Identifiable, abc.ABC):
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     #: Condition types this scorer can use as its criterion. Wrapping scorers report their
-    #: children's union so the root can reject conditions that reach no configured leaf.
+    #: children's union so group validation can reject conditions that reach no configured leaf.
     MATCHED_CONDITIONS: ClassVar[frozenset[type[Condition]]] = frozenset()
 
     #: Matched condition types that this scorer cannot operate without. The empty-condition
@@ -277,6 +279,7 @@ class Scorer(Identifiable, abc.ABC):
         score_aggregator: str | None = None,
         prompt_target: ComponentIdentifier | None = None,
         sub_scorers: list[ComponentIdentifier] | None = None,
+        children: dict[str, ComponentIdentifier] | None = None,
     ) -> ComponentIdentifier:
         """
         Construct the scorer identifier.
@@ -299,6 +302,8 @@ class Scorer(Identifiable, abc.ABC):
                 scorer calls, promoted to ``ScorerIdentifier.prompt_target``.
             sub_scorers (list[ComponentIdentifier] | None): Nested scorers a
                 composite wraps, promoted to ``ScorerIdentifier.sub_scorers``.
+            children (dict[str, ComponentIdentifier] | None): Additional component
+                dependencies not covered by the promoted child slots.
 
         Returns:
             ComponentIdentifier: The identifier for this scorer.
@@ -310,6 +315,7 @@ class Scorer(Identifiable, abc.ABC):
             score_aggregator=score_aggregator,
             prompt_target=prompt_target,
             sub_scorers=sub_scorers,
+            children=children,
         )
 
     async def score_async(
@@ -320,6 +326,9 @@ class Scorer(Identifiable, abc.ABC):
     ) -> list[Score]:
         """
         Score a scorable against an expectation, persist the results, and return them.
+
+        Only this scorer's criteria are checked. Use a group helper to also reject
+        condition types that no configured scorer consumes.
 
         Args:
             scorable (Scorable): What to look at.
@@ -373,35 +382,130 @@ class Scorer(Identifiable, abc.ABC):
             object.__setattr__(score, "scored_expectation", expectation)
             object.__setattr__(score, "objective", expectation.objective)
 
+    @staticmethod
+    async def score_with_scorers_async(
+        *,
+        scorable: Scorable,
+        scorers: Sequence[Scorer],
+        expectation: ScoringExpectation | None = None,
+        scorer_roles: Sequence[ComponentRole] | None = None,
+    ) -> list[list[Score]]:
+        """
+        Score evidence concurrently with independently persisted scoring roots.
+
+        Each root receives the original scorable and complete expectation through its public
+        ``score_async`` method. The group checks condition coverage before any scorer runs.
+        This does not apply message-specific evidence policies.
+
+        Args:
+            scorable (Scorable): The evidence each scorer acquires.
+            scorers (Sequence[Scorer]): The ordered scoring roots.
+            expectation (ScoringExpectation | None): The complete scoring question. Defaults to None.
+            scorer_roles (Sequence[ComponentRole] | None): One execution role per scorer, in
+                input order. Omission preserves the caller's execution context.
+
+        Returns:
+            list[list[Score]]: One score list per root, in input order, including empty lists.
+
+        Raises:
+            TypeError: If the expectation is not a ``ScoringExpectation``.
+            ValueError: If conditions are unmatched, ambiguous, or missing required criteria,
+                or the role count differs from the scorer count.
+        """
+        roots = tuple(scorers)
+        roles = tuple(scorer_roles) if scorer_roles is not None else (None,) * len(roots)
+        if len(roles) != len(roots):
+            raise ValueError("scorer_roles must have one entry per scorer.")
+        Scorer.validate_expectation_for_scorers(scorers=roots, expectation=expectation)
+        return await asyncio.gather(
+            *(
+                Scorer._score_with_context_async(
+                    scorer=scorer, scorable=scorable, expectation=expectation, component_role=role
+                )
+                for scorer, role in zip(roots, roles, strict=True)
+            )
+        )
+
+    @staticmethod
+    async def _score_with_context_async(
+        *,
+        scorer: Scorer,
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        component_role: ComponentRole | None,
+    ) -> list[Score]:
+        """
+        Call a scoring root with an optional role and its own component identifier.
+
+        Returns:
+            list[Score]: The root's persisted scores.
+        """
+        if component_role is None:
+            return await scorer.score_async(scorable=scorable, expectation=expectation)
+        parent = get_execution_context()
+        with execution_context(
+            component_role=component_role,
+            component_identifier=scorer.get_identifier(),
+            attack_strategy_name=parent.attack_strategy_name if parent else None,
+            attack_identifier=parent.attack_identifier if parent else None,
+            objective_target_conversation_id=parent.objective_target_conversation_id if parent else None,
+            objective=parent.objective if parent else None,
+        ):
+            return await scorer.score_async(scorable=scorable, expectation=expectation)
+
+    @staticmethod
+    def validate_expectation_for_scorers(
+        *,
+        scorers: Sequence[Scorer],
+        expectation: ScoringExpectation | None,
+    ) -> None:
+        """
+        Validate conditions against a forest of independently configured scoring roots.
+
+        Wrappers declare their leaves' matched and required conditions. Every condition must
+        reach a configured leaf, but a root may ignore conditions addressed to another root.
+        Nested scoring retains each leaf's own validation.
+
+        Args:
+            scorers (Sequence[Scorer]): The objective and auxiliary scoring roots.
+            expectation (ScoringExpectation | None): The complete scoring question.
+
+        Raises:
+            TypeError: If the expectation is not a ``ScoringExpectation``.
+            ValueError: If conditions are unmatched, ambiguous, or missing required criteria.
+        """
+        ScoringExpectation.validate_type(expectation)
+        if expectation is None or not expectation.conditions:
+            return
+        matched = tuple({condition_type for scorer in scorers for condition_type in scorer.matched_conditions()})
+        unmatched = [condition for condition in expectation.conditions if not isinstance(condition, matched)]
+        if unmatched:
+            names = ", ".join(sorted({type(condition).__name__ for condition in unmatched}))
+            raise ValueError(f"The scorer group does not match the condition(s) {names}.")
+        for scorer in scorers:
+            scorer._validate_expectation(expectation=expectation)
+
     def _validate_expectation(
         self,
         *,
         expectation: ScoringExpectation | None,
-        allow_unmatched_conditions: bool = False,
     ) -> None:
         """
-        Reject conditions no scorer in this tree consumes, and ambiguous routing.
+        Validate this scorer's criteria; condition coverage belongs to the scoring group.
 
         Args:
             expectation (ScoringExpectation | None): The expectation to validate.
-            allow_unmatched_conditions (bool): Permit conditions addressed to sibling leaves.
 
         Raises:
-            ValueError: If a condition is unsupported at the root, if a required condition is
-                absent, or if more than one condition of the same matched type is present.
+            TypeError: If the expectation is not a ``ScoringExpectation``.
+            ValueError: If a required condition is absent, or if more than one condition of
+                the same matched type is present.
         """
+        ScoringExpectation.validate_type(expectation)
         if expectation is None or not expectation.conditions:
             return
 
         matched = self.matched_conditions()
-        unmatched = [condition for condition in expectation.conditions if not isinstance(condition, tuple(matched))]
-        if unmatched and not allow_unmatched_conditions:
-            names = ", ".join(sorted({type(condition).__name__ for condition in unmatched}))
-            matched_names = ", ".join(sorted(cls.__name__ for cls in matched)) or "none"
-            raise ValueError(
-                f"{type(self).__name__} does not match the condition(s) {names}. Matched conditions: {matched_names}."
-            )
-
         for condition_type in matched:
             matches = [condition for condition in expectation.conditions if isinstance(condition, condition_type)]
             if len(matches) > 1:
@@ -466,9 +570,8 @@ class Scorer(Identifiable, abc.ABC):
         """
         Score a scorable as a child in a scorer tree.
 
-        Conditions addressed to sibling leaves are ignored here because the root scorer
-        already validates that every supplied condition reaches at least one leaf. The
-        root scorer owns persistence, so this path only validates child output.
+        Conditions addressed to sibling leaves are ignored, as in direct scoring.
+        The root scorer owns persistence, so this path only validates child output.
 
         Args:
             scorable (Scorable): What to look at.
@@ -477,7 +580,7 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             list[Score]: The validated child scores.
         """
-        self._validate_expectation(expectation=expectation, allow_unmatched_conditions=True)
+        self._validate_expectation(expectation=expectation)
         with _scoring_scorable_context(scorable), _scoring_expectation_context(expectation):
             scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
         self._stamp_scored_expectation(scores=scores, expectation=expectation)
@@ -509,7 +612,7 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             NonReplayableObservationError: If this scorer or payload cannot replay.
         """
-        self._validate_expectation(expectation=expectation, allow_unmatched_conditions=True)
+        self._validate_expectation(expectation=expectation)
         stored_observations = self._memory.get_observations(observation_ids=[observation.id])
         if not stored_observations:
             raise NonReplayableObservationError(f"Observation {observation.id} is not stored in memory.")
@@ -746,6 +849,7 @@ class Scorer(Identifiable, abc.ABC):
         objective_scorer: Scorer | None = None,
         auxiliary_scorers: list[Scorer] | None = None,
         role_filter: ChatMessageRole | None = None,
+        expectation: ScoringExpectation | None = None,
         objective: str | None = None,
         skip_on_error_result: bool | None = None,
     ) -> dict[str, list[Score]]:
@@ -755,6 +859,8 @@ class Scorer(Identifiable, abc.ABC):
         Response scoring is message-only policy, so it moved to ``MessageScorer``.
         ``role_filter`` and ``skip_on_error_result`` are deprecated compatibility filters.
         New code declares the roles it reads on the scorer.
+        ``expectation`` is forwarded unchanged; ``objective`` remains a deprecated alternative
+        until 2.0 and cannot be supplied alongside a non-null expectation.
 
         Returns:
             dict[str, list[Score]]: Auxiliary and objective scores, keyed by
@@ -772,6 +878,7 @@ class Scorer(Identifiable, abc.ABC):
             objective_scorer=objective_scorer,
             auxiliary_scorers=auxiliary_scorers,
             role_filter=role_filter,
+            expectation=expectation,
             objective=objective,
             skip_on_error_result=skip_on_error_result,
         )
@@ -782,6 +889,7 @@ class Scorer(Identifiable, abc.ABC):
         response: Message,
         scorers: list[Scorer],
         role_filter: ChatMessageRole | None = None,
+        expectation: ScoringExpectation | None = None,
         objective: str | None = None,
         skip_on_error_result: bool | None = None,
     ) -> list[Score]:
@@ -789,6 +897,8 @@ class Scorer(Identifiable, abc.ABC):
         Score a response with several scorers through the message family. Deprecated.
 
         ``role_filter`` and ``skip_on_error_result`` are deprecated compatibility filters.
+        ``expectation`` is forwarded unchanged; ``objective`` remains a deprecated alternative
+        until 2.0 and cannot be supplied alongside a non-null expectation.
 
         Returns:
             list[Score]: Every score the scorers produced.
@@ -804,6 +914,7 @@ class Scorer(Identifiable, abc.ABC):
             response=response,
             scorers=scorers,
             role_filter=role_filter,
+            expectation=expectation,
             objective=objective,
             skip_on_error_result=skip_on_error_result,
         )

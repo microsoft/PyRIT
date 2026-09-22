@@ -1,0 +1,78 @@
+parameters:
+  - name: stageName
+    type: string
+  - name: displayName
+    type: string
+  - name: deploymentName
+    type: string
+  - name: dependsOn
+    type: object
+  - name: condition
+    type: string
+  - name: slot
+    type: string
+    values:
+      - test
+      - prod
+  - name: phase
+    type: string
+    values:
+      - infra
+      - app
+
+stages:
+  - stage: ${{ parameters.stageName }}
+    displayName: ${{ parameters.displayName }}
+    dependsOn: ${{ parameters.dependsOn }}
+    condition: ${{ parameters.condition }}
+    variables:
+      - group: copyrit-gui-common
+      - group: copyrit-gui-${{ parameters.slot }}
+      - ${{ if eq(parameters.phase, 'app') }}:
+          - name: immutableImage
+            value: $[ stageDependencies.Build.BuildAndPush.outputs['BuildImage.immutableImage'] ]
+    pool:
+      vmImage: 'ubuntu-latest'
+    jobs:
+      - deployment: ${{ parameters.deploymentName }}
+        displayName: ${{ parameters.displayName }}
+        timeoutInMinutes: 120
+        environment: 'copyrit-${{ parameters.slot }}'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  fetchDepth: 1
+                - task: AzureCLI@2
+                  displayName: 'Preview, deploy, and verify ${{ parameters.slot }} ${{ parameters.phase }}'
+                  env:
+                    PYRIT_SLOT: ${{ parameters.slot }}
+                    PYRIT_BUILD_ID: $(Build.BuildId)
+                    PYRIT_SOURCE_DIRECTORY: $(Build.SourcesDirectory)
+                    PYRIT_AGENT_TEMP_DIRECTORY: $(Agent.TempDirectory)
+                    PYRIT_DEPLOYMENT_RESOURCE_GROUP: $(deploymentResourceGroup)
+                    PYRIT_APP_NAME: $(deploymentAppName)
+                    PYRIT_MANAGED_IDENTITY_RESOURCE_ID: $(managedIdentityResourceId)
+                    PYRIT_ACR_RESOURCE_ID: $(acrResourceId)
+                    PYRIT_ENABLE_OTEL: $(enableOtel)
+                    ${{ if eq(parameters.phase, 'infra') }}:
+                      PYRIT_VNET_ADDRESS_PREFIX: $(deploymentVnetAddressPrefix)
+                      PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX: $(deploymentInfrastructureSubnetAddressPrefix)
+                    ${{ else }}:
+                      PYRIT_CONTAINER_IMAGE: $(immutableImage)
+                      PYRIT_ALLOWED_CLIENT_CIDR: $(deploymentAllowedClientCidr)
+                      PYRIT_ENTRA_TENANT_ID: $(entraTenantId)
+                      PYRIT_ENTRA_CLIENT_ID: $(entraClientId)
+                      PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
+                      PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)
+                      PYRIT_CONFIG_FILE_URI: $(pyritConfigFileUri)
+                      PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)
+                      PYRIT_SQL_DATABASE_NAME: $(sqlDatabaseName)
+                      PYRIT_KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)
+                      PYRIT_ENV_SECRET_NAME: $(envSecretName)
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'scriptPath'
+                    scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_${{ parameters.phase }}.sh'

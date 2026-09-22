@@ -249,7 +249,7 @@ describe('ScenarioDetail', () => {
     expect(await screen.findByTestId('scenario-target-select')).toBeInTheDocument()
   })
 
-  it('estimates without a target and directs to Targets before launch', async () => {
+  it('estimates without a target and directs to the registry before launch', async () => {
     jest.useFakeTimers()
     const onNavigate = jest.fn()
     mockListTargets.mockResolvedValueOnce({ items: [], pagination: { limit: 200, has_more: false } })
@@ -270,7 +270,7 @@ describe('ScenarioDetail', () => {
     )
     expect(within(screen.getByTestId('run-estimate')).getByText('8')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Configure target to launch' }))
-    expect(onNavigate).toHaveBeenCalledWith('targets')
+    expect(onNavigate).toHaveBeenCalledWith('registry')
   })
 
   it('defaults the target selector to the active target when it is among the fetched targets', async () => {
@@ -314,6 +314,36 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).not.toHaveBeenCalled()
     await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
+  })
+
+  it('restores focus to Launch scan button when preview dialog is cancelled', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/foundry.red_team_agent')
+
+    const launchButton = await screen.findByTestId('launch-scenario-btn')
+    const preview = await openRunPreview(user)
+    expect(preview).toBeInTheDocument()
+
+    await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(launchButton).toHaveFocus()
+    })
+  })
+
+  it('restores focus to Launch scan button when preview dialog is dismissed via Escape', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/foundry.red_team_agent')
+
+    const launchButton = await screen.findByTestId('launch-scenario-btn')
+    const preview = await openRunPreview(user)
+    expect(preview).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(launchButton).toHaveFocus()
+    })
   })
 
   it('debounces preview requests and aborts the superseded request', async () => {
@@ -811,19 +841,46 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 
-  it('validates advanced concurrency and retry bounds before launching', async () => {
+  it.each([
+    ['Max concurrency', '500', 'Max concurrency must be an integer from 1 to 100.'],
+    ['Max concurrency', '1.5', 'Max concurrency must be an integer from 1 to 100.'],
+    ['Max retries', '21', 'Max retries must be an integer from 0 to 20.'],
+    ['Max retries', '1.5', 'Max retries must be an integer from 0 to 20.'],
+  ])('validates %s typed as %s before launching', async (label, value, message) => {
     const user = userEvent.setup()
     renderDetail('/scanner/foundry.red_team_agent')
-    await screen.findByTestId('scenario-target-select')
+    const input = await screen.findByRole('spinbutton', { name: label })
 
-    fireEvent.change(screen.getByTestId('max-concurrency-input'), { target: { value: '500' } })
-    fireEvent.blur(screen.getByTestId('max-concurrency-input'))
+    await user.clear(input)
+    await user.type(input, value)
+    await user.tab()
     await user.click(screen.getByTestId('launch-scenario-btn'))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Max concurrency must be an integer from 1 to 100.',
-    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(message)
     expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
+  it('commits typed stepper values and sends the values shown after mouse and keyboard steps', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/foundry.red_team_agent')
+    const retries = await screen.findByRole('spinbutton', { name: 'Max retries' })
+    const concurrency = screen.getByRole('spinbutton', { name: 'Max concurrency' })
+
+    await user.clear(retries)
+    await user.type(retries, '3')
+    await user.tab()
+    await user.clear(concurrency)
+    await user.type(concurrency, '12{ArrowUp}')
+    await user.tab()
+    await user.click(screen.getAllByRole('button', { name: 'Increment value' })[1])
+    expect(retries).toHaveValue('4')
+    expect(concurrency).toHaveValue('13')
+    await confirmRunPreview(user)
+
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+      max_retries: 4,
+      max_concurrency: 13,
+    })))
   })
 
   it('sends the exact RunScenarioRequest payload and attaches labels automatically', async () => {

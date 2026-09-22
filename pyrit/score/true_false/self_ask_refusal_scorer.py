@@ -19,7 +19,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
-from pyrit.score.observation import _ObservationEvidence
+from pyrit.score.observation.execution import _ObservationEvidence
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (

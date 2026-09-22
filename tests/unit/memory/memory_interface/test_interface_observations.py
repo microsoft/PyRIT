@@ -22,12 +22,13 @@ from pyrit.models import (
     Acquisition,
     ComponentIdentifier,
     ContentScorable,
-    JudgmentObservationPayload,
     MessagePiece,
     MessageScorable,
     Observation,
     Score,
+    ScorerTargetResponsePayload,
     ScoringExpectation,
+    TraceScorable,
     scoring_expectation_fingerprint,
 )
 from pyrit.models.score.observation import _message_piece_digest, _response_piece_digest
@@ -50,7 +51,7 @@ def _observation(
         source_identifier=_identifier(),
         acquisition=Acquisition.COMPLETE,
         scorable=scorable,
-        payload=JudgmentObservationPayload(
+        payload=ScorerTargetResponsePayload(
             scored_piece_id=scorable.message_piece_ids[0],
             message_piece_ids=(response_piece_id,),
             message_piece_digests=(_response_piece_digest(response_piece, include_id=True),),
@@ -669,14 +670,23 @@ def test_sqlite_write_requires_a_real_driver_connection() -> None:
     session.connection.return_value.exec_driver_sql.assert_not_called()
 
 
-def test_media_judgment_observation_rejection(file_memory: SQLiteMemory) -> None:
+@pytest.mark.parametrize("direct_orm", [False, True])
+@pytest.mark.parametrize(
+    ("scorable", "error"),
+    [
+        (ContentScorable(value="image.png", data_type="image_path"), "Media scorer target response"),
+        (TraceScorable(trace_ids=("1" * 32,)), "message or content evidence"),
+    ],
+)
+def test_unchecked_observation_rejected(
+    *, file_memory: SQLiteMemory, direct_orm: bool, scorable: object, error: str
+) -> None:
     score, observation, _ = _score_and_observation(file_memory)
-    media = ContentScorable(value="image.png", data_type="image_path")
-    observation = observation.model_copy(
-        update={
-            "scorable": media,
-            "payload": observation.payload.model_copy(update={"scored_piece_id": None}),
-        }
-    )
-    with pytest.raises(ValueError, match="Media judgment observations are deferred"):
-        file_memory.add_scores_to_memory(scores=[score], observations=[observation])
+    observation = observation.model_copy(update={"scorable": scorable})
+    with pytest.raises(ValueError, match=error):
+        if direct_orm:
+            ObservationEntry(entry=observation)
+        else:
+            file_memory.add_scores_to_memory(scores=[score], observations=[observation])
+    assert file_memory.get_scores(score_ids=[score.id]) == []
+    assert file_memory.get_observations(observation_ids=[observation.id]) == []

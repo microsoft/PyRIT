@@ -398,7 +398,7 @@ class HumanLabeledDataset:
             if len(harm_categories) > 1:
                 raise ValueError("Evaluating a dataset with multiple harm categories is not currently supported.")
 
-        elif self.metrics_type == MetricsType.OBJECTIVE:
+        else:
             for index, entry in enumerate(self.entries):
                 if not isinstance(entry, ObjectiveHumanLabeledEntry):
                     raise ValueError(

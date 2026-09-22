@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models import Message, Score, ScoreStatus, UndeterminedScoreError
 from pyrit.score.message_scorer import MessageScorer
-from pyrit.score.observation import _merge_observation_ids
+from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 

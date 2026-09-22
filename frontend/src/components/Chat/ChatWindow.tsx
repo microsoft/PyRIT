@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
 import type { ChangeEvent } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Button,
   Breadcrumb,
@@ -30,8 +31,16 @@ import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
 import ObjectiveHeader from './ObjectiveHeader'
 import type { PieceConversion } from './converterTypes'
-import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
-import LabelsBar from '../Labels/LabelsBar'
+import { useChatConverters } from '@/hooks/useChatConverters'
+import {
+  basenameFromValue,
+  buildMediaUrl,
+  buildRequestConverterConfigurations,
+  buildDraftPieceIds,
+  dataTypeToAttachmentKind,
+  isPathDataType,
+  withDraftIdentity,
+} from './converterTypes'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi, scoresApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
@@ -192,6 +201,8 @@ function matchesNarrowScreen(): boolean {
 }
 
 interface ChatWindowProps {
+  /** Shared layout slot; standalone chat renders its toolbar inline. */
+  toolbarContainer?: HTMLElement | null
   onNewAttack: () => void
   activeTarget: TargetInstance | null
   attackResultId: string | null
@@ -203,7 +214,6 @@ interface ChatWindowProps {
   onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
   onAttackChange?: (attack: AttackSummary) => void
   labels?: Record<string, string>
-  onLabelsChange?: (labels: Record<string, string>) => void
   onNavigate?: (view: ViewName) => void
   /** Operator from the loaded attack (for operator locking). Null for new attacks. */
   attackOperator?: string | null
@@ -229,6 +239,7 @@ interface ChatWindowProps {
 }
 
 export default function ChatWindow({
+  toolbarContainer,
   onNewAttack,
   activeTarget,
   attackResultId,
@@ -240,7 +251,6 @@ export default function ChatWindow({
   onHumanScoreChange,
   onAttackChange,
   labels,
-  onLabelsChange,
   onNavigate,
   attackOperator,
   attackTarget,
@@ -280,9 +290,9 @@ export default function ChatWindow({
   const [globalMarkdown, setGlobalMarkdown] = useState(() => readStoredMarkdownPreference())
   const [chatInputText, setChatInputText] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
-  const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
-  const [attachmentData, setAttachmentData] = useState<Record<string, string>>({})
-  const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
+  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([])
+  const converters = useChatConverters(chatInputText, draftAttachments)
+  const { applied: activePieceConversions, restore: restoreConversions } = converters
   const [recoverableSends, setRecoverableSends] = useState<Record<string, RecoverableSendDraft>>({})
   const [isRecoveringProcessingError, setIsRecoveringProcessingError] = useState(false)
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
@@ -331,40 +341,9 @@ export default function ChatWindow({
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [])
 
-  const handleAttachmentsChange = useCallback((types: string[], data: Record<string, string>) => {
-    setAttachmentTypes(types)
-    setAttachmentData(data)
-  }, [])
-
-  // Auto-prune stale conversions whose original input no longer matches.
-  // For text: the typed text differs from the captured originalValue.
-  // For media: the uploaded base64 changed (or was removed).
-  // Deriving this rather than syncing via an effect avoids triggering
-  // react-hooks/set-state-in-effect and is the pattern recommended by React
-  // (see frontend-style-guide → "Prefer Derived Values Over Effects").
-  const activePieceConversions = useMemo(() => {
-    const entries = Object.entries(pieceConversions)
-    if (entries.length === 0) return pieceConversions
-    const next: Record<string, PieceConversion> = {}
-    let hasStale = false
-    for (const [key, conv] of entries) {
-      const stillValid = key === 'text'
-        ? conv.originalValue === chatInputText
-        : attachmentData[key] === conv.originalValue
-      if (stillValid) {
-        next[key] = conv
-      } else {
-        hasStale = true
-      }
-    }
-    return hasStale ? next : pieceConversions
-  }, [pieceConversions, chatInputText, attachmentData])
   const conversionRevisionKey = useMemo(
-    () => JSON.stringify(
-      Object.entries(activePieceConversions)
-        .sort(([left], [right]) => left.localeCompare(right)),
-    ),
-    [activePieceConversions],
+    () => JSON.stringify({ applied: activePieceConversions, pipelines: converters.pipelines }),
+    [activePieceConversions, converters.pipelines],
   )
 
   // Auto-open conversation sidebar when loading a historical attack with multiple
@@ -643,18 +622,13 @@ export default function ChatWindow({
       const pieces = await buildMessagePieces(originalValue, attachments)
 
       // Send converter selections to the backend and let it apply conversions per piece.
-      // Avoid setting converted_value client-side because one preview value does not
+      // Avoid setting converted_value client-side because one converted value does not
       // necessarily correspond to every piece of the same data type, and any locally
-      // preconverted piece may cause the backend to skip converter_ids entirely.
-      const allConverterIds: string[] = []
-      for (const [pieceType, conv] of Object.entries(conversions)) {
-        const dataType = PIECE_TYPE_TO_DATA_TYPE[pieceType]
-        if (!dataType) continue
-        const hasMatchingPiece = pieces.some(piece => piece.data_type === dataType)
-        if (hasMatchingPiece) {
-          allConverterIds.push(conv.converterInstanceId)
-        }
-      }
+      // preconverted piece may cause the backend to skip the configuration entirely.
+      const requestConverterConfigurations = buildRequestConverterConfigurations(
+        buildDraftPieceIds(originalValue, attachments),
+        conversions,
+      )
 
       // Create attack lazily on first message
       let currentAttackResultId = attackResultId
@@ -701,7 +675,6 @@ export default function ChatWindow({
       const effectiveConvId = currentActiveConversationId ?? currentConversationId
 
       // Send message to target
-      const converterIds = allConverterIds.length > 0 ? allConverterIds : undefined
       if (!currentAttackResultId || !effectiveConvId) {
         throw new Error('Message send is missing an attack or conversation ID.')
       }
@@ -711,7 +684,9 @@ export default function ChatWindow({
         send: true,
         target_registry_name: activeTarget.target_registry_name,
         target_conversation_id: effectiveConvId,
-        converter_ids: converterIds,
+        request_converter_configurations: requestConverterConfigurations.length > 0
+          ? requestConverterConfigurations
+          : undefined,
       }
       const response = await attacksApi.addMessage(currentAttackResultId, addMessageRequest)
       onAttackChange?.(response.attack)
@@ -875,24 +850,16 @@ export default function ChatWindow({
 
   const restoreRecoverableDraft = useCallback((): void => {
     if (!recoverableSend) { return }
-    const restoredMediaInputs: Record<string, string> = {}
-    for (const [pieceType, conversion] of Object.entries(recoverableSend.conversions)) {
-      if (pieceType !== 'text') {
-        restoredMediaInputs[pieceType] = conversion.originalValue
-      }
-    }
-    // Keep preserved converters valid while the restored Files are read asynchronously.
-    handleAttachmentsChange(
-      [...new Set(recoverableSend.attachments.map((attachment: MessageAttachment) => attachment.type))],
-      restoredMediaInputs,
-    )
-    setPieceConversions(recoverableSend.conversions)
+    const attachments = recoverableSend.attachments.map(withDraftIdentity)
+    setChatInputText(recoverableSend.originalValue)
+    setDraftAttachments(attachments)
+    restoreConversions(recoverableSend.originalValue, attachments, recoverableSend.conversions)
     inputBoxRef.current?.restoreDraft(
       recoverableSend.originalValue,
-      recoverableSend.attachments,
+      attachments,
     )
     inputBoxRef.current?.focus()
-  }, [handleAttachmentsChange, recoverableSend])
+  }, [restoreConversions, recoverableSend])
 
   const handleRecoverProcessingError = useCallback(async (): Promise<void> => {
     if (
@@ -1213,18 +1180,100 @@ export default function ChatWindow({
     }
   }
 
+  // Chat owns these handlers and states even when the layout hosts the controls.
+  const toolbar = (
+    <div
+      className={toolbarContainer ? styles.sharedToolbar : styles.ribbon}
+      role="group"
+      aria-label="Chat controls"
+    >
+      <div className={mergeClasses(styles.conversationInfo, toolbarContainer ? styles.sharedTarget : undefined)}>
+        {activeTarget ? (
+          <TargetBadge target={activeTarget} />
+        ) : (
+          <Text size={200} className={styles.noTarget}>
+            No target selected
+          </Text>
+        )}
+      </div>
+      <div className={mergeClasses(styles.ribbonActions, toolbarContainer ? styles.sharedActions : undefined)}>
+        <Tooltip content="Render all messages as Markdown by default" relationship="label">
+          <Switch
+            checked={globalMarkdown}
+            onChange={handleMarkdownChange}
+            label="Markdown"
+            data-testid="global-markdown-toggle"
+          />
+        </Tooltip>
+        <Menu>
+          <MenuTrigger disableButtonEnhancement>
+            <Tooltip content="Export conversation" relationship="label">
+              <Button
+                appearance="subtle"
+                className={styles.ribbonAction}
+                icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
+                disabled={!canExportConversation}
+                aria-label="Export conversation"
+                data-testid="export-conversation-btn"
+              />
+            </Tooltip>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              <MenuItem
+                onClick={() => handleExport('markdown')}
+                disabled={isExporting}
+                data-testid="export-markdown-item"
+              >
+                Export as Markdown (.md)
+              </MenuItem>
+              <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
+                Export as JSON (.json)
+              </MenuItem>
+              <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
+                Export as HTML (.html)
+              </MenuItem>
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+        <Tooltip content="Toggle conversations panel" relationship="label">
+          <Button
+            {...restoreFocusTargetAttributes}
+            appearance="subtle"
+            className={styles.ribbonAction}
+            icon={<PanelRightRegular />}
+            onClick={() => setIsPanelOpen((open) => !open)}
+            disabled={!attackResultId}
+            data-testid="toggle-panel-btn"
+            aria-label="Toggle conversations panel"
+            aria-expanded={isPanelOpen}
+            aria-controls="conversation-panel"
+          />
+        </Tooltip>
+        <Tooltip content="New Attack" relationship="label">
+          <Button
+            appearance="primary"
+            icon={<AddRegular />}
+            onClick={() => { setIsPanelOpen(false); onNewAttack() }}
+            disabled={!attackResultId}
+            data-testid="new-attack-btn"
+            aria-label="New Attack"
+            className={styles.newAttackButton}
+          >
+            <span className={styles.newAttackLabel}>New Attack</span>
+          </Button>
+        </Tooltip>
+      </div>
+    </div>
+  )
+
   return (
     <div className={styles.root}>
       <h1 className={styles.pageHeading}>Chat</h1>
       {isConverterPanelOpen && (
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
-          previewText={chatInputText}
-          attachmentData={attachmentData}
-          activeInputTypes={chatInputText.trim() ? ['text', ...attachmentTypes] : attachmentTypes}
-          onUseConvertedValue={(conversion) => {
-            setPieceConversions((prev) => ({ ...prev, [conversion.pieceType]: conversion }))
-          }}
+          controller={converters}
         />
       )}
       <div className={styles.chatArea} data-testid="chat-area">
@@ -1247,88 +1296,7 @@ export default function ChatWindow({
             </Breadcrumb>
           </div>
         )}
-        <div className={styles.ribbon}>
-          <div className={styles.conversationInfo}>
-            {activeTarget ? (
-              <TargetBadge target={activeTarget} />
-            ) : (
-              <Text size={200} className={styles.noTarget}>
-                No target selected
-              </Text>
-            )}
-            {labels && onLabelsChange && (
-              <LabelsBar labels={labels} onLabelsChange={onLabelsChange} />
-            )}
-          </div>
-          <div className={styles.ribbonActions}>
-            <Tooltip content="Render all messages as Markdown by default" relationship="label">
-              <Switch
-                checked={globalMarkdown}
-                onChange={handleMarkdownChange}
-                label="Markdown"
-                data-testid="global-markdown-toggle"
-              />
-            </Tooltip>
-            <Menu>
-              <MenuTrigger disableButtonEnhancement>
-                <Tooltip content="Export conversation" relationship="label">
-                  <Button
-                    appearance="subtle"
-                    className={styles.ribbonAction}
-                    icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
-                    disabled={!canExportConversation}
-                    aria-label="Export conversation"
-                    data-testid="export-conversation-btn"
-                  />
-                </Tooltip>
-              </MenuTrigger>
-              <MenuPopover>
-                <MenuList>
-                  <MenuItem
-                    onClick={() => handleExport('markdown')}
-                    disabled={isExporting}
-                    data-testid="export-markdown-item"
-                  >
-                    Export as Markdown (.md)
-                  </MenuItem>
-                  <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
-                    Export as JSON (.json)
-                  </MenuItem>
-                  <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
-                    Export as HTML (.html)
-                  </MenuItem>
-                </MenuList>
-              </MenuPopover>
-            </Menu>
-            <Tooltip content="Toggle conversations panel" relationship="label">
-              <Button
-                {...restoreFocusTargetAttributes}
-                appearance="subtle"
-                className={styles.ribbonAction}
-                icon={<PanelRightRegular />}
-                onClick={() => setIsPanelOpen((open) => !open)}
-                disabled={!attackResultId}
-                data-testid="toggle-panel-btn"
-                aria-label="Toggle conversations panel"
-                aria-expanded={isPanelOpen}
-                aria-controls="conversation-panel"
-              />
-            </Tooltip>
-            <Tooltip content="New Attack" relationship="label">
-              <Button
-                appearance="primary"
-                icon={<AddRegular />}
-                onClick={() => { setIsPanelOpen(false); onNewAttack() }}
-                disabled={!attackResultId}
-                data-testid="new-attack-btn"
-                aria-label="New Attack"
-                className={styles.newAttackButton}
-              >
-                <span className={styles.newAttackLabel}>New Attack</span>
-              </Button>
-            </Tooltip>
-          </div>
-        </div>
+        {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         <ObjectiveHeader
           key={`${attackResultId ?? 'new'}-${objective}-${pendingObjective}`}
           objective={objective || pendingObjective}
@@ -1409,22 +1377,16 @@ export default function ChatWindow({
           onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           noTargetSelected={!activeTarget}
-          onConfigureTarget={() => onNavigate?.('targets')}
+          onConfigureTarget={() => onNavigate?.('registry')}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}
-          onAttachmentsChange={handleAttachmentsChange}
+          onAttachmentsChange={setDraftAttachments}
           convertedValue={activePieceConversions['text']?.convertedDataType === 'text' ? (activePieceConversions['text']?.convertedValue ?? null) : null}
           originalValue={activePieceConversions['text']?.originalValue ?? null}
-          onClearConversion={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
-          onClearAllConversions={() => setPieceConversions((current) => (
-            current === pieceConversions ? {} : current
-          ))}
-          onConvertedValueChange={(val) => setPieceConversions((prev) => {
-            const existing = prev['text']
-            if (!existing) return prev
-            return { ...prev, text: { ...existing, convertedValue: val } }
-          })}
+          onClearConversion={() => converters.clear('text')}
+          onClearAllConversions={converters.clearAll}
+          onConvertedValueChange={(val: string) => converters.editConvertedValue('text', val)}
           convertedFileChip={(() => {
             const tc = activePieceConversions['text']
             if (!tc || tc.convertedDataType === 'text') return null
@@ -1435,16 +1397,12 @@ export default function ChatWindow({
               iconKind: dataTypeToAttachmentKind(tc.convertedDataType),
             }
           })()}
-          onClearConvertedFileChip={() => setPieceConversions((prev) => { const next = { ...prev }; delete next['text']; return next })}
+          onClearConvertedFileChip={() => converters.clear('text')}
           converterOutputDataTypes={Object.values(activePieceConversions).map((c) => c.convertedDataType)}
           mediaConversions={Object.entries(activePieceConversions)
             .filter(([k]) => k !== 'text')
-            .map(([k, v]) => ({ pieceType: k, convertedValue: v.convertedValue, convertedDataType: v.convertedDataType }))}
-          onClearMediaConversion={(pieceType) => setPieceConversions((prev) => {
-            const next = { ...prev }
-            delete next[pieceType]
-            return next
-          })}
+            .map(([, conversion]) => conversion)}
+          onClearMediaConversion={converters.clear}
         />
       </div>
       <Drawer
