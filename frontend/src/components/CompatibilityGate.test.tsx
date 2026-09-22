@@ -173,6 +173,20 @@ it('blocks startup after authentication still fails following refresh', async ()
   expect(screen.queryByRole('textbox', { hidden: true })).not.toBeInTheDocument()
 })
 
+it('retains admitted UI when the first business request is incompatible', async () => {
+  const unmount = jest.fn()
+  adapter.mockImplementation(async (config: InternalAxiosRequestConfig) => {
+    if (config.url === '/version') return response(config, { compatibility_id: bundledId })
+    throw problem(config, 409, 'urn:pyrit:compatibility:mismatch')
+  })
+  render(application(<BusinessUI unmount={unmount} />))
+  await screen.findByRole('alertdialog')
+  expect(screen.getByRole('textbox', { hidden: true })).not.toBeVisible()
+  expect(screen.getByRole('alertdialog')).toHaveTextContent('Your existing UI state is retained')
+  expect(unmount).not.toHaveBeenCalled()
+  expect(adapter.mock.calls.map(([config]) => config.url)).toEqual(['/version', '/auth/access'])
+})
+
 it.each([
   [400, 'urn:pyrit:compatibility:invalid'],
   [409, 'urn:pyrit:compatibility:mismatch'],

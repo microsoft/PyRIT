@@ -10,7 +10,11 @@ export function CompatibilityGate({ children }: { children: ReactNode }) {
   const { modalAttributes } = useModalAttributes({ trapFocus: true })
 
   useEffect(() => {
-    void compatibility.verify(() => versionApi.getVersion())
+    let active = true
+    void compatibility.verify(() => versionApi.getVersion()).then(() => {
+      if (active && compatibility.getSnapshot().status === 'ready') setAdmitted(true)
+    })
+    return () => { active = false }
   }, [])
 
   useEffect(() => {
@@ -18,8 +22,6 @@ export function CompatibilityGate({ children }: { children: ReactNode }) {
       notice.current.showModal()
     }
   }, [snapshot.status])
-
-  if (snapshot.status === 'ready' && !admitted) setAdmitted(true)
 
   return (
     <>

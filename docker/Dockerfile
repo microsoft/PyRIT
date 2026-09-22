@@ -65,7 +65,11 @@ RUN set -eu; if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         export PYRIT_SOURCE_COMMIT="$GIT_COMMIT" PYRIT_SOURCE_DIRTY="$GIT_MODIFIED"; \
         uv pip install --python /opt/venv/bin/python -e .[speech,opencv,fairness_bias,fastapi,playwright]; \
         echo "Building frontend..."; \
-        /opt/venv/bin/python -m build_scripts.prepare_package; \
+        if [ "$GIT_MODIFIED" = "true" ]; then \
+            /opt/venv/bin/python -m build_scripts.prepare_package --development; \
+        else \
+            /opt/venv/bin/python -m build_scripts.prepare_package; \
+        fi; \
     else \
         echo "Invalid PYRIT_SOURCE"; exit 1; \
     fi && \
