@@ -564,7 +564,11 @@ function formatAttackProgress(
   queueSnapshot: ScenarioQueueSnapshot | null,
 ): string | null {
   if (isTerminal(run.status)) {
-    return null
+    return run.planned_total_available !== false
+      && run.total_attacks !== null
+      && run.completed_attacks !== run.total_attacks
+      ? `${run.completed_attacks}/${run.total_attacks} attacks complete`
+      : null
   }
   const inProgress = isRunInProgress(run, queueSnapshot)
   if (run.planned_total_available === false || run.total_attacks === null) {

@@ -164,6 +164,25 @@ describe('ScenarioHistory', () => {
     expect(screen.queryByText('1/1 (100%)')).not.toBeInTheDocument()
   })
 
+  it('shows planned progress when a terminal run completes fewer attacks than planned', async () => {
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [{
+        ...RUN,
+        total_attacks: 2,
+        completed_attacks: 1,
+        successful_attacks: 1,
+        objective_achieved_rate: 100,
+      }],
+      pagination: { limit: 25, has_more: false },
+    })
+
+    renderHistory()
+
+    expect(await screen.findByText('Completed')).toBeInTheDocument()
+    expect(screen.getByText('1/2 attacks complete')).toBeInTheDocument()
+    expect(screen.getByText('1/1 (100%)')).toBeInTheDocument()
+  })
+
   it('renders safe fallbacks when optional run metadata is unavailable', async () => {
     jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-01-01T00:00:30Z'))
     mockedScenariosApi.listRuns.mockResolvedValue({
