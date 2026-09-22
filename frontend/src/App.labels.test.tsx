@@ -99,12 +99,12 @@ function currentLabels(): HTMLElement {
 }
 
 async function chooseOperation(user: ReturnType<typeof userEvent.setup>, operation: string): Promise<void> {
-  await user.click(within(currentLabels()).getByRole('button', { name: /^Edit operation label/ }))
+  await user.click(within(currentLabels()).getByRole('button', { name: /^Edit operation, currently / }))
   await user.click(screen.getByRole('combobox', { name: 'Operation' }))
   await user.paste(operation)
   await user.keyboard('{ArrowDown}')
   await user.click(await screen.findByRole('option', { name: `Create "${operation}"` }))
-  expect(within(currentLabels()).getByRole('button', { name: `Edit operation label, currently ${operation}` }))
+  expect(within(currentLabels()).getByRole('button', { name: `Edit operation, currently ${operation}` }))
     .toBeInTheDocument()
 }
 
@@ -167,19 +167,20 @@ describe('Shared new run labels', () => {
   it('edits operator, operation, and custom labels during scenario setup and sends them on launch', async () => {
     const user = userEvent.setup()
     renderApp()
-    await user.click(await screen.findByRole('button', { name: 'Edit operator label, currently config_user' }))
+    await user.click(await screen.findByRole('button', { name: 'Edit operator, currently config_user' }))
     const operator = screen.getByRole('textbox', { name: 'Value for operator label' })
     await user.clear(operator)
     await user.paste('test_user')
     await user.keyboard('{Enter}')
     await chooseOperation(user, 'test_op')
 
-    await user.click(screen.getByRole('button', { name: /3 labels .* click to view or add/ }))
+    await user.click(screen.getByRole('button', { name: /^1 label .* click to view or add$/ }))
     await user.click(screen.getByRole('textbox', { name: 'Label key' }))
     await user.paste('campaign')
     await user.click(screen.getByRole('textbox', { name: 'Label value' }))
     await user.paste('regression')
     await user.click(screen.getByRole('button', { name: 'Add', exact: true }))
+    expect(screen.getByRole('button', { name: /^2 labels .* click to view or add$/ })).toBeInTheDocument()
 
     await launchScenario(user)
     expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
@@ -191,7 +192,7 @@ describe('Shared new run labels', () => {
   it('keeps one editor through navigation and restores choices without pinning backend defaults', async () => {
     const user = userEvent.setup()
     const app = renderApp()
-    await screen.findByRole('button', { name: 'Edit operation label, currently config_op' })
+    await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
     await chooseOperation(user, 'remembered_op')
     const bar = currentLabels()
 
@@ -221,7 +222,7 @@ describe('Shared new run labels', () => {
     window.localStorage.setItem('pyrit.globalLabels', JSON.stringify({ operator: 'remembered_user', operation: 'remembered_op' }))
     mockGetActiveAccount.mockReturnValue({ username: 'Signed.In@contoso.com' })
     renderApp()
-    await screen.findByRole('button', { name: 'Edit operator label, currently signed.in' })
+    await screen.findByRole('button', { name: 'Edit operator, currently signed.in' })
     await chooseOperation(user, 'signed_in_op')
     await launchScenario(user)
     expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
@@ -260,7 +261,7 @@ describe('Shared new run labels', () => {
     renderApp()
     await chooseOperation(user, 'early_choice')
     await act(async () => { resolveVersion({ version: '1.0.0', default_labels: DEFAULT_LABELS }) })
-    await screen.findByRole('button', { name: 'Edit operator label, currently config_user' })
+    await screen.findByRole('button', { name: 'Edit operator, currently config_user' })
     expect(screen.getByRole('button', { name: /currently early_choice$/ })).toBeInTheDocument()
   })
 
@@ -268,13 +269,13 @@ describe('Shared new run labels', () => {
     const user = userEvent.setup()
     renderApp('/scanner-history/saved_run')
     const saved = screen.getByRole('region', { name: 'Run configuration' })
-    await screen.findByRole('button', { name: 'Edit operation label, currently config_op' })
+    await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
     await chooseOperation(user, 'future_op')
     expect(saved).toHaveTextContent('original_user')
     expect(saved).toHaveTextContent('original_op')
     expect(saved).toHaveTextContent('original_team')
     expect(saved).not.toHaveTextContent('future_op')
-    expect(within(saved).queryByRole('button', { name: /Edit .* label/ })).not.toBeInTheDocument()
+    expect(within(saved).queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument()
     expect(scenariosApi.startRun).not.toHaveBeenCalled()
     expect(scenariosApi.cancelRun).not.toHaveBeenCalled()
   })
