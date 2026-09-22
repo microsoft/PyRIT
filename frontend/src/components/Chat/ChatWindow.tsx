@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
 import type { ChangeEvent } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Button,
   Breadcrumb,
@@ -40,7 +41,6 @@ import {
   isPathDataType,
   withDraftIdentity,
 } from './converterTypes'
-import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi, scoresApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
@@ -201,6 +201,8 @@ function matchesNarrowScreen(): boolean {
 }
 
 interface ChatWindowProps {
+  /** Shared layout slot; standalone chat renders its toolbar inline. */
+  toolbarContainer?: HTMLElement | null
   onNewAttack: () => void
   activeTarget: TargetInstance | null
   attackResultId: string | null
@@ -212,7 +214,6 @@ interface ChatWindowProps {
   onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
   onAttackChange?: (attack: AttackSummary) => void
   labels?: Record<string, string>
-  onLabelsChange?: (labels: Record<string, string>) => void
   onNavigate?: (view: ViewName) => void
   /** Operator from the loaded attack (for operator locking). Null for new attacks. */
   attackOperator?: string | null
@@ -238,6 +239,7 @@ interface ChatWindowProps {
 }
 
 export default function ChatWindow({
+  toolbarContainer,
   onNewAttack,
   activeTarget,
   attackResultId,
@@ -249,7 +251,6 @@ export default function ChatWindow({
   onHumanScoreChange,
   onAttackChange,
   labels,
-  onLabelsChange,
   onNavigate,
   attackOperator,
   attackTarget,
@@ -1179,6 +1180,93 @@ export default function ChatWindow({
     }
   }
 
+  // Chat owns these handlers and states even when the layout hosts the controls.
+  const toolbar = (
+    <div
+      className={toolbarContainer ? styles.sharedToolbar : styles.ribbon}
+      role="group"
+      aria-label="Chat controls"
+    >
+      <div className={mergeClasses(styles.conversationInfo, toolbarContainer ? styles.sharedTarget : undefined)}>
+        {activeTarget ? (
+          <TargetBadge target={activeTarget} />
+        ) : (
+          <Text size={200} className={styles.noTarget}>
+            No target selected
+          </Text>
+        )}
+      </div>
+      <div className={mergeClasses(styles.ribbonActions, toolbarContainer ? styles.sharedActions : undefined)}>
+        <Tooltip content="Render all messages as Markdown by default" relationship="label">
+          <Switch
+            checked={globalMarkdown}
+            onChange={handleMarkdownChange}
+            label="Markdown"
+            data-testid="global-markdown-toggle"
+          />
+        </Tooltip>
+        <Menu>
+          <MenuTrigger disableButtonEnhancement>
+            <Tooltip content="Export conversation" relationship="label">
+              <Button
+                appearance="subtle"
+                className={styles.ribbonAction}
+                icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
+                disabled={!canExportConversation}
+                aria-label="Export conversation"
+                data-testid="export-conversation-btn"
+              />
+            </Tooltip>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              <MenuItem
+                onClick={() => handleExport('markdown')}
+                disabled={isExporting}
+                data-testid="export-markdown-item"
+              >
+                Export as Markdown (.md)
+              </MenuItem>
+              <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
+                Export as JSON (.json)
+              </MenuItem>
+              <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
+                Export as HTML (.html)
+              </MenuItem>
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+        <Tooltip content="Toggle conversations panel" relationship="label">
+          <Button
+            {...restoreFocusTargetAttributes}
+            appearance="subtle"
+            className={styles.ribbonAction}
+            icon={<PanelRightRegular />}
+            onClick={() => setIsPanelOpen((open) => !open)}
+            disabled={!attackResultId}
+            data-testid="toggle-panel-btn"
+            aria-label="Toggle conversations panel"
+            aria-expanded={isPanelOpen}
+            aria-controls="conversation-panel"
+          />
+        </Tooltip>
+        <Tooltip content="New Attack" relationship="label">
+          <Button
+            appearance="primary"
+            icon={<AddRegular />}
+            onClick={() => { setIsPanelOpen(false); onNewAttack() }}
+            disabled={!attackResultId}
+            data-testid="new-attack-btn"
+            aria-label="New Attack"
+            className={styles.newAttackButton}
+          >
+            <span className={styles.newAttackLabel}>New Attack</span>
+          </Button>
+        </Tooltip>
+      </div>
+    </div>
+  )
+
   return (
     <div className={styles.root}>
       <h1 className={styles.pageHeading}>Chat</h1>
@@ -1208,88 +1296,7 @@ export default function ChatWindow({
             </Breadcrumb>
           </div>
         )}
-        <div className={styles.ribbon}>
-          <div className={styles.conversationInfo}>
-            {activeTarget ? (
-              <TargetBadge target={activeTarget} />
-            ) : (
-              <Text size={200} className={styles.noTarget}>
-                No target selected
-              </Text>
-            )}
-            {labels && onLabelsChange && (
-              <LabelsBar labels={labels} onLabelsChange={onLabelsChange} />
-            )}
-          </div>
-          <div className={styles.ribbonActions}>
-            <Tooltip content="Render all messages as Markdown by default" relationship="label">
-              <Switch
-                checked={globalMarkdown}
-                onChange={handleMarkdownChange}
-                label="Markdown"
-                data-testid="global-markdown-toggle"
-              />
-            </Tooltip>
-            <Menu>
-              <MenuTrigger disableButtonEnhancement>
-                <Tooltip content="Export conversation" relationship="label">
-                  <Button
-                    appearance="subtle"
-                    className={styles.ribbonAction}
-                    icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
-                    disabled={!canExportConversation}
-                    aria-label="Export conversation"
-                    data-testid="export-conversation-btn"
-                  />
-                </Tooltip>
-              </MenuTrigger>
-              <MenuPopover>
-                <MenuList>
-                  <MenuItem
-                    onClick={() => handleExport('markdown')}
-                    disabled={isExporting}
-                    data-testid="export-markdown-item"
-                  >
-                    Export as Markdown (.md)
-                  </MenuItem>
-                  <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
-                    Export as JSON (.json)
-                  </MenuItem>
-                  <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
-                    Export as HTML (.html)
-                  </MenuItem>
-                </MenuList>
-              </MenuPopover>
-            </Menu>
-            <Tooltip content="Toggle conversations panel" relationship="label">
-              <Button
-                {...restoreFocusTargetAttributes}
-                appearance="subtle"
-                className={styles.ribbonAction}
-                icon={<PanelRightRegular />}
-                onClick={() => setIsPanelOpen((open) => !open)}
-                disabled={!attackResultId}
-                data-testid="toggle-panel-btn"
-                aria-label="Toggle conversations panel"
-                aria-expanded={isPanelOpen}
-                aria-controls="conversation-panel"
-              />
-            </Tooltip>
-            <Tooltip content="New Attack" relationship="label">
-              <Button
-                appearance="primary"
-                icon={<AddRegular />}
-                onClick={() => { setIsPanelOpen(false); onNewAttack() }}
-                disabled={!attackResultId}
-                data-testid="new-attack-btn"
-                aria-label="New Attack"
-                className={styles.newAttackButton}
-              >
-                <span className={styles.newAttackLabel}>New Attack</span>
-              </Button>
-            </Tooltip>
-          </div>
-        </div>
+        {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         <ObjectiveHeader
           key={`${attackResultId ?? 'new'}-${objective}-${pendingObjective}`}
           objective={objective || pendingObjective}

@@ -53,9 +53,7 @@ from pyrit.models import (
     ConversationType,
     ConverterIdentifier,
     EvaluationIdentifier,
-    JudgmentObservationPayload,
     MessagePiece,
-    MessageScorable,
     Observation,
     PromptDataType,
     ScenarioEvaluationIdentifier,
@@ -1171,12 +1169,8 @@ class ObservationEntry(Base):
         self.acquisition = entry.acquisition.value
         self.observed_at = entry.observed_at
         self.scorable = entry.scorable.model_dump(mode="json")
-        self.scorable_content_id = (
-            entry.scorable.content_id if isinstance(entry.scorable, ContentEntryScorable) else None
-        )
-        self.scored_message_piece_id = (
-            entry.payload.scored_piece_id if isinstance(entry.scorable, MessageScorable) else None
-        )
+        self.scorable_content_id = entry.scorable_content_id
+        self.scored_message_piece_id = entry.scored_message_piece_id
         self.payload = entry.payload.model_dump(mode="json")
         self.metadata_json = dict(entry.metadata)
         self.pyrit_version = pyrit.__version__
@@ -1195,14 +1189,16 @@ class ObservationEntry(Base):
         source_identifier = _load_identifier(self.source_identifier, pyrit_version=stored_version)
         if source_identifier is None:
             raise ValueError(f"Observation {self.id} has no source identifier.")
-        return Observation(
-            id=self.id,
-            source_identifier=source_identifier,
-            acquisition=self.acquisition,
-            observed_at=self.observed_at,
-            scorable=scorable_from_dict(self.scorable),
-            payload=JudgmentObservationPayload.model_validate(self.payload),
-            metadata=self.metadata_json or {},
+        return Observation.model_validate(
+            {
+                "id": self.id,
+                "source_identifier": source_identifier,
+                "acquisition": self.acquisition,
+                "observed_at": self.observed_at,
+                "scorable": self.scorable,
+                "payload": self.payload,
+                "metadata": self.metadata_json or {},
+            }
         )
 
 

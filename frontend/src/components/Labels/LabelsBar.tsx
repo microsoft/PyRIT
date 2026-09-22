@@ -466,6 +466,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             }, 150))
           }}
           style={{ width: '120px' }}
+          aria-label={`Value for ${key} label`}
           data-testid={`edit-label-${key}`}
         />
         {error && <Text size={200} className={styles.errorText}>{error}</Text>}
@@ -624,6 +625,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           className={styles.inputField}
           size="small"
           placeholder="key"
+          aria-label="Label key"
           value={newKey}
           onChange={(_, d) => { setNewKey(d.value.toLowerCase()); setError('') }}
           onKeyDown={handleAddKeyDown}
@@ -633,6 +635,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           className={styles.inputField}
           size="small"
           placeholder="value"
+          aria-label="Label value"
           value={newValue}
           onChange={(_, d) => { setNewValue(d.value.toLowerCase()); setError('') }}
           onKeyDown={handleAddKeyDown}
@@ -743,7 +746,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             </Button>
           </Tooltip>
         </PopoverTrigger>
-        <PopoverSurface>
+        <PopoverSurface className={styles.popover}>
           <div className={styles.popoverSurface}>
             <Text weight="semibold" size={300}>Run metadata</Text>
             {renderMetadataList()}

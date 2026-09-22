@@ -16,18 +16,19 @@ from pyrit.exceptions import (
 )
 from pyrit.models import (
     Acquisition,
-    JudgmentObservationPayload,
     Message,
     MessagePiece,
     MessageScorable,
     Observation,
     ScorableUnion,
+    ScorerTargetResponsePayload,
     ScoringExpectation,
     scoring_expectation_fingerprint,
 )
+from pyrit.models.score.observation import _response_piece_digest
 from pyrit.models.score.scorable import SCORABLE_TYPES
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
-from pyrit.score.observation import (
+from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _collect_observation,
     _get_current_scorable,
@@ -35,8 +36,6 @@ from pyrit.score.observation import (
     _get_current_scoring_expectation,
     _has_observation_collection,
     _ObservationEvidence,
-    _replay_message_piece_id,
-    _response_piece_digest,
     _scored_evidence_digest,
 )
 
@@ -355,7 +354,7 @@ def _build_judgment_observation(
         source_identifier=scorer_identifier,
         acquisition=acquisition,
         scorable=scorable,
-        payload=JudgmentObservationPayload(
+        payload=ScorerTargetResponsePayload(
             scored_piece_id=scored_piece_id,
             message_piece_ids=tuple(piece.id for piece in response.message_pieces),
             message_piece_digests=tuple(
@@ -381,6 +380,8 @@ def _validate_judgment_replay_compatibility(
     Raises:
         NonReplayableObservationError: If the scorer or expectation changed.
     """
+    if not isinstance(observation.payload, ScorerTargetResponsePayload):
+        raise NonReplayableObservationError("A judgment scorer requires a judgment observation.")
     if (
         observation.source_identifier.hash != scorer_identifier.hash
         or observation.source_identifier.pyrit_version != scorer_identifier.pyrit_version
@@ -413,6 +414,8 @@ def _parse_judgment_observation(
     Raises:
         NonReplayableObservationError: If the stored response has no text judgment.
     """
+    if not isinstance(observation.payload, ScorerTargetResponsePayload):
+        raise NonReplayableObservationError("A judgment scorer requires a judgment observation.")
     replay_contract_fingerprint = _replay_contract_fingerprint(
         response_handler=response_handler,
         category=category,
@@ -440,7 +443,7 @@ def _parse_judgment_observation(
         category=category,
         objective=expectation.objective if expectation else None,
     )
-    score.message_piece_id = _replay_message_piece_id(observation)
+    score.message_piece_id = observation.scored_message_piece_id
     score.scorable = observation.scorable
     score.scored_expectation = expectation
     score.observation_ids.append(observation.id)
