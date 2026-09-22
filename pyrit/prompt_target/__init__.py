@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.prompt_target.a2a_target import A2ATarget
     from pyrit.prompt_target.azure_blob_storage_target import AzureBlobStorageTarget
     from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
     from pyrit.prompt_target.common.conversation_normalization_pipeline import ConversationNormalizationPipeline
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.websocket_target import WebsocketTarget
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "A2ATarget": "pyrit.prompt_target.a2a_target",
     "AzureBlobStorageTarget": "pyrit.prompt_target.azure_blob_storage_target",
     "AzureMLChatTarget": "pyrit.prompt_target.azure_ml_chat_target",
     "CapabilityName": "pyrit.prompt_target.common.target_capabilities",
