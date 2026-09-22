@@ -35,6 +35,9 @@
 # `--techniques` selects the injection wording, and `--goal-texts` selects the requested output.
 # The default run uses all five techniques, the three Garak goal texts, and up to 60 attempts.
 # `--max-dataset-size` must be at least the number of selected goal texts.
+# Sampling selects at least one context for every goal, then fills the remaining budget
+# without replacement. All techniques use the same sample. Injection wording is applied
+# through request converters, before any caller-supplied converters.
 #
 # **CLI examples:**
 #

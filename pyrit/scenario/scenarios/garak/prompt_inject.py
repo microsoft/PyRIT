@@ -10,9 +10,11 @@
 
 from __future__ import annotations
 
+import random
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults, forward_init_parameters
+from pyrit.converter import SearchReplaceConverter
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackSeedGroup, Parameter, Seed, SeedObjective, SeedPrompt
@@ -80,6 +82,52 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
             raise ValueError("goal_texts must not contain duplicate values.")
         self._goal_texts = list(goal_texts)
 
+    async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
+        """
+        Resolve flat groups with the same goal coverage as the grouped resolver.
+
+        Returns:
+            list[AttackSeedGroup]: The validated context and goal groups.
+        """
+        groups_by_dataset = await self.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
+        return [group for groups in groups_by_dataset.values() for group in groups]
+
+    def _sample_groups_by_dataset(
+        self, groups_by_dataset: dict[str, list[AttackSeedGroup]]
+    ) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Reserve one context per goal, then fill the remaining budget without replacement.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: Sampled groups keyed by dataset name.
+
+        Raises:
+            DatasetConstraintError: If the cap is too small or a goal has no context.
+        """
+        cap = self.max_dataset_size
+        if cap is not None and cap < len(self._goal_texts):
+            raise DatasetConstraintError(
+                f"PromptInject max_dataset_size ({cap}) must be at least the number of goal_texts "
+                f"({len(self._goal_texts)})."
+            )
+        pairs = [(name, group) for name, groups in groups_by_dataset.items() for group in groups]
+        indices_by_goal: dict[str, list[int]] = {goal: [] for goal in self._goal_texts}
+        for index, (_, group) in enumerate(pairs):
+            indices_by_goal[(group.objective.metadata or {})["goal_text"]].append(index)
+        missing = [goal for goal, indices in indices_by_goal.items() if not indices]
+        if missing:
+            raise DatasetConstraintError(f"PromptInject has no contexts for goal_texts: {missing}.")
+        if cap is None or len(pairs) <= cap:
+            return groups_by_dataset
+        selected = {random.choice(indices) for indices in indices_by_goal.values()}
+        remaining = [index for index in range(len(pairs)) if index not in selected]
+        selected.update(random.sample(remaining, cap - len(selected)))
+        result: dict[str, list[AttackSeedGroup]] = {}
+        for index in sorted(selected):
+            name, group = pairs[index]
+            result.setdefault(name, []).append(group)
+        return result
+
     def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """
         Create attack groups from the context templates.
@@ -144,7 +192,7 @@ class PromptInject(Scenario):
     Responses are scored by checking for that text.
     """
 
-    VERSION: int = 2
+    VERSION: int = 3
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
     DEFAULT_GOAL_TEXTS: ClassVar[tuple[str, str, str]] = _DEFAULT_GOAL_TEXTS
     TECHNIQUE_DATASET_NAME: ClassVar[str] = "prompt_inject_techniques"
@@ -236,30 +284,37 @@ class PromptInject(Scenario):
 
         Returns:
             list[AtomicAttack]: The configured atomic attacks.
+
+        Raises:
+            DatasetConstraintError: If a requested goal has no sampled contexts.
         """
         atomic_attacks: list[AtomicAttack] = []
         goal_texts = cast("list[str]", self.params["goal_texts"])
         for technique in context.scenario_techniques:
             for goal_index, goal_text in enumerate(goal_texts):
                 seed_groups = [
-                    self._render_technique(group=group, technique_name=technique.value, goal_text=goal_text)
+                    group
                     for group in context.seed_groups
                     if (group.objective.metadata or {}).get("goal_text") == goal_text
                 ]
                 if not seed_groups:
-                    continue
+                    raise DatasetConstraintError(f"PromptInject has no sampled contexts for goal_text {goal_text!r}.")
                 scorer = (
                     SubStringScorer(substring=goal_text, categories=["prompt_injection"])
                     if self._use_goal_scorers
                     else cast("TrueFalseScorer", self._objective_scorer)
                 )
-                converters = self._technique_converters.get(technique.value, [])
-                converter_config = (
-                    AttackConverterConfig(
-                        request_converters=ConverterConfiguration.from_converters(converters=list(converters))
+                technique_text = self._technique_templates[technique.value].render_template_value(goal_text=goal_text)
+                converter_config = AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(
+                        converters=[
+                            SearchReplaceConverter(
+                                pattern=r"\{\{\s*technique_text\s*\}\}",
+                                replace=technique_text.replace("\\", "\\\\"),
+                            ),
+                            *self._technique_converters.get(technique.value, []),
+                        ]
                     )
-                    if converters
-                    else None
                 )
                 attack = PromptSendingAttack(
                     objective_target=context.objective_target,
@@ -329,18 +384,6 @@ class PromptInject(Scenario):
         if missing:
             raise DatasetConstraintError(f"PromptInject technique templates are missing: {sorted(missing)}.")
         return templates
-
-    def _render_technique(self, *, group: AttackSeedGroup, technique_name: str, goal_text: str) -> AttackSeedGroup:
-        """
-        Render one technique into a copy of an attack group.
-
-        Returns:
-            AttackSeedGroup: The rendered group.
-        """
-        rendered = group.model_copy(deep=True)
-        technique_text = self._technique_templates[technique_name].render_template_value(goal_text=goal_text)
-        rendered.prompts[0].value = rendered.prompts[0].render_template_value(technique_text=technique_text)
-        return rendered
 
     @staticmethod
     def _build_goal_scorer(*, goal_texts: Sequence[str]) -> TrueFalseCompositeScorer:
