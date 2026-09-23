@@ -34,6 +34,7 @@
 # FigStep [@gong2025figstep],
 # FORTRESS [@knight2025fortress],
 # HarmBench [@mazeika2024harmbench],
+# HarmEval [@banerjee2025safeinfer],
 # HarmfulQA [@bhardwaj2023harmfulqa],
 # JailbreakBench [@chao2024jailbreakbench],
 # JailbreakV-28K [@luo2024jailbreakv],

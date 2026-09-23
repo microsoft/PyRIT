@@ -76,6 +76,7 @@ if TYPE_CHECKING:
     )
     from pyrit.datasets.seed_datasets.remote.harmbench_dataset import _HarmBenchDataset
     from pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset import _HarmBenchMultimodalDataset
+    from pyrit.datasets.seed_datasets.remote.harmeval_dataset import HarmEvalTopic, _HarmEvalDataset
     from pyrit.datasets.seed_datasets.remote.harmful_qa_dataset import _HarmfulQADataset
     from pyrit.datasets.seed_datasets.remote.hixstest_dataset import HiXSTestLanguage, _HiXSTestDataset
     from pyrit.datasets.seed_datasets.remote.jailbreakv_28k_dataset import _JailbreakV28KDataset
@@ -165,6 +166,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FortressRiskDomain": "pyrit.datasets.seed_datasets.remote.fortress_dataset",
     "FortressRiskSubdomain": "pyrit.datasets.seed_datasets.remote.fortress_dataset",
     "FortressSplit": "pyrit.datasets.seed_datasets.remote.fortress_dataset",
+    "HarmEvalTopic": "pyrit.datasets.seed_datasets.remote.harmeval_dataset",
     "HiXSTestLanguage": "pyrit.datasets.seed_datasets.remote.hixstest_dataset",
     "MMSafetyBenchCategory": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
     "MMSafetyBenchVariant": "pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset",
@@ -219,6 +221,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_GarakTmSystemPromptDataset": "pyrit.datasets.seed_datasets.remote.garak_system_prompt_dataset",
     "_HarmBenchDataset": "pyrit.datasets.seed_datasets.remote.harmbench_dataset",
     "_HarmBenchMultimodalDataset": "pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset",
+    "_HarmEvalDataset": "pyrit.datasets.seed_datasets.remote.harmeval_dataset",
     "_HarmfulQADataset": "pyrit.datasets.seed_datasets.remote.harmful_qa_dataset",
     "_HiXSTestDataset": "pyrit.datasets.seed_datasets.remote.hixstest_dataset",
     "_JailbreakV28KDataset": "pyrit.datasets.seed_datasets.remote.jailbreakv_28k_dataset",

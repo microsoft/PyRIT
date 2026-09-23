@@ -21,7 +21,7 @@ from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import aiofiles
 import aiofiles.os
@@ -40,12 +40,9 @@ from pyrit.backend.models.converters import (
 from pyrit.backend.services.media_persistence import persist_media_value_async
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
-from pyrit.models import PromptDataType
+from pyrit.models import MessagePiece, PromptDataType
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
-
-if TYPE_CHECKING:
-    from pyrit.converter import ConverterResult
-
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
 _DEFAULT_UPLOAD_EXTENSION = ".bin"
@@ -217,7 +214,8 @@ class ConverterService:
         Preview conversion through a converter pipeline.
 
         For non-text data types (image_path, audio_path, etc.), persists base64 data
-        to a temporary file so converters can operate on file paths.
+        to a temporary file so converters can operate on file paths. Marked text
+        regions are converted by the next converter, which consumes their delimiters.
 
         Returns:
             ConverterPreviewResponse with step-by-step conversion results.
@@ -426,19 +424,30 @@ class ConverterService:
         initial_type: PromptDataType,
     ) -> tuple[list[PreviewStep], str, PromptDataType]:
         """
-        Apply converters and collect steps.
+        Collect preview steps using the normalizer's conversion-only path.
 
         Returns:
             Tuple of (steps, final_value, final_type).
         """
-        current_value: str = initial_value
-        current_type: PromptDataType = initial_type
+        if not converters:
+            return [], initial_value, initial_type
+
+        piece = MessagePiece(
+            role="user",
+            original_value=initial_value,
+            original_value_data_type=initial_type,
+            not_in_memory=True,
+        )
+        message = piece.to_message()
+        normalizer = PromptNormalizer()
         steps: list[PreviewStep] = []
 
         for conv_id, conv_type, conv_obj in converters:
-            input_value, input_type = current_value, current_type
-            result: ConverterResult = await conv_obj.convert_async(prompt=current_value, input_type=current_type)
-            current_value, current_type = result.output_text, result.output_type
+            input_value, input_type = piece.converted_value, piece.converted_value_data_type
+            await normalizer.convert_values_async(
+                converter_configurations=[ConverterConfiguration(converters=[conv_obj])],
+                message=message,
+            )
 
             steps.append(
                 PreviewStep(
@@ -446,12 +455,12 @@ class ConverterService:
                     converter_type=conv_type,
                     input_value=input_value,
                     input_data_type=input_type,
-                    output_value=current_value,
-                    output_data_type=current_type,
+                    output_value=piece.converted_value,
+                    output_data_type=piece.converted_value_data_type,
                 )
             )
 
-        return steps, current_value, current_type
+        return steps, piece.converted_value, piece.converted_value_data_type
 
 
 # ============================================================================
