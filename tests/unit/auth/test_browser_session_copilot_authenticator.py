@@ -4,7 +4,10 @@
 import asyncio
 import threading
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import jwt
@@ -16,6 +19,441 @@ from pyrit.auth import (
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 
 _TEST_JWT_KEY = "a" * 32
+
+
+class _BrowserLifetimeHarness:
+    def __init__(self, *, phase: str, cleanup_error: Exception | None = None) -> None:
+        self.phase = phase
+        self.cleanup_error = cleanup_error
+        self.operation_error = ValueError("navigation failed")
+        self.main_loop = asyncio.get_running_loop()
+        self.operation_started = asyncio.Event()
+        self.cleanup_started = asyncio.Event()
+        self.cleanup_finished = threading.Event()
+        self.cleanup_release = asyncio.Event()
+        self.operation_task: asyncio.Task[Any] | None = None
+        self.tasks: list[asyncio.Task[Any]] = []
+        self.stopped_before_cleanup = False
+        self.cleanup_cancellations = 0
+        self.authenticator = BrowserSessionCopilotAuthenticator(headless=True)
+        self.page = MagicMock()
+        self.page.goto = AsyncMock(side_effect=self._navigate_async)
+        self.context = MagicMock()
+        self.context.pages = [] if phase == "page" else [self.page]
+        self.context.new_page = AsyncMock(side_effect=self._new_page_async)
+        self.context.close = AsyncMock(side_effect=self._close_context_async)
+        self.playwright = MagicMock()
+        self.playwright.chromium.launch_persistent_context = AsyncMock(side_effect=self._launch_async)
+        self.manager = AsyncMock()
+        self.manager.__aenter__.return_value = self.playwright
+        self.manager.__aexit__.side_effect = self._exit_async
+
+    async def _block_operation_async(self) -> None:
+        self.operation_task = asyncio.current_task()
+        self.main_loop.call_soon_threadsafe(self.operation_started.set)
+        await asyncio.Event().wait()
+
+    async def _launch_async(self, **kwargs: Any) -> MagicMock:
+        if self.phase == "setup":
+            await self._block_operation_async()
+        return self.context
+
+    async def _new_page_async(self) -> MagicMock:
+        await self._block_operation_async()
+        return self.page
+
+    async def _navigate_async(self, url: str) -> None:
+        self.operation_task = asyncio.current_task()
+        if self.phase == "navigation":
+            await self._block_operation_async()
+        elif self.phase == "error":
+            raise self.operation_error
+        elif self.phase == "wait":
+            self.main_loop.call_soon_threadsafe(self.operation_started.set)
+        else:
+            callback = self.page.on.call_args.args[1]
+            callback(
+                MagicMock(url=f"{self.authenticator.DEFAULT_WEBSOCKET_BASE_URL}/ChatHub?access_token={_make_token()}")
+            )
+
+    async def _block_cleanup_async(self) -> None:
+        self.main_loop.call_soon_threadsafe(self.cleanup_started.set)
+        try:
+            await self.cleanup_release.wait()
+        except asyncio.CancelledError:
+            self.cleanup_cancellations += 1
+            raise
+        self.cleanup_finished.set()
+        if self.cleanup_error is not None:
+            raise self.cleanup_error
+
+    async def _close_context_async(self) -> None:
+        await self._block_cleanup_async()
+
+    async def _exit_async(self, *args: Any) -> None:
+        if self.phase == "setup":
+            await self._block_cleanup_async()
+
+    def release_cleanup(self) -> None:
+        browser_loop = self.authenticator._browser_loop
+        if browser_loop is not None:
+            browser_loop.call_soon_threadsafe(self.cleanup_release.set)
+
+    async def drain_browser_async(self) -> None:
+        if self.operation_task is not None:
+            await asyncio.gather(self.operation_task, return_exceptions=True)
+        assert not [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+
+
+async def _event_loop_barrier_async() -> None:
+    loop = asyncio.get_running_loop()
+    reached = loop.create_future()
+    loop.call_soon(reached.set_result, None)
+    await reached
+
+
+@asynccontextmanager
+async def _browser_lifetime_async(
+    *,
+    phase: str,
+    cleanup_error: Exception | None = None,
+) -> AsyncIterator[_BrowserLifetimeHarness]:
+    harness = _BrowserLifetimeHarness(phase=phase, cleanup_error=cleanup_error)
+    authenticator = harness.authenticator
+    original_stop = authenticator._stop_browser_thread_async
+    original_tasks = asyncio.all_tasks()
+
+    async def stop_async() -> None:
+        harness.stopped_before_cleanup |= not harness.cleanup_finished.is_set()
+        harness.release_cleanup()
+        browser_loop = authenticator._browser_loop
+        thread = authenticator._browser_thread
+        if browser_loop is not None:
+            await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(harness.drain_browser_async(), browser_loop))
+        await original_stop()
+        if thread is not None:
+            assert not thread.is_alive()
+
+    with (
+        patch.object(authenticator, "_create_playwright_context_manager", return_value=harness.manager),
+        patch.object(authenticator, "_stop_browser_thread_async", side_effect=stop_async),
+    ):
+        try:
+            yield harness
+        finally:
+            harness.release_cleanup()
+            if not harness.cleanup_started.is_set():
+                for task in harness.tasks:
+                    if not task.done():
+                        task.cancel()
+            await asyncio.wait_for(asyncio.gather(*harness.tasks, return_exceptions=True), timeout=5)
+            await asyncio.wait_for(authenticator.close_async(), timeout=5)
+            assert authenticator._browser_thread is None
+            assert authenticator._browser_loop is None
+            assert not (asyncio.all_tasks() - original_tasks)
+
+
+@pytest.mark.parametrize("phase", ["setup", "page", "navigation", "wait"])
+async def test_public_token_cancellation_drains_before_close_async(phase: str) -> None:
+    async with _browser_lifetime_async(phase=phase) as harness:
+        authenticator = harness.authenticator
+        caller = asyncio.create_task(authenticator.get_token_async())
+        harness.tasks.append(caller)
+        await asyncio.wait_for(harness.operation_started.wait(), timeout=5)
+        caller.cancel("original cancellation")
+        await asyncio.wait_for(harness.cleanup_started.wait(), timeout=5)
+        closer = asyncio.create_task(authenticator.close_async())
+        harness.tasks.append(closer)
+        await _event_loop_barrier_async()
+
+        assert not caller.done()
+        assert not closer.done()
+        assert authenticator._token_fetch_lock.locked()
+        caller.cancel("repeated cancellation")
+        await _event_loop_barrier_async()
+        assert not caller.done()
+        assert not harness.stopped_before_cleanup
+        assert harness.cleanup_cancellations == 0
+        assert authenticator._access_token is None
+
+        harness.release_cleanup()
+        with pytest.raises(asyncio.CancelledError, match="original cancellation"):
+            await asyncio.wait_for(caller, timeout=5)
+        await asyncio.wait_for(closer, timeout=5)
+        assert harness.cleanup_finished.is_set()
+        assert not harness.stopped_before_cleanup
+        harness.manager.__aexit__.assert_awaited_once()
+        assert harness.context.close.await_count == (0 if phase == "setup" else 1)
+        assert harness.page.remove_listener.call_count == (0 if phase in {"setup", "page"} else 1)
+        assert await authenticator.get_claims_async() == {}
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_public_close_cancellation_drains_cleanup_async(cleanup_fails: bool) -> None:
+    cleanup_error = RuntimeError("close cleanup failed") if cleanup_fails else None
+    async with _browser_lifetime_async(phase="close", cleanup_error=cleanup_error) as harness:
+        authenticator = harness.authenticator
+        assert await authenticator.get_token_async()
+        closer = asyncio.create_task(authenticator.close_async())
+        harness.tasks.append(closer)
+        await asyncio.wait_for(harness.cleanup_started.wait(), timeout=5)
+        closer.cancel("original close cancellation")
+        await _event_loop_barrier_async()
+        closer.cancel("repeated close cancellation")
+        await _event_loop_barrier_async()
+
+        assert not closer.done()
+        assert not harness.stopped_before_cleanup
+        assert harness.cleanup_cancellations == 0
+        assert authenticator._access_token is None
+        harness.release_cleanup()
+        with pytest.raises(asyncio.CancelledError, match="original close cancellation") as raised:
+            await asyncio.wait_for(closer, timeout=5)
+        assert raised.value.__cause__ is cleanup_error
+        assert harness.cleanup_finished.is_set()
+        assert not harness.stopped_before_cleanup
+        harness.context.close.assert_awaited_once()
+        harness.manager.__aexit__.assert_awaited_once()
+
+
+async def test_public_token_cancellation_chains_cleanup_error_async() -> None:
+    cleanup_error = RuntimeError("cleanup failed")
+    async with _browser_lifetime_async(phase="navigation", cleanup_error=cleanup_error) as harness:
+        caller = asyncio.create_task(harness.authenticator.get_token_async())
+        harness.tasks.append(caller)
+        await asyncio.wait_for(harness.operation_started.wait(), timeout=5)
+        caller.cancel("original cancellation")
+        await asyncio.wait_for(harness.cleanup_started.wait(), timeout=5)
+        caller.cancel("repeated cancellation")
+        harness.release_cleanup()
+
+        with pytest.raises(asyncio.CancelledError, match="original cancellation") as raised:
+            await asyncio.wait_for(caller, timeout=5)
+        assert raised.value.__cause__ is cleanup_error
+        assert harness.cleanup_finished.is_set()
+        harness.page.remove_listener.assert_called_once()
+        harness.manager.__aexit__.assert_awaited_once()
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_public_operation_error_preserves_cleanup_semantics_async(cleanup_fails: bool) -> None:
+    cleanup_error = RuntimeError("cleanup failed") if cleanup_fails else None
+    async with _browser_lifetime_async(phase="error", cleanup_error=cleanup_error) as harness:
+        caller = asyncio.create_task(harness.authenticator.get_token_async())
+        harness.tasks.append(caller)
+        await asyncio.wait_for(harness.cleanup_started.wait(), timeout=5)
+        assert not caller.done()
+        harness.release_cleanup()
+        with pytest.raises((ValueError, RuntimeError)) as raised:
+            await asyncio.wait_for(caller, timeout=5)
+        assert raised.value is (cleanup_error or harness.operation_error)
+        assert harness.cleanup_finished.is_set()
+        harness.page.remove_listener.assert_called_once()
+        harness.manager.__aexit__.assert_awaited_once()
+
+
+async def test_public_cancellation_during_error_cleanup_drains_async() -> None:
+    async with _browser_lifetime_async(phase="error") as harness:
+        caller = asyncio.create_task(harness.authenticator.get_token_async())
+        harness.tasks.append(caller)
+        await asyncio.wait_for(harness.cleanup_started.wait(), timeout=5)
+        caller.cancel("cancel during cleanup")
+        await _event_loop_barrier_async()
+        caller.cancel("repeat during cleanup")
+        await _event_loop_barrier_async()
+
+        assert not caller.done()
+        assert harness.cleanup_cancellations == 0
+        harness.release_cleanup()
+        with pytest.raises(asyncio.CancelledError, match="cancel during cleanup"):
+            await asyncio.wait_for(caller, timeout=5)
+        assert harness.cleanup_finished.is_set()
+
+
+async def test_public_token_cancellation_before_browser_coroutine_entry_is_acknowledged_async() -> None:
+    authenticator = BrowserSessionCopilotAuthenticator()
+    await authenticator._ensure_browser_thread_started_async()
+    browser_loop = authenticator._browser_loop
+    thread = authenticator._browser_thread
+    assert browser_loop is not None
+    assert thread is not None
+    main_loop = asyncio.get_running_loop()
+    browser_blocked = asyncio.Event()
+    release_browser = threading.Event()
+    original_tasks = asyncio.all_tasks()
+
+    def block_browser_dispatch() -> None:
+        main_loop.call_soon_threadsafe(browser_blocked.set)
+        release_browser.wait(timeout=5)
+
+    callers: list[asyncio.Task[str]] = []
+    try:
+        with patch.object(authenticator, "_create_playwright_context_manager") as factory:
+            browser_loop.call_soon_threadsafe(block_browser_dispatch)
+            await asyncio.wait_for(browser_blocked.wait(), timeout=5)
+            caller = asyncio.create_task(authenticator.get_token_async())
+            callers.append(caller)
+            await _event_loop_barrier_async()
+            caller.cancel("original pre-start cancellation")
+            await _event_loop_barrier_async()
+            caller.cancel("repeated pre-start cancellation")
+            await _event_loop_barrier_async()
+            assert not caller.done()
+            assert authenticator._token_fetch_lock.locked()
+            release_browser.set()
+            with pytest.raises(asyncio.CancelledError, match="original pre-start cancellation"):
+                await asyncio.wait_for(caller, timeout=5)
+            factory.assert_not_called()
+            assert not authenticator._token_fetch_lock.locked()
+    finally:
+        release_browser.set()
+        await asyncio.gather(*callers, return_exceptions=True)
+        await authenticator.close_async()
+    assert not thread.is_alive()
+    assert authenticator._browser_loop is None
+    assert not (asyncio.all_tasks() - original_tasks)
+
+
+async def test_public_close_cancellation_waits_for_thread_stop_async() -> None:
+    async with _browser_lifetime_async(phase="close") as harness:
+        authenticator = harness.authenticator
+        await authenticator.get_token_async()
+        harness.release_cleanup()
+        stopping = asyncio.Event()
+        release_stop = asyncio.Event()
+        original_stop = authenticator._stop_browser_thread_async
+
+        async def delayed_stop_async() -> None:
+            stopping.set()
+            await release_stop.wait()
+            await original_stop()
+
+        with patch.object(authenticator, "_stop_browser_thread_async", side_effect=delayed_stop_async):
+            closer = asyncio.create_task(authenticator.close_async())
+            harness.tasks.append(closer)
+            try:
+                await asyncio.wait_for(stopping.wait(), timeout=5)
+                closer.cancel("original stop cancellation")
+                await _event_loop_barrier_async()
+                closer.cancel("repeated stop cancellation")
+                await _event_loop_barrier_async()
+                assert not closer.done()
+                assert authenticator._browser_thread is not None
+                assert authenticator._browser_thread.is_alive()
+            finally:
+                release_stop.set()
+            with pytest.raises(asyncio.CancelledError, match="original stop cancellation"):
+                await asyncio.wait_for(closer, timeout=5)
+        assert authenticator._browser_thread is None
+
+
+async def test_public_token_cancellation_waits_for_browser_startup_async() -> None:
+    authenticator = BrowserSessionCopilotAuthenticator()
+    main_loop = asyncio.get_running_loop()
+    starting = asyncio.Event()
+    release_start = threading.Event()
+    original_start = authenticator._run_browser_event_loop
+
+    def delayed_start() -> None:
+        main_loop.call_soon_threadsafe(starting.set)
+        release_start.wait(timeout=5)
+        original_start()
+
+    with (
+        patch.object(authenticator, "_run_browser_event_loop", side_effect=delayed_start),
+        patch.object(authenticator, "_create_playwright_context_manager") as factory,
+    ):
+        caller = asyncio.create_task(authenticator.get_token_async())
+        try:
+            await asyncio.wait_for(starting.wait(), timeout=5)
+            caller.cancel("original startup cancellation")
+            await _event_loop_barrier_async()
+            caller.cancel("repeated startup cancellation")
+            await _event_loop_barrier_async()
+            assert not caller.done()
+            assert authenticator._token_fetch_lock.locked()
+            release_start.set()
+            with pytest.raises(asyncio.CancelledError, match="original startup cancellation"):
+                await asyncio.wait_for(caller, timeout=5)
+            factory.assert_not_called()
+        finally:
+            release_start.set()
+            await asyncio.to_thread(authenticator._browser_loop_started.wait, 5)
+            await asyncio.gather(caller, return_exceptions=True)
+            thread = authenticator._browser_thread
+            await authenticator.close_async()
+        assert thread is not None
+        assert not thread.is_alive()
+        assert authenticator._browser_loop is None
+
+
+async def test_public_startup_cancellation_and_close_wait_until_browser_loop_runs_async() -> None:
+    authenticator = BrowserSessionCopilotAuthenticator()
+    main_loop = asyncio.get_running_loop()
+    original_tasks = asyncio.all_tasks()
+    before_run = asyncio.Event()
+    running = asyncio.Event()
+    release_run = threading.Event()
+    original_run = asyncio.BaseEventLoop.run_forever
+    original_stop = authenticator._stop_browser_thread_async
+    premature_stops: list[bool] = []
+    callers: list[asyncio.Task[Any]] = []
+
+    def delay_run_forever(loop: asyncio.BaseEventLoop) -> None:
+        loop.call_soon(lambda: main_loop.call_soon_threadsafe(running.set))
+        main_loop.call_soon_threadsafe(before_run.set)
+        release_run.wait(timeout=5)
+        original_run(loop)
+
+    async def stop_safely_async() -> None:
+        browser_loop = authenticator._browser_loop
+        if browser_loop is not None:
+            premature_stops.append(not browser_loop.is_running())
+            # Keep the old failing implementation's teardown from hanging in join.
+            release_run.set()
+            await asyncio.wait_for(running.wait(), timeout=5)
+        await original_stop()
+
+    with (
+        patch.object(asyncio.BaseEventLoop, "run_forever", autospec=True, side_effect=delay_run_forever),
+        patch.object(authenticator, "_stop_browser_thread_async", side_effect=stop_safely_async),
+        patch.object(authenticator, "_create_playwright_context_manager") as factory,
+    ):
+        caller = asyncio.create_task(authenticator.get_token_async())
+        callers.append(caller)
+        try:
+            await asyncio.wait_for(before_run.wait(), timeout=5)
+            thread = authenticator._browser_thread
+            assert thread is not None
+            caller.cancel("original readiness cancellation")
+            closer = asyncio.create_task(authenticator.close_async())
+            callers.append(closer)
+            await _event_loop_barrier_async()
+
+            assert not authenticator._browser_loop_started.is_set()
+            assert not caller.done()
+            assert not closer.done()
+            assert authenticator._token_fetch_lock.locked()
+            caller.cancel("repeated readiness cancellation")
+            await _event_loop_barrier_async()
+            assert not caller.done()
+            assert not closer.done()
+            assert premature_stops == []
+
+            release_run.set()
+            with pytest.raises(asyncio.CancelledError, match="original readiness cancellation"):
+                await asyncio.wait_for(caller, timeout=5)
+            await asyncio.wait_for(closer, timeout=5)
+            factory.assert_not_called()
+            assert premature_stops == [False]
+            assert not thread.is_alive()
+            assert authenticator._browser_loop is None
+        finally:
+            release_run.set()
+            await asyncio.gather(*callers, return_exceptions=True)
+            await authenticator.close_async()
+    assert authenticator._browser_thread is None
+    assert not (asyncio.all_tasks() - original_tasks)
 
 
 def _make_token(
