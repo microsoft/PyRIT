@@ -33,8 +33,7 @@ class ScorerIdentifier(ComponentIdentifier):
     them references resolved by name from the target and scorer registries.
 
     The optional ``sub_scorers_order_independent`` param declares that the
-    aggregation verdict does not depend on child order. Legacy identifiers omit
-    it and remain ordered; aggregator names alone cannot prove commutativity.
+    aggregation verdict does not depend on child order.
     """
 
     component_type: ClassVar[ComponentType] = ComponentType.SCORER

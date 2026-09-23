@@ -165,25 +165,3 @@ What feeds the eval hash is declared **on the strongly-typed identifier fields t
 - `Evaluate.Unwrap()` — mark a wrapper passthrough slot (e.g. `TargetIdentifier.targets`). A multi-target like `RoundRobinTarget` is "looked through" to its inner target, so it eval-hashes the same as the bare inner target.
 
 For example, `TargetIdentifier` excludes `endpoint` but includes `temperature`, and the `ObjectiveTargetEvaluationIdentifier` / `ScorerEvaluationIdentifier` / `AtomicAttackEvaluationIdentifier` subclasses derive their engine rules from these markers (via `derive_eval_config`). Markers affect **only** the eval hash — the identity `hash` always keeps distinct components (e.g. a wrapper vs. its inner target) distinct.
-
-#### Child order
-
-Child lists are ordered unless a child field declares
-`Evaluate.Include(unordered_when="parent_param")` and that parent param is exactly
-`True`. The eval engine then sorts the child hashes **after** behavioral filtering.
-It retains duplicates and does not change the stored list or execution order.
-
-`TrueFalseCompositeScorer` sets the `sub_scorers_order_independent` param only for
-the built-in `AND`, `OR`, and `MAJORITY` aggregator functions. Reordered children
-then have the same eval hash, including within nested composites and scenario
-resume checks. Different child configurations and duplicate counts remain distinct.
-Custom aggregators, converter pipelines, and other sequences keep their order.
-Rationale and metadata output can still follow input order.
-
-**Compatibility:** The new opt-in param changes the content and eval hashes of
-built-in composites and identifiers that include them. Existing records without
-the param remain ordered: an aggregator name alone cannot prove that a custom
-function is commutative. No stored hashes are migrated. A scenario saved before
-this opt-in cannot resume with a new built-in composite; start a new run.
-Stored eval hashes are recomputed when wrapped in an `EvaluationIdentifier`,
-but hash-only lookup keys and cached evaluation results are not remapped.

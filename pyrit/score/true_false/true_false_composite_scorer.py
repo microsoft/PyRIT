@@ -39,10 +39,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
     composed with one over evidence that is not a message at all.
 
     Built-in AND, OR, and MAJORITY aggregators opt into order-independent evaluation
-    identity. Child multiplicity still matters. Execution, rationale, and full content
-    identity retain child order. Custom aggregators remain ordered, even if their names
-    match a built-in. Legacy identifiers without the explicit opt-in stay ordered;
-    resuming those runs with a newly identified built-in composite requires a new run.
+    identity. Duplicates remain significant; custom aggregators and execution stay ordered.
     """
 
     def __init__(
