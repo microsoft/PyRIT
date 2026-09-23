@@ -91,10 +91,11 @@ class _HarmEvalDataset(_RemoteDatasetLoader):
     License: The HuggingFace metadata tags the dataset Apache-2.0, but access is
     granted through a gate that additionally requires the requester to attest
     "I agree to use this dataset for non-commercial use ONLY" and to agree not to
-    use the dataset for experiments that cause harm to human subjects. Treat the
-    stricter gate terms as binding rather than reading the Apache-2.0 tag as
-    unrestricted use. PyRIT does not redistribute the data; it is fetched at
-    runtime under the terms the user accepted.
+    use the dataset for experiments that cause harm to human subjects. Which of
+    the two governs is not for this docstring to decide; both are recorded here
+    so a user sees the gate terms before accepting them. PyRIT does not
+    redistribute the data; it is fetched at runtime by the user, under whatever
+    they accepted at the gate.
 
     Note: This is a gated dataset on HuggingFace. You must accept the terms at
     https://huggingface.co/datasets/SoftMINER-Group/HarmEval before use, and provide
@@ -166,7 +167,9 @@ class _HarmEvalDataset(_RemoteDatasetLoader):
                 raise ValueError("`topics` must be a non-empty list (pass None to include all topics)")
             self._validate_enums(values=topics, enum_cls=HarmEvalTopic, label="topics")
 
-        self.topics = topics
+        # Copied, so a caller mutating its own list afterwards cannot change
+        # what this loader filters on.
+        self.topics = list(topics) if topics is not None else None
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
 
     @property
