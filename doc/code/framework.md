@@ -277,11 +277,13 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.
 - Scorer groups check that all conditions have a matching scorer. A leaf consumes its declared
-  conditions and may ignore conditions owned by siblings. Typed message scorers receive criteria
+  condition and may ignore conditions owned by siblings. Typed message scorers receive criteria
   through `_score_piece_with_expectation_async`; old objective-only hooks must not discard
   conditions they claim to match. Subclasses of a migrated scorer must use its typed hook.
-- Each condition-based leaf should match one condition type. Use separate leaves and a composite
-  for independent checks; wrappers may report the union of their children's condition types.
+- A condition-based leaf declares one `CONDITION_TYPE` and requires exactly one condition of that
+  type. Constructor-configured leaves declare none. Shared validation rejects missing and duplicate
+  conditions before scoring. Wrappers expose their children; `get_condition_types()` derives their
+  combined coverage. Use separate leaves and a composite for independent checks.
   **Breaking change:** both Q&A scorers require `AnswerMatches`. The LLM Q&A scorer no longer
   accepts an objective or inferred request text as ground truth. Objective text is question
   context only; use `SelfAskTrueFalseScorer` to evaluate `MatchesObjective` separately.

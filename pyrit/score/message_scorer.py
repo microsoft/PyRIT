@@ -292,28 +292,13 @@ class MessageScorer(Scorer):
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Return the conditions this message scorer uses as criteria.
-
-        An objective-required validator is the existing declaration that the scorer judges
-        whether the evidence satisfies the objective. Other message scorers may read the
-        objective as context without matching ``MatchesObjective``.
-
-        Returns:
-            frozenset[type[Condition]]: The matched condition types.
-        """
-        matched = super().matched_conditions()
-        if self._validator.is_objective_required:
-            return matched | {MatchesObjective}
-        return matched
-
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """Return the matched conditions required by this message scorer."""
-        required = super().required_conditions()
-        if self._validator.is_objective_required:
-            return required | {MatchesObjective}
-        return required
+    def _get_condition_type(self) -> type[Condition] | None:
+        """Return the declared criterion, using the objective validator only for undeclared leaves."""
+        if self._get_child_scorers():
+            return None
+        if self.CONDITION_TYPE is not None:
+            return self.CONDITION_TYPE
+        return MatchesObjective if self._validator.is_objective_required else None
 
     def _validate_expectation(
         self,
@@ -329,17 +314,16 @@ class MessageScorer(Scorer):
         Raises:
             ValueError: If ``MatchesObjective`` is present without an objective to match.
         """
+        ScoringExpectation.validate_type(expectation)
+        if self.condition_type is MatchesObjective:
+            if expectation is None or not expectation.objective:
+                raise ValueError(
+                    "MatchesObjective requires the expectation to carry an objective. Set ScoringExpectation.objective."
+                )
+            if not expectation.conditions:
+                # Existing objective-based scorers accept bare objective text.
+                expectation = ScoringExpectation(objective=expectation.objective, conditions=(MatchesObjective(),))
         super()._validate_expectation(expectation=expectation)
-        if expectation is None or not expectation.conditions:
-            return
-        matches_objective = MatchesObjective in self.matched_conditions() and any(
-            isinstance(condition, MatchesObjective) for condition in expectation.conditions
-        )
-        if matches_objective and not expectation.objective:
-            raise ValueError(
-                "MatchesObjective requires the expectation to carry an objective. "
-                "Set ScoringExpectation.objective or drop the condition."
-            )
 
     async def score_async(
         self,

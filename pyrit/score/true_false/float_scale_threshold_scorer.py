@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
 from pyrit.models import (
     ComponentIdentifier,
-    Condition,
     Scorable,
     ScorableUnion,
     Score,
@@ -21,6 +20,7 @@ from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggre
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
+from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
@@ -104,28 +104,9 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report what the wrapped scorer matches.
-
-        Returns:
-            frozenset[type[Condition]]: The condition types the wrapped scorer routes.
-        """
-        return self._scorer.matched_conditions()
-
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report what the wrapped scorer requires.
-
-        Returns:
-            frozenset[type[Condition]]: The required condition types.
-        """
-        return self._scorer.required_conditions()
-
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        """Validate wrapper and child criteria without checking sibling condition coverage."""
-        super()._validate_expectation(expectation=expectation)
-        self._scorer._validate_expectation(expectation=expectation)
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the scorer whose value is compared to the threshold."""
+        return (self._scorer,)
 
     async def _score_scorable_async(
         self,

@@ -132,7 +132,7 @@ class _LegacyResponseHandler(ResponseHandler):
 class _MatchesObjectiveScorer(TrueFalseScorer):
     """A deterministic sibling that consumes ``MatchesObjective``."""
 
-    MATCHED_CONDITIONS = frozenset({MatchesObjective})
+    CONDITION_TYPE = MatchesObjective
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
@@ -1059,7 +1059,7 @@ async def test_generic_replay_delegates_compatibility_to_the_matcher_async(
     )[0]
     observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
     scorer = _MatchesObjectiveScorer()
-    expectation = ScoringExpectation(objective="Different expectation")
+    expectation = ScoringExpectation(objective="Different expectation", conditions=(MatchesObjective(),))
     result = Score(score_value="true", score_type="true_false")
 
     with patch.object(scorer, "_score_observation", return_value=[result]) as match:

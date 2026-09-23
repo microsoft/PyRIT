@@ -158,7 +158,7 @@ async def test_video_forwards_explicit_conditions_and_templates_async(
     frame = MessagePiece(role="assistant", original_value="frame.png", original_value_data_type="image_path")
     score_type = "float_scale" if float_scale else "true_false"
     with (
-        patch.object(image_scorer, "matched_conditions", return_value=frozenset({AnswerMatches})),
+        patch.object(image_scorer, "CONDITION_TYPE", AnswerMatches),
         patch.object(scorer._video_helper, "_extract_frames", return_value=[frame.converted_value]),
         patch.object(AudioTranscriptHelper, "extract_audio_from_video", return_value=str(audio_path)),
         patch.object(

@@ -38,6 +38,17 @@ Requirements:
   base class wires the validator and validates ``TARGET_REQUIREMENTS``
   against any provided ``chat_target``.
 
+## Condition contract
+
+- A condition-based leaf declares one `CONDITION_TYPE` subclass. The shared base requires exactly
+  one condition of that type and provides `_get_required_condition` for typed access.
+- A constructor-configured leaf leaves `CONDITION_TYPE = None`. It must not claim to consume a
+  per-execution condition.
+- Wrappers implement `_get_child_scorers()` and declare no criterion. The base derives coverage
+  through `get_condition_types()` and validates every child before scoring.
+- Do not override the derived capability API, add plural declarations, or repeat missing/duplicate
+  condition checks in leaves. Each leaf receives the complete expectation and ignores sibling criteria.
+
 ## Common pitfalls
 
 - Forgetting ``*`` after ``self`` — the new check will surface this at

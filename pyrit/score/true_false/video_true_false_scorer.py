@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 
-from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoreStatus, ScoringExpectation
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoreStatus, ScoringExpectation
+from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
@@ -91,42 +92,10 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
             sub_scorers=sub_scorer_ids,
         )
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the union of conditions matched by the media scorers.
-
-        Returns:
-            frozenset[type[Condition]]: The matched condition types.
-        """
-        scorers = [self._video_helper.image_scorer]
-        if self.audio_scorer:
-            scorers.append(self.audio_scorer)
-        conditions: set[type[Condition]] = set()
-        for scorer in scorers:
-            conditions.update(scorer.matched_conditions())
-        return frozenset(conditions)
-
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the union of conditions required by the media scorers.
-
-        Returns:
-            frozenset[type[Condition]]: The required condition types.
-        """
-        scorers = [self._video_helper.image_scorer]
-        if self.audio_scorer:
-            scorers.append(self.audio_scorer)
-        conditions: set[type[Condition]] = set()
-        for scorer in scorers:
-            conditions.update(scorer.required_conditions())
-        return frozenset(conditions)
-
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        """Validate all media scorer criteria before acquiring evidence or sending prompts."""
-        super()._validate_expectation(expectation=expectation)
-        self._video_helper.image_scorer._validate_expectation(expectation=expectation)
-        if self.audio_scorer is not None:
-            self.audio_scorer._validate_expectation(expectation=expectation)
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the frame scorer and the optional audio scorer."""
+        image_scorer = self._video_helper.image_scorer
+        return (image_scorer, self.audio_scorer) if self.audio_scorer is not None else (image_scorer,)
 
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None

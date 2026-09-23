@@ -71,22 +71,24 @@ class _RecordingScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        condition_type: type[Condition] = _OutcomeCondition,
+        condition_type: type[Condition] | None = _OutcomeCondition,
         value: bool = True,
         barrier: asyncio.Barrier | None = None,
     ) -> None:
         super().__init__()
-        self.condition_type = condition_type
+        self._condition_type = condition_type
         self.value = value
         self.barrier = barrier
         self.calls: list[tuple[Scorable, ScoringExpectation | None]] = []
         self.contexts: list[ExecutionContext | None] = []
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
-        return frozenset({self.condition_type})
+    def _get_condition_type(self) -> type[Condition] | None:
+        return self._condition_type
 
     def _build_identifier(self) -> ComponentIdentifier:
-        return self._create_identifier(params={"condition": self.condition_type.__name__, "value": self.value})
+        return self._create_identifier(
+            params={"condition": self.condition_type.__name__ if self.condition_type else None, "value": self.value}
+        )
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         self.calls.append((scorable, expectation))
@@ -105,7 +107,7 @@ class _RecordingScorer(TrueFalseScorer):
 
 
 class _RecordingFloatScorer(FloatScaleScorer):
-    MATCHED_CONDITIONS = frozenset({_OutcomeCondition})
+    CONDITION_TYPE = _OutcomeCondition
 
     def __init__(self) -> None:
         super().__init__()
@@ -125,6 +127,10 @@ class _RecordingFloatScorer(FloatScaleScorer):
                 scorable=cast("ScorableUnion", scorable),
             )
         ]
+
+
+class _ConfiguredFloatScorer(_RecordingFloatScorer):
+    CONDITION_TYPE = None
 
 
 def _expectation(objective: str | None = "scoring objective") -> ScoringExpectation:
@@ -263,12 +269,17 @@ class TestExecutionExpectationTransport:
         replaced = ScoringExpectation(objective="replacement", conditions=(_OutcomeCondition(value="different"),))
         empty = _expectation("")
         overrides = [{}, {"expectation": replaced}, {"expectation": None}, {"expectation": empty}]
-        scorer = _RecordingScorer(barrier=asyncio.Barrier(4))
+        scorer = _RecordingScorer(barrier=asyncio.Barrier(3))
         attack = PromptSendingAttack(
             objective_target=MockPromptTarget(), attack_scoring_config=AttackScoringConfig(objective_scorer=scorer)
         )
         executor = AttackExecutor(max_concurrency=4)
-        kwargs = {"attack": attack, "expectation": supplied, "field_overrides": overrides}
+        kwargs = {
+            "attack": attack,
+            "expectation": supplied,
+            "field_overrides": overrides,
+            "return_partial_on_failure": True,
+        }
         if from_seeds:
             execution = executor.execute_attack_from_seed_groups_async(
                 seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value=value)]) for value in objectives], **kwargs
@@ -281,11 +292,13 @@ class TestExecutionExpectationTransport:
         expected = [
             supplied.model_copy(update={"objective": objectives[0]}),
             replaced,
-            ScoringExpectation(objective=objectives[2]),
             empty,
         ]
-        results = batch.get_results()
-        assert len(results) == 4
+        results = batch.completed_results
+        assert len(results) == 3
+        [(failed_objective, error)] = batch.incomplete_objectives
+        assert failed_objective == objectives[2]
+        assert "requires one _OutcomeCondition" in str(error)
         for result, expectation in zip(results, expected, strict=True):
             assert result.automated_score is not None
             assert result.automated_score.scored_expectation == expectation
@@ -437,7 +450,7 @@ class TestExecutionExpectationTransport:
         target = MockPromptTarget()
         objective = _RecordingScorer()
         auxiliary = _RecordingScorer()
-        refusal = _RecordingScorer(value=False)
+        refusal = _RecordingScorer(value=False, condition_type=None)
         supplied = _expectation()
         attack = CrescendoAttack(
             objective_target=target,
@@ -559,7 +572,7 @@ class TestExecutionExpectationTransport:
             patch.object(failing, "_score_scorable_async", side_effect=original),
             pytest.raises(RuntimeError, match=f"Strategy execution failed for {failing_role.value}") as raised,
         ):
-            await attack.execute_async(objective="attack objective")
+            await attack.execute_async(objective="attack objective", expectation=_expectation())
 
         context = get_exception_execution_context(raised.value)
         assert context is not None
@@ -576,8 +589,8 @@ class TestExecutionExpectationTransport:
         self, *, duplicate: bool, explicit_expectation: bool
     ) -> None:
         target = MockPromptTarget()
-        leaf = _RecordingFloatScorer()
-        auxiliary = _RecordingScorer()
+        leaf = _RecordingFloatScorer() if explicit_expectation else _ConfiguredFloatScorer()
+        auxiliary = _RecordingScorer(condition_type=_OutcomeCondition if explicit_expectation else None)
         supplied = _expectation() if explicit_expectation else None
         attack = TreeOfAttacksWithPruningAttack(
             objective_target=target,

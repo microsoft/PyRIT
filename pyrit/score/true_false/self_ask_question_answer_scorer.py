@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import AnswerMatches, Condition, ScoringExpectation
+from pyrit.models import AnswerMatches, ScoringExpectation
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.self_ask_true_false_scorer import (
@@ -41,8 +41,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
     )
-    MATCHED_CONDITIONS = frozenset({AnswerMatches})
-    REQUIRED_CONDITIONS = MATCHED_CONDITIONS
+    CONDITION_TYPE = AnswerMatches
     _ANSWER_CONDITION_VERSION = 2
     _TYPED_ANSWER_PROMPT = (
         "Question or context: {objective}\n"
@@ -122,30 +121,6 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         """
         return {**super()._judgment_replay_identifier(), "answer_condition_version": self._ANSWER_CONDITION_VERSION}
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
-        """Return the answer criterion, regardless of the message validator configuration."""
-        return self.MATCHED_CONDITIONS
-
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """Return the required answer criterion."""
-        return self.REQUIRED_CONDITIONS
-
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        """
-        Require typed ground truth, including on deprecated message entry points.
-
-        Raises:
-            ValueError: If the required answer condition is absent.
-        """
-        ScoringExpectation.validate_type(expectation)
-        if expectation is None or not any(isinstance(item, AnswerMatches) for item in expectation.conditions):
-            raise ValueError(
-                "SelfAskQuestionAnswerScorer requires an AnswerMatches condition. "
-                "Objective-only Q&A scoring is no longer supported. "
-                "Supply AnswerMatches(correct_answer=...) or use SelfAskTrueFalseScorer to evaluate an objective."
-            )
-        super()._validate_expectation(expectation=expectation)
-
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:
@@ -158,9 +133,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         Raises:
             ValueError: If the required answer condition is absent or duplicated.
         """
-        self._validate_expectation(expectation=expectation)
-        conditions = expectation.conditions if expectation else ()
-        answer = next(item for item in conditions if isinstance(item, AnswerMatches))
+        answer = self._get_required_condition(expectation=expectation, condition_type=AnswerMatches)
         objective = expectation.objective if expectation else None
         correct_answer = (
             f"{answer.correct_answer_index}: {answer.correct_answer}"

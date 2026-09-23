@@ -735,7 +735,7 @@ class TestConditionRouting:
     async def test_two_conditions_of_one_type_raise(self):
         scorer = RecordingScorer(is_objective_required=True)
 
-        with pytest.raises(ValueError, match="at most one condition"):
+        with pytest.raises(ValueError, match="exactly one condition"):
             await scorer.score_async(
                 scorable=MessageScorable.from_message(_assistant_message()),
                 expectation=ScoringExpectation(
@@ -748,7 +748,7 @@ class TestConditionRouting:
         contextual_scorer = RecordingScorer()
         objective_scorer = RecordingScorer(is_objective_required=True)
 
-        assert contextual_scorer.matched_conditions() == frozenset()
-        assert contextual_scorer.required_conditions() == frozenset()
-        assert objective_scorer.matched_conditions() == frozenset({MatchesObjective})
-        assert objective_scorer.required_conditions() == frozenset({MatchesObjective})
+        assert contextual_scorer.condition_type is None
+        assert contextual_scorer.get_condition_types() == frozenset()
+        assert objective_scorer.condition_type is MatchesObjective
+        assert objective_scorer.get_condition_types() == frozenset({MatchesObjective})

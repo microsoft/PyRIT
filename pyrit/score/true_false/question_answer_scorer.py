@@ -54,8 +54,7 @@ class QuestionAnswerScorer(MessageTrueFalseScorer):
     """
 
     CORRECT_ANSWER_MATCHING_PATTERNS = ["{correct_answer_index}:", "{correct_answer}"]
-    MATCHED_CONDITIONS = frozenset({AnswerMatches})
-    REQUIRED_CONDITIONS = frozenset({AnswerMatches})
+    CONDITION_TYPE = AnswerMatches
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
 
@@ -108,17 +107,6 @@ class QuestionAnswerScorer(MessageTrueFalseScorer):
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        """
-        Require typed ground truth, including on the objective-only compatibility path.
-
-        Raises:
-            ValueError: If the required answer condition is absent.
-        """
-        super()._validate_expectation(expectation=expectation)
-        if expectation is None or not any(isinstance(item, AnswerMatches) for item in expectation.conditions):
-            raise ValueError("QuestionAnswerScorer requires the condition AnswerMatches.")
-
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:
@@ -128,9 +116,7 @@ class QuestionAnswerScorer(MessageTrueFalseScorer):
         Returns:
             list[Score]: A single score indicating whether any pattern matched.
         """
-        self._validate_expectation(expectation=expectation)
-        assert expectation is not None
-        answer = next(item for item in expectation.conditions if isinstance(item, AnswerMatches))
+        answer = self._get_required_condition(expectation=expectation, condition_type=AnswerMatches)
         result = False
         matching_text = None
 

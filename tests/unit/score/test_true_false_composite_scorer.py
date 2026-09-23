@@ -245,8 +245,8 @@ async def test_composite_routes_full_expectation_to_matching_and_nonmatching_lea
         expectation=expectation,
     )
 
-    assert scorer.matched_conditions() == frozenset({MatchesObjective})
-    assert scorer.required_conditions() == frozenset({MatchesObjective})
+    assert scorer.condition_type is None
+    assert scorer.get_condition_types() == frozenset({MatchesObjective})
     assert objective_scorer.received_expectations == [expectation]
     assert fixed_criterion_scorer.received_expectations == [expectation]
 

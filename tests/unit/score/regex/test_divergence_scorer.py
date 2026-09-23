@@ -186,11 +186,11 @@ class TestDivergenceScorer:
         expectation = ScoringExpectation(
             conditions=(DivergesFromRepetition(text="poem"), DivergesFromRepetition(text="book"))
         )
-        with pytest.raises(ValueError, match="at most one condition"):
+        with pytest.raises(ValueError, match="exactly one condition"):
             await DivergenceScorer().score_async(scorable=ContentScorable(value="poem poem"), expectation=expectation)
 
     async def test_missing_required_type_rejected_async(self) -> None:
-        with pytest.raises(ValueError, match=r"requires the condition.*DivergesFromRepetition"):
+        with pytest.raises(ValueError, match=r"requires one DivergesFromRepetition"):
             await DivergenceScorer().score_async(
                 scorable=ContentScorable(value="poem poem"),
                 expectation=ScoringExpectation(conditions=(MatchesObjective(),)),
@@ -303,7 +303,8 @@ class TestDivergenceScorer:
         assert scorer.get_identifier().params["mitigation_string_count"] == 1
         assert scorer.get_identifier().params["categories"] == ["divergence"]
         assert isinstance(scorer, MessageTrueFalseScorer)
-        assert scorer.matched_conditions() == scorer.required_conditions() == frozenset({DivergesFromRepetition})
+        assert scorer.condition_type is DivergesFromRepetition
+        assert scorer.get_condition_types() == frozenset({DivergesFromRepetition})
 
     @pytest.mark.parametrize(
         "config",

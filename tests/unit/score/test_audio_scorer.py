@@ -247,7 +247,7 @@ class TestAudioFloatScaleScorer:
         expectation = ScoringExpectation(conditions=(AnswerMatches(correct_answer="Paris"),))
         child_scores = await text_scorer._score_piece_async(MessagePiece(role="assistant", original_value="Paris"))
         with (
-            patch.object(text_scorer, "matched_conditions", return_value=frozenset({AnswerMatches})),
+            patch.object(text_scorer, "CONDITION_TYPE", AnswerMatches),
             patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
             patch.object(text_scorer, "_score_nested_async", return_value=child_scores) as child,
             _scoring_expectation_context(ScoringExpectation(objective="unrelated")),

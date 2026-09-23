@@ -80,8 +80,7 @@ class _SiblingCondition(Condition):
 
 class _SiblingScorer(_ObjectiveTrueFalseScorer):
     _DEFAULT_VALIDATOR = ScorerPromptValidator()
-    MATCHED_CONDITIONS = frozenset({_SiblingCondition})
-    REQUIRED_CONDITIONS = MATCHED_CONDITIONS
+    CONDITION_TYPE = _SiblingCondition
 
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
@@ -158,11 +157,14 @@ def test_wrapper_preflight_preserves_sibling_conditions(wrapper_pair: tuple[Scor
 
 
 @pytest.mark.parametrize("expectation", [None, ScoringExpectation(objective="")])
-def test_wrapper_group_preflight_keeps_empty_condition_compatibility(
+def test_wrapper_group_preflight_rejects_missing_objective(
     *, wrapper_pair: tuple[Scorer, MessageScorer], expectation: ScoringExpectation | None
 ) -> None:
     wrapper, child = wrapper_pair
-    with patch.object(child, "_validate_expectation", wraps=child._validate_expectation) as validate:
+    with (
+        patch.object(child, "_validate_expectation", wraps=child._validate_expectation) as validate,
+        pytest.raises(ValueError, match="MatchesObjective requires"),
+    ):
         Scorer.validate_expectation_for_scorers(scorers=[wrapper], expectation=expectation)
     validate.assert_called_once()
 

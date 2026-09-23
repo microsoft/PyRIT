@@ -35,6 +35,7 @@ from pyrit.score import (
     ScorerPromptValidator,
     SelfAskTrueFalseScorer,
     TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
     TrueFalseScoreAggregator,
     TrueFalseScorer,
 )
@@ -55,8 +56,7 @@ class _SecondCondition(Condition):
 
 
 class _MessageRecordingScorer(MessageTrueFalseScorer):
-    MATCHED_CONDITIONS = frozenset({_FirstCondition})
-    REQUIRED_CONDITIONS = MATCHED_CONDITIONS
+    CONDITION_TYPE = _FirstCondition
 
     def __init__(self) -> None:
         super().__init__(validator=ScorerPromptValidator())
@@ -86,8 +86,7 @@ class _MessageRecordingScorer(MessageTrueFalseScorer):
 
 
 class _GenericRecordingScorer(TrueFalseScorer):
-    MATCHED_CONDITIONS = frozenset({_SecondCondition})
-    REQUIRED_CONDITIONS = MATCHED_CONDITIONS
+    CONDITION_TYPE = _SecondCondition
 
     def __init__(self) -> None:
         super().__init__()
@@ -112,7 +111,7 @@ class _GenericRecordingScorer(TrueFalseScorer):
 
 
 class _MultipleContentScorer(FloatScaleScorer):
-    MATCHED_CONDITIONS = frozenset({_SecondCondition})
+    CONDITION_TYPE = _SecondCondition
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
@@ -128,6 +127,128 @@ class _MultipleContentScorer(FloatScaleScorer):
             )
             for value in ("0.25", "0.75")
         ]
+
+
+class _ConfiguredMessageScorer(_MessageRecordingScorer):
+    CONDITION_TYPE = None
+
+
+class _ConfiguredGenericScorer(_GenericRecordingScorer):
+    CONDITION_TYPE = None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestConditionCapabilities:
+    @pytest.mark.parametrize(
+        "declaration",
+        [
+            {_FirstCondition, _SecondCondition},
+            (_FirstCondition, _SecondCondition),
+            _FirstCondition | _SecondCondition,
+            _FirstCondition(),
+            Condition,
+            str,
+        ],
+    )
+    def test_rejects_non_singular_declaration(self, declaration: object) -> None:
+        with pytest.raises(TypeError, match="one specific Condition subclass or None"):
+            type("InvalidScorer", (_MessageRecordingScorer,), {"CONDITION_TYPE": declaration})
+
+    @pytest.mark.parametrize(
+        "name", ["MATCHED_CONDITIONS", "REQUIRED_CONDITIONS", "matched_conditions", "required_conditions"]
+    )
+    def test_rejects_removed_set_declarations(self, name: str) -> None:
+        with pytest.raises(TypeError, match="declare one CONDITION_TYPE"):
+            type("InvalidScorer", (_MessageRecordingScorer,), {name: frozenset({_FirstCondition})})
+
+    @pytest.mark.parametrize("name", ["condition_type", "get_condition_types"])
+    def test_rejects_derived_capability_override(self, name: str) -> None:
+        with pytest.raises(TypeError, match="cannot override derived condition capabilities"):
+            type("InvalidScorer", (_MessageRecordingScorer,), {name: lambda self: {_FirstCondition, _SecondCondition}})
+
+    def test_rejects_invalid_instance_condition_type(self) -> None:
+        scorer = _MessageRecordingScorer()
+        with (
+            patch.object(scorer, "_get_condition_type", return_value={_FirstCondition, _SecondCondition}),
+            pytest.raises(TypeError, match="one specific Condition subclass or None"),
+        ):
+            scorer.get_condition_types()
+
+    def test_rejects_wrapper_owned_condition(self) -> None:
+        with pytest.raises(TypeError, match="wraps scorers and cannot declare its own"):
+            type("InvalidWrapper", (TrueFalseInverterScorer,), {"CONDITION_TYPE": _FirstCondition})
+
+    def test_rejects_instance_specific_wrapper_condition(self) -> None:
+        wrapper = TrueFalseInverterScorer(scorer=_MessageRecordingScorer())
+        with (
+            patch.object(wrapper, "_get_condition_type", return_value=_FirstCondition),
+            pytest.raises(TypeError, match="wraps scorers and cannot declare its own"),
+        ):
+            wrapper.get_condition_types()
+
+    def test_inherits_one_leaf_condition(self) -> None:
+        class InheritedScorer(_MessageRecordingScorer):
+            pass
+
+        scorer = InheritedScorer()
+        assert scorer.condition_type is _FirstCondition
+        assert scorer.get_condition_types() == frozenset({_FirstCondition})
+
+    def test_configured_leaf_needs_no_condition(self) -> None:
+        scorer = _ConfiguredMessageScorer()
+        assert scorer.condition_type is None
+        assert scorer.get_condition_types() == frozenset()
+        Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=None)
+
+    def test_nested_wrapper_derives_coverage(self) -> None:
+        wrapper = TrueFalseInverterScorer(
+            scorer=TrueFalseCompositeScorer(
+                scorers=[_MessageRecordingScorer(), _GenericRecordingScorer(), _ConfiguredMessageScorer()],
+                aggregator=TrueFalseScoreAggregator.AND,
+            )
+        )
+        assert wrapper.condition_type is None
+        assert wrapper.get_condition_types() == frozenset({_FirstCondition, _SecondCondition})
+        Scorer.validate_expectation_for_scorers(scorers=[wrapper], expectation=_expectation())
+
+    def test_explicit_type_takes_precedence_over_objective_validator(self) -> None:
+        scorer = _MessageRecordingScorer()
+        scorer._validator = ScorerPromptValidator(is_objective_required=True)
+        assert scorer.condition_type is _FirstCondition
+        assert scorer.get_condition_types() == frozenset({_FirstCondition})
+        Scorer.validate_expectation_for_scorers(
+            scorers=[scorer],
+            expectation=ScoringExpectation(objective="question context", conditions=(_FirstCondition(),)),
+        )
+
+    @pytest.mark.parametrize(
+        "expectation",
+        [
+            None,
+            ScoringExpectation(),
+            ScoringExpectation(objective="context"),
+            ScoringExpectation(conditions=(_SecondCondition(),)),
+        ],
+    )
+    def test_typed_leaf_requires_its_condition(self, expectation: ScoringExpectation | None) -> None:
+        with pytest.raises(ValueError, match="requires one _FirstCondition"):
+            _MessageRecordingScorer()._validate_expectation(expectation=expectation)
+
+    def test_typed_leaf_rejects_duplicate_conditions(self) -> None:
+        with pytest.raises(ValueError, match="received 2 _FirstCondition"):
+            _MessageRecordingScorer()._validate_expectation(
+                expectation=ScoringExpectation(conditions=(_FirstCondition(), _FirstCondition()))
+            )
+
+    def test_leaf_can_only_retrieve_its_declared_criterion(self) -> None:
+        scorer = _MessageRecordingScorer()
+        expectation = _expectation()
+        assert (
+            scorer._get_required_condition(expectation=expectation, condition_type=_FirstCondition)
+            is expectation.conditions[0]
+        )
+        with pytest.raises(TypeError, match="only retrieve its declared condition type"):
+            scorer._get_required_condition(expectation=expectation, condition_type=_SecondCondition)
 
 
 def _expectation(objective: str | None = "scoring context") -> ScoringExpectation:
@@ -219,9 +340,10 @@ class TestResponseScoringExpectation:
     @pytest.mark.parametrize(
         ("conditions", "error"),
         [
-            ((_FirstCondition(),), "requires the condition"),
-            ((_SecondCondition(),), "requires the condition"),
-            ((_FirstCondition(), _FirstCondition(), _SecondCondition()), "at most one condition"),
+            ((), "requires one"),
+            ((_FirstCondition(),), "requires one"),
+            ((_SecondCondition(),), "requires one"),
+            ((_FirstCondition(), _FirstCondition(), _SecondCondition()), "exactly one condition"),
         ],
     )
     async def test_invalid_group_fails_before_any_scoring_async(
@@ -246,13 +368,13 @@ class TestResponseScoringExpectation:
     @pytest.mark.parametrize("multiple", [False, True])
     @pytest.mark.parametrize("objective", [None, "", "context"])
     @pytest.mark.filterwarnings("error::DeprecationWarning")
-    async def test_no_conditions_preserves_legacy_behavior_without_warning_async(
+    async def test_no_conditions_accepts_constructor_configured_scorers_async(
         self, *, sqlite_instance: MemoryInterface, multiple: bool, objective: str | None
     ) -> None:
         expectation = ScoringExpectation(objective=objective)
         scores = await _score_response_async(
             response=_stored_response(sqlite_instance),
-            scorers=[_MessageRecordingScorer(), _GenericRecordingScorer()],
+            scorers=[_ConfiguredMessageScorer(), _ConfiguredGenericScorer()],
             multiple=multiple,
             expectation=expectation,
             objective=None,
@@ -266,7 +388,7 @@ class TestResponseScoringExpectation:
     ) -> None:
         scores = await _score_response_async(
             response=_stored_response(sqlite_instance),
-            scorers=[_MessageRecordingScorer()],
+            scorers=[_ConfiguredMessageScorer()],
             multiple=multiple,
         )
         assert scores[0].scored_expectation == ScoringExpectation(objective=None)
@@ -279,7 +401,7 @@ class TestResponseScoringExpectation:
         with pytest.warns(DeprecationWarning, match="objective argument.*2.0.0"):
             scores = await _score_response_async(
                 response=_stored_response(sqlite_instance),
-                scorers=[_MessageRecordingScorer()],
+                scorers=[_ConfiguredMessageScorer()],
                 multiple=multiple,
                 objective=objective,
             )
@@ -322,7 +444,7 @@ class TestResponseScoringExpectation:
     async def test_direct_root_still_checks_its_own_criteria_async(self, duplicate: bool) -> None:
         scorer = _GenericRecordingScorer()
         conditions = (_SecondCondition(), _SecondCondition()) if duplicate else (_FirstCondition(),)
-        with pytest.raises(ValueError, match="at most one condition" if duplicate else "requires the condition"):
+        with pytest.raises(ValueError, match="exactly one condition" if duplicate else "requires one"):
             await scorer.score_async(
                 scorable=ContentScorable(value="unused"), expectation=ScoringExpectation(conditions=conditions)
             )
@@ -407,7 +529,7 @@ class TestGenericScoringGroup:
                 scorable=ContentScorable(value="response"),
                 scorers=[first, second],
                 scorer_roles=roles if explicit_roles else None,
-                expectation=ScoringExpectation(objective="scoring objective"),
+                expectation=ScoringExpectation(objective="scoring objective", conditions=(_SecondCondition(),)),
             )
             assert get_execution_context() is parent
         assert [len(scores) for scores in results] == [1, 1]
@@ -441,7 +563,8 @@ class TestGenericScoringGroup:
         self, *, sqlite_instance: MemoryInterface, expectation: ScoringExpectation | None
     ) -> None:
         scorable = ContentScorable(value="combined response content")
-        objective, auxiliary = _MessageRecordingScorer(), _GenericRecordingScorer()
+        objective = _MessageRecordingScorer() if expectation else _ConfiguredMessageScorer()
+        auxiliary = _GenericRecordingScorer() if expectation else _ConfiguredGenericScorer()
         roots = (objective, auxiliary)
         with (
             patch.object(objective, "score_async", wraps=objective.score_async) as objective_spy,
@@ -501,11 +624,12 @@ class TestGenericScoringGroup:
                 scorable=ContentScorable(value="combined response"),
                 scorers=[scorer],
                 scorer_roles=[ComponentRole.AUXILIARY_SCORER],
+                expectation=ScoringExpectation(conditions=(_SecondCondition(),)),
             )
 
     async def test_group_preflights_conditions_before_running_any_root_async(self) -> None:
         objective, auxiliary = _MessageRecordingScorer(), _GenericRecordingScorer()
-        with pytest.raises(ValueError, match="requires the condition"):
+        with pytest.raises(ValueError, match="requires one"):
             await Scorer.score_with_scorers_async(
                 scorable=ContentScorable(value="combined response"),
                 scorers=[objective, auxiliary],
@@ -525,18 +649,17 @@ class _ConditionJudgmentScorer(SelfAskTrueFalseScorer):
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:
         assert expectation is not None
-        condition = next(
-            condition for condition in expectation.conditions if isinstance(condition, tuple(self.MATCHED_CONDITIONS))
-        )
+        assert self.CONDITION_TYPE is not None
+        condition = self._get_required_condition(expectation=expectation, condition_type=self.CONDITION_TYPE)
         return await self._score_piece_async(message_piece, objective=str(condition.model_dump()))
 
 
 class _FirstJudgmentScorer(_ConditionJudgmentScorer):
-    MATCHED_CONDITIONS = frozenset({_FirstCondition})
+    CONDITION_TYPE = _FirstCondition
 
 
 class _SecondJudgmentScorer(_ConditionJudgmentScorer):
-    MATCHED_CONDITIONS = frozenset({_SecondCondition})
+    CONDITION_TYPE = _SecondCondition
 
 
 def _judgment_scorers() -> list[Scorer]:

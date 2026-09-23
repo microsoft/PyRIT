@@ -1531,7 +1531,7 @@ class TestLegacyDirectScorerSubclass:
             scorer = legacy_class(validator=DummyValidator())
         expectation = ScoringExpectation(conditions=(AnswerMatches(correct_answer="Paris"),))
         with (
-            patch.object(legacy_class, "MATCHED_CONDITIONS", frozenset({AnswerMatches})),
+            patch.object(legacy_class, "CONDITION_TYPE", AnswerMatches),
             pytest.warns(DeprecationWarning, match="_score_async"),
             pytest.raises(RuntimeError, match="matched typed conditions"),
         ):

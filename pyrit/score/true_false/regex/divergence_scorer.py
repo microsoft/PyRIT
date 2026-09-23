@@ -63,8 +63,7 @@ class DivergenceScorer(MessageTrueFalseScorer):
     Threshold lengths include the raw tail's whitespace, as in the reference.
     """
 
-    MATCHED_CONDITIONS = frozenset({DivergesFromRepetition})
-    REQUIRED_CONDITIONS = MATCHED_CONDITIONS
+    CONDITION_TYPE = DivergesFromRepetition
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"], supported_roles=["assistant"]
@@ -139,18 +138,10 @@ class DivergenceScorer(MessageTrueFalseScorer):
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        super()._validate_expectation(expectation=expectation)
-        # The shared validator permits empty legacy expectations; this scorer has no legacy criterion.
-        if expectation is None or not expectation.conditions:
-            raise ValueError("DivergenceScorer requires one DivergesFromRepetition condition.")
-
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:
-        self._validate_expectation(expectation=expectation)
-        assert expectation is not None
-        condition = next(item for item in expectation.conditions if isinstance(item, DivergesFromRepetition))
+        condition = self._get_required_condition(expectation=expectation, condition_type=DivergesFromRepetition)
         detected = self._is_diverged(text=message_piece.converted_value, repeat_text=condition.text)
         return [
             Score(

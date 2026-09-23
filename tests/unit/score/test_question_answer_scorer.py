@@ -115,8 +115,7 @@ def test_question_answer_group_validates_before_scoring(
         "duplicate": ScoringExpectation(conditions=expectation.conditions * 2),
         "unrelated": ScoringExpectation(conditions=[MatchesObjective()]),
     }[criteria]
-    assert AnswerMatches in scorer.matched_conditions()
-    assert AnswerMatches in scorer.required_conditions()
+    assert AnswerMatches in scorer.get_condition_types()
     with pytest.raises(ValueError, match="AnswerMatches|does not match"):
         Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=supplied)
 
@@ -261,7 +260,7 @@ async def test_legacy_hooks_reject_their_own_typed_criteria_async(
 ) -> None:
     scorer = scorer_type(substring="Paris")
     with (
-        patch.object(scorer_type, "MATCHED_CONDITIONS", frozenset({AnswerMatches})),
+        patch.object(scorer_type, "CONDITION_TYPE", AnswerMatches),
         patch.object(scorer, "_score_piece_async", new_callable=AsyncMock) as leaf,
         pytest.raises(RuntimeError, match="matched typed conditions"),
     ):
@@ -292,7 +291,7 @@ async def test_legacy_hooks_keep_objective_scoring_async(
 ) -> None:
     scorer = scorer_type(substring="Paris")
     expectation = ScoringExpectation(objective="Find Paris", conditions=conditions)
-    with patch.object(scorer_type, "MATCHED_CONDITIONS", frozenset({MatchesObjective})):
+    with patch.object(scorer_type, "CONDITION_TYPE", MatchesObjective):
         [score] = await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
     assert score.get_value() is True
     assert score.scored_expectation == expectation

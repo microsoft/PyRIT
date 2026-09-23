@@ -83,8 +83,8 @@ async def test_typed_answer_supplies_judge_ground_truth_async(
         objective=objective,
         conditions=[AnswerMatches(correct_answer="Paris", correct_answer_index="B")],
     )
-    assert scorer.required_conditions() == frozenset({AnswerMatches})
-    assert scorer.matched_conditions() == frozenset({AnswerMatches})
+    assert scorer.condition_type is AnswerMatches
+    assert scorer.get_condition_types() == frozenset({AnswerMatches})
     Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=expectation)
     unvalidated = UnvalidatedScore(
         raw_score_value="true",
@@ -124,9 +124,9 @@ async def test_llm_question_answer_requires_answer_condition_async(
     with patch(
         "pyrit.score.true_false.self_ask_question_answer_scorer._run_llm_scoring_async", new_callable=AsyncMock
     ) as judge:
-        with pytest.raises(ValueError, match="Objective-only Q&A scoring is no longer supported"):
+        with pytest.raises(ValueError, match="requires one AnswerMatches condition"):
             await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
-        with pytest.raises(ValueError, match="requires an AnswerMatches condition"):
+        with pytest.raises(ValueError, match="requires one AnswerMatches condition"):
             await scorer._score_piece_with_expectation_async(
                 MessagePiece(role="assistant", original_value="Paris"), expectation=expectation
             )
@@ -137,13 +137,14 @@ def test_objective_validator_does_not_add_another_condition(mock_chat_target: Ma
     scorer = SelfAskQuestionAnswerScorer(
         chat_target=mock_chat_target, validator=ScorerPromptValidator(is_objective_required=True)
     )
-    assert scorer.matched_conditions() == scorer.required_conditions() == frozenset({AnswerMatches})
+    assert scorer.condition_type is AnswerMatches
+    assert scorer.get_condition_types() == frozenset({AnswerMatches})
 
 
 async def test_legacy_objective_argument_requires_answer_condition_async(mock_chat_target: MagicMock) -> None:
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
     mock_chat_target.send_prompt_async = AsyncMock()
-    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="Objective-only Q&A scoring"):
+    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="requires one AnswerMatches condition"):
         await scorer.score_async(
             Message.from_prompt(prompt="Paris", role="assistant"),
             objective="Capital of France? The answer is Paris.",
@@ -257,7 +258,7 @@ async def test_inferred_objective_is_context_not_ground_truth_async(
         return await scorer.score_async(response, expectation=expectation, infer_objective_from_request=True)
 
     if not has_answer:
-        with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="requires an AnswerMatches condition"):
+        with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="requires one AnswerMatches condition"):
             await score_async()
         mock_chat_target.send_prompt_async.assert_not_awaited()
         return
@@ -276,7 +277,7 @@ async def test_inferred_objective_is_context_not_ground_truth_async(
 
 async def test_missing_inferred_objective_still_fails_async(mock_chat_target: MagicMock) -> None:
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
-    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="requires an AnswerMatches condition"):
+    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="requires one AnswerMatches condition"):
         await scorer.score_async(
             Message.from_prompt(prompt="Paris", role="assistant"), infer_objective_from_request=True
         )

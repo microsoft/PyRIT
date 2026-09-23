@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 
 from pyrit.models import (
     ComponentIdentifier,
-    Condition,
     ContentScorable,
     Message,
     MessagePiece,
@@ -38,28 +37,9 @@ class ConversationScorer(MessageScorer, ABC):
         enforce_all_pieces_valid=False,
     )
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the conditions matched by the wrapped scorer.
-
-        Returns:
-            frozenset[type[Condition]]: The matched condition types.
-        """
-        return self._get_wrapped_scorer().matched_conditions()
-
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the conditions required by the wrapped scorer.
-
-        Returns:
-            frozenset[type[Condition]]: The required condition types.
-        """
-        return self._get_wrapped_scorer().required_conditions()
-
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        """Validate wrapper and child criteria without checking sibling condition coverage."""
-        super()._validate_expectation(expectation=expectation)
-        self._get_wrapped_scorer()._validate_expectation(expectation=expectation)
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the scorer that evaluates the conversation text."""
+        return (self._get_wrapped_scorer(),)
 
     def _build_scoring_message(self, *, message: Message) -> Message | None:
         """

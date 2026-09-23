@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 
 from pyrit.models import (
     ComponentIdentifier,
-    Condition,
     Scorable,
     ScorableUnion,
     Score,
@@ -20,6 +19,7 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.score.observation.execution import _merge_observation_ids
+from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -90,35 +90,9 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 return target
         return None
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the union of what the constituent scorers match.
-
-        Returns:
-            frozenset[type[Condition]]: The condition types this composite routes.
-        """
-        conditions: set[type[Condition]] = set()
-        for scorer in self._scorers:
-            conditions.update(scorer.matched_conditions())
-        return frozenset(conditions)
-
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the union of conditions required by the constituent scorers.
-
-        Returns:
-            frozenset[type[Condition]]: The required condition types.
-        """
-        conditions: set[type[Condition]] = set()
-        for scorer in self._scorers:
-            conditions.update(scorer.required_conditions())
-        return frozenset(conditions)
-
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        """Validate every child before any runs, leaving coverage to the root scorer group."""
-        super()._validate_expectation(expectation=expectation)
-        for scorer in self._scorers:
-            scorer._validate_expectation(expectation=expectation)
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the scorers whose verdicts are combined."""
+        return tuple(self._scorers)
 
     async def _score_scorable_async(
         self,

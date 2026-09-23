@@ -7,7 +7,7 @@ import abc
 import asyncio
 import logging
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 #: Release in which the message-shaped ``score_async`` parameters are removed.
 LEGACY_SCORE_ASYNC_REMOVED_IN = "2.0.0"
+ConditionT = TypeVar("ConditionT", bound=Condition)
 
 
 async def _legacy_score_scorable_async(
@@ -159,27 +160,38 @@ class Scorer(Identifiable, abc.ABC):
     #: validate it.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
-    #: Condition types this scorer can use as its criterion. Wrapping scorers report their
-    #: children's union so group validation can reject conditions that reach no configured leaf.
-    MATCHED_CONDITIONS: ClassVar[frozenset[type[Condition]]] = frozenset()
-
-    #: Matched condition types that this scorer cannot operate without. The empty-condition
-    #: legacy path remains valid during the transition to typed expectations.
-    REQUIRED_CONDITIONS: ClassVar[frozenset[type[Condition]]] = frozenset()
+    #: The single required criterion for a leaf, or None for constructor-configured scoring.
+    #: Wrappers expose their children instead of declaring their own criterion.
+    CONDITION_TYPE: ClassVar[type[Condition] | None] = None
 
     _identifier: ComponentIdentifier | None = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
-        Enforce the keyword-only constructor contract on subclasses.
+        Enforce keyword-only constructors and singular leaf condition declarations.
 
         See ``.github/instructions/scorers.instructions.md`` for the contract.
+
+        Raises:
+            TypeError: If a subclass declares invalid or independently derived condition capabilities.
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
         from pyrit.common.brick_contract import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Scorer")
+        if any(
+            name in cls.__dict__
+            for name in ("MATCHED_CONDITIONS", "REQUIRED_CONDITIONS", "matched_conditions", "required_conditions")
+        ):
+            raise TypeError(f"{cls.__name__} must declare one CONDITION_TYPE, not condition sets.")
+        if any(name in cls.__dict__ for name in ("condition_type", "get_condition_types")):
+            raise TypeError(f"{cls.__name__} cannot override derived condition capabilities.")
+        cls._check_condition_type(cls.CONDITION_TYPE)
+        if cls.CONDITION_TYPE is not None and any(
+            "_get_child_scorers" in base.__dict__ for base in cls.__mro__ if base is not Scorer
+        ):
+            raise TypeError(f"{cls.__name__} wraps scorers and cannot declare its own CONDITION_TYPE.")
         _adapt_legacy_message_scorer(cls)
 
     def __init__(
@@ -208,23 +220,88 @@ class Scorer(Identifiable, abc.ABC):
         if chat_target is not None:
             type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
+    @property
+    @final
+    def condition_type(self) -> type[Condition] | None:
         """
-        Return the condition types this scorer can use as its criterion.
+        The leaf's required condition type, or None for a wrapper or configured criterion.
+
+        Raises:
+            TypeError: If a wrapper declares its own condition type.
+        """
+        condition_type = self._get_condition_type()
+        self._check_condition_type(condition_type)
+        if condition_type is not None and self._get_child_scorers():
+            raise TypeError(f"{type(self).__name__} wraps scorers and cannot declare its own condition type.")
+        return condition_type
+
+    def _get_condition_type(self) -> type[Condition] | None:
+        """Return the leaf declaration, or its instance-specific equivalent."""
+        return self.CONDITION_TYPE
+
+    @staticmethod
+    def _check_condition_type(value: object) -> None:
+        """
+        Enforce a singular, concrete declaration.
+
+        Raises:
+            TypeError: If the declaration is not one specific Condition type or None.
+        """
+        if value is not None and (
+            not isinstance(value, type) or not issubclass(value, Condition) or value is Condition
+        ):
+            raise TypeError("CONDITION_TYPE must be one specific Condition subclass or None.")
+
+    @final
+    def get_condition_types(self) -> frozenset[type[Condition]]:
+        """
+        Derive condition coverage from the scorer tree, not a separate declaration.
 
         Returns:
-            frozenset[type[Condition]]: The matched condition types.
+            frozenset[type[Condition]]: The union of the leaves' condition types.
         """
-        return type(self).MATCHED_CONDITIONS
+        condition_type = self.condition_type
+        children = self._get_child_scorers()
+        if children:
+            return frozenset(condition_type for child in children for condition_type in child.get_condition_types())
+        return frozenset({condition_type}) if condition_type is not None else frozenset[type[Condition]]()
 
-    def required_conditions(self) -> frozenset[type[Condition]]:
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the wrapped scorers, or an empty tuple for a leaf."""
+        return ()
+
+    def _get_required_condition(
+        self, *, expectation: ScoringExpectation | None, condition_type: type[ConditionT]
+    ) -> ConditionT:
         """
-        Return the matched condition types this scorer requires.
+        Retrieve exactly one condition of the requested type.
 
         Returns:
-            frozenset[type[Condition]]: The required condition types.
+            ConditionT: The criterion used by this leaf.
+
+        Raises:
+            TypeError: If the expectation is invalid or the requested type is not this leaf's criterion.
+            ValueError: If the condition is missing or duplicated.
         """
-        return type(self).REQUIRED_CONDITIONS
+        ScoringExpectation.validate_type(expectation)
+        if condition_type is not self.condition_type:
+            raise TypeError(f"{type(self).__name__} can only retrieve its declared condition type.")
+        matches = [
+            condition
+            for condition in (expectation.conditions if expectation else ())
+            if isinstance(condition, condition_type)
+        ]
+        if not matches:
+            raise ValueError(
+                f"{type(self).__name__} requires one {condition_type.__name__} condition. "
+                f"Supply it in ScoringExpectation.conditions; objective text alone does not supply this criterion."
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"{type(self).__name__} received {len(matches)} {condition_type.__name__} conditions. "
+                "A leaf scorer requires exactly one condition of its declared type."
+            )
+        return matches[0]
 
     def _validate_legacy_hook_expectation(self, *, expectation: ScoringExpectation | None, replacement: str) -> None:
         """
@@ -235,7 +312,7 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             TypeError: If the hook cannot receive a matched non-objective condition.
         """
-        matched = tuple(self.matched_conditions())
+        matched = tuple(self.get_condition_types())
         if expectation is not None and any(
             isinstance(condition, matched) and not isinstance(condition, MatchesObjective)
             for condition in expectation.conditions
@@ -501,7 +578,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         ScoringExpectation.validate_type(expectation)
         if expectation is not None and expectation.conditions:
-            matched = tuple({condition_type for scorer in scorers for condition_type in scorer.matched_conditions()})
+            matched = tuple({condition_type for scorer in scorers for condition_type in scorer.get_condition_types()})
             unmatched = [condition for condition in expectation.conditions if not isinstance(condition, matched)]
             if unmatched:
                 names = ", ".join(sorted({type(condition).__name__ for condition in unmatched}))
@@ -526,26 +603,11 @@ class Scorer(Identifiable, abc.ABC):
                 the same matched type is present.
         """
         ScoringExpectation.validate_type(expectation)
-        if expectation is None or not expectation.conditions:
-            return
-
-        matched = self.matched_conditions()
-        for condition_type in matched:
-            matches = [condition for condition in expectation.conditions if isinstance(condition, condition_type)]
-            if len(matches) > 1:
-                raise ValueError(
-                    f"{type(self).__name__} received {len(matches)} {condition_type.__name__} conditions. "
-                    "A scorer matches at most one condition of a given type."
-                )
-
-        missing = [
-            condition_type
-            for condition_type in self.required_conditions()
-            if not any(isinstance(condition, condition_type) for condition in expectation.conditions)
-        ]
-        if missing:
-            names = ", ".join(sorted(condition_type.__name__ for condition_type in missing))
-            raise ValueError(f"{type(self).__name__} requires the condition(s) {names}.")
+        for child in self._get_child_scorers():
+            child._validate_expectation(expectation=expectation)
+        condition_type = self.condition_type
+        if condition_type is not None:
+            self._get_required_condition(expectation=expectation, condition_type=condition_type)
 
     async def _validate_and_persist_scores_async(
         self,
