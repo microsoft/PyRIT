@@ -276,6 +276,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   supports caller-owned, in-process capture, not a remote collector or durable store.
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.
+- Scorer groups check that all conditions have a matching scorer. A leaf consumes its declared
+  conditions and may ignore conditions owned by siblings. Typed message scorers receive criteria
+  through `_score_piece_with_expectation_async`; old objective-only hooks must not discard
+  conditions they claim to match. Subclasses of a migrated scorer must use its typed hook.
 - `score_observation_async` coordinates replay of stored evidence without calling the target. Scorer target response replay owns the checks for the exact original expectation, scorer configuration, and response-handler contract; evidence resolution checks that scored evidence and response content are unchanged.
 - Tool-event observations can be matched against new tool-name expectations
   without querying the trace client again. This does not relax scorer target response replay rules.

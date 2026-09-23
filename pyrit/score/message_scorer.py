@@ -270,7 +270,24 @@ class MessageScorer(Scorer):
             validator (ScorerPromptValidator): Validator for message pieces.
             chat_target (PromptTarget | None): Optional target used by the scorer.
             message_resolver (MessageScorableResolver | None): Evidence resolver.
+
+        Raises:
+            TypeError: If a legacy piece override would be hidden by an inherited typed hook.
         """
+        typed_hook_owner = next(
+            cls for cls in type(self).__mro__ if "_score_piece_with_expectation_async" in cls.__dict__
+        )
+        if typed_hook_owner is not MessageScorer:
+            hook_owner = next(
+                cls
+                for cls in type(self).__mro__
+                if "_score_piece_async" in cls.__dict__ or "_score_piece_with_expectation_async" in cls.__dict__
+            )
+            if "_score_piece_with_expectation_async" not in hook_owner.__dict__:
+                raise TypeError(
+                    f"{type(self).__name__} overrides _score_piece_async below an expectation-aware scorer. "
+                    "Move the custom policy to _score_piece_with_expectation_async."
+                )
         self._validator = validator
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
@@ -1039,12 +1056,9 @@ class MessageScorer(Scorer):
             TypeError: If a legacy aggregation override cannot receive typed criteria.
         """
         if "expectation" not in inspect.signature(self._score_async).parameters:
-            if expectation is not None and any(
-                not isinstance(condition, MatchesObjective) for condition in expectation.conditions
-            ):
-                raise TypeError(
-                    f"{type(self).__name__}._score_async must accept and forward expectation to score typed conditions."
-                )
+            self._validate_legacy_hook_expectation(
+                expectation=expectation, replacement="_score_async(..., expectation=...)"
+            )
             return await self._score_async(message, objective=expectation.objective if expectation else None)
         return await self._score_async(
             message,
@@ -1189,7 +1203,13 @@ class MessageScorer(Scorer):
 
         Returns:
             list[Score]: The legacy leaf's scores.
+
+        Raises:
+            TypeError: If the legacy hook would discard criteria this scorer claims to match.
         """
+        self._validate_legacy_hook_expectation(
+            expectation=expectation, replacement="_score_piece_with_expectation_async"
+        )
         return await self._score_piece_async(
             message_piece=message_piece,
             objective=expectation.objective if expectation else None,

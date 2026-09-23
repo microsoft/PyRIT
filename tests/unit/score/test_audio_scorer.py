@@ -9,9 +9,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from unit.mocks import get_mock_scorer_identifier
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import AnswerMatches, ComponentIdentifier, MessagePiece, Score, ScoringExpectation
+from pyrit.score import QuestionAnswerScorer
 from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
+from pyrit.score.observation.execution import _scoring_expectation_context
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
@@ -116,6 +118,23 @@ class TestAudioTrueFalseScorer:
 
         assert isinstance(identifier, ComponentIdentifier)
 
+    async def test_typed_transcript_criteria_are_explicit_async(self, audio_message_piece: MessagePiece) -> None:
+        scorer = AudioTrueFalseScorer(text_capable_scorer=QuestionAnswerScorer())
+        expectation = ScoringExpectation(conditions=(AnswerMatches(correct_answer="Paris"),))
+        unrelated = ScoringExpectation(conditions=(AnswerMatches(correct_answer="London"),))
+        with (
+            patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
+            patch.object(
+                scorer._audio_helper.text_scorer,
+                "_score_nested_async",
+                wraps=scorer._audio_helper.text_scorer._score_nested_async,
+            ) as child,
+            _scoring_expectation_context(unrelated),
+        ):
+            [score] = await scorer._score_async(audio_message_piece.to_message(), expectation=expectation)
+        assert score.get_value() is True
+        assert child.call_args.kwargs["expectation"] is expectation
+
     async def test_score_piece_with_transcript(self, audio_message_piece):
         """Test scoring audio with a valid transcript"""
         text_scorer = MockTextTrueFalseScorer(return_value=True)
@@ -127,7 +146,7 @@ class TestAudioTrueFalseScorer:
         ) as mock_transcribe:
             mock_transcribe.return_value = "Hello, this is a test transcript."
 
-            scores = await audio_scorer._score_piece_async(audio_message_piece)
+            scores = await audio_scorer._score_piece_with_expectation_async(audio_message_piece, expectation=None)
 
             assert len(scores) == 1
             assert scores[0].score_type == "true_false"
@@ -145,7 +164,7 @@ class TestAudioTrueFalseScorer:
         ) as mock_transcribe:
             mock_transcribe.return_value = ""
 
-            scores = await audio_scorer._score_piece_async(audio_message_piece)
+            scores = await audio_scorer._score_piece_with_expectation_async(audio_message_piece, expectation=None)
 
             # Empty transcript returns empty list
             assert len(scores) == 0
@@ -161,7 +180,7 @@ class TestAudioTrueFalseScorer:
         ) as mock_transcribe:
             mock_transcribe.return_value = "Some transcript text"
 
-            scores = await audio_scorer._score_piece_async(audio_message_piece)
+            scores = await audio_scorer._score_piece_with_expectation_async(audio_message_piece, expectation=None)
 
             assert len(scores) == 1
             assert scores[0].score_type == "true_false"
@@ -199,7 +218,7 @@ class TestAudioFloatScaleScorer:
         ) as mock_transcribe:
             mock_transcribe.return_value = "Hello, this is a test transcript."
 
-            scores = await audio_scorer._score_piece_async(audio_message_piece)
+            scores = await audio_scorer._score_piece_with_expectation_async(audio_message_piece, expectation=None)
 
             assert len(scores) == 1
             assert scores[0].score_type == "float_scale"
@@ -217,10 +236,25 @@ class TestAudioFloatScaleScorer:
         ) as mock_transcribe:
             mock_transcribe.return_value = ""
 
-            scores = await audio_scorer._score_piece_async(audio_message_piece)
+            scores = await audio_scorer._score_piece_with_expectation_async(audio_message_piece, expectation=None)
 
             # Empty transcript returns empty list
             assert len(scores) == 0
+
+    async def test_typed_criteria_forwarded_to_float_child_async(self, audio_message_piece: MessagePiece) -> None:
+        text_scorer = MockTextFloatScaleScorer()
+        scorer = AudioFloatScaleScorer(text_capable_scorer=text_scorer)
+        expectation = ScoringExpectation(conditions=(AnswerMatches(correct_answer="Paris"),))
+        child_scores = await text_scorer._score_piece_async(MessagePiece(role="assistant", original_value="Paris"))
+        with (
+            patch.object(text_scorer, "matched_conditions", return_value=frozenset({AnswerMatches})),
+            patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
+            patch.object(text_scorer, "_score_nested_async", return_value=child_scores) as child,
+            _scoring_expectation_context(ScoringExpectation(objective="unrelated")),
+        ):
+            [score] = await scorer._score_async(audio_message_piece.to_message(), expectation=expectation)
+        assert score.get_value() == 0.8
+        assert child.call_args.kwargs["expectation"] is expectation
 
 
 @pytest.mark.usefixtures("patch_central_database")

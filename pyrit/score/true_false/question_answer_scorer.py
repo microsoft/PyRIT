@@ -7,7 +7,6 @@ from string import Formatter
 from typing import TYPE_CHECKING
 
 from pyrit.models import AnswerMatches, MessagePiece, Score, ScoringExpectation
-from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -84,11 +83,6 @@ class QuestionAnswerScorer(MessageTrueFalseScorer):
             ValueError: If a pattern names a field that AnswerMatches does not carry.
             TypeError: If a subclass still overrides the objective-only piece hook.
         """
-        if type(self)._score_piece_async is not MessageScorer._score_piece_async:
-            raise TypeError(
-                f"{type(self).__name__} overrides _score_piece_async, which QuestionAnswerScorer no longer calls. "
-                "Move the custom policy to _score_piece_with_expectation_async."
-            )
         unknown = {name for pattern in correct_answer_matching_patterns for name in _pattern_fields(pattern)} - (
             _ANSWER_PATTERN_FIELDS
         )

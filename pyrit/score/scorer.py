@@ -18,6 +18,7 @@ from pyrit.models import (
     Condition,
     ContentScorable,
     Identifiable,
+    MatchesObjective,
     Message,
     MessageScorable,
     Observation,
@@ -78,6 +79,9 @@ async def _legacy_score_scorable_async(
         old_item=f"{type(self).__name__}._score_async on a scorer without a MessageScorer base",
         new_item="pyrit.score.MessageScorer (or MessageTrueFalseScorer / MessageFloatScaleScorer) as the base class",
         removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
+    )
+    self._validate_legacy_hook_expectation(
+        expectation=expectation, replacement="a MessageScorer expectation-aware hook"
     )
     resolver = getattr(self, "_message_resolver", None) or MessageScorableResolver()
     message = resolver.resolve(scorable=scorable, memory=self._memory)
@@ -221,6 +225,25 @@ class Scorer(Identifiable, abc.ABC):
             frozenset[type[Condition]]: The required condition types.
         """
         return type(self).REQUIRED_CONDITIONS
+
+    def _validate_legacy_hook_expectation(self, *, expectation: ScoringExpectation | None, replacement: str) -> None:
+        """
+        Reject criteria a legacy hook claims to match but cannot receive.
+
+        Conditions owned by sibling scorers do not require this hook to migrate.
+
+        Raises:
+            TypeError: If the hook cannot receive a matched non-objective condition.
+        """
+        matched = tuple(self.matched_conditions())
+        if expectation is not None and any(
+            isinstance(condition, matched) and not isinstance(condition, MatchesObjective)
+            for condition in expectation.conditions
+        ):
+            raise TypeError(
+                f"{type(self).__name__} must accept and forward expectation for its matched typed conditions. "
+                f"Implement {replacement}."
+            )
 
     def get_chat_target(self) -> PromptTarget | None:
         """

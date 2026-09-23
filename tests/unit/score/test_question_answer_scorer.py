@@ -250,6 +250,54 @@ async def test_legacy_aggregation_override_cannot_drop_typed_criteria_async(expe
         await LegacyAggregationScorer().score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
 
 
+class _LegacyMessageSubstringScorer(SubStringScorer):
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+        return await self._score_piece_async(message.get_piece(), objective=objective)
+
+
+@pytest.mark.parametrize("scorer_type", [SubStringScorer, _LegacyMessageSubstringScorer])
+async def test_legacy_hooks_reject_their_own_typed_criteria_async(
+    scorer_type: type[SubStringScorer], expectation: ScoringExpectation
+) -> None:
+    scorer = scorer_type(substring="Paris")
+    with (
+        patch.object(scorer_type, "MATCHED_CONDITIONS", frozenset({AnswerMatches})),
+        patch.object(scorer, "_score_piece_async", new_callable=AsyncMock) as leaf,
+        pytest.raises(RuntimeError, match="matched typed conditions"),
+    ):
+        await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+    leaf.assert_not_awaited()
+
+
+@pytest.mark.parametrize("scorer_type", [SubStringScorer, _LegacyMessageSubstringScorer])
+async def test_legacy_hooks_ignore_sibling_criteria_async(
+    scorer_type: type[SubStringScorer], expectation: ScoringExpectation
+) -> None:
+    legacy = scorer_type(substring="Paris")
+    composite = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[QuestionAnswerScorer(), legacy],
+    )
+    with patch.object(legacy, "_score_piece_async", wraps=legacy._score_piece_async) as leaf:
+        [score] = await composite.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+    leaf.assert_awaited_once()
+    assert score.get_value() is True
+    assert score.scored_expectation == expectation
+
+
+@pytest.mark.parametrize("scorer_type", [SubStringScorer, _LegacyMessageSubstringScorer])
+@pytest.mark.parametrize("conditions", [(), (MatchesObjective(),)])
+async def test_legacy_hooks_keep_objective_scoring_async(
+    scorer_type: type[SubStringScorer], conditions: tuple[MatchesObjective, ...]
+) -> None:
+    scorer = scorer_type(substring="Paris")
+    expectation = ScoringExpectation(objective="Find Paris", conditions=conditions)
+    with patch.object(scorer_type, "MATCHED_CONDITIONS", frozenset({MatchesObjective})):
+        [score] = await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+    assert score.get_value() is True
+    assert score.scored_expectation == expectation
+
+
 async def test_question_answer_preserves_role_filter_async(expectation: ScoringExpectation) -> None:
     scorer = QuestionAnswerScorer(
         validator=ScorerPromptValidator(supported_data_types=["text"], supported_roles=["assistant"])

@@ -27,7 +27,6 @@ from pyrit.models import (
     ScoringExpectation,
     SeedDataset,
 )
-from pyrit.score.observation.execution import _get_current_scoring_expectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -146,8 +145,9 @@ class DivergenceScorer(MessageTrueFalseScorer):
         if expectation is None or not expectation.conditions:
             raise ValueError("DivergenceScorer requires one DivergesFromRepetition condition.")
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        expectation = _get_current_scoring_expectation()
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         self._validate_expectation(expectation=expectation)
         assert expectation is not None
         condition = next(item for item in expectation.conditions if isinstance(item, DivergesFromRepetition))

@@ -151,19 +151,24 @@ class VideoFloatScaleScorer(
         if self.audio_scorer is not None:
             self.audio_scorer._validate_expectation(expectation=expectation)
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score a single video piece by extracting frames and optionally audio, then aggregating their scores.
 
         Args:
             message_piece: The message piece containing the video.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the frame and audio scorers.
 
         Returns:
             List of aggregated scores for the video. Returns one score if using FloatScaleScoreAggregator,
             or multiple scores (one per category) if using FloatScaleScorerByCategory.
         """
-        frame_scores = await self._video_helper._score_frames_async(message_piece=message_piece, objective=objective)
+        objective = expectation.objective if expectation else None
+        frame_scores = await self._video_helper._score_frames_async(
+            message_piece=message_piece, expectation=expectation
+        )
 
         all_scores = list(frame_scores)
         audio_scored = False
@@ -171,7 +176,7 @@ class VideoFloatScaleScorer(
         # Score audio if audio_scorer is provided
         if self.audio_scorer:
             audio_scores = await self._video_helper._score_video_audio_async(
-                message_piece=message_piece, audio_scorer=self.audio_scorer, objective=objective
+                message_piece=message_piece, audio_scorer=self.audio_scorer, expectation=expectation
             )
             if audio_scores:
                 all_scores.extend(audio_scores)

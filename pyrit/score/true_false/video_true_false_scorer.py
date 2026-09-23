@@ -128,7 +128,9 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
         if self.audio_scorer is not None:
             self.audio_scorer._validate_expectation(expectation=expectation)
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score a single video piece by extracting frames and optionally audio, then aggregating their scores.
 
@@ -138,15 +140,18 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
 
         Args:
             message_piece: The message piece containing the video.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the frame and audio scorers.
 
         Returns:
             List containing a single aggregated score for the video.
         """
+        objective = expectation.objective if expectation else None
         piece_id = message_piece.id
 
         # Get scores for all frames and aggregate with OR (True if ANY frame matches)
-        frame_scores = await self._video_helper._score_frames_async(message_piece=message_piece, objective=objective)
+        frame_scores = await self._video_helper._score_frames_async(
+            message_piece=message_piece, expectation=expectation
+        )
         frame_result = TrueFalseScoreAggregator.OR(frame_scores)
 
         # Create a Score from the frame aggregation result
@@ -166,7 +171,7 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
         # Score audio if audio_scorer is provided
         if self.audio_scorer:
             audio_scores = await self._video_helper._score_video_audio_async(
-                message_piece=message_piece, audio_scorer=self.audio_scorer, objective=objective
+                message_piece=message_piece, audio_scorer=self.audio_scorer, expectation=expectation
             )
             if audio_scores:
                 # AND: both frame and audio must be true

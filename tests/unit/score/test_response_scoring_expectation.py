@@ -71,13 +71,15 @@ class _MessageRecordingScorer(MessageTrueFalseScorer):
         self.expectations.append(expectation)
         return await super()._score_prepared_message_async(message=message, expectation=expectation)
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         return [
             Score(
                 score_value="true",
                 score_type="true_false",
                 message_piece_id=message_piece.id,
-                objective=objective,
+                scored_expectation=expectation,
                 scorer_class_identifier=self.get_identifier(),
             )
         ]
@@ -518,11 +520,22 @@ class TestGenericScoringGroup:
             )
 
 
-class _FirstJudgmentScorer(SelfAskTrueFalseScorer):
+class _ConditionJudgmentScorer(SelfAskTrueFalseScorer):
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        assert expectation is not None
+        condition = next(
+            condition for condition in expectation.conditions if isinstance(condition, tuple(self.MATCHED_CONDITIONS))
+        )
+        return await self._score_piece_async(message_piece, objective=str(condition.model_dump()))
+
+
+class _FirstJudgmentScorer(_ConditionJudgmentScorer):
     MATCHED_CONDITIONS = frozenset({_FirstCondition})
 
 
-class _SecondJudgmentScorer(SelfAskTrueFalseScorer):
+class _SecondJudgmentScorer(_ConditionJudgmentScorer):
     MATCHED_CONDITIONS = frozenset({_SecondCondition})
 
 

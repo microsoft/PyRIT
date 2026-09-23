@@ -83,6 +83,13 @@ class _SiblingScorer(_ObjectiveTrueFalseScorer):
     MATCHED_CONDITIONS = frozenset({_SiblingCondition})
     REQUIRED_CONDITIONS = MATCHED_CONDITIONS
 
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        assert expectation is not None
+        assert any(isinstance(condition, _SiblingCondition) for condition in expectation.conditions)
+        return await self._score_piece_async(message_piece, objective=expectation.objective)
+
 
 @pytest.fixture(params=["inverter", "threshold"])
 def outcome_pair(request: pytest.FixtureRequest) -> tuple[TrueFalseScorer, MessageScorer]:

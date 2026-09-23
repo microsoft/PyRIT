@@ -10,7 +10,7 @@ from pathlib import Path
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, MessageScorable, Score, ScoringExpectation
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
-from pyrit.score.observation.execution import _get_current_scoring_expectation, _suppress_observation_collection
+from pyrit.score.observation.execution import _suppress_observation_collection
 from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)
@@ -95,13 +95,15 @@ class VideoHelper:
                 f"Supported types: {scorer._validator._supported_data_types}"
             )
 
-    async def _score_frames_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
+    async def _score_frames_async(
+        self, *, message_piece: MessagePiece, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Extract frames from video and score them.
 
         Args:
             message_piece: The message piece containing the video.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the frame scorer, with the objective template applied.
 
         Returns:
             List of scores for the extracted frames.
@@ -110,6 +112,7 @@ class VideoHelper:
             FileNotFoundError: If the video file does not exist.
             ValueError: If no frames are extracted from the video or if no scores are returned for the frames.
         """
+        objective = expectation.objective if expectation else None
         video_path = message_piece.converted_value
 
         if not Path(video_path).exists():
@@ -152,11 +155,10 @@ class VideoHelper:
             formatted_objective = self.image_objective_template.format(objective=objective)
             scoring_objectives = [formatted_objective] * len(image_requests)
 
-        effective_expectation = _get_current_scoring_expectation()
         frame_expectations = [
             (
-                effective_expectation.model_copy(update={"objective": scoring_objective})
-                if effective_expectation is not None
+                expectation.model_copy(update={"objective": scoring_objective})
+                if expectation is not None
                 else ScoringExpectation(objective=scoring_objective)
             )
             for scoring_objective in scoring_objectives
@@ -224,7 +226,7 @@ class VideoHelper:
         return frame_paths
 
     async def _score_video_audio_async(
-        self, *, message_piece: MessagePiece, audio_scorer: Scorer | None = None, objective: str | None = None
+        self, *, message_piece: MessagePiece, expectation: ScoringExpectation | None, audio_scorer: Scorer | None = None
     ) -> list[Score]:
         """
         Extract and score audio from the video.
@@ -232,7 +234,7 @@ class VideoHelper:
         Args:
             message_piece: The message piece containing the video.
             audio_scorer: The scorer to use for audio scoring.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the audio scorer, with the objective template applied.
 
         Returns:
             List of scores for the audio content, or empty list if audio extraction/scoring fails.
@@ -240,6 +242,7 @@ class VideoHelper:
         if audio_scorer is None:
             return []
 
+        objective = expectation.objective if expectation else None
         video_path = message_piece.converted_value
 
         # Use BaseAudioTranscriptScorer's static method to extract audio
@@ -279,11 +282,10 @@ class VideoHelper:
                 formatted_objective = self.audio_objective_template.format(objective=objective)
                 scoring_objectives = [formatted_objective]
 
-            effective_expectation = _get_current_scoring_expectation()
             audio_expectations = [
                 (
-                    effective_expectation.model_copy(update={"objective": scoring_objective})
-                    if effective_expectation is not None
+                    expectation.model_copy(update={"objective": scoring_objective})
+                    if expectation is not None
                     else ScoringExpectation(objective=scoring_objective)
                 )
                 for scoring_objective in scoring_objectives

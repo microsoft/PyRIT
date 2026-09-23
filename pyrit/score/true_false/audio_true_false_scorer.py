@@ -74,15 +74,17 @@ class AudioTrueFalseScorer(MessageTrueFalseScorer):
         super()._validate_expectation(expectation=expectation)
         self._audio_helper.text_scorer._validate_expectation(expectation=expectation)
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score an audio file by transcribing it and scoring the transcript.
 
         Args:
             message_piece: The message piece containing the audio file path.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the transcript scorer.
 
         Returns:
             List of scores from evaluating the transcribed audio.
         """
-        return await self._audio_helper._score_audio_async(message_piece=message_piece, objective=objective)
+        return await self._audio_helper._score_audio_async(message_piece=message_piece, expectation=expectation)
