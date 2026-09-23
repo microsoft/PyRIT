@@ -95,7 +95,7 @@ function renderApp(path = SCENARIO_PATH) {
 }
 
 function currentLabels(): HTMLElement {
-  return screen.getByRole('region', { name: 'New run labels' })
+  return screen.getByRole('region', { name: 'Default Labels' })
 }
 
 async function chooseOperation(user: ReturnType<typeof userEvent.setup>, operation: string): Promise<void> {

@@ -284,7 +284,10 @@ describe("MainLayout", () => {
     render(<ThemeProvider><Workspace /></ThemeProvider>);
     await screen.findByText("Co-PyRIT 1.0.0");
     const draft = screen.getByRole("textbox", { name: "Draft" });
-    const labels = screen.getByRole("region", { name: "New run labels" });
+    const labels = screen.getByRole("region", { name: "Default Labels" });
+    expect(screen.queryByText("New run labels")).not.toBeInTheDocument();
+    expect(screen.queryByText("Used for new attacks and scans. Existing runs keep their original labels."))
+      .not.toBeInTheDocument();
     await user.type(draft, "draft");
     expect(screen.queryByTestId("workspace-background")).not.toBeInTheDocument();
 
@@ -292,13 +295,13 @@ describe("MainLayout", () => {
     expect(screen.getByTestId("workspace-background")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByRole("textbox", { name: "Draft" })).toBe(draft);
     expect(draft).toHaveValue("draft");
-    expect(screen.getByRole("region", { name: "New run labels" })).toBe(labels);
+    expect(screen.getByRole("region", { name: "Default Labels" })).toBe(labels);
     expect(screen.getAllByTestId("labels-bar")).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: "Use Dark" }));
     expect(screen.queryByTestId("workspace-background")).not.toBeInTheDocument();
     expect(draft).toHaveValue("draft");
-    expect(screen.getByRole("region", { name: "New run labels" })).toBe(labels);
+    expect(screen.getByRole("region", { name: "Default Labels" })).toBe(labels);
     expect(screen.getAllByTestId("labels-bar")).toHaveLength(1);
   });
 });

@@ -26,7 +26,7 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
     {
       target: '[data-tour="labels-card"]',
       content:
-        'The New run labels bar stays available across views, including scanner setup. Set "operator", "operation", ' +
+        'The labels bar stays available across views, including scanner setup. Set "operator", "operation", ' +
         'and other labels here before starting an attack or scan. Existing runs keep their original labels.',
       placement: 'bottom',
       skipBeacon: true,

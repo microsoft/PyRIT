@@ -35,11 +35,11 @@ test.describe("Onboarding tour", () => {
     await dialog.getByRole("button", { name: "Back", exact: true }).click();
     await expect(page).toHaveURL(/\/$/);
     await expect(dialog).toContainText(
-      "The New run labels bar stays available across views, including scanner setup."
+      "The labels bar stays available across views, including scanner setup."
     );
     await expect(dialog).toContainText('Set "operator", "operation", and other labels here');
     await expect(dialog).toContainText("Existing runs keep their original labels.");
-    await expect(page.getByRole("region", { name: "New run labels" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Default Labels" })).toBeVisible();
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
     await page
