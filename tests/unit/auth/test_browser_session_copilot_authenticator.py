@@ -1165,6 +1165,114 @@ async def test_run_on_browser_thread_async_reuses_thread_and_loop() -> None:
     assert first_context[0] != threading.get_ident()
 
 
+@pytest.mark.parametrize("outcome", ["result", "cancelled", "error"])
+@pytest.mark.parametrize("request_cancellation", [False, True])
+async def test_await_completion_async_drains_repeated_cancellation(*, outcome: str, request_cancellation: bool) -> None:
+    completion: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    cancel = MagicMock()
+    cleanup_error = RuntimeError("cleanup failed")
+    caller = asyncio.create_task(
+        BrowserSessionCopilotAuthenticator._await_completion_async(
+            completion=completion,
+            cancel=cancel if request_cancellation else None,
+        )
+    )
+    try:
+        await asyncio.sleep(0)
+        for message in ("original cancellation", "repeated cancellation"):
+            caller.cancel(message)
+            await asyncio.sleep(0)
+            assert not caller.done()
+            assert not completion.done()
+
+        if outcome == "result":
+            completion.set_result("finished")
+        elif outcome == "cancelled":
+            completion.cancel()
+        else:
+            completion.set_exception(cleanup_error)
+
+        with pytest.raises(asyncio.CancelledError, match="original cancellation") as error:
+            await caller
+        assert error.value.__cause__ is (cleanup_error if outcome == "error" else None)
+        if request_cancellation:
+            cancel.assert_called_once()
+        else:
+            cancel.assert_not_called()
+    finally:
+        if not completion.done():
+            completion.set_result("released")
+        await asyncio.gather(caller, return_exceptions=True)
+
+
+# A missing cross-thread completion acknowledgement cannot be bounded by asyncio cancellation.
+@pytest.mark.timeout(30, method="thread")
+async def test_run_on_browser_thread_async_drains_cancelled_operation() -> None:
+    authenticator = BrowserSessionCopilotAuthenticator()
+    caller_loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    cleaning = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_finished = threading.Event()
+
+    async def operation_async() -> str:
+        caller_loop.call_soon_threadsafe(started.set)
+        try:
+            await asyncio.Future()
+            return "unused"
+        finally:
+            caller_loop.call_soon_threadsafe(cleaning.set)
+            await release_cleanup.wait()
+            cleanup_finished.set()
+
+    caller = asyncio.create_task(authenticator._run_on_browser_thread_async(operation=operation_async))
+    try:
+        await started.wait()
+        caller.cancel("original cancellation")
+        await cleaning.wait()
+        caller.cancel("repeated cancellation")
+        await asyncio.sleep(0)
+        assert not caller.done()
+        assert not cleanup_finished.is_set()
+
+        browser_loop = authenticator._browser_loop
+        assert browser_loop is not None
+        browser_loop.call_soon_threadsafe(release_cleanup.set)
+        with pytest.raises(asyncio.CancelledError, match="original cancellation"):
+            await caller
+        assert cleanup_finished.is_set()
+    finally:
+        browser_loop = authenticator._browser_loop
+        if browser_loop is not None:
+            browser_loop.call_soon_threadsafe(release_cleanup.set)
+        await asyncio.gather(caller, return_exceptions=True)
+        await authenticator.close_async()
+
+    assert authenticator._browser_loop is None
+    assert authenticator._browser_thread is None
+
+
+@pytest.mark.timeout(30, method="thread")
+async def test_run_on_browser_thread_async_closes_coroutine_when_scheduling_fails() -> None:
+    authenticator = BrowserSessionCopilotAuthenticator()
+    operation = AsyncMock()
+    scheduling_error = RuntimeError("task scheduling failed")
+    try:
+        await authenticator._ensure_browser_thread_started_async()
+        browser_loop = authenticator._browser_loop
+        assert browser_loop is not None
+        with patch.object(browser_loop, "create_task", side_effect=scheduling_error) as create_task:
+            with pytest.raises(RuntimeError, match="task scheduling failed") as error:
+                await authenticator._run_on_browser_thread_async(operation=operation)
+
+        assert error.value is scheduling_error
+        create_task.assert_called_once()
+        assert create_task.call_args.args[0].cr_frame is None
+        operation.assert_not_awaited()
+    finally:
+        await authenticator.close_async()
+
+
 async def test_close_async_closes_resources_on_browser_thread() -> None:
     authenticator = BrowserSessionCopilotAuthenticator()
     resources = MagicMock()
