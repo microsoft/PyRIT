@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 from pyrit.models import AtomicAttackIdentifier, AttackOutcome, AttackResult, ComponentIdentifier
+from pyrit.prompt_target import PromptTarget
 
 
 def make_attack_result(
@@ -60,7 +61,8 @@ def make_attack_result(
 
 def _make_matching_target_mock() -> MagicMock:
     """Create a mock target object whose get_identifier() matches make_attack_result's default target."""
-    mock_target = MagicMock()
+    mock_target = MagicMock(spec=PromptTarget)
+    mock_target._max_requests_per_minute = None
     mock_target.get_identifier.return_value = ComponentIdentifier(
         class_name="TextTarget",
         class_module="pyrit.prompt_target",

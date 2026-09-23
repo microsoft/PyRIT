@@ -5,12 +5,15 @@
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, cast
 
 from pyrit.backend.mappers import request_piece_to_pyrit_message_piece, request_to_pyrit_message
 from pyrit.backend.models.attacks import AddMessageRequest, ConverterConfigurationRequest
 from pyrit.backend.services.converter_service import get_converter_service
+from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler, get_manual_send_scheduler
 from pyrit.backend.services.media_persistence import persist_media_value_async
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.deprecation import print_deprecation_message
@@ -18,7 +21,6 @@ from pyrit.memory import CentralMemory, MemoryInterface, data_serializer_factory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
-    AttackResult,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     Conversation,
@@ -26,6 +28,7 @@ from pyrit.models import (
     PromptDataType,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +36,15 @@ logger = logging.getLogger(__name__)
 class MessageSendService:
     """Prepare manual messages and dispatch through the existing ``PromptNormalizer``."""
 
-    def __init__(self, *, memory: MemoryInterface | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        memory: MemoryInterface | None = None,
+        scheduler: ManualSendScheduler | None = None,
+    ) -> None:
         """Initialize the manual-message service with the application's memory."""
         self._memory = memory if memory is not None else CentralMemory.get_memory_instance()
+        self._scheduler = scheduler if scheduler is not None else get_manual_send_scheduler()
 
     async def add_message_async(self, *, attack_result_id: str, request: AddMessageRequest) -> None:
         """
@@ -44,14 +53,23 @@ class MessageSendService:
         Messages are stored in the database via PromptNormalizer.
         The ``request.target_conversation_id`` field specifies which conversation
         the messages are stored under (main conversation or a related one).
-
         """
-        results = self._memory.get_attack_results(attack_result_ids=[attack_result_id])
+        with self._scheduler.reserve(conversation_id=request.target_conversation_id):
+            await self._add_message_async(attack_result_id=attack_result_id, request=request)
+
+    async def _add_message_async(self, *, attack_result_id: str, request: AddMessageRequest) -> None:
+        results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
         if not results:
             raise ValueError(f"Attack '{attack_result_id}' not found")
 
         ar = results[0]
-        self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), request=request)
+        target_registry_name = request.target_registry_name
+        target = (
+            get_target_service().get_target_object(target_registry_name=target_registry_name)
+            if request.send and target_registry_name
+            else None
+        )
+        self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
 
         msg_conversation_id = request.target_conversation_id
 
@@ -59,7 +77,6 @@ class MessageSendService:
         if msg_conversation_id not in ar.get_active_conversation_ids():
             raise ValueError(f"Conversation '{msg_conversation_id}' is not part of attack '{attack_result_id}'")
 
-        target_registry_name = request.target_registry_name
         if request.send and not target_registry_name:
             raise ValueError("target_registry_name is required when send=True")
 
@@ -67,29 +84,50 @@ class MessageSendService:
         response_converter_configs = self._resolve_converter_configs(
             configurations=request.response_converter_configurations
         )
+        if request.send and target is None:
+            raise ValueError(f"Target object for '{target_registry_name}' not found")
+
+        exclusive = bool(
+            request_converter_configs or response_converter_configs or (target and target._max_requests_per_minute)
+        )
+        async with self._scheduler.operation_async(exclusive=exclusive):
+            await self._execute_message_async(
+                attack_result_id=attack_result_id,
+                request=request,
+                target=target,
+                request_converter_configurations=request_converter_configs,
+                response_converter_configurations=response_converter_configs,
+            )
+
+    async def _execute_message_async(
+        self,
+        *,
+        attack_result_id: str,
+        request: AddMessageRequest,
+        target: PromptTarget | None,
+        request_converter_configurations: list[ConverterConfiguration],
+        response_converter_configurations: list[ConverterConfiguration],
+    ) -> None:
+        msg_conversation_id = request.target_conversation_id
         preconverted_indexes = {
             index for index, piece in enumerate(request.pieces) if piece.converted_value is not None
         }
         last_response_id: str | None = None
 
-        # Get existing messages to determine sequence.
-        # NOTE: This read-then-write is not atomic (TOCTOU). Fine for the
-        # current single-user UI, but would need a DB-level sequence
-        # generator or optimistic locking if concurrent writes are supported.
-        existing = self._memory.get_message_pieces(conversation_id=msg_conversation_id)
+        existing = await asyncio.to_thread(self._memory.get_message_pieces, conversation_id=msg_conversation_id)
         sequence = max((p.sequence for p in existing), default=-1) + 1
 
         if request.send:
-            assert target_registry_name is not None  # validated above
+            assert target is not None  # validated before acquiring the execution slot
             prior_ids = {p.id for p in existing}
             try:
                 await self._send_and_store_message_async(
                     conversation_id=msg_conversation_id,
-                    target_registry_name=target_registry_name,
+                    target=target,
                     request=request,
                     sequence=sequence,
-                    request_converter_configurations=request_converter_configs,
-                    response_converter_configurations=response_converter_configs,
+                    request_converter_configurations=request_converter_configurations,
+                    response_converter_configurations=response_converter_configurations,
                     preconverted_indexes=preconverted_indexes,
                 )
             except Exception:
@@ -98,9 +136,11 @@ class MessageSendService:
                 # piece inline so the send (POST) response matches the
                 # conversation-reload (GET) view instead of collapsing to a
                 # generic 500. If no new error piece was stored (the failure
-                # happened before the send, e.g. target lookup), re-raise so the
+                # happened before the send, e.g. media preparation), re-raise so the
                 # route still reports a real error.
-                current_pieces = self._memory.get_message_pieces(conversation_id=msg_conversation_id)
+                current_pieces = await asyncio.to_thread(
+                    self._memory.get_message_pieces, conversation_id=msg_conversation_id
+                )
                 if not any(p.id not in prior_ids and p.has_error() for p in current_pieces):
                     raise
                 logger.exception(
@@ -118,7 +158,9 @@ class MessageSendService:
             )
             last_response_id = str(last_response.id) if last_response else None
         else:
-            existing_metadata = self._memory._get_conversation(conversation_id=msg_conversation_id)
+            existing_metadata = await asyncio.to_thread(
+                self._memory._get_conversation, conversation_id=msg_conversation_id
+            )
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
@@ -126,16 +168,18 @@ class MessageSendService:
                 target_identifier=existing_metadata.target_identifier if existing_metadata else None,
             )
 
-        await self._update_attack_after_message_async(
-            attack_result_id=attack_result_id,
-            ar=ar,
-            last_response_id=last_response_id,
-            request_converter_configurations=request_converter_configs,
-            response_converter_configurations=response_converter_configs,
+        await self._complete_memory_write_async(
+            partial(
+                self._update_attack_after_message,
+                attack_result_id=attack_result_id,
+                last_response_id=last_response_id,
+                request_converter_configurations=request_converter_configurations,
+                response_converter_configurations=response_converter_configurations,
+            )
         )
 
     def _validate_target_match(
-        self, *, attack_identifier: ComponentIdentifier | None, request: AddMessageRequest
+        self, *, attack_identifier: ComponentIdentifier | None, target: PromptTarget | None
     ) -> None:
         """
         Validate that the request target matches the attack's stored target.
@@ -143,19 +187,14 @@ class MessageSendService:
         Raises:
             ValueError: If the target in the request doesn't match the attack's target.
         """
-        if not request.send or not request.target_registry_name:
+        if target is None:
             return
 
         stored_target_id = attack_identifier.get_child("objective_target") if attack_identifier else None
         if not stored_target_id:
             return
 
-        target_service = get_target_service()
-        request_target_obj = target_service.get_target_object(target_registry_name=request.target_registry_name)
-        if not request_target_obj:
-            return
-
-        request_target_id = request_target_obj.get_identifier()
+        request_target_id = target.get_identifier()
         if stored_target_id.hash != request_target_id.hash:
             raise ValueError(
                 f"Target mismatch: attack was created with {stored_target_id.unique_name} "
@@ -163,11 +202,10 @@ class MessageSendService:
                 f"Create a new attack to use a different target."
             )
 
-    async def _update_attack_after_message_async(
+    def _update_attack_after_message(
         self,
         *,
         attack_result_id: str,
-        ar: AttackResult,
         last_response_id: str | None,
         request_converter_configurations: list[ConverterConfiguration],
         response_converter_configurations: list[ConverterConfiguration],
@@ -180,11 +218,18 @@ class MessageSendService:
 
         Args:
             attack_result_id: The attack result to update.
-            ar: The current attack result.
             last_response_id: The latest target response piece ID, if one was stored.
             request_converter_configurations: Resolved request converter configurations used for this message.
             response_converter_configurations: Resolved response converter configurations used for this message.
+
+        Raises:
+            ValueError: If the attack disappeared before its metadata could be updated.
         """
+        # Converter-bearing sends hold an exclusive slot through this read/merge/write.
+        results = self._memory.get_attack_results(attack_result_ids=[attack_result_id])
+        if not results:
+            raise ValueError(f"Attack '{attack_result_id}' not found after message send")
+        ar = results[0]
         update_fields: dict[str, Any] = {"timestamp": datetime.now(UTC)}
         if last_response_id:
             update_fields["last_response_id"] = last_response_id
@@ -360,7 +405,7 @@ class MessageSendService:
         self,
         *,
         conversation_id: str,
-        target_registry_name: str,
+        target: PromptTarget,
         request: AddMessageRequest,
         sequence: int,
         request_converter_configurations: list[ConverterConfiguration],
@@ -368,13 +413,9 @@ class MessageSendService:
         preconverted_indexes: set[int],
     ) -> None:
         """Send message to target via normalizer and store response."""
-        target_obj = get_target_service().get_target_object(target_registry_name=target_registry_name)
-        if not target_obj:
-            raise ValueError(f"Target object for '{target_registry_name}' not found")
-
         await self._persist_base64_pieces_async(request)
 
-        self._resolve_video_remix_metadata(request)
+        await asyncio.to_thread(self._resolve_video_remix_metadata, request)
 
         pyrit_message = request_to_pyrit_message(
             request=request,
@@ -391,7 +432,7 @@ class MessageSendService:
         normalizer = PromptNormalizer()
         await normalizer.send_prompt_async(
             message=pyrit_message,
-            target=target_obj,
+            target=target,
             conversation_id=conversation_id,
             request_converter_configurations=request_converter_configurations,
             response_converter_configurations=response_converter_configurations,
@@ -408,6 +449,24 @@ class MessageSendService:
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
+        await self._complete_memory_write_async(
+            partial(
+                self._store_message_only,
+                conversation_id=conversation_id,
+                request=request,
+                sequence=sequence,
+                target_identifier=target_identifier,
+            )
+        )
+
+    def _store_message_only(
+        self,
+        *,
+        conversation_id: str,
+        request: AddMessageRequest,
+        sequence: int,
+        target_identifier: ComponentIdentifier | None,
+    ) -> None:
         self._memory.add_conversation_to_memory(
             conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
         )
@@ -419,6 +478,20 @@ class MessageSendService:
                 sequence=sequence,
             )
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
+
+    @staticmethod
+    async def _complete_memory_write_async(write: Callable[[], None]) -> None:
+        """Keep ownership until an offloaded write finishes, even when the caller cancels."""
+        worker = asyncio.create_task(asyncio.to_thread(write))
+        cancelled = False
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                cancelled = True
+        worker.result()
+        if cancelled:
+            raise asyncio.CancelledError
 
     def _resolve_video_remix_metadata(self, request: AddMessageRequest) -> None:
         """

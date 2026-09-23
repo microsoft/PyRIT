@@ -1328,22 +1328,46 @@ class TestAddMessage:
             await attack_service.add_message_async(attack_result_id="attack", request=request)
         reader.assert_not_called()
 
-    async def test_add_message_send_false_without_registry_name_succeeds(self, attack_service, mock_memory) -> None:
+    @pytest.mark.parametrize("role", ["system", "user", "assistant", "simulated_assistant", "tool", "developer"])
+    async def test_add_message_send_false_without_registry_name_succeeds(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, role: ChatMessageRole
+    ) -> None:
         """Test that add_message with send=False does not require target_registry_name."""
         ar = make_attack_result(conversation_id="test-id")
         mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_message_pieces.return_value = [
+            MessagePiece(role="user", original_value="prior", conversation_id="test-id", sequence=3)
+        ]
         mock_memory.get_conversation_messages.return_value = []
+        target = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
+        mock_memory._get_conversation.return_value = Conversation(conversation_id="test-id", target_identifier=target)
+        original_id = uuid.uuid4()
 
         request = AddMessageRequest(
-            role="system",
-            pieces=[MessagePieceRequest(original_value="Hello")],
+            role=role,
+            pieces=[
+                MessagePieceRequest(original_value="Hello", original_prompt_id=str(original_id)),
+                MessagePieceRequest(original_value="World", converted_value="converted"),
+            ],
             target_conversation_id="test-id",
             send=False,
         )
 
-        result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
+        with patch("pyrit.backend.services.message_send_service.PromptNormalizer") as normalizer:
+            result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
+        normalizer.assert_not_called()
         assert result.attack is not None
+        assert result.messages.conversation_id == "test-id"
+        pieces = [
+            piece
+            for call in mock_memory.add_message_pieces_to_memory.call_args_list
+            for piece in call.kwargs["message_pieces"]
+        ]
+        assert [piece.original_value for piece in pieces] == ["Hello", "World"]
+        assert [piece.converted_value for piece in pieces] == ["Hello", "converted"]
+        assert all(piece.role == role and piece.sequence == 4 for piece in pieces)
+        assert pieces[0].original_prompt_id == original_id
+        assert mock_memory.add_conversation_to_memory.call_args.kwargs["conversation"].target_identifier == target
 
     async def test_add_message_surfaces_stored_error_piece_on_send_failure(self, attack_service, mock_memory) -> None:
         """When the normalizer stores an error piece then raises, the send returns that turn inline (no raise)."""
