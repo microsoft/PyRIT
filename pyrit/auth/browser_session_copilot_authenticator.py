@@ -147,24 +147,24 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
             return await self._capture_and_store_token_async()
 
     async def close_async(self) -> None:
-        """Discard authentication state and finish browser cleanup before propagating cancellation."""
+        """Discard authentication state and finish cleanup even if cancelled while waiting for token operations."""
+        await self._await_completion_async(
+            completion=asyncio.create_task(self._close_and_stop_browser_async()),
+        )
+
+    async def _close_and_stop_browser_async(self) -> None:
+        """Wait for active token operations, then discard state and close the browser."""
         async with self._token_fetch_lock:
             self._access_token = None
             self._claims = {}
-            await self._await_completion_async(
-                completion=asyncio.create_task(self._close_and_stop_browser_async()),
-            )
-
-    async def _close_and_stop_browser_async(self) -> None:
-        """Finish resource cleanup before stopping the owning browser thread."""
-        browser_loop = self._browser_loop
-        try:
-            if browser_loop is not None and browser_loop.is_running():
-                await self._run_on_browser_thread_async(operation=self._close_browser_resources_async)
-            else:
-                await self._close_browser_resources_async()
-        finally:
-            await self._stop_browser_thread_async()
+            browser_loop = self._browser_loop
+            try:
+                if browser_loop is not None and browser_loop.is_running():
+                    await self._run_on_browser_thread_async(operation=self._close_browser_resources_async)
+                else:
+                    await self._close_browser_resources_async()
+            finally:
+                await self._stop_browser_thread_async()
 
     async def get_claims_async(self) -> dict[str, Any]:
         """Return the claims extracted from the current token."""

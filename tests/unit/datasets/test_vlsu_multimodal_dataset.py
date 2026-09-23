@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import os
 import uuid
 from unittest.mock import patch
 
@@ -10,21 +11,20 @@ from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
     VLSUCategory,
     _VLSUMultimodalDataset,
 )
-from pyrit.memory import SQLiteMemory
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import SeedDataset
 
 
+@pytest.mark.usefixtures("sqlite_instance")
 class TestVLSUMultimodalDataset:
     """Unit tests for _VLSUMultimodalDataset."""
 
-    @pytest.fixture(autouse=True)
-    def setup_memory(self):
-        """Set up memory instance for image downloads."""
-        memory = SQLiteMemory()
-        CentralMemory.set_memory_instance(memory)
-        yield
-        CentralMemory.set_memory_instance(None)
+    def test_dataset_uses_isolated_memory_and_results_path(self):
+        """Prove per-test database and results-directory isolation."""
+        memory = CentralMemory.get_memory_instance()
+        assert memory.engine.url.database == ":memory:"
+        assert os.path.isabs(memory.results_path)
+        assert "results" not in os.path.basename(memory.results_path)
 
     def test_dataset_name(self):
         """Test that dataset_name property returns correct value."""
