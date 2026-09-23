@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { type MouseEvent, useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -23,12 +23,15 @@ import {
   ArrowRightRegular,
   ArrowSyncRegular,
   FilterDismissRegular,
+  PlayRegular,
   ScriptRegular,
 } from '@fluentui/react-icons'
 
+import { useScenarioQueue } from '@/hooks/useScenarioQueue'
+import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
 import { labelsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ScenarioRunListItem, ScenarioRunState } from '@/types'
+import type { ScenarioQueueSnapshot, ScenarioRunListItem, ScenarioRunState, ScenarioRunSummary } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import type { ViewName } from '../Sidebar/Navigation'
@@ -92,6 +95,8 @@ export default function ScenarioHistory({
   showTitle = true,
 }: ScenarioHistoryProps) {
   const styles = useScenarioHistoryStyles()
+  const queue = useScenarioQueue()
+  const lastQueueRevisionRef = useRef<number | null>(null)
   const [runs, setRuns] = useState<ScenarioRunListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -103,7 +108,7 @@ export default function ScenarioHistory({
   const [page, setPage] = useState(0)
   const [nextCursor, setNextCursor] = useState<string | undefined>()
   const [hasMore, setHasMore] = useState(false)
-  const [now, setNow] = useState(0)
+  const [now, setNow] = useState(() => Date.now())
   const filterKey = JSON.stringify([
     filters.scenarioNames,
     filters.statuses,
@@ -117,12 +122,26 @@ export default function ScenarioHistory({
     filterKey,
     nonce: 0,
   })
+  const queueRevision = queue.snapshot?.revision
 
   const requestPage = useCallback((cursor?: string) => {
     setLoading(true)
     setError(null)
     setFetchToken((previous) => ({ cursor, filterKey, nonce: previous.nonce + 1 }))
   }, [filterKey])
+  const resume = useScenarioRunResume({
+    onResumed: (resumedRun: ScenarioRunSummary): void => {
+      setRuns((current: ScenarioRunListItem[]) => current.map((run: ScenarioRunListItem) =>
+        run.scenario_result_id === resumedRun.scenario_result_id
+          ? { ...run, status: resumedRun.status, completed_at: resumedRun.completed_at }
+          : run,
+      ))
+    },
+    onRefresh: (): void => {
+      requestPage(fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined)
+      queue.retry()
+    },
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -208,6 +227,15 @@ export default function ScenarioHistory({
     filters.operation,
     filters.otherLabels,
   ])
+
+  useEffect(() => {
+    if (queueRevision === undefined) return
+    const previousRevision = lastQueueRevisionRef.current
+    lastQueueRevisionRef.current = queueRevision
+    if (previousRevision === null || previousRevision === queueRevision) return
+    const currentCursor = fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined
+    requestPage(currentCursor)
+  }, [fetchToken.cursor, fetchToken.filterKey, filterKey, queueRevision, requestPage])
 
   const setFilter = <K extends keyof ScenarioHistoryFilters>(
     key: K,
@@ -303,6 +331,11 @@ export default function ScenarioHistory({
             <MessageBarBody>{optionsError}</MessageBarBody>
           </MessageBar>
         )}
+        {(resume.error || resume.executionError) && (
+          <MessageBar intent="error">
+            <MessageBarBody>{resume.error || resume.executionError}</MessageBarBody>
+          </MessageBar>
+        )}
       </header>
 
       <div className={styles.content}>
@@ -326,7 +359,14 @@ export default function ScenarioHistory({
             )}
           </div>
         ) : (
-          <ScenarioHistoryTable runs={runs} onOpenRun={onOpenRun} now={now} />
+          <ScenarioHistoryTable
+            runs={runs}
+            queueSnapshot={queue.snapshot}
+            onOpenRun={onOpenRun}
+            onResume={resume.requestResume}
+            resumingRunId={resume.pendingRunId}
+            now={now}
+          />
         )}
       </div>
 
@@ -365,11 +405,16 @@ export default function ScenarioHistory({
 
 interface ScenarioHistoryTableProps {
   runs: ScenarioRunListItem[]
+  queueSnapshot: ScenarioQueueSnapshot | null
   onOpenRun: (scenarioResultId: string) => void
+  onResume: (scenarioResultId: string) => void
+  resumingRunId: string | null
   now: number
 }
 
-function ScenarioHistoryTable({ runs, onOpenRun, now }: ScenarioHistoryTableProps) {
+function ScenarioHistoryTable({
+  runs, queueSnapshot, onOpenRun, onResume, resumingRunId, now,
+}: ScenarioHistoryTableProps) {
   const styles = useScenarioHistoryStyles()
   return (
     <Table className={styles.table} aria-label="Scanner history" data-testid="scenario-history-table">
@@ -377,23 +422,26 @@ function ScenarioHistoryTable({ runs, onOpenRun, now }: ScenarioHistoryTableProp
         <TableRow>
           <TableHeaderCell>Scenario</TableHeaderCell>
           <TableHeaderCell>State</TableHeaderCell>
+          <TableHeaderCell>Operator</TableHeaderCell>
+          <TableHeaderCell>Operation</TableHeaderCell>
           <TableHeaderCell>Target</TableHeaderCell>
-          <TableHeaderCell>Created</TableHeaderCell>
-          <TableHeaderCell>Runtime</TableHeaderCell>
-          <TableHeaderCell>Attacks Complete</TableHeaderCell>
+          <TableHeaderCell>Timing</TableHeaderCell>
           <TableHeaderCell>Attack Success</TableHeaderCell>
           <TableHeaderCell>Errors / retries</TableHeaderCell>
           <TableHeaderCell>Labels</TableHeaderCell>
+          <TableHeaderCell>Actions</TableHeaderCell>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {runs.map((run) => (
-          <TableRow
-            key={run.scenario_result_id}
-            className={styles.clickableRow}
-            data-testid={`scenario-history-row-${run.scenario_result_id}`}
-            onClick={() => onOpenRun(run.scenario_result_id)}
-          >
+        {runs.map((run) => {
+          const attackProgress = formatAttackProgress(run, queueSnapshot)
+          return (
+            <TableRow
+              key={run.scenario_result_id}
+              className={styles.clickableRow}
+              data-testid={`scenario-history-row-${run.scenario_result_id}`}
+              onClick={() => onOpenRun(run.scenario_result_id)}
+            >
             <TableCell>
               <a
                 href={`/scanner-history/${run.scenario_result_id}`}
@@ -419,7 +467,16 @@ function ScenarioHistoryTable({ runs, onOpenRun, now }: ScenarioHistoryTableProp
                 </span>
               </a>
             </TableCell>
-            <TableCell><Badge appearance="outline">{formatState(run.status)}</Badge></TableCell>
+            <TableCell>
+              <div className={styles.stackedCell}>
+                <Badge appearance="outline">{formatHistoryState(run, queueSnapshot)}</Badge>
+                {attackProgress && (
+                  <Text size={200} className={styles.secondary}>{attackProgress}</Text>
+                )}
+              </div>
+            </TableCell>
+            <TableCell>{run.labels.operator ?? 'Unavailable'}</TableCell>
+            <TableCell>{run.labels.operation ?? 'Unavailable'}</TableCell>
             <TableCell>
               {run.target ? (
                 <Tooltip content={run.target.endpoint ?? run.target.target_type} relationship="label">
@@ -432,14 +489,11 @@ function ScenarioHistoryTable({ runs, onOpenRun, now }: ScenarioHistoryTableProp
                 </Tooltip>
               ) : 'Unavailable'}
             </TableCell>
-            <TableCell className={styles.nowrap}>{formatTimestamp(run.created_at)}</TableCell>
-            <TableCell className={styles.nowrap}>
-              {formatRuntime(run, now)}
-            </TableCell>
-            <TableCell className={styles.nowrap}>
-              {run.planned_total_available !== false && run.total_attacks !== null
-                ? `${run.completed_attacks}/${run.total_attacks}`
-                : `${run.completed_attacks} known / total unknown`}
+            <TableCell>
+              <div className={mergeClasses(styles.stackedCell, styles.nowrap)}>
+                <Text>{formatTimestamp(run.created_at)}</Text>
+                <Text size={200} className={styles.secondary}>{formatRuntime(run, now)}</Text>
+              </div>
             </TableCell>
             <TableCell className={styles.nowrap}>
               {formatSuccess(run)}
@@ -447,13 +501,33 @@ function ScenarioHistoryTable({ runs, onOpenRun, now }: ScenarioHistoryTableProp
             <TableCell className={styles.nowrap}>{run.error_attacks} / {run.total_retries}</TableCell>
             <TableCell>
               <div className={styles.badges}>
-                {Object.entries(run.labels).map(([key, value]) => (
-                  <Badge key={key} appearance="tint" size="small">{key}: {value}</Badge>
-                ))}
+                {Object.entries(run.labels)
+                  .filter(([key]) => key !== 'operator' && key !== 'operation')
+                  .map(([key, value]) => (
+                    <Badge key={key} appearance="tint" size="small">{key}: {value}</Badge>
+                  ))}
               </div>
             </TableCell>
-          </TableRow>
-        ))}
+            <TableCell>
+              {run.status === 'FAILED' && (
+                <Button
+                  className={styles.touchTarget}
+                  icon={<PlayRegular />}
+                  disabled={resumingRunId !== null}
+                  aria-label={`Resume ${run.scenario_registry_name ?? run.scenario_name} run ${run.scenario_result_id}`}
+                  onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                    event.stopPropagation()
+                    onResume(run.scenario_result_id)
+                  }}
+                  data-testid={`scenario-history-resume-${run.scenario_result_id}`}
+                >
+                  {resumingRunId === run.scenario_result_id ? 'Resuming...' : 'Resume'}
+                </Button>
+              )}
+            </TableCell>
+            </TableRow>
+          )
+        })}
       </TableBody>
     </Table>
   )
@@ -461,6 +535,31 @@ function ScenarioHistoryTable({ runs, onOpenRun, now }: ScenarioHistoryTableProp
 
 function formatState(value: string): string {
   return value.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (letter: string) => letter.toUpperCase())
+}
+
+function formatHistoryState(run: ScenarioRunListItem, queueSnapshot: ScenarioQueueSnapshot | null): string {
+  if (isTerminal(run.status)) {
+    return formatState(run.status)
+  }
+  if (isRunInProgress(run, queueSnapshot)) {
+    return 'In progress'
+  }
+  const position = queueSnapshot?.queued.find(
+    (entry) => entry.scenario_result_id === run.scenario_result_id,
+  )?.position
+  if (typeof position === 'number' && Number.isInteger(position) && position > 0) {
+    return `Queued ${formatOrdinal(position)}`
+  }
+  return formatState(run.status)
+}
+
+function formatOrdinal(value: number): string {
+  const lastTwoDigits = value % 100
+  if (lastTwoDigits >= 11 && lastTwoDigits <= 13) {
+    return `${value}th`
+  }
+  const suffix = value % 10 === 1 ? 'st' : value % 10 === 2 ? 'nd' : value % 10 === 3 ? 'rd' : 'th'
+  return `${value}${suffix}`
 }
 
 function formatTimestamp(value: string): string {
@@ -473,22 +572,59 @@ function formatTimestamp(value: string): string {
 }
 
 function formatRuntime(run: ScenarioRunListItem, now: number): string {
-  const start = Date.parse(run.created_at)
+  if (!run.started_at) {
+    return run.status === 'CREATED' || run.status === 'QUEUED'
+      ? 'Not started'
+      : 'Execution time unavailable'
+  }
+  const start = Date.parse(run.started_at)
   const terminal = isTerminal(run.status)
   const end = terminal
     ? Date.parse(run.completed_at ?? run.updated_at)
     : now
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return 'Execution time unavailable'
+  }
   const seconds = Math.max(0, Math.floor((end - start) / 1000))
   const duration = seconds < 60
     ? `${seconds}s`
     : seconds < 3600
       ? `${Math.floor(seconds / 60)}m`
       : `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`
-  return `${duration} (${terminal ? 'completed' : 'in progress'})`
+  return duration
 }
 
 function isTerminal(status: ScenarioRunState): boolean {
   return status === 'COMPLETED' || status === 'FAILED' || status === 'CANCELLED'
+}
+
+function isRunInProgress(run: ScenarioRunListItem, queueSnapshot: ScenarioQueueSnapshot | null): boolean {
+  return run.status === 'IN_PROGRESS'
+    || queueSnapshot?.active?.scenario_result_id === run.scenario_result_id
+}
+
+function formatAttackProgress(
+  run: ScenarioRunListItem,
+  queueSnapshot: ScenarioQueueSnapshot | null,
+): string | null {
+  if (isTerminal(run.status)) {
+    return run.planned_total_available !== false
+      && run.total_attacks !== null
+      && run.completed_attacks !== run.total_attacks
+      ? `${run.completed_attacks}/${run.total_attacks} attacks complete`
+      : null
+  }
+  const inProgress = isRunInProgress(run, queueSnapshot)
+  if (run.planned_total_available === false || run.total_attacks === null) {
+    return inProgress
+      ? `${run.completed_attacks} complete / total unknown`
+      : 'Attack total unknown'
+  }
+  if (inProgress) {
+    return `${run.completed_attacks}/${run.total_attacks} attacks complete`
+  }
+  const attackLabel = run.total_attacks === 1 ? 'attack' : 'attacks'
+  return `${run.total_attacks} ${attackLabel} planned`
 }
 
 function formatSuccess(run: ScenarioRunListItem): string {

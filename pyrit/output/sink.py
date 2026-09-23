@@ -3,6 +3,7 @@
 
 import asyncio
 import sys
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Literal
@@ -71,7 +72,7 @@ class FileSink(Sink):
             raise ValueError(f"mode must be 'w' or 'a', got '{mode}'")
         self._path = path
         self._mode = mode
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
 
     async def write_async(self, data: str) -> None:
         """
@@ -80,12 +81,21 @@ class FileSink(Sink):
         Args:
             data (str): The text to write.
         """
-        async with self._lock:
-            await asyncio.to_thread(self._write_sync, data)
+        await asyncio.to_thread(self._write_sync, data)
 
     def _write_sync(self, data: str) -> None:
         """
         Write data to the file synchronously.
+
+        Args:
+            data (str): The text to write.
+        """
+        with self._lock:
+            self._write_unlocked_sync(data)
+
+    def _write_unlocked_sync(self, data: str) -> None:
+        """
+        Write data to the file without acquiring the lock.
 
         Args:
             data (str): The text to write.

@@ -693,7 +693,7 @@ class TestInHandMessages:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConditionRouting:
-    """An expectation is a routing envelope, so a condition is consumed or refused."""
+    """Groups check condition coverage; each scorer checks the criteria it uses."""
 
     async def test_matches_objective_reaches_a_message_scorer(self):
         scorer = RecordingScorer(is_objective_required=True)
@@ -714,15 +714,16 @@ class TestConditionRouting:
                 expectation=ScoringExpectation(conditions=(MatchesObjective(),)),
             )
 
-    async def test_unconsumed_condition_raises_instead_of_being_dropped(self):
+    async def test_group_rejects_unconsumed_condition(self):
         class UnroutedCondition(Condition):
             condition_type: Literal["test_unrouted"] = "test_unrouted"
 
         scorer = RecordingScorer()
 
         with pytest.raises(ValueError, match="does not match the condition"):
-            await scorer.score_async(
-                scorable=MessageScorable.from_message(_assistant_message()),
+            await MessageScorer.score_response_multiple_scorers_async(
+                response=_assistant_message(),
+                scorers=[scorer],
                 expectation=ScoringExpectation(conditions=(UnroutedCondition(),)),
             )
 

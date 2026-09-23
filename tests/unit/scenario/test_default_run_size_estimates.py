@@ -15,6 +15,8 @@ from pyrit.models import (
     ComponentIdentifier,
     ScenarioDatasetSizeCap,
     ScenarioDatasetSummary,
+    ScenarioRunSizeEstimateCondition,
+    ScenarioRunSizeEstimateStatus,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -155,8 +157,13 @@ def _resolved_groups(
 async def test_ordinary_matrix_estimate_uses_planned_seed_units_and_baseline() -> None:
     """The base estimate is selected seed groups times concrete defaults plus baseline."""
     estimate = await _MatrixEstimateScenario(objective_scorer=_scorer()).get_default_run_size_estimate_async()
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
+    assert estimate.total_attack_count == 6
     assert estimate.estimated_attack_count == 6
+    assert estimate.minimum_attack_count == 6
+    assert estimate.maximum_attack_count == 6
     assert [component.count for component in estimate.components] == [4, 2]
+    assert [[factor.count for factor in component.factors] for component in estimate.components] == [[2, 2], [2]]
     assert estimate.datasets[0].logical_seed_group_count == 3
     assert estimate.datasets[0].selected_seed_group_count == 2
 
@@ -292,7 +299,7 @@ async def test_matrix_estimate_filters_each_technique_seed_population_like_execu
     conversation_factory.seed_technique = AttackTechniqueSeedGroup(
         seeds=[
             SeedSimulatedConversation(
-                adversarial_chat_system_prompt_path="fake.yaml",
+                adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                 num_turns=3,
             )
         ]
@@ -361,8 +368,8 @@ async def test_matrix_estimate_with_binding_cap_is_exact_when_every_group_is_com
     ):
         estimate = await scenario.get_run_size_estimate_async()
     assert estimate.estimated_attack_count == 2
-    assert estimate.minimum_attack_count is None
-    assert estimate.maximum_attack_count is None
+    assert estimate.minimum_attack_count == 2
+    assert estimate.maximum_attack_count == 2
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -409,7 +416,7 @@ async def test_matrix_estimate_with_binding_cap_reports_compatibility_bounds() -
     conversation_factory.seed_technique = AttackTechniqueSeedGroup(
         seeds=[
             SeedSimulatedConversation(
-                adversarial_chat_system_prompt_path="fake.yaml",
+                adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                 num_turns=3,
             )
         ]
@@ -424,6 +431,8 @@ async def test_matrix_estimate_with_binding_cap_reports_compatibility_bounds() -
     assert estimate.estimated_attack_count is None
     assert estimate.minimum_attack_count == 1
     assert estimate.maximum_attack_count == 2
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
+    assert estimate.condition is ScenarioRunSizeEstimateCondition.LaunchConfiguration
     assert "range covers every compatibility mix" in estimate.note
 
 
@@ -758,7 +767,10 @@ async def test_adversarial_benchmark_estimate_exposes_per_required_target_formul
     assert estimate.estimated_attack_count is None
     assert estimate.minimum_attack_count == 6
     assert estimate.maximum_attack_count is None
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
+    assert estimate.condition is ScenarioRunSizeEstimateCondition.LaunchConfiguration
     assert [component.count for component in estimate.components] == [3, 3]
+    assert [[factor.count for factor in component.factors] for component in estimate.components] == [[1, 3], [1, 3]]
     assert "adversarial_targets" in estimate.note
 
 
@@ -811,7 +823,7 @@ async def test_adversarial_benchmark_resolves_targets_and_filters_each_technique
     conversation_factory.seed_technique = AttackTechniqueSeedGroup(
         seeds=[
             SeedSimulatedConversation(
-                adversarial_chat_system_prompt_path="fake.yaml",
+                adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                 num_turns=3,
             )
         ]
@@ -825,7 +837,17 @@ async def test_adversarial_benchmark_resolves_targets_and_filters_each_technique
 
     resolve_targets.assert_called_once_with(target_names=["target-a", "target-b"])
     assert estimate.estimated_attack_count == expected_total
+    assert estimate.status is (
+        ScenarioRunSizeEstimateStatus.Exact if expected_total is not None else ScenarioRunSizeEstimateStatus.Conditional
+    )
+    assert estimate.condition is (
+        None if expected_total is not None else ScenarioRunSizeEstimateCondition.PriorExecutionResults
+    )
     assert [(component.label, component.count) for component in estimate.components] == [("one", 4), ("two", 2)]
+    assert [[factor.count for factor in component.factors] for component in estimate.components] == [
+        [1, 2, 2],
+        [1, 2, 1],
+    ]
 
 
 @pytest.mark.parametrize(
@@ -878,6 +900,8 @@ async def test_adversarial_benchmark_binding_cap_reports_available_bounds(
     assert estimate.estimated_attack_count is None
     assert estimate.minimum_attack_count == expected_minimum
     assert estimate.maximum_attack_count == expected_maximum
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
+    assert estimate.condition is ScenarioRunSizeEstimateCondition.LaunchConfiguration
 
 
 @pytest.mark.usefixtures("patch_central_database")

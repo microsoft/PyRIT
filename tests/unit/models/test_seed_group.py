@@ -679,7 +679,7 @@ class TestAttackSeedGroupWithTechnique:
         technique = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                     num_turns=3,
                 ),
             ],
@@ -694,7 +694,7 @@ class TestAttackSeedGroupWithTechnique:
         technique = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                     num_turns=3,
                 ),
             ],
@@ -716,7 +716,7 @@ class TestAttackSeedGroupWithTechnique:
         technique = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                     num_turns=3,
                 ),
             ],
@@ -730,7 +730,7 @@ class TestAttackSeedGroupWithTechnique:
         technique = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                     num_turns=3,
                 ),
             ],
@@ -777,7 +777,7 @@ class TestAttackSeedGroupFilterCompatible:
         technique = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path="fake.yaml",
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                     num_turns=3,
                 ),
             ],

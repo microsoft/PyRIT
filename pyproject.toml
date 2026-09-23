@@ -49,11 +49,13 @@ dependencies = [
     "numpy>=2.3.0; python_version >= '3.14'",
     "openai>=2.2.0",
     "openpyxl>=3.1.5",
+    "opentelemetry-sdk>=1.36,<2",
     "pillow>=12.2.0",
-    "pydantic>=2.11.5",
+    "pydantic>=2.12.0",
     "PyJWT[crypto]>=2.8.0",
     "pyodbc>=5.1.0",
     "pypdf>=6.10.2",
+    "pypinyin>=0.55.0",
     "python-docx>=1.1.0",
     "python-dotenv>=1.2.2",
     "reportlab>=4.4.4",
@@ -221,6 +223,12 @@ include = ["pyrit/prompt_target/hugging_face/**"]
 [tool.ty.overrides.rules]
 invalid-argument-type = "ignore"
 
+# Historical Alembic revisions are immutable; retain their defensive rowcount checks.
+[[tool.ty.overrides]]
+include = ["pyrit/memory/alembic/versions/1b3d5f7a9c2e_persist_scored_expectation.py"]
+[tool.ty.overrides.rules]
+redundant-condition-strict = "ignore"
+
 # Unit tests intentionally exercise runtime validation failures, mutable test doubles,
 # and optional fields after fixtures have populated them. Keep library code strict while
 # avoiding hundreds of per-assertion ignores in tests.
@@ -278,8 +286,10 @@ include = ["pyrit", "pyrit.*"]
 license-files = [
     "LICENSE",
     "LICENSES/Apache-2.0.txt",
+    "LICENSES/PromptInject-MIT.txt",
     "THIRD_PARTY_NOTICES.txt",
     "third_party/garak-provenance.json",
+    "third_party/promptinject-provenance.json",
 ]
 
 [tool.setuptools.package-data]

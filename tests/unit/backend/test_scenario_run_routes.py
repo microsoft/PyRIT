@@ -18,6 +18,7 @@ from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.routes.scenarios import get_scenario_run_progress, list_scenario_runs
+from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
@@ -25,6 +26,8 @@ from pyrit.models import (
     ScenarioProgressCounts,
     ScenarioProgressHeader,
     ScenarioProgressSummary,
+    ScenarioQueueEntry,
+    ScenarioQueueSnapshot,
     ScenarioRunPlan,
     ScenarioRunProgress,
     ScenarioRunState,
@@ -167,6 +170,70 @@ class TestStartScenarioRunRoute:
         }
 
 
+class TestResumeScenarioRunRoute:
+    """The bodyless resume route uses only the saved result ID."""
+
+    def test_resume_returns_same_run_id(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as get_service:
+            service = get_service.return_value
+            service.resume_run_async = AsyncMock(
+                return_value=_mock_run_response(run_id="saved-id", run_status=ScenarioRunState.QUEUED)
+            )
+            response = client.post("/api/scenarios/runs/saved-id/resume")
+        assert response.status_code == 202
+        assert response.json()["scenario_result_id"] == "saved-id"
+        assert response.json()["status"] == "QUEUED"
+        service.resume_run_async.assert_awaited_once_with(scenario_result_id="saved-id")
+
+    def test_resume_has_no_get_preflight(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as get_service:
+            response = client.get("/api/scenarios/runs/saved-id/resume")
+            get_service.assert_not_called()
+        assert response.status_code == 405
+
+    def test_resume_schema_has_no_body_or_preflight(self) -> None:
+        schema = app.openapi()
+        path = schema["paths"]["/api/scenarios/runs/{scenario_result_id}/resume"]
+        assert set(path) == {"post"}
+        assert "requestBody" not in path["post"]
+        assert [(parameter["name"], parameter["in"]) for parameter in path["post"]["parameters"]] == [
+            ("scenario_result_id", "path")
+        ]
+        assert "ResumeScenarioRunRequest" not in schema["components"]["schemas"]
+        assert "ScenarioResumeOptions" not in schema["components"]["schemas"]
+
+    @pytest.mark.parametrize(
+        ("error", "expected_status"),
+        [
+            (ScenarioRunNotFoundError("Run not found"), 404),
+            (ScenarioRunConflictError("Already scheduled"), 409),
+            (ValueError("Target configuration changed"), 400),
+        ],
+    )
+    def test_resume_errors_are_explicit(self, *, client: TestClient, error: Exception, expected_status: int) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as get_service:
+            service = get_service.return_value
+            service.resume_run_async = AsyncMock(side_effect=error)
+            response = client.post("/api/scenarios/runs/saved-id/resume")
+        assert response.status_code == expected_status
+        assert response.json()["detail"] == str(error)
+
+    def test_older_run_returns_409_without_initialization(self, client: TestClient) -> None:
+        stored = make_scenario_result(scenario_run_state=ScenarioRunState.FAILED, attack_results={})
+        with patch.object(_svc_mod.CentralMemory, "get_memory_instance") as get_memory:
+            get_memory.return_value.get_scenario_result_header.return_value = stored
+            service = _svc_mod.ScenarioRunService()
+        with (
+            patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=service),
+            patch.object(service, "_prepare_run_blocking") as prepare,
+        ):
+            response = client.post(f"/api/scenarios/runs/{stored.id}/resume")
+            prepare.assert_not_called()
+        assert response.status_code == 409
+        assert "older run" in response.json()["detail"]
+        assert "cannot be resumed through the GUI" in response.json()["detail"]
+
+
 class TestListScenarioRunsRoute:
     """Tests for GET /api/scenarios/runs."""
 
@@ -199,7 +266,7 @@ class TestListScenarioRunsRoute:
     async def test_list_runs_requires_keyword_arguments(self) -> None:
         """Test that route parameters cannot be passed positionally."""
         with pytest.raises(TypeError, match="positional"):
-            await list_scenario_runs(None, None, None, 100, None)
+            await list_scenario_runs(None, None, None, 100, None)  # ty: ignore[too-many-positional-arguments]
 
     def test_list_runs_returns_multiple_runs(self, client: TestClient) -> None:
         """Test that list runs returns all tracked runs."""
@@ -249,6 +316,45 @@ class TestListScenarioRunsRoute:
             limit=10,
             cursor="opaque",
         )
+
+
+class TestScenarioRunQueueRoute:
+    """Tests for GET /api/scenarios/runs/queue."""
+
+    def test_queue_returns_active_and_ordered_entries(self, client: TestClient) -> None:
+        now = datetime(2025, 1, 1, tzinfo=UTC)
+        snapshot = ScenarioQueueSnapshot(
+            revision=4,
+            snapshot_at=now,
+            active=ScenarioQueueEntry(
+                scenario_result_id="active",
+                scenario_name="ActiveScenario",
+                scenario_registry_name="active.scenario",
+                state=ScenarioRunState.IN_PROGRESS,
+                created_at=now,
+                enqueued_at=now,
+                started_at=now,
+            ),
+            queued=[
+                ScenarioQueueEntry(
+                    scenario_result_id="queued",
+                    scenario_name="QueuedScenario",
+                    scenario_registry_name="queued.scenario",
+                    state=ScenarioRunState.QUEUED,
+                    position=1,
+                    created_at=now,
+                    enqueued_at=now,
+                )
+            ],
+        )
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
+            mock_get.return_value.get_queue_snapshot.return_value = snapshot
+
+            response = client.get("/api/scenarios/runs/queue")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["active"]["scenario_result_id"] == "active"
+        assert response.json()["queued"][0]["position"] == 1
 
 
 class TestGetScenarioRunRoute:
@@ -358,7 +464,12 @@ class TestGetScenarioRunRoute:
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
             mock_service.snapshot_active_run.side_effect = lambda **_: (
-                snapshot_thread.append(get_ident()) or MagicMock(active_group_ids=("active-group",))
+                snapshot_thread.append(get_ident())
+                or MagicMock(
+                    active_group_ids=("active-group",),
+                    queue_position=None,
+                    active_scenario_result_id="test-run-id",
+                )
             )
             mock_service.get_run_progress_from_storage.side_effect = lambda **_: (
                 storage_thread.append(get_ident()) or progress
@@ -374,6 +485,8 @@ class TestGetScenarioRunRoute:
             since=None,
             limit=25,
             active_group_ids=("active-group",),
+            queue_position=None,
+            active_scenario_result_id="test-run-id",
         )
         assert snapshot_thread[0] != storage_thread[0]
 
@@ -405,7 +518,11 @@ class TestGetScenarioRunRoute:
         )
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.snapshot_active_run.return_value = MagicMock(active_group_ids=())
+            mock_service.snapshot_active_run.return_value = MagicMock(
+                active_group_ids=(),
+                queue_position=None,
+                active_scenario_result_id="test-run-id",
+            )
             mock_service.get_run_progress_from_storage.return_value = progress
             mock_get.return_value = mock_service
 
@@ -421,6 +538,8 @@ class TestGetScenarioRunRoute:
             since=None,
             limit=25,
             active_group_ids=(),
+            queue_position=None,
+            active_scenario_result_id="test-run-id",
         )
 
 

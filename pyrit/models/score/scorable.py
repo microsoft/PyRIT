@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
+from pyrit.models.score._trace_validation import TraceId  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
@@ -124,11 +125,35 @@ class ContentEntryScorable(Scorable):
     data_type: PromptDataType = "text"
 
 
+class TraceScorable(Scorable):
+    """An exact trace scope supplied by the caller."""
+
+    scorable_type: Literal["trace"] = "trace"
+    trace_ids: tuple[TraceId, ...]
+
+    @model_validator(mode="after")
+    def _validate_scope(self) -> TraceScorable:
+        """
+        Require a nonempty trace scope with no repeated identifiers.
+
+        Returns:
+            TraceScorable: The validated scope.
+
+        Raises:
+            ValueError: If no traces are given or a trace identifier repeats.
+        """
+        if not self.trace_ids:
+            raise ValueError("A TraceScorable must name at least one trace.")
+        if len(set(self.trace_ids)) != len(self.trace_ids):
+            raise ValueError("A TraceScorable must name each trace once.")
+        return self
+
+
 # Polymorphic union of scorables that can be stored on a Score. Every member declares a
 # ``scorable_type`` tag and Pydantic dispatches on it, so a new member is never mistaken for
 # an existing one and storage never depends on field shape.
 ScorableUnion = Annotated[
-    MessageScorable | ContentScorable | ContentEntryScorable,
+    MessageScorable | ContentScorable | ContentEntryScorable | TraceScorable,
     Field(discriminator="scorable_type"),
 ]
 

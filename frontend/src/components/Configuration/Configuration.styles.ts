@@ -5,6 +5,7 @@ import {
   NARROW_VIEWPORT_QUERY,
   TOUCH_INPUT_QUERY,
 } from '@/styles/touchTargets'
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
 export const useConfigurationStyles = makeStyles({
   root: {
@@ -18,7 +19,7 @@ export const useConfigurationStyles = makeStyles({
     gap: tokens.spacingVerticalL,
     padding: tokens.spacingVerticalXXL,
     overflow: 'auto',
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
     '@media (max-width: 600px)': {
       padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
     },

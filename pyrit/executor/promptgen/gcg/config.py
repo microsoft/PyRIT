@@ -315,9 +315,11 @@ class GCGOutputConfig:
 
     Attributes:
         result_prefix (str): Prefix for the per-run JSON log file. The actual
-            filename is ``{result_prefix}_{YYYYMMDD-HHMMSS}.json``. Empty string
-            means write the log into the current working directory with no
-            prefix (``_<timestamp>.json``); that is rarely what you want.
+            filename is ``{result_prefix}_{YYYYMMDD-HHMMSS}_{id}.json`` where
+            ``id`` is a random 8-character hex string that keeps concurrent runs
+            sharing a prefix from writing to the same file. Empty string means
+            write the log into the current working directory with no prefix
+            (``_<timestamp>_<id>.json``); that is rarely what you want.
         logfile (str): Optional pre-resolved log file path. When set this takes
             precedence over ``result_prefix`` for the legacy code paths.
         verbose (bool): Verbose progress logging during the run. Defaults to True.

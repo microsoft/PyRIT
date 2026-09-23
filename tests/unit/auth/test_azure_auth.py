@@ -10,6 +10,7 @@ import pytest
 from pyrit.auth.auth_config import REFRESH_TOKEN_BEFORE_MSEC
 from pyrit.auth.azure_auth import (
     AzureAuth,
+    ensure_async_token_provider,
     get_azure_token_provider,
     get_speech_config,
     get_speech_config_from_default_azure_credential,
@@ -19,6 +20,19 @@ from pyrit.auth.azure_auth import (
 
 curr_epoch_time = int(time.time())
 mock_token = "fake token"
+
+
+@pytest.mark.parametrize("returns_awaitable", [False, True])
+async def test_ensure_async_token_provider_preserves_string_and_awaitable_results(returns_awaitable):
+    async def token_async() -> str:
+        return mock_token
+
+    def provider():
+        return token_async() if returns_awaitable else mock_token
+
+    wrapped = ensure_async_token_provider(provider)
+    assert callable(wrapped)
+    assert await wrapped() == mock_token
 
 
 def is_speechsdk_installed():

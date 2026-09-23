@@ -1,14 +1,18 @@
 import axios from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
+import { generateClientId } from '@/utils/clientId'
 import { toApiError } from './errors'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
   TargetInstance,
   TargetListResponse,
-  TargetCatalogResponse,
-  ConverterCatalogResponse,
+  TargetTypeListResponse,
+  ConverterTypeListResponse,
   ConverterInstance,
   ConverterListResponse,
+  ConverterPreviewRequest,
+  ConverterPreviewResponse,
+  CreateConverterRequest,
   CreateTargetRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
@@ -34,6 +38,7 @@ import type {
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
+  ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
   EnvironmentFileContent,
@@ -55,23 +60,6 @@ const apiClient = axios.create({
   },
   timeout: 5 * 60 * 1000, // 5 minutes – video generation can take a while
 })
-
-// ---------------------------------------------------------------------------
-// Request interceptor: attach X-Request-ID for log correlation
-// ---------------------------------------------------------------------------
-
-/** Generate a UUID v4, falling back to Math.random for HTTP dev environments. */
-function generateRequestId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  // Fallback for environments without crypto.randomUUID
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0
-    const v = c === 'x' ? r : (r & 0x3) | 0x8
-    return v.toString(16)
-  })
-}
 
 // ---------------------------------------------------------------------------
 // MSAL token acquisition for API calls
@@ -107,7 +95,7 @@ async function getAccessToken(forceRefresh = false): Promise<string | null> {
 }
 
 apiClient.interceptors.request.use(async (config) => {
-  config.headers.set('X-Request-ID', generateRequestId())
+  config.headers.set('X-Request-ID', generateClientId())
 
   const token = await getAccessToken()
   if (token) {
@@ -202,8 +190,8 @@ export const configurationApi = {
 }
 
 export const targetsApi = {
-  listTargetCatalog: async (): Promise<TargetCatalogResponse> => {
-    const response = await apiClient.get('/targets/catalog')
+  listTargetTypes: async (): Promise<TargetTypeListResponse> => {
+    const response = await apiClient.get('/targets/types')
     return response.data
   },
 
@@ -226,8 +214,8 @@ export const targetsApi = {
 }
 
 export const convertersApi = {
-  listConverterCatalog: async (): Promise<ConverterCatalogResponse> => {
-    const response = await apiClient.get('/converters/catalog')
+  listConverterTypes: async (): Promise<ConverterTypeListResponse> => {
+    const response = await apiClient.get('/converters/types')
     return response.data
   },
 
@@ -241,12 +229,16 @@ export const convertersApi = {
     return response.data
   },
 
-  createConverter: async (request: { type: string; params?: Record<string, unknown> }): Promise<{ converter_id: string; converter_type: string }> => {
+  createConverter: async (request: CreateConverterRequest): Promise<ConverterInstance> => {
     const response = await apiClient.post('/converters', request)
     return response.data
   },
 
-  previewConversion: async (request: { original_value: string; converter_ids: string[]; original_value_data_type?: string }): Promise<{ converted_value: string; converted_value_data_type?: string }> => {
+  deleteConverter: async (converterId: string): Promise<void> => {
+    await apiClient.delete(`/converters/${encodeURIComponent(converterId)}`)
+  },
+
+  previewConversion: async (request: ConverterPreviewRequest): Promise<ConverterPreviewResponse> => {
     const response = await apiClient.post('/converters/preview', request)
     return response.data
   },
@@ -485,12 +477,22 @@ export const scenariosApi = {
     return response.data
   },
 
+  getQueue: async (signal?: AbortSignal): Promise<ScenarioQueueSnapshot> => {
+    const response = await apiClient.get('/scenarios/runs/queue', { signal })
+    return response.data
+  },
+
   cancelRun: async (scenarioResultId: string, signal?: AbortSignal): Promise<ScenarioRunSummary> => {
     const response = await apiClient.post(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/cancel`,
       undefined,
       { signal },
     )
+    return response.data
+  },
+
+  resumeRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
+    const response = await apiClient.post(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/resume`)
     return response.data
   },
 }

@@ -39,6 +39,8 @@ from typing_extensions import TypeAliasType
 import pyrit
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pyrit.models.parameter import ComponentType
 
 #: The set of value types allowed inside ``ComponentIdentifier.params``. Params
@@ -144,8 +146,8 @@ def _build_hash_dict(
         for name, child in sorted(children.items()):
             if isinstance(child, ComponentIdentifier):
                 children_hashes[name] = child.hash
-            elif isinstance(child, list):
-                children_hashes[name] = [c.hash for c in child if isinstance(c, ComponentIdentifier)]
+            else:
+                children_hashes[name] = [c.hash for c in child]
         if children_hashes:
             hash_dict[ComponentIdentifier.KEY_CHILDREN] = children_hashes
 
@@ -653,7 +655,7 @@ class ComponentIdentifier(BaseModel):
             for name, child in self.children.items():
                 if isinstance(child, ComponentIdentifier):
                     serialized_children[name] = child.model_dump(mode=mode)
-                elif isinstance(child, list):
+                else:
                     serialized_children[name] = [c.model_dump(mode=mode) for c in child]
             result[self.KEY_CHILDREN] = serialized_children
 
@@ -772,7 +774,7 @@ class ComponentIdentifier(BaseModel):
         obj: object,
         *,
         params: dict[str, Any] | None = None,
-        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
+        children: Mapping[str, ComponentIdentifier | list[ComponentIdentifier] | None] | None = None,
         attributes: dict[str, Any] | None = None,
         **promoted: Any,
     ) -> Self:
@@ -787,7 +789,7 @@ class ComponentIdentifier(BaseModel):
             obj: The live object whose class metadata will populate the
                 identifier.
             params: Optional behavioral params.
-            children: Optional child identifiers.
+            children: Optional child identifiers; None-valued entries are omitted.
             attributes: Optional identity-bearing state (hashed, but excluded from
                 the eval hash and not a constructor input). ``None`` values dropped.
             **promoted: Optional promoted typed fields (for subclasses). Passed
