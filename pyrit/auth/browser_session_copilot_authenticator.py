@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Coroutine
+from concurrent.futures import Future
 from contextlib import AsyncExitStack
 from pathlib import Path
 from types import TracebackType
@@ -146,20 +147,20 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
             return await self._capture_and_store_token_async()
 
     async def close_async(self) -> None:
-        """Close browser resources and discard authentication state."""
+        """Discard authentication state and finish cleanup even if cancelled while waiting for token operations."""
+        await self._await_completion_async(
+            completion=asyncio.create_task(self._close_and_stop_browser_async()),
+        )
+
+    async def _close_and_stop_browser_async(self) -> None:
+        """Wait for active token operations, then discard state and close the browser."""
         async with self._token_fetch_lock:
             self._access_token = None
             self._claims = {}
-
             browser_loop = self._browser_loop
-
             try:
                 if browser_loop is not None and browser_loop.is_running():
-                    future = asyncio.run_coroutine_threadsafe(
-                        self._close_browser_resources_async(),
-                        browser_loop,
-                    )
-                    await asyncio.wrap_future(future)
+                    await self._run_on_browser_thread_async(operation=self._close_browser_resources_async)
                 else:
                     await self._close_browser_resources_async()
             finally:
@@ -214,8 +215,77 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
         if browser_loop is None:
             raise RuntimeError("Browser event loop failed to start.")
 
-        future = asyncio.run_coroutine_threadsafe(operation(), browser_loop)
-        return await asyncio.wrap_future(future)
+        completion: Future[T] = Future()
+        operation_task: asyncio.Task[T] | None = None
+
+        async def invoke_operation_async() -> T:
+            return await operation()
+
+        def complete_operation(task: asyncio.Task[T]) -> None:
+            try:
+                completion.set_result(task.result())
+            except BaseException as error:
+                completion.set_exception(error)
+
+        def start_operation() -> None:
+            nonlocal operation_task
+            coroutine = invoke_operation_async()
+            try:
+                operation_task = browser_loop.create_task(coroutine)
+            except BaseException as error:
+                coroutine.close()
+                completion.set_exception(error)
+            else:
+                # A finally block inside the coroutine cannot acknowledge cancellation before its first step.
+                operation_task.add_done_callback(complete_operation)
+
+        def cancel_operation() -> None:
+            if operation_task is not None and not operation_task.done():
+                operation_task.cancel()
+
+        def request_cancellation() -> None:
+            browser_loop.call_soon_threadsafe(cancel_operation)
+
+        browser_loop.call_soon_threadsafe(start_operation)
+        return await self._await_completion_async(
+            completion=asyncio.wrap_future(completion),
+            cancel=request_cancellation,
+        )
+
+    @staticmethod
+    async def _await_completion_async(
+        *,
+        completion: asyncio.Future[T],
+        cancel: Callable[[], None] | None = None,
+    ) -> T:
+        """
+        Retain ownership until actual completion, including after repeated cancellation.
+
+        Returns:
+            The completed operation's result.
+
+        Raises:
+            asyncio.CancelledError: After draining, preserving the original cancellation and any cleanup failure.
+        """
+        try:
+            return await asyncio.shield(completion)
+        except asyncio.CancelledError as cancellation:
+            if cancel is not None:
+                cancel()
+            while not completion.done():
+                try:
+                    await asyncio.shield(completion)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            try:
+                completion.result()
+            except asyncio.CancelledError:
+                pass
+            except BaseException as error:
+                raise cancellation from error
+            raise cancellation
 
     async def _ensure_browser_thread_started_async(self) -> None:
         """
@@ -238,7 +308,9 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
         self._browser_thread = thread
         thread.start()
 
-        await asyncio.to_thread(self._browser_loop_started.wait)
+        await self._await_completion_async(
+            completion=asyncio.create_task(asyncio.to_thread(self._browser_loop_started.wait)),
+        )
 
         if self._browser_loop_start_error is not None:
             raise RuntimeError("Browser event loop failed to start.") from self._browser_loop_start_error
@@ -249,7 +321,7 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
             loop = asyncio.ProactorEventLoop() if sys.platform == "win32" else asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._browser_loop = loop
-            self._browser_loop_started.set()
+            loop.call_soon(self._browser_loop_started.set)
             loop.run_forever()
             loop.close()
         except Exception as error:
@@ -266,11 +338,12 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(loop.stop)
 
-        if thread is not None and thread.is_alive():
-            await asyncio.to_thread(thread.join)
-
-        self._browser_loop = None
-        self._browser_thread = None
+        try:
+            if thread is not None and thread.is_alive():
+                await self._await_completion_async(completion=asyncio.create_task(asyncio.to_thread(thread.join)))
+        finally:
+            self._browser_loop = None
+            self._browser_thread = None
 
     async def _capture_access_token_on_browser_loop_async(self) -> str:
         """
@@ -457,7 +530,7 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
             pages = browser_context.pages
             page = pages[0] if pages else await browser_context.new_page()
         except BaseException:
-            await resources.aclose()
+            await self._await_completion_async(completion=asyncio.create_task(resources.aclose()))
             raise
 
         self._browser_resources = resources
@@ -500,4 +573,4 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
         self._page = None
 
         if resources is not None:
-            await resources.aclose()
+            await self._await_completion_async(completion=asyncio.create_task(resources.aclose()))

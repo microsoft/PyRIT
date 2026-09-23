@@ -240,7 +240,7 @@ interface TextInputRowsProps {
 }
 
 function TextInputRows({ input, convertedValue, convertedFileChip, disabled, textareaRef, convertedRef, onInput, onKeyDown, onConvertedValueChange, onClearConvertedFileChip, styles, textInputClassName }: TextInputRowsProps) {
-  const hasConversion = Boolean(convertedValue) || Boolean(convertedFileChip)
+  const hasConversion = convertedValue != null || Boolean(convertedFileChip)
   const convertedTextareaId = useId()
   return (
     <>
@@ -260,7 +260,7 @@ function TextInputRows({ input, convertedValue, convertedFileChip, disabled, tex
           data-testid="chat-input"
         />
       </div>
-      {convertedValue && (
+      {convertedValue != null && (
         <div className={styles.convertedRow} data-testid="converted-indicator">
           <label htmlFor={convertedTextareaId} className={styles.convertedBadge}>
             Converted prompt
@@ -276,7 +276,7 @@ function TextInputRows({ input, convertedValue, convertedFileChip, disabled, tex
           />
         </div>
       )}
-      {!convertedValue && convertedFileChip && (
+      {convertedValue == null && convertedFileChip && (
         <div className={styles.convertedFileBlock} data-testid="converted-file-chip">
           <div className={styles.convertedRow}>
             <span className={styles.convertedBadge}>Converted</span>
@@ -479,7 +479,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const hasUnsupportedModalities =
     unsupportedAttachmentTypes.length > 0 || unsupportedConverterOutputTypes.length > 0
 
-  const hasConversion = convertedValue != null && convertedValue !== ''
+  const hasConversion = convertedValue != null
   const textInputClassName = hasConversion
     ? mergeClasses(styles.textInput, styles.textInputShared)
     : styles.textInput
@@ -555,7 +555,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
 
   const handleSend = async (): Promise<void> => {
     if (
-      (input || attachments.length > 0)
+      (input || convertedValue != null || convertedFileChip || attachments.length > 0)
       && !disabled
       && !sendDisabled
       && !hasUnsupportedModalities
@@ -800,12 +800,14 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                   appearance="primary"
                   icon={<SendRegular />}
                   onClick={() => { void handleSend() }}
-                  disabled={disabled || sendDisabled || (!input && attachments.length === 0) || hasUnsupportedModalities}
+                  disabled={disabled || sendDisabled
+                    || (!input && convertedValue == null && !convertedFileChip && attachments.length === 0)
+                    || hasUnsupportedModalities}
                   aria-label="Send message"
                   data-testid="send-message-btn"
                 />
               </Tooltip>
-              {convertedValue && (
+              {convertedValue != null && (
                 <Tooltip content="Clear conversion" relationship="label">
                   <Button
                     appearance="subtle"
