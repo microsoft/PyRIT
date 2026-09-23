@@ -6,33 +6,57 @@ For running PyRIT tests, you need to have `pytest` package installed, but if you
 `uv sync`, `pytest` should be included in that setup.
 
 
-## Running PyRIT test files
-PyRIT test files can be run using `pytest`.
+## Running the unit tests
 
-  * You can invoke pytest if it's in your path or via python; either `pytest` or `python -m pytest`. For the following examples, we will use `pytest`.
+Unit tests are the tier you will run most often. Run the full suite through `make` rather
+than invoking `pytest` directly on `tests/unit`. The target runs in parallel
+(`pytest -n 4 --dist=loadfile`), which is several times faster than a serial run:
 
-  * To run all tests (both unit and integration), you can pass a directory:
+```bash
+make unit-test
+```
 
+## Running a subset while iterating
+
+For a narrower run, invoke `pytest` directly. You can invoke pytest if it's in your path or via python; either `pytest` or `python -m pytest`. For the following examples, we will use `pytest`.
+
+  * To run every test under a subdirectory:
+
+      ```bash
+      pytest tests/unit/converter
       ```
-      pytest tests
-      ```
 
-  * To run all unit tests you also can pass the unit test directory:
-
-      ```
-      pytest tests/unit
-      ```
-
-  * To run tests from a specific file (e.g. test_aml_online_endpoint.py), from the PyRIT directory, use:
+  * To run tests from a specific file (e.g. `test_base64_converter.py`), from the PyRIT directory, use:
 
      ```bash
-     pytest tests\test_aml_online_endpoint_chat.py
+     pytest tests/unit/converter/test_base64_converter.py
      ```
 
-  * To execute a specific test (`test_get_headers_with_empty_api_key`) within the test module(`test_aml_online_endpoint.py`),
+  * To execute a specific test (`test_base64_converter_default`) within the test module (`test_base64_converter.py`),
+
      ```bash
-     pytest tests\test_aml_online_endpoint_chat.py::test_get_headers_with_empty_api_key
+     pytest tests/unit/converter/test_base64_converter.py::test_base64_converter_default
      ```
+
+## Running the other test tiers
+
+```{note}
+Avoid `pytest tests`. It collects the integration, end-to-end, and partner-integration tiers
+alongside the unit tests. The end-to-end tier is not gated behind `RUN_ALL_TESTS`, and its
+session fixture starts a real `pyrit_backend` process and drives scenarios against live
+endpoints.
+```
+
+Run those tiers deliberately, through their own targets:
+
+```bash
+make integration-test
+make end-to-end-test
+make partner-integration-test
+```
+
+Integration tests additionally require `RUN_ALL_TESTS=true` and real credentials. See
+[Unit Tests](./5_unit_tests.md) and [Integration Tests](./6_integration_tests.md) for details.
 
 ## Coverage checks
 
