@@ -11,6 +11,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +55,14 @@ class FortressRiskDomain(Enum):
 
 class FortressRiskSubdomain(Enum):
     """
-    Filter for which Fortress risk subdomain to load.
+    Filter for which Fortress source risk subdomain to load.
 
     Values are the short title prefix used by the upstream dataset; the stored
     ``risk_subdomain`` field carries a longer descriptive suffix after a colon
     (e.g. ``"Illegal Weapons: 3d-printed weapons, ..."``). Filtering uses a
     prefix match against this short form so the descriptive suffix is preserved
-    in metadata for downstream consumers.
+    in metadata for downstream consumers. This source taxonomy is distinct from
+    PyRIT's standardized per-seed harm categories.
 
     Note: the upstream README documents that some rows have a subdomain
     assignment that does not match the canonical domain mapping
@@ -108,6 +110,8 @@ class _FortressDataset(_RemoteDatasetLoader):
     Single-split loads also retain the full counterpart text in ``paired_prompt``;
     only selected splits are emitted as seeds.
     Adversarial seeds preserve the source rubric as a list of criterion strings.
+    Source risk labels remain in metadata; per-seed ``harm_categories`` use
+    PyRIT's standardized taxonomy.
     This loader does not implement scoring or the benchmark's aggregate metrics.
 
     Use restriction: This dataset should be used for safety evaluations only, and
@@ -125,6 +129,23 @@ class _FortressDataset(_RemoteDatasetLoader):
 
     HF_DATASET_NAME: str = HF_DATASET_NAME
     HF_REVISION: str = HF_REVISION
+
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        FortressRiskSubdomain.CHEMICAL.value: [HarmCategory.CBRN],
+        FortressRiskSubdomain.BIOLOGICAL.value: [HarmCategory.CBRN],
+        FortressRiskSubdomain.RADIOLOGICAL_NUCLEAR_WMD.value: [HarmCategory.CBRN],
+        FortressRiskSubdomain.EXPLOSIVES.value: [HarmCategory.MILITARY, HarmCategory.COORDINATION_HARM],
+        FortressRiskSubdomain.TERRORISM.value: [HarmCategory.VIOLENT_EXTREMISM, HarmCategory.COORDINATION_HARM],
+        FortressRiskSubdomain.POLITICAL_VIOLENCE.value: [HarmCategory.VIOLENT_THREATS, HarmCategory.INFO_INTEGRITY],
+        FortressRiskSubdomain.ILLEGAL_WEAPONS.value: [
+            HarmCategory.REGULATED_GOODS,
+            HarmCategory.MILITARY,
+            HarmCategory.COORDINATION_HARM,
+        ],
+        FortressRiskSubdomain.COORDINATION_OF_ILLICIT_ACTIVITIES.value: [HarmCategory.COORDINATION_HARM],
+        FortressRiskSubdomain.FRAUD.value: [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+        FortressRiskSubdomain.PRIVACY_SCAMS.value: [HarmCategory.PPI, HarmCategory.SCAMS, HarmCategory.DECEPTION],
+    }
 
     modalities: list[str] = ["text"]
     size: str = "large"
@@ -294,7 +315,9 @@ class _FortressDataset(_RemoteDatasetLoader):
             value=str(value),
             data_type="text",
             dataset_name=self.dataset_name,
-            harm_categories=[subdomain_short] if subdomain_short else [],
+            harm_categories=self._standardize_harm_categories(
+                subdomain_short, alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES
+            ),
             description=self._DESCRIPTION,
             source=HF_SOURCE_URL,
             authors=_AUTHORS,

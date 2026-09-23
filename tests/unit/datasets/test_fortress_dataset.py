@@ -117,6 +117,58 @@ class TestFortressRiskSubdomainShortener:
         assert _shorten_risk_subdomain("Some New Category: foo, bar") == "Some New Category"
 
 
+class TestFortressHarmCategories:
+    @pytest.mark.parametrize("split", list(FortressSplit))
+    @pytest.mark.parametrize(
+        ("subdomain", "expected_categories"),
+        [
+            (FortressRiskSubdomain.CHEMICAL, ["CBRN"]),
+            (FortressRiskSubdomain.BIOLOGICAL, ["CBRN"]),
+            (FortressRiskSubdomain.RADIOLOGICAL_NUCLEAR_WMD, ["CBRN"]),
+            (FortressRiskSubdomain.EXPLOSIVES, ["MILITARY", "COORDINATION_HARM"]),
+            (FortressRiskSubdomain.TERRORISM, ["VIOLENT_EXTREMISM", "COORDINATION_HARM"]),
+            (FortressRiskSubdomain.POLITICAL_VIOLENCE, ["VIOLENT_THREATS", "INFO_INTEGRITY"]),
+            (FortressRiskSubdomain.ILLEGAL_WEAPONS, ["REGULATED_GOODS", "MILITARY", "COORDINATION_HARM"]),
+            (FortressRiskSubdomain.COORDINATION_OF_ILLICIT_ACTIVITIES, ["COORDINATION_HARM"]),
+            (FortressRiskSubdomain.FRAUD, ["SCAMS", "DECEPTION"]),
+            (FortressRiskSubdomain.PRIVACY_SCAMS, ["PPI", "SCAMS", "DECEPTION"]),
+        ],
+    )
+    async def test_seed_categories_are_standardized_for_each_source_subdomain(
+        self,
+        mock_fortress_rows: list[dict[str, Any]],
+        subdomain: FortressRiskSubdomain,
+        expected_categories: list[str],
+        split: FortressSplit,
+    ) -> None:
+        row = mock_fortress_rows[0]
+        row["risk_subdomain"] = f"{subdomain.value}: source description"
+        loader = _FortressDataset(splits=[split])
+
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=[row])):
+            seed = (await loader.fetch_dataset_async()).seeds[0]
+
+        assert seed.harm_categories == expected_categories
+        assert seed.metadata is not None
+        assert seed.metadata["risk_subdomain"] == subdomain.value
+        assert seed.metadata["risk_subdomain_full"] == row["risk_subdomain"]
+
+    async def test_unknown_source_subdomain_maps_to_other_with_warning(
+        self, mock_fortress_rows: list[dict[str, Any]], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        row = mock_fortress_rows[0]
+        row["risk_subdomain"] = "New Subdomain: source description"
+        loader = _FortressDataset()
+
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=[row])):
+            seed = (await loader.fetch_dataset_async()).seeds[0]
+
+        assert seed.harm_categories == ["OTHER"]
+        assert seed.metadata is not None
+        assert seed.metadata["risk_subdomain"] == "New Subdomain"
+        assert "Unknown harm category" in caplog.text
+
+
 class TestFortressAdversarialDataset:
     async def test_dataset_name(self):
         assert _FortressDataset().dataset_name == "fortress"
@@ -379,6 +431,7 @@ class TestFortressClassMetadata:
         # Class-level harm_categories should be the lowercased set of the 10 subdomains.
         expected = {sd.value.lower() for sd in FortressRiskSubdomain}
         assert set(_FortressDataset.harm_categories) == expected
+        assert set(_FortressDataset.HARM_CATEGORY_ALIAS_OVERRIDES) == {sd.value for sd in FortressRiskSubdomain}
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -393,3 +446,5 @@ class TestFortressMemory:
         assert len(stored) == len(dataset.seeds)
         original_metadata = {seed.value: seed.metadata for seed in dataset.seeds}
         assert {seed.value: seed.metadata for seed in stored} == original_metadata
+        original_categories = {seed.value: seed.harm_categories for seed in dataset.seeds}
+        assert {seed.value: seed.harm_categories for seed in stored} == original_categories
