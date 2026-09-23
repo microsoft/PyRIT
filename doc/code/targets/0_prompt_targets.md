@@ -73,6 +73,7 @@ Here are some examples:
 | **OpenAIChatTarget** (e.g., GPT-4)  | **Yes** (multi-turn + editable history)           | Designed for conversational prompts (system messages, conversation history, etc.).               |
 | **OpenAIImageTarget**               | **No**                                            | Used for image generation; does not manage conversation history.                                 |
 | **HTTPTarget**                      | **No**                                            | Generic HTTP target. Some apps might allow conversation history, but this target doesn't handle it. |
+| **A2ATarget**                       | **Yes** (multi-turn task continuity)              | Target for Agent-to-Agent (A2A) protocol endpoints with v0.3/v0.2 dual-spec negotiation.         |
 | **AzureBlobStorageTarget**          | **No**                                            | Used primarily for storage; not for conversation-based AI.                                       |
 
 ## Target Capabilities
