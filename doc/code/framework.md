@@ -204,8 +204,6 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Executors should use scoring and target capabilities implicitly. Executors should support multi-modal.
 - Seeds author goals and criteria; execution parameters carry an optional `ScoringExpectation`
   beside the attack objective. Attacks forward its conditions; scorers interpret them.
-- With no scorers configured, the question-answering benchmark collects responses without
-  submitting answer conditions for evaluation. Its outcome is undetermined, not success or failure.
 - Compound attacks are possible, combining different attacks in different ways.
 - **Does not own**: packaging the attack. Those are passed in as configuration by the **attack technique**, not assembled here:
   - prepended / system prompts, role-play framing, the converter stack, or dataset selection (e.g. if an executor assembles its own prompt scaffolding for a simulated conversation, that is attack-technique work bleeding into the executor)

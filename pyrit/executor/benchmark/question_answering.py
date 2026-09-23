@@ -87,8 +87,8 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         self,
         *,
         objective_target: PromptTarget,
+        attack_scoring_config: AttackScoringConfig,
         attack_converter_config: AttackConverterConfig | None = None,
-        attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         objective_format_string: str = _DEFAULT_OBJECTIVE_FORMAT,
         question_asking_format_string: str = _DEFAULT_QUESTION_FORMAT,
@@ -101,15 +101,22 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         Args:
             objective_target (PromptTarget): The target system to evaluate.
             attack_converter_config (AttackConverterConfig | None): Configuration for converters.
-            attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
-                With no scorers, collect responses without a verdict. Otherwise, at least one
-                scorer must consume the generated ``AnswerMatches`` condition.
+            attack_scoring_config (AttackScoringConfig): Required scoring configuration. Its
+                objective scorer must consume the generated ``AnswerMatches`` condition.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             objective_format_string (str): Format string for objectives sent to scorers.
             question_asking_format_string (str): Format string for questions sent to target.
             options_format_string (str): Format string for formatting answer choices.
             max_attempts_on_failure (int): Maximum number of attempts on failure.
+
+        Raises:
+            ValueError: If no objective scorer consumes ``AnswerMatches``.
         """
+        if attack_scoring_config is None or attack_scoring_config.objective_scorer is None:
+            raise ValueError("QuestionAnsweringBenchmark requires an objective scorer.")
+        if AnswerMatches not in attack_scoring_config.objective_scorer.get_condition_types():
+            raise ValueError("QuestionAnsweringBenchmark requires an objective scorer that consumes AnswerMatches.")
+
         super().__init__(
             context_type=QuestionAnsweringBenchmarkContext,
             logger=logger,
@@ -200,13 +207,9 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         if not context.generated_message:
             raise ValueError("Message must be generated before executing benchmark")
 
-        scoring_config = self._prompt_sending_attack.get_attack_scoring_config()
-        has_scorers = scoring_config is not None and (
-            scoring_config.objective_scorer is not None or bool(scoring_config.auxiliary_scorers)
-        )
         return await self._prompt_sending_attack.execute_async(
             objective=context.generated_objective,
-            expectation=context.generated_expectation if has_scorers else None,
+            expectation=context.generated_expectation,
             next_message=context.generated_message,
             prepended_conversation=context.prepended_conversation,
             memory_labels=context.memory_labels,

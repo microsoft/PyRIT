@@ -20,6 +20,7 @@
 # `QuestionAnsweringBenchmark` runs a multiple-choice dataset (here, WMDP) through a target and scores each answer. Fetching the dataset can take a minute.
 #
 # The benchmark builds a `ScoringExpectation` containing `AnswerMatches` from each entry.
+# An explicit scoring configuration with an objective scorer that consumes `AnswerMatches` is required.
 # Expected answers are scoring criteria, not target-facing metadata. Choose the deterministic
 # `QuestionAnswerScorer` for case-insensitive answer text/index matching, or
 # `SelfAskQuestionAnswerScorer` for an LLM judgment. Both consume the same typed expectation.
