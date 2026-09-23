@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from pyrit.analytics import AttackStats as AnalyticsAttackStats
 from pyrit.analytics.result_analysis import AttackStats as ResultAnalysisAttackStats
+from pyrit.common.pagination import fingerprint_filters
 from pyrit.models import (
     AttackAnalyticsDimension,
     AttackAnalyticsDimensionName,
@@ -156,6 +157,86 @@ def test_analytics_filter_keeps_additional_membership_constraints() -> None:
 def test_analytics_filters_reject_invalid_requests(data: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         AttackAnalyticsFilters.model_validate(data)
+
+
+@pytest.mark.parametrize("field", ["updated_after", "updated_before"])
+@pytest.mark.parametrize("timestamp", ["0001-01-01T00:00:00+00:01", "9999-12-31T23:59:59.999999-00:01"])
+@pytest.mark.parametrize("paired", [False, True])
+@pytest.mark.parametrize("input_mode", ["python", "json"])
+def test_analytics_filters_reject_unrepresentable_utc_bounds(
+    *, field: str, timestamp: str, paired: bool, input_mode: str
+) -> None:
+    bounds = {field: datetime.fromisoformat(timestamp)}
+    if paired:
+        other_field = "updated_before" if field == "updated_after" else "updated_after"
+        bounds[other_field] = datetime(2026, 1, 1, tzinfo=UTC)
+
+    with pytest.raises(ValidationError, match="Updated timestamp must be representable in UTC") as exc_info:
+        if input_mode == "python":
+            AttackAnalyticsFilters.model_validate(bounds)
+        else:
+            AttackAnalyticsFilters.model_validate_json(
+                json.dumps({name: value.isoformat() for name, value in bounds.items()})
+            )
+
+    errors = exc_info.value.errors()
+    assert len(errors) == 1
+    assert errors[0]["loc"] == (field,)
+    assert errors[0]["type"] == "value_error"
+
+
+@pytest.mark.parametrize("field", ["updated_after", "updated_before"])
+@pytest.mark.parametrize(
+    "timestamp, expected",
+    [
+        ("0001-01-01T00:00:00Z", datetime.min.replace(tzinfo=UTC)),
+        ("0001-01-01T00:01:00+00:01", datetime.min.replace(tzinfo=UTC)),
+        ("9999-12-31T23:59:59.999999Z", datetime.max.replace(tzinfo=UTC)),
+        ("9999-12-31T23:58:59.999999-00:01", datetime.max.replace(tzinfo=UTC)),
+    ],
+)
+def test_analytics_filters_accept_representable_utc_extremes(*, field: str, timestamp: str, expected: datetime) -> None:
+    from_python = AttackAnalyticsFilters.model_validate({field: datetime.fromisoformat(timestamp)})
+    from_json = AttackAnalyticsFilters.model_validate_json(json.dumps({field: timestamp}))
+
+    for filters in (from_python, from_json):
+        bound = getattr(filters, field)
+        assert bound == expected
+        assert bound.tzinfo is UTC
+        assert AttackAnalyticsFilters.model_validate_json(filters.model_dump_json()) == filters
+
+
+@pytest.mark.parametrize("fields", [("updated_after",), ("updated_before",), ("updated_after", "updated_before")])
+def test_analytics_filters_canonicalize_equivalent_timestamps(fields: tuple[str, ...]) -> None:
+    bounds = {
+        "updated_after": "2026-01-01T07:00:00.123456-05:00",
+        "updated_before": "2026-01-02T00:00:00.654321+05:30",
+    }
+    selected_bounds = {field: bounds[field] for field in fields}
+    python_bounds = {field: datetime.fromisoformat(value) for field, value in selected_bounds.items()}
+    expected = AttackAnalyticsFilters.model_validate(
+        {field: value.astimezone(UTC) for field, value in python_bounds.items()}
+    )
+    from_python = AttackAnalyticsFilters.model_validate(python_bounds)
+    from_json = AttackAnalyticsFilters.model_validate_json(json.dumps(selected_bounds))
+
+    for filters in (from_python, from_json):
+        assert all(getattr(filters, field).tzinfo is UTC for field in fields)
+        assert filters.model_dump() == expected.model_dump()
+        assert filters.model_dump(mode="json") == expected.model_dump(mode="json")
+        assert filters.model_dump_json() == expected.model_dump_json()
+        assert fingerprint_filters(filters=filters.model_dump(mode="json")) == fingerprint_filters(
+            filters=expected.model_dump(mode="json")
+        )
+
+
+def test_analytics_filters_preserve_absent_date_bounds() -> None:
+    from_python = AttackAnalyticsFilters(updated_after=None, updated_before=None)
+    from_json = AttackAnalyticsFilters.model_validate_json('{"updated_after": null, "updated_before": null}')
+
+    assert from_python == from_json == AttackAnalyticsFilters()
+    assert from_python.updated_after is None
+    assert from_python.updated_before is None
 
 
 @pytest.mark.parametrize("after_minute, before_minute", [(45, 15), (30, 30)])

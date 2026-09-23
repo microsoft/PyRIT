@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from enum import Enum
 from typing import ClassVar, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.models.results.attack_result import AttackOutcome
 
@@ -218,7 +218,8 @@ class AttackAnalyticsFilters(_AnalyticsModel):
     No predicates and no outcomes means unrestricted saved results. All four
     outcomes normalize to the same unrestricted representation. Updated bounds
     form a half-open interval [after, before) over last-modified timestamps, not
-    attack execution time, and are compared as UTC instants across timezone changes.
+    attack execution time. Bounds are stored as UTC instants; values outside the
+    supported UTC datetime range are rejected.
     Request-size limits bound work without sampling results.
     """
 
@@ -246,13 +247,35 @@ class AttackAnalyticsFilters(_AnalyticsModel):
         if (
             self.updated_after is not None
             and self.updated_before is not None
-            and self.updated_after.astimezone(UTC) >= self.updated_before.astimezone(UTC)
+            and self.updated_after >= self.updated_before
         ):
             raise ValueError("updated_after must be before updated_before")
         self.outcomes = sorted(set(self.outcomes), key=lambda outcome: outcome.value)
         if set(self.outcomes) == set(AttackOutcome):
             self.outcomes = []
         return self
+
+    @field_validator("updated_after", "updated_before")
+    @classmethod
+    def _normalize_updated_bound(cls, value: datetime | None) -> datetime | None:
+        """
+        Store each updated bound as a representable UTC instant.
+
+        Args:
+            value (datetime | None): The timezone-aware bound, if supplied.
+
+        Returns:
+            datetime | None: The bound normalized to UTC, or None.
+
+        Raises:
+            ValueError: If the bound is outside the supported UTC datetime range.
+        """
+        if value is None:
+            return None
+        try:
+            return value.astimezone(UTC)
+        except OverflowError as exc:
+            raise ValueError("Updated timestamp must be representable in UTC") from exc
 
 
 class AttackAnalyticsQuery(_AnalyticsModel):
