@@ -13,9 +13,6 @@ authors:
   - Lizhuang Ma
 groups:
   - Shanghai Jiao Tong University
-  - The Chinese University of Hong Kong
-  - Shanghai Artificial Intelligence Laboratory
-  - East China Normal University
 source: https://github.com/microsoft/PyRIT
 data_type: text
 value: >
