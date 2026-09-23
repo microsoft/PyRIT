@@ -90,6 +90,8 @@ await SeedDatasetProvider.get_all_dataset_names_async()
 # You can retrieve all built-in datasets using `SeedDatasetProvider.fetch_datasets_async()`, or fetch specific ones by providing dataset names. This returns a list of `SeedDataset` objects containing the seeds.
 #
 # **FORTRESS:** The `fortress` dataset loads 500 adversarial prompts by default.
+# No benign seeds are emitted by default, but each adversarial seed retains the
+# full benign counterpart in its `paired_prompt` metadata.
 # To configure its provider, import `_FortressDataset` and `FortressSplit` from
 # `pyrit.datasets.seed_datasets.remote`. The `splits` constructor argument accepts
 # `[FortressSplit.ADVERSARIAL]`, `[FortressSplit.BENIGN]`, or

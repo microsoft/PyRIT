@@ -105,6 +105,8 @@ class _FortressDataset(_RemoteDatasetLoader):
     ``splits`` selects the prompt types to emit, defaulting to adversarial only.
     Selecting both types returns 1000 independent seeds, adversarial then benign
     per row, linked by ``fortress_id`` and ``paired_prompt`` metadata.
+    Single-split loads also retain the full counterpart text in ``paired_prompt``;
+    only selected splits are emitted as seeds.
     Adversarial seeds preserve the source rubric as a list of criterion strings.
     This loader does not implement scoring or the benchmark's aggregate metrics.
 
