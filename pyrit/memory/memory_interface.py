@@ -101,11 +101,6 @@ from pyrit.models import (
     sort_message_pieces,
 )
 from pyrit.models.results.attack_result import ATTRIBUTION_FIELDS, ATTRIBUTION_VALUE_MAX_LENGTH
-from pyrit.models.score.observation import (
-    _content_scorable_digest,
-    _message_piece_digest,
-    _response_piece_digest,
-)
 
 if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
@@ -1969,6 +1964,7 @@ class MemoryInterface(abc.ABC):
             ValueError: If observation IDs, references, or managed anchors are invalid.
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
+        observations = [Observation.model_validate(observation.model_dump()) for observation in observations]
         new_ids, referenced_ids = self._validate_score_inputs(scores=scores, observations=observations)
         with closing(self.get_session()) as session:
             try:
@@ -2022,16 +2018,6 @@ class MemoryInterface(abc.ABC):
         unreferenced = set(observations_by_id) - referenced_observation_ids
         if unreferenced:
             raise ValueError(f"New observations are not referenced by a score: {sorted(unreferenced)}.")
-        for observation in observations:
-            if isinstance(observation.scorable, (ContentScorable, ContentEntryScorable)):
-                if observation.scorable.data_type in MEDIA_PATH_DATA_TYPES:
-                    raise ValueError(f"Media judgment observations are deferred: {observation.id}.")
-                if isinstance(
-                    observation.scorable, ContentScorable
-                ) and observation.payload.scored_evidence_digest != _content_scorable_digest(observation.scorable):
-                    raise ValueError(
-                        f"Content observations contain an invalid scored-evidence digest: {observation.id}."
-                    )
         return set(observations_by_id), referenced_observation_ids
 
     @classmethod
@@ -2123,7 +2109,7 @@ class MemoryInterface(abc.ABC):
                 message_piece_id=piece_id,
             )
             for observation in observations
-            for position, piece_id in enumerate(observation.payload.message_piece_ids)
+            for position, piece_id in enumerate(observation.response_message_piece_ids)
         ]
         score_observation_links = [
             ScoreObservationEntry(
@@ -2221,31 +2207,12 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If referenced response or scored evidence is missing or modified.
         """
-        piece_ids = {
-            piece_id
-            for observation in observations
-            for piece_id in (
-                *observation.payload.message_piece_ids,
-                *((observation.payload.scored_piece_id,) if isinstance(observation.scorable, MessageScorable) else ()),
-            )
-        }
+        piece_ids = {piece_id for observation in observations for piece_id in observation.evidence_message_piece_ids}
         pieces_by_id = cls._load_score_message_pieces(session=session, piece_ids=sorted(piece_ids, key=str))
-        missing_payload_piece_ids = {
-            str(piece_id)
-            for observation in observations
-            for piece_id in observation.payload.message_piece_ids
-            if piece_id not in pieces_by_id
-        }
-        if missing_payload_piece_ids:
-            raise ValueError(
-                f"Observation payload references message pieces not found in memory: "
-                f"{sorted(missing_payload_piece_ids)}."
-            )
-
         content_ids = {
-            observation.scorable.content_id
+            observation.scorable_content_id
             for observation in observations
-            if isinstance(observation.scorable, ContentEntryScorable)
+            if observation.scorable_content_id is not None
         }
         content_by_id: dict[uuid.UUID, tuple[ContentScorable, str]] = {}
         content_id_values = list(content_ids)
@@ -2269,10 +2236,11 @@ class MemoryInterface(abc.ABC):
             )
 
         for observation in observations:
-            cls._validate_one_observation_evidence(
-                observation=observation,
-                pieces_by_id=pieces_by_id,
-                content_by_id=content_by_id,
+            observation.validate_evidence(
+                message_pieces=pieces_by_id,
+                stored_content=content_by_id.get(observation.scorable_content_id)
+                if observation.scorable_content_id is not None
+                else None,
             )
 
     @classmethod
@@ -2294,58 +2262,6 @@ class MemoryInterface(abc.ABC):
                 statement = statement.with_hint(PromptMemoryEntry, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
             pieces_by_id.update({entry.id: entry.get_message_piece() for entry in session.scalars(statement)})
         return pieces_by_id
-
-    @staticmethod
-    def _validate_one_observation_evidence(
-        *,
-        observation: Observation,
-        pieces_by_id: Mapping[uuid.UUID, MessagePiece],
-        content_by_id: Mapping[uuid.UUID, tuple[ContentScorable, str]],
-    ) -> None:
-        """
-        Verify one observation against canonical evidence values.
-
-        Raises:
-            ValueError: If any referenced evidence is missing or has a different digest.
-        """
-        payload = observation.payload
-        for piece_id, expected_digest in zip(
-            payload.message_piece_ids,
-            payload.message_piece_digests,
-            strict=True,
-        ):
-            piece = pieces_by_id.get(piece_id)
-            if piece is None or _response_piece_digest(piece, include_id=True) != expected_digest:
-                raise ValueError(f"Observation {observation.id} references missing or modified response evidence.")
-
-        if isinstance(observation.scorable, MessageScorable):
-            scored_piece = pieces_by_id.get(payload.scored_piece_id)
-            if scored_piece and scored_piece.converted_value_data_type in MEDIA_PATH_DATA_TYPES:
-                raise ValueError(f"Media judgment observations are deferred: {observation.id}.")
-            actual_digest = _message_piece_digest(scored_piece, include_id=False) if scored_piece else None
-        elif isinstance(observation.scorable, ContentEntryScorable):
-            stored_content = content_by_id.get(observation.scorable.content_id)
-            actual_digest = (
-                stored_content[1]
-                if stored_content
-                and stored_content[0].data_type == observation.scorable.data_type
-                and stored_content[0].data_type not in MEDIA_PATH_DATA_TYPES
-                else None
-            )
-            if (
-                stored_content
-                and stored_content[0].data_type not in MEDIA_PATH_DATA_TYPES
-                and _content_scorable_digest(stored_content[0]) != stored_content[1]
-            ):
-                actual_digest = None
-        else:
-            actual_digest = (
-                _content_scorable_digest(observation.scorable)
-                if observation.scorable.data_type not in MEDIA_PATH_DATA_TYPES
-                else None
-            )
-        if actual_digest != payload.scored_evidence_digest:
-            raise ValueError(f"Observation {observation.id} references missing or modified scored evidence.")
 
     def get_scorable_content(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, ContentScorable]:
         """

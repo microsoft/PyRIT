@@ -27,7 +27,7 @@ from pyrit.models import (
     ScoringExpectation,
     SeedDataset,
 )
-from pyrit.score.observation import _get_current_scoring_expectation
+from pyrit.score.observation.execution import _get_current_scoring_expectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,

@@ -131,9 +131,10 @@ print(df.to_string(index=False))
 # `Score.objective` remains a read-only compatibility view. `score_observation_async()` can
 # parse that stored judgment again without calling the target. Replay requires unchanged scored
 # evidence and response content, plus the exact original expectation, scorer configuration, and
-# response-handler contract. The payload is a `JudgmentObservationPayload` with kind `judgment`;
-# the target need not be a language model. Media, tool-call observations, and coverage are deferred
-# until their evidence can be snapshotted before judgment.
+# response-handler contract. `ScorerTargetResponsePayload` references the scorer's target response;
+# the target need not be a language model. Its kind is `scorer_target_response`.
+# Media observation capture remains deferred until its evidence can be snapshotted.
+# Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb).
 #
 # Replaying a judgment is different from evaluating a stored run against a new expectation.
 # A retained target judgment answers the original expectation; changing that expectation

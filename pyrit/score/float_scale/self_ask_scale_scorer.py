@@ -19,7 +19,7 @@ from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.numeric_scale import NumericRubric
 from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
-from pyrit.score.observation import _ObservationEvidence
+from pyrit.score.observation.execution import _ObservationEvidence
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     )
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.float_scale.numeric_scale import NumericRange
-    from pyrit.score.observation import _ObservationEvidence
+    from pyrit.score.observation.execution import _ObservationEvidence
 
 
 class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):

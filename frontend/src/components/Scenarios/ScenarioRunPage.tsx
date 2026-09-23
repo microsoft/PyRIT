@@ -74,6 +74,7 @@ import ScenarioQueue from './ScenarioQueue'
 
 const CLOCK_REFRESH_INTERVAL_MS = 1_000
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
+const AUTO_EXPAND_GROUP_LIMIT = 20
 
 const RUN_BADGE_COLORS: Record<ScenarioRunState, 'informative' | 'brand' | 'success' | 'danger' | 'warning'> = {
   CREATED: 'informative',
@@ -114,6 +115,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const [cancelError, setCancelError] = useState<string | null>(null)
   const [selectedTechnique, setSelectedTechnique] = useState<ScenarioTechniqueProgress | null>(null)
   const [selectedObjective, setSelectedObjective] = useState<ScenarioRunPlanSeedGroup | null>(null)
+  const [atomicGroupsExpandedChoice, setAtomicGroupsExpandedChoice] = useState<boolean | null>(null)
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set())
   const detailsTriggerRef = useRef<HTMLElement | null>(null)
   const navigationState = location.state as {
@@ -281,6 +283,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     seed_groups: seedGroups,
   } = state.summary
   const displayGroups = summarizedDisplayGroups ?? techniques
+  const atomicGroupsExpanded = atomicGroupsExpandedChoice ?? displayGroups.length <= AUTO_EXPAND_GROUP_LIMIT
   const unattributedAttempts = state.summary.unattributed_attempts ?? 0
   const queued = run.status === 'QUEUED'
   const canCancel = run.status === 'CREATED' || queued || run.status === 'IN_PROGRESS'
@@ -511,72 +514,88 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
 
         <section className={styles.section} aria-labelledby="atomic-groups-heading">
           <div className={styles.sectionHeading}>
-            <Text as="h2" id="atomic-groups-heading" size={500} weight="semibold">
-              Atomic attack groups
-            </Text>
+            <div className={styles.objectivesHeading}>
+              <Text as="h2" id="atomic-groups-heading" size={500} weight="semibold">
+                Atomic attack groups
+              </Text>
+              <Button
+                appearance="subtle"
+                className={styles.touchTarget}
+                icon={atomicGroupsExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                aria-expanded={atomicGroupsExpanded}
+                aria-controls="atomic-groups-panel"
+                aria-label={`${atomicGroupsExpanded ? 'Collapse' : 'Expand'} atomic attack groups`}
+                data-testid="toggle-atomic-groups-btn"
+                onClick={() => setAtomicGroupsExpandedChoice(!atomicGroupsExpanded)}
+              >
+                {atomicGroupsExpanded ? 'Collapse' : 'Expand'}
+              </Button>
+            </div>
             <Text className={styles.sectionHint}>
-              {`${state.results.length} executions`}
+              {`${displayGroups.length.toLocaleString()} group${displayGroups.length === 1 ? '' : 's'}, ${state.results.length.toLocaleString()} execution${state.results.length === 1 ? '' : 's'}`}
             </Text>
           </div>
-          {displayGroups.length === 0 ? (
-            <EmptyState text="No atomic attack groups have been persisted yet." />
-          ) : (
-            <div className={styles.displayGroupList}>
-              {displayGroups.map((group) => {
-                const attempts = (group.atomic_group_ids ?? [])
-                  .flatMap((atomicGroupId) => attemptsByGroupId.get(atomicGroupId) ?? [])
-                const expanded = expandedGroupIds.has(group.id)
-                const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
-                return (
-                  <article key={group.id} className={styles.displayGroup}>
-                    <div className={styles.displayGroupSummary}>
-                      <Button
-                        appearance="subtle"
-                        className={styles.expandButton}
-                        icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
-                        aria-expanded={expanded}
-                        aria-controls={panelId}
-                        aria-label={`${expanded ? 'Collapse' : 'Expand'} attacks in ${group.display_group}`}
-                        onClick={() => toggleDisplayGroup(group.id)}
-                      />
-                      <span className={styles.displayGroupIdentity}>
-                        <Text size={400} weight="semibold">{group.display_group}</Text>
-                        <Text size={200} className={styles.sectionHint}>
-                          {group.atomic_attack_names.join(', ')}
-                        </Text>
-                      </span>
-                      <span className={styles.displayGroupMetrics}>
-                        <DisplayGroupMetric
-                          label="Completed"
-                          value={formatCompletion(group.completed, group.planned)}
+          <div id="atomic-groups-panel" hidden={!atomicGroupsExpanded}>
+            {atomicGroupsExpanded && (displayGroups.length === 0 ? (
+              <EmptyState text="No atomic attack groups have been persisted yet." />
+            ) : (
+              <div className={styles.displayGroupList}>
+                {displayGroups.map((group) => {
+                  const attempts = (group.atomic_group_ids ?? [])
+                    .flatMap((atomicGroupId) => attemptsByGroupId.get(atomicGroupId) ?? [])
+                  const expanded = expandedGroupIds.has(group.id)
+                  const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+                  return (
+                    <article key={group.id} className={styles.displayGroup}>
+                      <div className={styles.displayGroupSummary}>
+                        <Button
+                          appearance="subtle"
+                          className={styles.expandButton}
+                          icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+                          aria-expanded={expanded}
+                          aria-controls={panelId}
+                          aria-label={`${expanded ? 'Collapse' : 'Expand'} attacks in ${group.display_group}`}
+                          onClick={() => toggleDisplayGroup(group.id)}
                         />
-                        <DisplayGroupMetric
-                          label="Attack success"
-                          value={formatSuccess(group.succeeded, group.completed, group.success_percentage)}
-                        />
-                        <DisplayGroupMetric label="Errors" value={String(group.errors)} />
-                        <DisplayGroupMetric label="Retries" value={String(group.retries)} />
-                      </span>
-                    </div>
-                    {expanded && (
-                      <div
-                        id={panelId}
-                        className={styles.displayGroupPanel}
-                        aria-label={`${group.display_group} attack executions`}
-                      >
-                        <AttackExecutionTable
-                          attempts={attempts.slice(0, MAX_VISIBLE_ATTEMPTS_PER_GROUP)}
-                          totalAttempts={attempts.length}
-                          seedObjectives={seedObjectives}
-                          onOpenDetails={openAttemptDetails}
-                        />
+                        <span className={styles.displayGroupIdentity}>
+                          <Text size={400} weight="semibold">{group.display_group}</Text>
+                          <Text size={200} className={styles.sectionHint}>
+                            {group.atomic_attack_names.join(', ')}
+                          </Text>
+                        </span>
+                        <span className={styles.displayGroupMetrics}>
+                          <DisplayGroupMetric
+                            label="Completed"
+                            value={formatCompletion(group.completed, group.planned)}
+                          />
+                          <DisplayGroupMetric
+                            label="Attack success"
+                            value={formatSuccess(group.succeeded, group.completed, group.success_percentage)}
+                          />
+                          <DisplayGroupMetric label="Errors" value={String(group.errors)} />
+                          <DisplayGroupMetric label="Retries" value={String(group.retries)} />
+                        </span>
                       </div>
-                    )}
-                  </article>
-                )
-              })}
-            </div>
-          )}
+                      {expanded && (
+                        <div
+                          id={panelId}
+                          className={styles.displayGroupPanel}
+                          aria-label={`${group.display_group} attack executions`}
+                        >
+                          <AttackExecutionTable
+                            attempts={attempts.slice(0, MAX_VISIBLE_ATTEMPTS_PER_GROUP)}
+                            totalAttempts={attempts.length}
+                            seedObjectives={seedObjectives}
+                            onOpenDetails={openAttemptDetails}
+                          />
+                        </div>
+                      )}
+                    </article>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className={styles.section} aria-labelledby="objective-scorer-heading">

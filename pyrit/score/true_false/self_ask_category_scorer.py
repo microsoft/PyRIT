@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
 
-    from pyrit.score.observation import _ObservationEvidence
+    from pyrit.score.observation.execution import _ObservationEvidence
 
 _DEFAULT_CONTENT_CLASSIFIER_SYSTEM_PROMPT_PATH = (
     SCORER_CONTENT_CLASSIFIERS_PATH / "content_classifier_system_prompt.yaml"
