@@ -102,7 +102,7 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 #### Sending Messages
 
-For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside **New run labels** to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target; their badge does not change the target.
+For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside the label controls to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target; their badge does not change the target.
 
 Clicking **Chat** while already in a new chat keeps its target and draft. Starting
 a new attack resets both. Default changes in another tab apply to the next new
@@ -203,7 +203,7 @@ Export stays available for read-only historical conversations, and is disabled w
 
 #### Labels
 
-The **New run labels** bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. You can add, edit, and remove labels without leaving the page. The `operator` and `operation` labels are required and cannot be removed.
+The labels bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. Click the labels icon to open **Default Labels** and add, edit, or remove custom labels. The required `operator` and `operation` controls remain in the bar, outside this popover, and cannot be removed. A signed-in operator is read-only.
 
 In Chat, the active target, Markdown toggle, export menu, conversations panel toggle, and **New Attack** button share the right side of this bar. They wrap below the labels on narrow screens.
 

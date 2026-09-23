@@ -151,7 +151,7 @@ export default function Home({
             </div>
             <div className={styles.cardBody}>
               <Text size={200} className={styles.heroSubtitle}>
-                Use the <strong>New run labels</strong> bar above to set your <strong>operator</strong>,
+                Use the bar above to set your <strong>operator</strong>,
                 {' '}<strong>operation</strong>, and other labels before starting an attack or scan.
                 Your choices stay with you as you navigate. Existing runs keep their original labels.
               </Text>

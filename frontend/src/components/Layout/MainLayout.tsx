@@ -130,19 +130,15 @@ export default function MainLayout({
           )}
           <section
             className={styles.labelsSection}
-            aria-label="New run labels"
+            aria-label="Default Labels"
             data-tour="labels-card"
           >
             <div className={styles.labelsRow}>
               <div className={styles.labelsControls}>
-                <Text weight="semibold" className={styles.labelsTitle}>New run labels</Text>
                 <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly} />
               </div>
               <div ref={toolbarRef} className={styles.toolbarSlot} />
             </div>
-            <Text size={200} className={styles.labelsHint}>
-              Used for new attacks and scans. Existing runs keep their original labels.
-            </Text>
           </section>
           {children}
         </main>

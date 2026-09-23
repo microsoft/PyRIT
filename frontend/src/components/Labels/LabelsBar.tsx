@@ -234,13 +234,17 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
     return DUMMY_VALUES[key] === value
   }, [])
 
-  const hasDummyValues = Object.entries(labels).some(([k, v]) => isDummyValue(k, v))
+  const placeholderKeys = Object.entries(labels)
+    .filter(([key, value]) => isDummyValue(key, value))
+    .map(([key]) => key)
+  const hasDummyValues = placeholderKeys.length > 0
 
   const validateKey = (key: string): string | null => {
     if (!key) return 'Key is required'
     if (key !== key.toLowerCase()) return 'Labels must be lowercase'
     if (!/^[a-z][a-z0-9_]*$/.test(key)) return 'Only lowercase letters, numbers, underscores'
     if (key in labels) return 'Label key already exists'
+    if (METADATA_KEYS.has(key)) return 'Set operator and operation in the bar'
     return null
   }
 
@@ -349,8 +353,8 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
 
   // Layout: the labels icon (with custom-label count badge) is always the first
   // element on the bar. We then render as many full chips as fit, in
-  // declaration order. The icon's popover keeps every metadata field and
-  // custom label reachable regardless of how many chips are currently visible.
+  // declaration order. Metadata stays in the bar; custom labels that do not
+  // fit remain available in the popover.
   const rootRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const ICON_BUTTON_WIDTH_PX = 56  // labels icon + count badge + gap
@@ -358,10 +362,6 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
   const [visibleCount, setVisibleCount] = useState(Infinity)
 
   const headerEntries = useMemo(() => Object.entries(labels), [labels])
-  const metadataEntries = useMemo(
-    () => headerEntries.filter(([key]) => METADATA_KEYS.has(key)),
-    [headerEntries]
-  )
   const labelEntries = useMemo(
     () => headerEntries.filter(([key]) => !METADATA_KEYS.has(key)),
     [headerEntries]
@@ -567,8 +567,7 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
     )
   }
 
-  const renderPopoverEntry = (key: string, value: string, isMetadata: boolean) => {
-    const isReadOnly = key === 'operator' && operatorReadOnly
+  const renderPopoverEntry = (key: string, value: string) => {
     if (editingLabel === key) {
       return (
         <div key={key} className={styles.inputRow} style={{ position: 'relative' }}>
@@ -588,39 +587,29 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
           onClick={() => handleStartEdit(key)}
           onKeyDown={e => handleStartEditKeyDown(e, key)}
           role="button"
-          tabIndex={isReadOnly ? -1 : 0}
-          aria-disabled={isReadOnly}
-          aria-label={isReadOnly ? `Signed-in operator: ${value}` : `Edit ${key}${isMetadata ? '' : ' label'}, currently ${value}`}
-          data-testid={`popover-${isMetadata ? 'metadata' : 'label'}-${key}`}
+          tabIndex={0}
+          aria-label={`Edit ${key} label, currently ${value}`}
+          data-testid={`popover-label-${key}`}
         >
           <Text size={200} weight="semibold">{key}:</Text>
           <Text size={200}>{value}</Text>
         </div>
-        {!isMetadata && (
-          <Button
-            className={styles.removeBtn}
-            appearance="transparent"
-            size="small"
-            icon={<DismissRegular fontSize={12} />}
-            onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
-            aria-label={`Remove ${key} label`}
-            data-testid={`popover-remove-label-${key}`}
-          />
-        )}
+        <Button
+          className={styles.removeBtn}
+          appearance="transparent"
+          size="small"
+          icon={<DismissRegular fontSize={12} />}
+          onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
+          aria-label={`Remove ${key} label`}
+          data-testid={`popover-remove-label-${key}`}
+        />
       </div>
     )
   }
 
-  const renderMetadataList = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      {metadataEntries.map(([key, value]) => renderPopoverEntry(key, value, true))}
-    </div>
-  )
-
   const renderLabelsList = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      {labelEntries.length === 0 && <Text size={200}>No labels yet</Text>}
-      {labelEntries.map(([key, value]) => renderPopoverEntry(key, value, false))}
+      {labelEntries.map(([key, value]) => renderPopoverEntry(key, value))}
     </div>
   )
 
@@ -695,11 +684,30 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
   return (
     <div className={styles.root} data-testid="labels-bar" ref={rootRef}>
       {hasDummyValues && (
-        <Tooltip content="Some labels have placeholder values — update them for proper tracking" relationship="description">
-          <span className={styles.warningIcon} data-testid="labels-warning">
-            <WarningRegular fontSize={16} />
-          </span>
-        </Tooltip>
+        <Popover>
+          <PopoverTrigger disableButtonEnhancement>
+            <Button
+              appearance="subtle"
+              size="small"
+              icon={<WarningRegular />}
+              className={styles.warningIcon}
+              data-testid="labels-warning"
+              aria-label="Show warnings"
+            />
+          </PopoverTrigger>
+          <PopoverSurface className={styles.popover} aria-label="Warnings">
+            <div className={styles.popoverSurface}>
+              <Text as="h2" weight="semibold" size={300}>Warnings</Text>
+              <Text size={200}>
+                {`Set ${placeholderKeys.join(' and ')} in the bar. ${
+                  placeholderKeys.length === 1
+                    ? 'The current value is a placeholder.'
+                    : 'The current values are placeholders.'
+                }`}
+              </Text>
+            </div>
+          </PopoverSurface>
+        </Popover>
       )}
 
       {/*
@@ -726,8 +734,8 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
 
       {/*
         Labels icon + custom-label count. Always present, anchored leftmost.
-        Clicking opens a popover with metadata fallbacks, the custom-label
-        list, and the add form — so even when every chip fits, this is still
+        Clicking opens a popover with the custom-label list and the add
+        form — so even when every chip fits, this is still
         the canonical entry point for editing/adding labels.
       */}
       <Popover open={isPopoverOpen} onOpenChange={(_, d) => { setIsPopoverOpen(d.open); setError(''); if (!d.open) setEditingLabel(null) }}>
@@ -754,13 +762,10 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
         </PopoverTrigger>
         <PopoverSurface className={styles.popover}>
           <div className={styles.popoverSurface}>
-            <Text weight="semibold" size={300}>Run metadata</Text>
-            {renderMetadataList()}
-            <div className={styles.popoverDivider} />
-            <Text weight="semibold" size={300}>Labels</Text>
+            <Text as="h2" weight="semibold" size={300}>Default Labels</Text>
+            <Text size={200}>added to new attacks and scans</Text>
             {renderLabelsList()}
             <div className={styles.popoverDivider} />
-            <Text weight="semibold" size={300}>Add Label</Text>
             {renderAddForm()}
           </div>
         </PopoverSurface>
@@ -768,7 +773,7 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
 
       <div className={styles.labelsContainer}>
         {headerEntries
-          .slice(0, visibleCount === Infinity ? headerEntries.length : visibleCount)
+          .filter(([key], idx) => METADATA_KEYS.has(key) || idx < visibleCount)
           .map(([key, value], idx) => renderLabelBadge(key, value, idx))}
       </div>
     </div>
