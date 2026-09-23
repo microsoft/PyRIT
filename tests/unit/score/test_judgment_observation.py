@@ -19,6 +19,7 @@ from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import ObservationEntry, PromptMemoryEntry, ScoreEntry
 from pyrit.models import (
     Acquisition,
+    AnswerMatches,
     ComponentIdentifier,
     ContentEntryScorable,
     ContentScorable,
@@ -387,7 +388,7 @@ async def test_builtin_question_answer_scorer_explicitly_supports_inherited_repl
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     target.send_prompt_async = AsyncMock(return_value=_response(_VALID_RESPONSE))
     scorer = SelfAskQuestionAnswerScorer(chat_target=target)
-    expectation = ScoringExpectation(objective="Is the answer correct?")
+    expectation = ScoringExpectation(conditions=[AnswerMatches(correct_answer="candidate response")])
     live = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
     observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
 

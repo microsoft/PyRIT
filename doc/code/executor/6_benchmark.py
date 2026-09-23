@@ -28,9 +28,17 @@
 # **Migration:** `QuestionAnswerScorer` no longer reads `prompt_metadata["correct_answer"]`
 # or `prompt_metadata["correct_answer_index"]`. When scoring directly, pass
 # `expectation=ScoringExpectation(conditions=[AnswerMatches(correct_answer="Paris", correct_answer_index="0")])`.
-# Both fields are required nonempty strings. Custom `correct_answer_matching_patterns` still use
-# `{correct_answer}` and `{correct_answer_index}`. The LLM scorer also retains objective-only
-# scoring when no `AnswerMatches` is supplied; the benchmark always supplies the typed condition.
+# `correct_answer` is required; omit `correct_answer_index` for an open-ended answer.
+# Custom `correct_answer_matching_patterns` still use `{correct_answer}` and `{correct_answer_index}`.
+#
+# **Breaking change:** `SelfAskQuestionAnswerScorer` now also requires `AnswerMatches`.
+# Objective-only calls, including `infer_objective_from_request=True` without an answer condition,
+# no longer supply ground truth. Put the expected answer in `AnswerMatches` and use `objective`
+# only for question context. Use `SelfAskTrueFalseScorer` for objective evaluation.
+# To check both answer correctness and an independent objective, combine those two scorers;
+# the Q&A leaf ignores the sibling's `MatchesObjective` condition.
+# Configure the objective scorer with `validator=ScorerPromptValidator(is_objective_required=True)`
+# so it declares that condition.
 
 # %%
 from pyrit.datasets.executors.question_answer.wmdp_dataset import fetch_wmdp_dataset

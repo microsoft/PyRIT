@@ -19,7 +19,15 @@ from pyrit.models import (
     UnvalidatedScore,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import MessageScorable, NonReplayableObservationError, Scorer
+from pyrit.score import (
+    MessageScorable,
+    NonReplayableObservationError,
+    Scorer,
+    ScorerPromptValidator,
+    SelfAskTrueFalseScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseScoreAggregator,
+)
 from pyrit.score.true_false.self_ask_question_answer_scorer import SelfAskQuestionAnswerScorer
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
@@ -57,7 +65,7 @@ async def test_score_async_returns_score_from_unvalidated(mock_chat_target):
         ):
             scores = await scorer.score_async(
                 scorable=MessageScorable.from_message(store_message(message)),
-                expectation=ScoringExpectation(objective="2+2=?\nanswer: 4"),
+                expectation=ScoringExpectation(objective="2+2=?", conditions=[AnswerMatches(correct_answer="4")]),
             )
 
     assert len(scores) == 1
@@ -75,8 +83,8 @@ async def test_typed_answer_supplies_judge_ground_truth_async(
         objective=objective,
         conditions=[AnswerMatches(correct_answer="Paris", correct_answer_index="B")],
     )
-    assert scorer.required_conditions() == frozenset()
-    assert scorer.matched_conditions() == frozenset({AnswerMatches, MatchesObjective})
+    assert scorer.required_conditions() == frozenset({AnswerMatches})
+    assert scorer.matched_conditions() == frozenset({AnswerMatches})
     Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=expectation)
     unvalidated = UnvalidatedScore(
         raw_score_value="true",
@@ -100,13 +108,47 @@ async def test_typed_answer_supplies_judge_ground_truth_async(
     assert scores[0].get_value() is True
 
 
-@pytest.mark.parametrize("expectation", [None, ScoringExpectation()])
-async def test_llm_question_answer_requires_answer_or_objective_async(
+@pytest.mark.parametrize(
+    "expectation",
+    [
+        None,
+        ScoringExpectation(),
+        ScoringExpectation(objective="Capital of France? Answer: Paris"),
+        ScoringExpectation(objective="Capital of France? Answer: Paris", conditions=[MatchesObjective()]),
+    ],
+)
+async def test_llm_question_answer_requires_answer_condition_async(
     mock_chat_target: MagicMock, expectation: ScoringExpectation | None
 ) -> None:
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
-    with pytest.raises(ValueError, match="requires AnswerMatches or an objective"):
-        await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+    with patch(
+        "pyrit.score.true_false.self_ask_question_answer_scorer._run_llm_scoring_async", new_callable=AsyncMock
+    ) as judge:
+        with pytest.raises(ValueError, match="Objective-only Q&A scoring is no longer supported"):
+            await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+        with pytest.raises(ValueError, match="requires an AnswerMatches condition"):
+            await scorer._score_piece_with_expectation_async(
+                MessagePiece(role="assistant", original_value="Paris"), expectation=expectation
+            )
+    judge.assert_not_awaited()
+
+
+def test_objective_validator_does_not_add_another_condition(mock_chat_target: MagicMock) -> None:
+    scorer = SelfAskQuestionAnswerScorer(
+        chat_target=mock_chat_target, validator=ScorerPromptValidator(is_objective_required=True)
+    )
+    assert scorer.matched_conditions() == scorer.required_conditions() == frozenset({AnswerMatches})
+
+
+async def test_legacy_objective_argument_requires_answer_condition_async(mock_chat_target: MagicMock) -> None:
+    scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
+    mock_chat_target.send_prompt_async = AsyncMock()
+    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="Objective-only Q&A scoring"):
+        await scorer.score_async(
+            Message.from_prompt(prompt="Paris", role="assistant"),
+            objective="Capital of France? The answer is Paris.",
+        )
+    mock_chat_target.send_prompt_async.assert_not_awaited()
 
 
 def test_llm_question_answer_rejects_duplicate_answers(mock_chat_target: MagicMock) -> None:
@@ -118,21 +160,71 @@ def test_llm_question_answer_rejects_duplicate_answers(mock_chat_target: MagicMo
         )
 
 
-async def test_llm_question_answer_rejects_simultaneous_alternatives_async(mock_chat_target: MagicMock) -> None:
+@pytest.mark.parametrize("composite", [False, True])
+@pytest.mark.parametrize("objective_met", [False, True])
+async def test_llm_question_answer_ignores_sibling_objective_condition_async(
+    mock_chat_target: MagicMock, composite: bool, objective_met: bool
+) -> None:
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
+    mock_chat_target.send_prompt_async = AsyncMock(
+        return_value=[
+            Message.from_prompt(
+                prompt='{"score_value":"true","description":"correct","rationale":"Paris matches","metadata":""}',
+                role="assistant",
+            )
+        ]
+    )
     expectation = ScoringExpectation(
         objective="Answer in German.",
         conditions=(MatchesObjective(), AnswerMatches(correct_answer="Paris")),
     )
-    with pytest.raises(ValueError, match="not both"):
+    with pytest.raises(ValueError, match="does not match.*MatchesObjective"):
         Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=expectation)
-    with pytest.raises(ValueError, match="not both"):
-        await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+
+    objective_target = MagicMock(spec=PromptTarget)
+    objective_target.get_identifier.return_value = ComponentIdentifier(
+        class_name="ObjectiveChatTarget", class_module="mock"
+    )
+    objective_target.send_prompt_async = AsyncMock(
+        return_value=[
+            Message.from_prompt(
+                prompt=(
+                    f'{{"score_value":"{str(objective_met).lower()}",'
+                    '"description":"language","rationale":"Objective judgment","metadata":""}'
+                ),
+                role="assistant",
+            )
+        ]
+    )
+    objective_scorer = SelfAskTrueFalseScorer(
+        chat_target=objective_target, validator=ScorerPromptValidator(is_objective_required=True)
+    )
+    root = (
+        TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[scorer, objective_scorer])
+        if composite
+        else scorer
+    )
+    if composite:
+        Scorer.validate_expectation_for_scorers(scorers=[root], expectation=expectation)
+    [score] = await root.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+
+    assert score.get_value() is (objective_met if composite else True)
+    assert score.scored_expectation == expectation
+    mock_chat_target.send_prompt_async.assert_awaited_once()
+    question_prompt = mock_chat_target.send_prompt_async.call_args.kwargs["message"].get_value()
+    assert 'The correct answer is "Paris".' in question_prompt
+    assert "not as a separate success criterion" in question_prompt
+    if composite:
+        objective_target.send_prompt_async.assert_awaited_once()
+        assert "Answer in German." in objective_target.send_prompt_async.call_args.kwargs["message"].get_value()
+    else:
+        objective_target.send_prompt_async.assert_not_awaited()
 
 
+@pytest.mark.parametrize("has_answer", [False, True])
 @pytest.mark.parametrize("canonical_input", [False, True])
-async def test_inferred_objective_is_validated_after_resolution_async(
-    sqlite_instance: MemoryInterface, mock_chat_target: MagicMock, canonical_input: bool
+async def test_inferred_objective_is_context_not_ground_truth_async(
+    sqlite_instance: MemoryInterface, mock_chat_target: MagicMock, canonical_input: bool, has_answer: bool
 ) -> None:
     question = "Capital of France? The correct answer is Paris."
     request = MessagePiece(role="user", original_value=question, conversation_id="inferred-qa", sequence=0).to_message()
@@ -153,24 +245,38 @@ async def test_inferred_objective_is_validated_after_resolution_async(
             )
         ]
     )
-    with pytest.warns(DeprecationWarning):
+    expectation = ScoringExpectation(conditions=[AnswerMatches(correct_answer="Paris")]) if has_answer else None
+
+    async def score_async() -> list[Score]:
         if canonical_input:
-            scores = await scorer.score_async(
-                scorable=MessageScorable.from_message(response), infer_objective_from_request=True
+            return await scorer.score_async(
+                scorable=MessageScorable.from_message(response),
+                expectation=expectation,
+                infer_objective_from_request=True,
             )
-        else:
-            scores = await scorer.score_async(response, infer_objective_from_request=True)
+        return await scorer.score_async(response, expectation=expectation, infer_objective_from_request=True)
+
+    if not has_answer:
+        with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="requires an AnswerMatches condition"):
+            await score_async()
+        mock_chat_target.send_prompt_async.assert_not_awaited()
+        return
+
+    with pytest.warns(DeprecationWarning):
+        scores = await score_async()
     mock_chat_target.send_prompt_async.assert_awaited_once()
     assert question in mock_chat_target.send_prompt_async.call_args.kwargs["message"].get_value()
     assert scores[0].get_value() is True
-    assert scores[0].scored_expectation == ScoringExpectation(objective=question)
+    assert scores[0].scored_expectation == ScoringExpectation(
+        objective=question, conditions=[AnswerMatches(correct_answer="Paris")]
+    )
     [stored] = sqlite_instance.get_scores(score_ids=[scores[0].id])
     assert stored.scored_expectation == scores[0].scored_expectation
 
 
 async def test_missing_inferred_objective_still_fails_async(mock_chat_target: MagicMock) -> None:
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
-    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="requires AnswerMatches or an objective"):
+    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="requires an AnswerMatches condition"):
         await scorer.score_async(
             Message.from_prompt(prompt="Paris", role="assistant"), infer_objective_from_request=True
         )
@@ -198,11 +304,16 @@ async def test_typed_answer_observation_replays_full_expectation_async(
 
     assert replay.get_value() == live.get_value()
     assert replay.scored_expectation == live.scored_expectation == expectation
-    assert scorer._judgment_replay_identifier()["answer_condition_version"] == 1
+    assert scorer._judgment_replay_identifier()["answer_condition_version"] == 2
     changed_answer = ScoringExpectation(
         objective=expectation.objective,
         conditions=[AnswerMatches(correct_answer="London", correct_answer_index="A")],
     )
     with pytest.raises(NonReplayableObservationError, match="expectation"):
         await scorer.score_observation_async(observation=observation, expectation=changed_answer)
+    with patch.object(SelfAskQuestionAnswerScorer, "_ANSWER_CONDITION_VERSION", 1):
+        old_contract = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
+        assert old_contract.get_identifier() != scorer.get_identifier()
+        with pytest.raises(NonReplayableObservationError):
+            await old_contract.score_observation_async(observation=observation, expectation=expectation)
     mock_chat_target.send_prompt_async.assert_called_once()
