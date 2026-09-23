@@ -1,3 +1,7 @@
+# Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt and third_party/garak-provenance.json for attribution.
+# WHOIS records: https://github.com/NVIDIA/garak/blob/2212c73e4886c9c9fe78768e82a543a47284addf/garak/data/payloads/whois_injection_contexts.json
 dataset_name: garak_latent_injection_contexts
 harm_categories: prompt_injection
 source: https://github.com/NVIDIA/garak/blob/2212c73e4886c9c9fe78768e82a543a47284addf/garak/probes/latentinjection.py
@@ -8,9 +12,9 @@ data_type: text
 description: 'Carrier documents for the Garak latent-injection probe family. Most seeds are a complete benign-looking document
   containing a single <|injection|> slot where the injection is planted. Seeds for the fact-snippet families are individual
   source paragraphs, which the scenario assembles deterministically into multi-snippet carrier documents (Garak assembles
-  them at runtime from a random sample instead, which would break resume). Two latent-jailbreak templates are split back
+  them at runtime from a random sample instead). Two latent-jailbreak templates are split back
   into separate documents here: the Garak source is missing the comma between them, so Python concatenates each pair into
-  one entry carrying two injection markers. Content is reproduced unmodified apart from renaming Garak''s templating markers
+  one entry carrying two injection markers. Other content is unchanged apart from renaming Garak''s templating markers
   to PyRIT''s. (Fetched 2026-09-04) Source content is Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES and is used under
   the Apache License 2.0; see the pinned ''source'' URL for the original.'
 seed_type: prompt

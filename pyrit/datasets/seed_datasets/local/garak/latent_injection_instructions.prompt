@@ -1,3 +1,6 @@
+# Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt and third_party/garak-provenance.json for attribution.
 dataset_name: garak_latent_injection_instructions
 harm_categories: prompt_injection
 source: https://github.com/NVIDIA/garak/blob/2212c73e4886c9c9fe78768e82a543a47284addf/garak/probes/latentinjection.py
