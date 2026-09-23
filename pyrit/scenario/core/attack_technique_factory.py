@@ -572,6 +572,9 @@ class AttackTechniqueFactory(Identifiable):
         builder parameter. This factory is left unchanged; the prefix is baked
         into the returned copy only.
 
+        Calling this again on the result layers the new prefix ahead of the previous
+        one, matching ``SeedSimulatedConversation.with_layered_prefix``.
+
         Args:
             prefix: Static guidance to prepend. Must not contain Jinja syntax.
 
@@ -599,7 +602,10 @@ class AttackTechniqueFactory(Identifiable):
         new_factory._technique_tags = list(self._technique_tags)
         new_factory._seed_technique = seed_technique
         if accepts_adversarial_config:
-            new_factory._adversarial_system_prompt_prefix = prefix
+            existing_prefix = self._adversarial_system_prompt_prefix
+            new_factory._adversarial_system_prompt_prefix = (
+                f"{prefix}\n\n{existing_prefix}" if existing_prefix else prefix
+            )
         return new_factory
 
     def create(
@@ -961,10 +967,10 @@ class AttackTechniqueFactory(Identifiable):
         """
         Build the behavioral identity for this factory.
 
-        Includes the factory name, attack class, kwargs, adversarial chat,
-        and the adversarial-flag booleans so factories with different
-        configurations produce different hashes. When a seed technique is
-        present, its seeds are added as ``children["technique_seeds"]``.
+        Includes the factory name, attack class, kwargs, adversarial chat, the
+        adversarial system-prompt prefix, and the adversarial-flag booleans so
+        factories with different configurations produce different hashes. When a
+        seed technique is present, its seeds are added as ``children["technique_seeds"]``.
 
         Returns:
             ComponentIdentifier: The frozen identity snapshot.
@@ -985,6 +991,8 @@ class AttackTechniqueFactory(Identifiable):
             params["adversarial_system_prompt"] = self._serialize_value(self._adversarial_system_prompt)
         if self._adversarial_seed_prompt is not None:
             params["adversarial_seed_prompt"] = self._serialize_value(self._adversarial_seed_prompt)
+        if self._adversarial_system_prompt_prefix is not None:
+            params["adversarial_system_prompt_prefix"] = self._adversarial_system_prompt_prefix
 
         children: dict[str, Any] = {}
         if self._seed_technique is not None:
