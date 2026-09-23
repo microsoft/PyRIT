@@ -19,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import pyrit
+import pyrit.backend.services.pagination as backend_pagination
+import pyrit.common.pagination as common_pagination
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AttackSummary,
@@ -2035,6 +2037,19 @@ class TestAddMessage:
 class TestPagination:
     """Tests for pagination in list_attacks."""
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "DecodedKeysetCursor",
+            "decode_keyset_cursor",
+            "encode_keyset_cursor",
+            "fingerprint_filters",
+            "normalize_label_filters",
+        ],
+    )
+    def test_pagination_reexports_preserve_identity(self, name: str) -> None:
+        assert getattr(backend_pagination, name) is getattr(common_pagination, name)
+
     async def test_list_attacks_first_page_forwards_limit_plus_one_and_no_after(
         self, attack_service, mock_memory
     ) -> None:
@@ -2082,6 +2097,24 @@ class TestPagination:
         await attack_service.list_attacks_async(limit=20, cursor="ar-attack-1")
 
         assert mock_memory.get_attack_results.call_args[1]["after"] is None
+
+    @pytest.mark.parametrize("field", ["t", "i"])
+    async def test_list_attacks_non_string_cursor_fields_restart_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, field: str
+    ) -> None:
+        payload = {
+            "v": 1,
+            "f": _attack_filter_fingerprint(),
+            "t": "2026-09-21T12:00:00Z",
+            "i": "00000000-0000-0000-0000-000000000001",
+            field: 123,
+        }
+        cursor = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+        mock_memory.get_attack_results.return_value = []
+
+        await attack_service.list_attacks_async(limit=20, cursor=cursor)
+
+        assert mock_memory.get_attack_results.call_args.kwargs["after"] is None
 
     def test_decode_attack_cursor_rejects_invalid_and_round_trips_valid(self) -> None:
         """Bad/legacy/mismatched/naive cursors decode to None; valid round-trips; non-UTC canonicalizes to UTC."""

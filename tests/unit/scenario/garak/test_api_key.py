@@ -11,7 +11,7 @@ import pytest
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import Base64Converter, Converter
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, Seed, SeedDataset
+from pyrit.models import ComponentIdentifier, ScenarioRunSizeEstimateStatus, Seed, SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
@@ -256,7 +256,16 @@ class TestApiKey:
             await scenario.initialize_async()
 
         expected = size or 20
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
+        assert estimate.total_attack_count == expected
         assert estimate.estimated_attack_count == expected
+        assert estimate.minimum_attack_count == expected
+        assert estimate.maximum_attack_count == expected
+        assert all(
+            [(factor.label, factor.count) for factor in component.factors]
+            == [("selected synthesized requests", component.count)]
+            for component in estimate.components
+        )
         assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == expected
         assert all(
             isinstance(attack.attack_technique.attack, PromptSendingAttack) for attack in scenario._atomic_attacks

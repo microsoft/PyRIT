@@ -21,7 +21,11 @@ from pyrit.backend.models.scenarios import (
     ScenarioRunListResponse,
 )
 from pyrit.backend.routes.common import parse_label_query_params
-from pyrit.backend.services.scenario_run_service import get_scenario_run_service
+from pyrit.backend.services.scenario_run_service import (
+    ScenarioRunConflictError,
+    ScenarioRunNotFoundError,
+    get_scenario_run_service,
+)
 from pyrit.backend.services.scenario_service import get_scenario_service
 from pyrit.models import ScenarioQueueSnapshot, ScenarioResult, ScenarioRunProgress, ScenarioRunState
 from pyrit.models.catalog import (
@@ -145,6 +149,8 @@ async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
     status_code=status.HTTP_202_ACCEPTED,
     responses={
         400: {"model": ProblemDetail, "description": "Invalid request (bad scenario/target/technique)"},
+        404: {"model": ProblemDetail, "description": "Saved run not found"},
+        409: {"model": ProblemDetail, "description": "Saved run cannot be resumed"},
     },
 )
 async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt
@@ -164,6 +170,37 @@ async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
     service = get_scenario_run_service()
     try:
         return await service.start_run_async(request=request)
+    except ScenarioRunNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
+    except ScenarioRunConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+
+
+@router.post(
+    "/runs/{scenario_result_id}/resume",
+    response_model=ScenarioRunSummary,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        400: {"model": ProblemDetail, "description": "Saved configuration is no longer available or compatible"},
+        404: {"model": ProblemDetail, "description": "Saved run not found"},
+        409: {"model": ProblemDetail, "description": "Run is ineligible or has no saved launch configuration"},
+    },
+)
+async def resume_scenario_run_async(*, scenario_result_id: str) -> ScenarioRunSummary:
+    """
+    Resume a failed run using its complete saved launch configuration.
+
+    Returns:
+        ScenarioRunSummary: Scheduled continuation under the saved result ID.
+    """
+    try:
+        return await get_scenario_run_service().resume_run_async(scenario_result_id=scenario_result_id)
+    except ScenarioRunNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
+    except ScenarioRunConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
 

@@ -32,6 +32,7 @@
 # Do-Not-Answer [@wang2023donotanswer],
 # EquityMedQA [@pfohl2024equitymedqa],
 # FigStep [@gong2025figstep],
+# FORTRESS [@knight2025fortress],
 # HarmBench [@mazeika2024harmbench],
 # HarmfulQA [@bhardwaj2023harmfulqa],
 # JailbreakBench [@chao2024jailbreakbench],
