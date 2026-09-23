@@ -3,12 +3,12 @@
 
 """Tests for the ``core`` scenario attack techniques (``techniques/core.py``).
 
-Covers the ``flip`` and ``code_attack`` techniques. FlipAttack used to be a bespoke
-``PromptSendingAttack`` subclass; it is now expressed purely as a ``core``
-technique (``FlipConverter`` + ``TaskFramingConverter`` + a system-prompt
-``seed_technique``). These tests lock in the legacy behavior: the objective is
-sent as ``TASK is '<reversed-objective>'`` and the flip instruction system
-prompt is prepended verbatim (never flipped).
+Covers the ``flip``, ``code_attack``, and ``bijection`` techniques. FlipAttack used
+to be a bespoke ``PromptSendingAttack`` subclass; it is now expressed purely as a
+``core`` technique (``FlipConverter`` + ``TaskFramingConverter`` + a system-prompt
+``seed_technique``). These tests lock in the legacy behavior: the objective is sent
+as ``TASK is '<reversed-objective>'`` and the flip instruction system prompt is
+prepended verbatim (never flipped).
 """
 
 import pytest
