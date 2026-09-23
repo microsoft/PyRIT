@@ -13,7 +13,7 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -425,7 +425,10 @@ class TestScenarioRunServiceStartRun:
             "airt.jailbreak",
             scenario_params=scenario_params,
             scenario_result_id=None,
-            initial_metadata={_svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE},
+            initial_metadata={
+                _svc_mod._SCHEDULER_METADATA_KEY: _svc_mod._SCHEDULER_METADATA_VALUE,
+                _svc_mod._LAUNCH_REQUEST_METADATA_KEY: ANY,
+            },
             objective_target=objective_target,
             max_concurrency=10,
             max_retries=0,
@@ -854,12 +857,20 @@ class TestScenarioRunServiceStartRun:
         service = ScenarioRunService()
         mock_sr = mock_all_registries["scenario_registry"]
 
+        mock_all_registries["scenario_instance"]._scenario_result_id = "existing-result-uuid"
+        mock_all_registries["memory"].get_scenario_results.return_value = [
+            _make_db_scenario_result(result_id="existing-result-uuid")
+        ]
+        mock_all_registries["memory"].get_scenario_result_header.return_value = _make_db_scenario_result(
+            result_id="existing-result-uuid", run_state=ScenarioRunState.FAILED
+        )
         response = await service.start_run_async(request=_make_request(scenario_result_id="existing-result-uuid"))
 
         assert response.status == ScenarioRunState.IN_PROGRESS
         call = mock_sr.create_and_initialize_async.await_args
         assert call.args[0] == "foundry.red_team_agent"
         assert call.kwargs["scenario_result_id"] == "existing-result-uuid"
+        assert response.scenario_result_id == "existing-result-uuid"
 
     async def test_start_run_omits_scenario_result_id_when_none(self, mock_all_registries) -> None:
         """Test that scenario_result_id is None when not provided in the request."""
@@ -1018,7 +1029,7 @@ class TestScenarioRunServiceStartRun:
         # that the resume was not mistaken for a cancellation and actually started.
         assert response.scenario_result_id == "resumed-cancelled"
 
-    async def test_start_run_honours_a_cancel_that_lands_while_a_live_run_initializes(
+    async def test_start_run_honours_a_cancel_that_lands_while_a_failed_run_initializes(
         self, mock_all_registries
     ) -> None:
         """A run that was not already cancelled must still respect a cancel during preparation."""
@@ -1030,10 +1041,10 @@ class TestScenarioRunServiceStartRun:
             return scenario_instance
 
         cancelled = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.CANCELLED)
-        in_progress = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.IN_PROGRESS)
+        failed = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.FAILED)
         mock_all_registries["memory"].get_scenario_results.return_value = [cancelled]
         # The pre-preparation read sees a live run; the cancel lands while the worker prepares.
-        mock_all_registries["memory"].get_scenario_result_header.return_value = in_progress
+        mock_all_registries["memory"].get_scenario_result_header.return_value = failed
 
         with patch.object(service, "_prepare_run_blocking", _prepare):
             with patch.object(service, "_execute_run_async") as execute:
@@ -1468,33 +1479,43 @@ class TestScenarioRunServiceGetRun:
         assert fetched.techniques_used == (["Attack"] if expected_planned_total else ["legacy attack"])
         assert ("using legacy run detail fields" in caplog.text) is expected_warning
 
-    def test_get_run_falls_back_to_persisted_error(self, mock_memory) -> None:
-        """Test that get_run extracts error from persisted error AttackResult when no active task.
-
-        After the foreign-key-based scenario linkage refactor, error
-        AttackResults are located via
-        ``get_attack_results(scenario_result_id=..., outcome=ERROR)`` rather
-        than via a per-scenario error_attack_result_ids manifest.
-        """
-        db_result = _make_db_scenario_result(result_id="sr-fail", run_state=ScenarioRunState.FAILED)
-
-        # Mock the error AttackResult lookup
-        error_ar = MagicMock()
-        error_ar.error_message = "Connection refused"
-        error_ar.error_type = "ConnectionError"
+    @pytest.mark.parametrize("run_state", list(ScenarioRunState))
+    def test_get_run_only_falls_back_to_persisted_error_for_failed_state(
+        self, *, mock_memory: MagicMock, run_state: ScenarioRunState
+    ) -> None:
+        error_ar = AttackResult(
+            conversation_id="failed-conversation",
+            objective="Say hello",
+            outcome=AttackOutcome.ERROR,
+            error_message="Connection refused",
+            error_type="ConnectionError",
+        )
+        db_result = make_scenario_result(
+            scenario_run_state=run_state,
+            attack_results={"direct": [error_ar]},
+        )
+        run_id = str(db_result.id)
         mock_memory.get_scenario_results.return_value = [db_result]
         mock_memory.get_attack_results.return_value = [error_ar]
 
         service = ScenarioRunService()
-        fetched = service.get_run(scenario_result_id="sr-fail")
+        fetched = service.get_run(scenario_result_id=run_id)
 
         assert fetched is not None
-        assert fetched.error == "Connection refused"
-        assert fetched.error_type == "ConnectionError"
-        mock_memory.get_attack_results.assert_called_once_with(
-            scenario_result_id="sr-fail",
-            outcome=AttackOutcome.ERROR,
-        )
+        assert fetched.status == run_state
+        assert len(fetched.failed_attacks) == 1
+        assert fetched.failed_attacks[0].error_message == "Connection refused"
+        if run_state == ScenarioRunState.FAILED:
+            assert fetched.error == "Connection refused"
+            assert fetched.error_type == "ConnectionError"
+            mock_memory.get_attack_results.assert_called_once_with(
+                scenario_result_id=run_id,
+                outcome=AttackOutcome.ERROR,
+            )
+        else:
+            assert fetched.error is None
+            assert fetched.error_type is None
+            mock_memory.get_attack_results.assert_not_called()
 
 
 class TestScenarioRunServiceListRuns:
@@ -2968,6 +2989,29 @@ def test_get_progress_uses_lightweight_queries_without_full_hydration(mock_memor
     assert progress.plan_complete is True
     mock_memory.get_scenario_results.assert_not_called()
     assert str(header.id) not in service._active_tasks
+
+
+def test_get_progress_maps_persisted_failure_details(mock_memory) -> None:
+    plan = ScenarioRunPlan(atomic_groups=[], seed_groups=[], scenario_registry_name="test.scenario")
+    header = make_scenario_result(
+        attack_results={},
+        scenario_run_state=ScenarioRunState.FAILED,
+        error_message="Scenario initialization failed.",
+        error_type="ValueError",
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+    )
+    mock_memory.get_scenario_result_header.return_value = header
+    mock_memory.get_scenario_attack_result_deltas.return_value = ([], False)
+
+    progress = ScenarioRunService().get_run_progress(
+        scenario_result_id=str(header.id),
+        since=None,
+        limit=25,
+    )
+
+    assert progress is not None
+    assert progress.run.error == "Scenario initialization failed."
+    assert progress.run.error_type == "ValueError"
 
 
 def test_get_progress_cache_only_maps_new_storage_rows(mock_memory) -> None:

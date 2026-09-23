@@ -1,9 +1,8 @@
 # Single place for all coverage checks: overall threshold + diff coverage on PRs.
 # Runs once on Ubuntu/Python 3.12 instead of across the full OS x Python matrix.
 #
-# Release branches run on push only, for the overall coverage threshold. The diff-coverage
-# step is deliberately limited to pull requests targeting main, because it compares against
-# origin/main and a release branch differs from main by the entire release delta.
+# Release branches run on push only, for the overall coverage threshold.
+# Diff coverage remains limited to pull requests targeting main.
 
 name: coverage
 
@@ -37,7 +36,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.9.17"
           enable-cache: true
@@ -69,6 +68,8 @@ jobs:
 
       - name: Check diff coverage on PR (>=90% on changed lines)
         if: github.event_name == 'pull_request'
-        run: |
-          git fetch origin main
-          make unit-test-diff-cover
+        env:
+          # Checkout tests the PR merge commit. Its first parent is the exact base
+          # used for that merge, even if the target branch advances during the run.
+          DIFF_COVER_BASE: HEAD^1
+        run: make unit-test-diff-cover

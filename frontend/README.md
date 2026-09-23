@@ -13,6 +13,12 @@ Your choice is saved in this browser. System follows the operating system's
 light/dark preference. High-contrast mode overrides every palette and hides
 decorations without forgetting the selected preset.
 
+## Resuming a scenario run
+
+Failed runs offer **Resume run** on the run page and **Resume** in Scanner History.
+See the [GUI guide](../doc/gui/0_gui.md#resuming-a-failed-scanner-run) for resume
+behavior and the saved launch configuration requirement.
+
 ## Development
 
 ```bash
@@ -149,6 +155,11 @@ E2E tests use `dev.py` to automatically start both frontend and backend servers.
 
 The frontend proxies API requests to `http://localhost:8000` in development.
 Configure this in `vite.config.ts` if needed.
+
+The Vite development server disables its own CORS handling. Use the frontend's
+same-origin `/api` proxy for API requests. Cross-origin API preflights pass to
+the backend, which applies its configured origin policy. Do not enable
+unrestricted Vite CORS: it can bypass the backend's preflight checks.
 
 ## Adding a theme preset
 

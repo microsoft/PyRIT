@@ -375,7 +375,6 @@ describe("ChatWindow Integration", () => {
     onConversationCreated: jest.fn(),
     onSelectConversation: jest.fn(),
     labels: { operator: 'testuser', operation: 'test_op' },
-    onLabelsChange: jest.fn(),
   };
 
   beforeEach(() => {

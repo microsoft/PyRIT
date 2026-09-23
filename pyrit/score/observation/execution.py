@@ -8,7 +8,6 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, TypeAlias
 
 from pyrit.models import (
-    MEDIA_PATH_DATA_TYPES,
     ContentEntryScorable,
     ContentScorable,
     Message,
@@ -19,12 +18,9 @@ from pyrit.models import (
     ScorableUnion,
     Score,
     ScoringExpectation,
+    ToolEventsObservationPayload,
 )
-from pyrit.models.score.observation import (
-    _content_scorable_digest,
-    _message_piece_digest,
-    _response_piece_digest,
-)
+from pyrit.models.score.observation import _resolved_scored_evidence_digest
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
@@ -39,7 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
 
-_ObservationEvidence: TypeAlias = Message
+_ObservationEvidence: TypeAlias = Message | ToolEventsObservationPayload
 
 
 def _scored_evidence_digest(
@@ -58,35 +54,36 @@ def _scored_evidence_digest(
     Raises:
         NonReplayableObservationError: If the scored evidence cannot be resolved.
     """
-    if isinstance(scorable, MessageScorable):
-        if scored_message_piece is not None and scored_message_piece.id != scored_piece_id:
-            raise NonReplayableObservationError(
-                f"Prepared message piece {scored_message_piece.id} does not match scored piece {scored_piece_id}."
-            )
-        piece = scored_message_piece
-        if piece is None:
-            pieces = memory.get_message_pieces(prompt_ids=[scored_piece_id])
-            piece = next((item for item in pieces if item.id == scored_piece_id), None)
-        if piece is None:
-            raise NonReplayableObservationError(f"Scored message piece {scored_piece_id} is missing.")
-        if piece.converted_value_data_type in MEDIA_PATH_DATA_TYPES:
-            return None
-        return _message_piece_digest(piece, include_id=False)
-    if isinstance(scorable, ContentScorable):
-        if scorable.data_type in MEDIA_PATH_DATA_TYPES:
-            return None
-        return _content_scorable_digest(scorable)
-    if isinstance(scorable, ContentEntryScorable):
-        content = memory.get_scorable_content(content_ids=[scorable.content_id]).get(scorable.content_id)
-        content_digest = memory.get_scorable_content_hashes(content_ids=[scorable.content_id]).get(scorable.content_id)
-        if content is None or content.data_type != scorable.data_type or content_digest is None:
-            raise NonReplayableObservationError(f"Scored content {scorable.content_id} is missing.")
-        if content.data_type in MEDIA_PATH_DATA_TYPES:
-            return None
-        if _content_scorable_digest(content) != content_digest:
-            raise NonReplayableObservationError(f"Scored content {scorable.content_id} was modified.")
-        return content_digest
-    raise NonReplayableObservationError(f"Scorable type {type(scorable).__name__} cannot replay judgment evidence.")
+    if isinstance(scorable, MessageScorable) and scored_message_piece is None:
+        pieces = memory.get_message_pieces(prompt_ids=[scored_piece_id])
+        scored_message_piece = next((piece for piece in pieces if piece.id == scored_piece_id), None)
+    content_id = scorable.content_id if isinstance(scorable, ContentEntryScorable) else None
+    stored_content = _load_content_evidence(memory=memory, content_id=content_id)
+    try:
+        return _resolved_scored_evidence_digest(
+            scorable=scorable,
+            scored_piece_id=scored_piece_id,
+            scored_piece=scored_message_piece,
+            stored_content=stored_content,
+        )
+    except ValueError as error:
+        raise NonReplayableObservationError(str(error)) from error
+
+
+def _load_content_evidence(
+    *, memory: MemoryInterface, content_id: uuid.UUID | None
+) -> tuple[ContentScorable, str] | None:
+    """
+    Load stored content and its hash.
+
+    Returns:
+        tuple[ContentScorable, str] | None: The evidence, or None if unreferenced or missing.
+    """
+    if content_id is None:
+        return None
+    content = memory.get_scorable_content(content_ids=[content_id]).get(content_id)
+    digest = memory.get_scorable_content_hashes(content_ids=[content_id]).get(content_id)
+    return (content, digest) if content is not None and digest is not None else None
 
 
 class _ObservationCollector:
@@ -266,19 +263,6 @@ def _merge_observation_ids(*, scores: Sequence[Score]) -> list[uuid.UUID]:
     return merged
 
 
-def _replay_message_piece_id(observation: Observation) -> uuid.UUID | None:
-    """
-    Resolve the scored piece when the observation remains message-anchored.
-
-    Returns:
-        uuid.UUID | None: The canonical scored piece ID, if the anchor contains it.
-    """
-    scored_piece_id = observation.payload.scored_piece_id
-    if isinstance(observation.scorable, MessageScorable) and scored_piece_id in observation.scorable.message_piece_ids:
-        return scored_piece_id
-    return None
-
-
 class _ObservationEvidenceResolver:
     """Resolve managed observation references without calling their original source."""
 
@@ -294,31 +278,19 @@ class _ObservationEvidenceResolver:
             _ObservationEvidence: The reconstructed LLM response.
 
         Raises:
-            NonReplayableObservationError: If a referenced message piece is missing.
+            NonReplayableObservationError: If referenced evidence is missing, modified, or unsupported.
         """
         payload = observation.payload
-        scored_evidence_digest = _scored_evidence_digest(
-            scorable=observation.scorable,
-            scored_piece_id=payload.scored_piece_id,
-            memory=self._memory,
-        )
-        if scored_evidence_digest != payload.scored_evidence_digest:
-            raise NonReplayableObservationError(f"Observation {observation.id} references modified scored evidence.")
-        pieces = self._memory.get_message_pieces(prompt_ids=list(payload.message_piece_ids))
-        pieces_by_id = {str(piece.id): piece for piece in pieces}
-        missing = [str(piece_id) for piece_id in payload.message_piece_ids if str(piece_id) not in pieces_by_id]
-        if missing:
-            raise NonReplayableObservationError(
-                f"Observation {observation.id} references missing message pieces: {missing}."
+        if isinstance(payload, ToolEventsObservationPayload):
+            return payload
+        pieces = self._memory.get_message_pieces(prompt_ids=list(observation.evidence_message_piece_ids))
+        pieces_by_id = {piece.id: piece for piece in pieces}
+        stored_content = _load_content_evidence(memory=self._memory, content_id=observation.scorable_content_id)
+        try:
+            observation.validate_evidence(
+                message_pieces=pieces_by_id,
+                stored_content=stored_content,
             )
-        ordered_pieces = [pieces_by_id[str(piece_id)] for piece_id in payload.message_piece_ids]
-        modified = [
-            str(piece.id)
-            for piece, expected_digest in zip(ordered_pieces, payload.message_piece_digests, strict=True)
-            if _response_piece_digest(piece, include_id=True) != expected_digest
-        ]
-        if modified:
-            raise NonReplayableObservationError(
-                f"Observation {observation.id} references modified message pieces: {modified}."
-            )
-        return Message(message_pieces=ordered_pieces)
+        except ValueError as error:
+            raise NonReplayableObservationError(str(error)) from error
+        return Message(message_pieces=[pieces_by_id[piece_id] for piece_id in observation.response_message_piece_ids])

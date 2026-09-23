@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select
+from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select, update
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -101,11 +101,6 @@ from pyrit.models import (
     sort_message_pieces,
 )
 from pyrit.models.results.attack_result import ATTRIBUTION_FIELDS, ATTRIBUTION_VALUE_MAX_LENGTH
-from pyrit.models.score.observation import (
-    _content_scorable_digest,
-    _message_piece_digest,
-    _response_piece_digest,
-)
 
 if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
@@ -671,9 +666,9 @@ class MemoryInterface(abc.ABC):
         rather than threaded through every write.
 
         Registration is idempotent only for an identical conversation: re-registering the
-        same ``conversation_id`` with the same target is a no-op (so repeated per-turn
-        registration is safe). Re-registering an existing ``conversation_id`` with a
-        different target is a conflict and raises ``ValueError`` -- a conversation is held
+        same ``conversation_id`` with the same target identity is a no-op, even across
+        PyRIT versions (so repeated per-turn registration is safe). Re-registering an existing
+        ``conversation_id`` with a different target is a conflict and raises ``ValueError`` -- a conversation is held
         with exactly one target and is never re-targeted.
 
         Args:
@@ -726,7 +721,20 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the message pieces or converter identifiers cannot be persisted.
         """
-        entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
+        with closing(self.get_session()) as session:
+            try:
+                self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting prompt memory entries: {e}")
+                raise
+
+    def _add_message_pieces_to_session(self, *, session: Session, message_pieces: Sequence[MessagePiece]) -> None:
+        """Insert pieces and their identifiers in the caller's transaction, without committing."""
+        pieces = [piece for piece in message_pieces if not piece.not_in_memory]
+        self._validate_persistable_conversation_ids(message_pieces=pieces)
+        entries = [PromptMemoryEntry(entry=piece) for piece in pieces]
         # Sequence orders messages, so timestamp preserves the input order of pieces within one message.
         latest_timestamp_by_message: dict[tuple[str, int], datetime] = {}
         for entry in entries:
@@ -735,24 +743,17 @@ class MemoryInterface(abc.ABC):
             if latest_timestamp is not None and entry.timestamp <= latest_timestamp:
                 entry.timestamp = latest_timestamp + timedelta(microseconds=1)
             latest_timestamp_by_message[message_key] = entry.timestamp
-        with closing(self.get_session()) as session:
-            try:
-                for piece, entry in zip(message_pieces, entries, strict=True):
-                    for position, identifier in enumerate(piece.converter_identifiers):
-                        converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
-                        self._persist_identifier(session=session, identifier=converter_identifier)
-                        entry.converter_identifier_links.append(
-                            PromptConverterIdentifierEntry(
-                                position=position,
-                                converter_identifier_hash=converter_identifier.hash,
-                            )
-                        )
-                session.add_all(entries)
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error inserting prompt memory entries: {e}")
-                raise
+        for piece, entry in zip(pieces, entries, strict=True):
+            for position, identifier in enumerate(piece.converter_identifiers):
+                converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
+                self._persist_identifier(session=session, identifier=converter_identifier)
+                entry.converter_identifier_links.append(
+                    PromptConverterIdentifierEntry(
+                        position=position,
+                        converter_identifier_hash=converter_identifier.hash,
+                    )
+                )
+        session.add_all(entries)
 
     @staticmethod
     def _validate_persistable_conversation_ids(*, message_pieces: Sequence[MessagePiece]) -> None:
@@ -796,36 +797,43 @@ class MemoryInterface(abc.ABC):
                 with the same id already exists with a different target.
             SQLAlchemyError: If the insert fails.
         """
-        if not conversation.conversation_id:
-            raise ValueError("Cannot register a conversation without a conversation_id.")
-        entry = ConversationEntry(conversation=conversation)
         with closing(self.get_session()) as session:
             try:
-                existing = session.get(ConversationEntry, conversation.conversation_id)
-                if existing is None:
-                    if conversation.target_identifier is not None:
-                        self._persist_target_identifier(
-                            session=session,
-                            target_identifier=TargetIdentifier.from_component_identifier(
-                                conversation.target_identifier
-                            ),
-                        )
-                    session.add(entry)
-                elif (
-                    entry.target_identifier is not None
-                    and existing.target_identifier is not None
-                    and existing.target_identifier != entry.target_identifier
-                ):
-                    raise ValueError(
-                        f"Conversation {conversation.conversation_id} is already registered with a different "
-                        f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
-                        f"target and cannot be re-registered with {entry.target_identifier!r}."
-                    )
+                self._insert_conversation_in_session(session=session, conversation=conversation)
                 session.commit()
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error registering conversation {conversation.conversation_id}: {e}")
                 raise
+
+    def _insert_conversation_in_session(self, *, session: Session, conversation: Conversation) -> None:
+        """
+        Register conversation metadata in the caller's transaction, without committing.
+
+        Raises:
+            ValueError: If the ID is empty or the conversation is already held with a different target.
+        """
+        if not conversation.conversation_id:
+            raise ValueError("Cannot register a conversation without a conversation_id.")
+        entry = ConversationEntry(conversation=conversation)
+        existing = session.get(ConversationEntry, conversation.conversation_id)
+        if existing is None:
+            if conversation.target_identifier is not None:
+                self._persist_target_identifier(
+                    session=session,
+                    target_identifier=TargetIdentifier.from_component_identifier(conversation.target_identifier),
+                )
+            session.add(entry)
+        elif (
+            entry.target_identifier is not None
+            and existing.target_identifier is not None
+            and ComponentIdentifier.model_validate(existing.target_identifier) != conversation.target_identifier
+        ):
+            raise ValueError(
+                f"Conversation {conversation.conversation_id} is already registered with a different "
+                f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
+                f"target and cannot be re-registered with {entry.target_identifier!r}."
+            )
 
     def add_conversation_retry(self, *, conversation_id: str, sequence: int, reason: ConversationRetryReason) -> None:
         """
@@ -1956,6 +1964,7 @@ class MemoryInterface(abc.ABC):
             ValueError: If observation IDs, references, or managed anchors are invalid.
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
+        observations = [Observation.model_validate(observation.model_dump()) for observation in observations]
         new_ids, referenced_ids = self._validate_score_inputs(scores=scores, observations=observations)
         with closing(self.get_session()) as session:
             try:
@@ -2009,16 +2018,6 @@ class MemoryInterface(abc.ABC):
         unreferenced = set(observations_by_id) - referenced_observation_ids
         if unreferenced:
             raise ValueError(f"New observations are not referenced by a score: {sorted(unreferenced)}.")
-        for observation in observations:
-            if isinstance(observation.scorable, (ContentScorable, ContentEntryScorable)):
-                if observation.scorable.data_type in MEDIA_PATH_DATA_TYPES:
-                    raise ValueError(f"Media judgment observations are deferred: {observation.id}.")
-                if isinstance(
-                    observation.scorable, ContentScorable
-                ) and observation.payload.scored_evidence_digest != _content_scorable_digest(observation.scorable):
-                    raise ValueError(
-                        f"Content observations contain an invalid scored-evidence digest: {observation.id}."
-                    )
         return set(observations_by_id), referenced_observation_ids
 
     @classmethod
@@ -2110,7 +2109,7 @@ class MemoryInterface(abc.ABC):
                 message_piece_id=piece_id,
             )
             for observation in observations
-            for position, piece_id in enumerate(observation.payload.message_piece_ids)
+            for position, piece_id in enumerate(observation.response_message_piece_ids)
         ]
         score_observation_links = [
             ScoreObservationEntry(
@@ -2208,31 +2207,12 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If referenced response or scored evidence is missing or modified.
         """
-        piece_ids = {
-            piece_id
-            for observation in observations
-            for piece_id in (
-                *observation.payload.message_piece_ids,
-                *((observation.payload.scored_piece_id,) if isinstance(observation.scorable, MessageScorable) else ()),
-            )
-        }
+        piece_ids = {piece_id for observation in observations for piece_id in observation.evidence_message_piece_ids}
         pieces_by_id = cls._load_score_message_pieces(session=session, piece_ids=sorted(piece_ids, key=str))
-        missing_payload_piece_ids = {
-            str(piece_id)
-            for observation in observations
-            for piece_id in observation.payload.message_piece_ids
-            if piece_id not in pieces_by_id
-        }
-        if missing_payload_piece_ids:
-            raise ValueError(
-                f"Observation payload references message pieces not found in memory: "
-                f"{sorted(missing_payload_piece_ids)}."
-            )
-
         content_ids = {
-            observation.scorable.content_id
+            observation.scorable_content_id
             for observation in observations
-            if isinstance(observation.scorable, ContentEntryScorable)
+            if observation.scorable_content_id is not None
         }
         content_by_id: dict[uuid.UUID, tuple[ContentScorable, str]] = {}
         content_id_values = list(content_ids)
@@ -2256,10 +2236,11 @@ class MemoryInterface(abc.ABC):
             )
 
         for observation in observations:
-            cls._validate_one_observation_evidence(
-                observation=observation,
-                pieces_by_id=pieces_by_id,
-                content_by_id=content_by_id,
+            observation.validate_evidence(
+                message_pieces=pieces_by_id,
+                stored_content=content_by_id.get(observation.scorable_content_id)
+                if observation.scorable_content_id is not None
+                else None,
             )
 
     @classmethod
@@ -2281,58 +2262,6 @@ class MemoryInterface(abc.ABC):
                 statement = statement.with_hint(PromptMemoryEntry, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
             pieces_by_id.update({entry.id: entry.get_message_piece() for entry in session.scalars(statement)})
         return pieces_by_id
-
-    @staticmethod
-    def _validate_one_observation_evidence(
-        *,
-        observation: Observation,
-        pieces_by_id: Mapping[uuid.UUID, MessagePiece],
-        content_by_id: Mapping[uuid.UUID, tuple[ContentScorable, str]],
-    ) -> None:
-        """
-        Verify one observation against canonical evidence values.
-
-        Raises:
-            ValueError: If any referenced evidence is missing or has a different digest.
-        """
-        payload = observation.payload
-        for piece_id, expected_digest in zip(
-            payload.message_piece_ids,
-            payload.message_piece_digests,
-            strict=True,
-        ):
-            piece = pieces_by_id.get(piece_id)
-            if piece is None or _response_piece_digest(piece, include_id=True) != expected_digest:
-                raise ValueError(f"Observation {observation.id} references missing or modified response evidence.")
-
-        if isinstance(observation.scorable, MessageScorable):
-            scored_piece = pieces_by_id.get(payload.scored_piece_id)
-            if scored_piece and scored_piece.converted_value_data_type in MEDIA_PATH_DATA_TYPES:
-                raise ValueError(f"Media judgment observations are deferred: {observation.id}.")
-            actual_digest = _message_piece_digest(scored_piece, include_id=False) if scored_piece else None
-        elif isinstance(observation.scorable, ContentEntryScorable):
-            stored_content = content_by_id.get(observation.scorable.content_id)
-            actual_digest = (
-                stored_content[1]
-                if stored_content
-                and stored_content[0].data_type == observation.scorable.data_type
-                and stored_content[0].data_type not in MEDIA_PATH_DATA_TYPES
-                else None
-            )
-            if (
-                stored_content
-                and stored_content[0].data_type not in MEDIA_PATH_DATA_TYPES
-                and _content_scorable_digest(stored_content[0]) != stored_content[1]
-            ):
-                actual_digest = None
-        else:
-            actual_digest = (
-                _content_scorable_digest(observation.scorable)
-                if observation.scorable.data_type not in MEDIA_PATH_DATA_TYPES
-                else None
-            )
-        if actual_digest != payload.scored_evidence_digest:
-            raise ValueError(f"Observation {observation.id} references missing or modified scored evidence.")
 
     def get_scorable_content(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, ContentScorable]:
         """
@@ -3916,6 +3845,102 @@ class MemoryInterface(abc.ABC):
             except SQLAlchemyError:
                 session.rollback()
                 raise
+
+    def add_conversation_branches_to_attack(
+        self,
+        *,
+        attack_result_id: str,
+        conversations: Sequence[Conversation],
+        message_pieces: Sequence[MessagePiece],
+        source_conversation: Conversation | None = None,
+    ) -> bool:
+        """
+        Atomically store prepared conversations, copied pieces, and their attack references.
+
+        The caller prepares the copies. This method only persists them, preserving the usual
+        conversation and message insertion invariants. A supplied source must still be an
+        active objective conversation when the transaction acquires the attack's write lock.
+
+        Returns:
+            bool: False when the attack no longer exists.
+
+        Raises:
+            ValueError: If the source is unrelated, branch IDs repeat, or pieces belong elsewhere.
+            SQLAlchemyError: If persistence fails; the complete preparation is rolled back.
+        """
+        conversation_ids = [conversation.conversation_id for conversation in conversations]
+        if len(set(conversation_ids)) != len(conversation_ids):
+            raise ValueError("Prepared branch conversation IDs must be unique")
+        if source_conversation and source_conversation.conversation_id in conversation_ids:
+            raise ValueError("A prepared branch cannot replace the source conversation")
+        if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
+            raise ValueError("Copied message pieces must belong to the prepared branches")
+
+        with closing(self.get_session()) as session, session.begin():
+            entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
+            if entry is None:
+                return False
+            if source_conversation is not None:
+                active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
+                if source_conversation.conversation_id not in active_ids:
+                    raise ValueError("Source conversation is not an active objective conversation of this attack")
+                self._insert_conversation_in_session(session=session, conversation=source_conversation)
+            for conversation in conversations:
+                self._insert_conversation_in_session(session=session, conversation=conversation)
+            self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
+            pruned_ids = list(entry.pruned_conversation_ids or [])
+            for conversation_id in conversation_ids:
+                if conversation_id != entry.conversation_id and conversation_id not in pruned_ids:
+                    pruned_ids.append(conversation_id)
+            entry.pruned_conversation_ids = pruned_ids or None
+            entry.timestamp = datetime.now(UTC)
+        return True
+
+    def promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
+        """
+        Promote an existing related conversation without losing concurrent branch additions.
+
+        Returns:
+            bool: False when the attack no longer exists.
+
+        Raises:
+            ValueError: If the requested conversation is not part of this attack.
+            SQLAlchemyError: If the transaction fails.
+        """
+        with closing(self.get_session()) as session, session.begin():
+            entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
+            if entry is None:
+                return False
+            if entry.conversation_id == conversation_id:
+                return True
+            pruned = list(entry.pruned_conversation_ids or [])
+            if conversation_id not in pruned:
+                raise ValueError(f"Conversation '{conversation_id}' is not part of this attack")
+            pruned = [item for item in pruned if item != conversation_id]
+            if entry.conversation_id not in pruned:
+                pruned.append(entry.conversation_id)
+            entry.pruned_conversation_ids = pruned or None
+            entry.conversation_id = conversation_id
+            entry.timestamp = datetime.now(UTC)
+        return True
+
+    @staticmethod
+    def _get_locked_attack_result(*, session: Session, attack_result_id: str) -> AttackResultEntry | None:
+        """
+        Acquire the write lock before reading references, on SQLite and SQL Server alike.
+
+        Returns:
+            AttackResultEntry | None: The current row, held until the caller ends its transaction.
+        """
+        result_id = uuid.UUID(attack_result_id)
+        # SELECT FOR UPDATE does not provide the required guard on both supported backends.
+        session.execute(
+            update(AttackResultEntry)
+            .where(AttackResultEntry.id == result_id)
+            .values(timestamp=AttackResultEntry.timestamp)
+            .execution_options(synchronize_session=False)
+        )
+        return session.get(AttackResultEntry, result_id, populate_existing=True)
 
     def update_attack_result(self, *, conversation_id: str, update_fields: dict[str, Any]) -> bool:
         """

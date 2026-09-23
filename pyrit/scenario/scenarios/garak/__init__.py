@@ -12,12 +12,22 @@ if TYPE_CHECKING:
     from pyrit.scenario.scenarios._dynamic_techniques import DoctorTechnique
     from pyrit.scenario.scenarios.garak.api_key import ApiKey, ApiKeyDatasetConfiguration, ApiKeyTechnique
     from pyrit.scenario.scenarios.garak.audio_achilles_heel import AudioAchillesHeel, AudioAchillesHeelTechnique
+    from pyrit.scenario.scenarios.garak.divergence import (
+        Divergence,
+        DivergenceDatasetConfiguration,
+        DivergenceTechnique,
+    )
     from pyrit.scenario.scenarios.garak.doctor import Doctor
     from pyrit.scenario.scenarios.garak.encoding import Encoding, EncodingTechnique
     from pyrit.scenario.scenarios.garak.figstep import FigStep, FigStepTechnique
     from pyrit.scenario.scenarios.garak.package_hallucination import (
         PackageHallucination,
         PackageHallucinationTechnique,
+    )
+    from pyrit.scenario.scenarios.garak.prompt_inject import (
+        PromptInject,
+        PromptInjectDatasetConfiguration,
+        PromptInjectTechnique,
     )
     from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
         SystemPromptExtraction,
@@ -31,6 +41,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ApiKeyTechnique": "pyrit.scenario.scenarios.garak.api_key",
     "AudioAchillesHeel": "pyrit.scenario.scenarios.garak.audio_achilles_heel",
     "AudioAchillesHeelTechnique": "pyrit.scenario.scenarios.garak.audio_achilles_heel",
+    "Divergence": "pyrit.scenario.scenarios.garak.divergence",
+    "DivergenceDatasetConfiguration": "pyrit.scenario.scenarios.garak.divergence",
+    "DivergenceTechnique": "pyrit.scenario.scenarios.garak.divergence",
     "Doctor": "pyrit.scenario.scenarios.garak.doctor",
     "DoctorTechnique": "pyrit.scenario.scenarios._dynamic_techniques",
     "Encoding": "pyrit.scenario.scenarios.garak.encoding",
@@ -39,6 +52,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FigStepTechnique": "pyrit.scenario.scenarios.garak.figstep",
     "PackageHallucination": "pyrit.scenario.scenarios.garak.package_hallucination",
     "PackageHallucinationTechnique": "pyrit.scenario.scenarios.garak.package_hallucination",
+    "PromptInject": "pyrit.scenario.scenarios.garak.prompt_inject",
+    "PromptInjectDatasetConfiguration": "pyrit.scenario.scenarios.garak.prompt_inject",
+    "PromptInjectTechnique": "pyrit.scenario.scenarios.garak.prompt_inject",
     "SystemPromptExtraction": "pyrit.scenario.scenarios.garak.system_prompt_extraction",
     "SystemPromptExtractionTechnique": "pyrit.scenario.scenarios.garak.system_prompt_extraction",
     "WebInjection": "pyrit.scenario.scenarios.garak.web_injection",

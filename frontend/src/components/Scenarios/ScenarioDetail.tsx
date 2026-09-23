@@ -17,7 +17,6 @@ import {
   mergeClasses,
   Select,
   Spinner,
-  SpinButton,
   Text,
   Tooltip,
   ToggleButton,
@@ -32,6 +31,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import ParameterField from '@/components/Parameters/ParameterField'
+import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import {
   buildParametersFromForm,
   getInitialFormValues,
@@ -632,6 +632,25 @@ function ScenarioLaunchForm({
   // Synchronous guard against a double-submit racing ahead of the state update.
   const isSubmittingRef = useRef(false)
   const estimateSequenceRef = useRef(0)
+  const launchButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  const restoreLaunchFocus = (): void => {
+    const focus = () => {
+      launchButtonRef.current?.focus()
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(focus)
+    } else {
+      setTimeout(focus, 0)
+    }
+  }
+
+  const handleDismissPreview = (): void => {
+    if (!submitting) {
+      setPreviewOpen(false)
+      restoreLaunchFocus()
+    }
+  }
 
   const selectableTechniques = useMemo<SelectableTechnique[]>(
     () => [
@@ -1124,7 +1143,7 @@ function ScenarioLaunchForm({
                   />
                 </Field>
                 <Field label="Max concurrency">
-                  <SpinButton
+                  <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxConcurrency}
                     min={MIN_MAX_CONCURRENCY}
@@ -1135,7 +1154,7 @@ function ScenarioLaunchForm({
                   />
                 </Field>
                 <Field label="Max retries">
-                  <SpinButton
+                  <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxRetries}
                     min={MIN_MAX_RETRIES}
@@ -1217,6 +1236,7 @@ function ScenarioLaunchForm({
 
             <section className={styles.launchSection} aria-label="Launch scan">
               <Button
+                ref={launchButtonRef}
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
@@ -1233,6 +1253,9 @@ function ScenarioLaunchForm({
             onOpenChange={(_, data) => {
               if (!submitting) {
                 setPreviewOpen(data.open)
+                if (!data.open) {
+                  restoreLaunchFocus()
+                }
               }
             }}
           >
@@ -1325,7 +1348,7 @@ function ScenarioLaunchForm({
                   <Button
                     appearance="secondary"
                     disabled={submitting}
-                    onClick={() => setPreviewOpen(false)}
+                    onClick={handleDismissPreview}
                   >
                     Cancel
                   </Button>

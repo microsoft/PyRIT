@@ -240,8 +240,8 @@ class WebsocketTarget(PromptTarget):
             self._conversation_locks.clear()
             self._is_cleaning_up = False
 
-    @limit_requests_per_minute
     @pyrit_target_retry
+    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send the current normalized message to the WebSocket service.
