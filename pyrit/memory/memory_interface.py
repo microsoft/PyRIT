@@ -3514,8 +3514,9 @@ class MemoryInterface(abc.ABC):
         Seeds with the same value hash, dataset, and canonical conditions already present
         in storage are skipped. Duplicates *within* ``seeds`` are all inserted, because the
         check looks at what storage held when the call started.
-        Groups introducing new objective criteria retain their companion seeds even when
-        those companions' content is already stored in another group.
+        Groups introducing new objective criteria retain the other seeds in the same group
+        even when their content is already stored in another group. When a stored seed is
+        copied to a new group, its caller-visible ID is updated after successful insertion.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -3545,6 +3546,7 @@ class MemoryInterface(abc.ABC):
         )
 
         entries: MutableSequence[SeedEntry] = []
+        copied_seed_ids: list[tuple[Seed, uuid.UUID]] = []
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
@@ -3557,6 +3559,7 @@ class MemoryInterface(abc.ABC):
                 entry = SeedEntry(entry=prompt)
                 if prompt.id in stored_groups:
                     entry.id = uuid.uuid4()
+                    copied_seed_ids.append((prompt, entry.id))
                 entries.append(entry)
                 continue
             if prompt.dataset_name:
@@ -3567,6 +3570,8 @@ class MemoryInterface(abc.ABC):
             entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
+        for prompt, new_id in copied_seed_ids:
+            prompt.id = new_id
 
     @staticmethod
     def _seed_conditions_key(seed: Seed) -> str:
@@ -3589,10 +3594,10 @@ class MemoryInterface(abc.ABC):
         existing_hashes: set[tuple[str, str]],
     ) -> set[uuid.UUID]:
         """
-        Identify groups whose newly authored criteria require retaining companion seeds.
+        Identify groups whose newly authored criteria require retaining all input seeds.
 
-        Companion prompts do not own conditions. Their ordinary content deduplication
-        must not strip them from a new condition-bearing group, or from a group that
+        Other seeds in the same group do not own conditions. Their ordinary content
+        deduplication must not strip them from a new condition-bearing group, or from a group that
         removes previously stored criteria. Purely condition-free loading is unchanged.
 
         Returns:

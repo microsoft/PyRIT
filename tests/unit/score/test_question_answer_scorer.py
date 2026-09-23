@@ -37,7 +37,7 @@ pytestmark = pytest.mark.usefixtures("patch_central_database")
 def expectation() -> ScoringExpectation:
     return ScoringExpectation(
         objective="What is the capital of France?",
-        conditions=[AnswerMatches(correct_answer="Paris", correct_answer_index="0")],
+        conditions=[AnswerMatches(correct_answer="Paris", correct_answer_label="0")],
     )
 
 
@@ -124,7 +124,7 @@ def test_question_answer_group_validates_before_scoring(
 async def test_question_answer_custom_patterns_async(
     response: str, expected: bool, expectation: ScoringExpectation
 ) -> None:
-    scorer = QuestionAnswerScorer(correct_answer_matching_patterns=["[{correct_answer_index}] {correct_answer}"])
+    scorer = QuestionAnswerScorer(correct_answer_matching_patterns=["[{correct_answer_label}] {correct_answer}"])
     scores = await scorer.score_async(scorable=ContentScorable(value=response), expectation=expectation)
     assert scores[0].get_value() is expected
 
@@ -139,9 +139,10 @@ async def test_question_answer_open_ended_answer_async(response: str, expected: 
     assert scores[0].get_value() is expected
 
 
-def test_question_answer_rejects_unknown_pattern_field() -> None:
+@pytest.mark.parametrize("field", ["not_a_field", "correct_answer_index"])
+def test_question_answer_rejects_unknown_pattern_field(field: str) -> None:
     with pytest.raises(ValueError, match="unknown field"):
-        QuestionAnswerScorer(correct_answer_matching_patterns=["{not_a_field}"])
+        QuestionAnswerScorer(correct_answer_matching_patterns=["{" + field + "}"])
 
 
 async def test_question_answer_wrappers_forward_full_expectation_async(expectation: ScoringExpectation) -> None:
@@ -182,7 +183,7 @@ async def test_question_answer_preserves_piece_aggregation_async(
 async def test_question_answer_concurrent_expectations_are_isolated_async() -> None:
     scorer = QuestionAnswerScorer()
     expectations = [
-        ScoringExpectation(conditions=[AnswerMatches(correct_answer=answer, correct_answer_index=str(index))])
+        ScoringExpectation(conditions=[AnswerMatches(correct_answer=answer, correct_answer_label=str(index))])
         for index, answer in enumerate(["Paris", "London", "Berlin"])
     ]
     original = scorer._score_piece_with_expectation_async

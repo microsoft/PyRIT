@@ -236,8 +236,7 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 # - **`SelfAskQuestionAnswerScorer`** — checks whether a response correctly answers a known
 #   question (used with question-answering datasets). `QuestionAnswerScorer` is the fast,
 #   non-LLM variant that matches against the expected answer directly.
-#   **Breaking change:** both require an `AnswerMatches` condition. The LLM variant no longer
-#   accepts objective-only ground truth. Use `objective` for question context, and a separate
+#   Both require an `AnswerMatches` condition. Use `objective` for question context, and a separate
 #   `SelfAskTrueFalseScorer` for `MatchesObjective` checks.
 #   Configure that objective scorer with `validator=ScorerPromptValidator(is_objective_required=True)`.
 # - **`SelfAskGeneralTrueFalseScorer`** — bring your own system prompt and JSON schema when

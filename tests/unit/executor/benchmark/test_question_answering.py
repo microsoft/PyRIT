@@ -179,7 +179,7 @@ class TestQuestionAnsweringBenchmark:
         assert not message_piece.prompt_metadata
         assert sample_benchmark_context.generated_expectation is not None
         assert sample_benchmark_context.generated_expectation.conditions == (
-            AnswerMatches(correct_answer="Paris", correct_answer_index="1"),
+            AnswerMatches(correct_answer="Paris", correct_answer_label="1"),
         )
         assert sample_benchmark_context.generated_expectation.objective == sample_benchmark_context.generated_objective
 
@@ -617,7 +617,7 @@ async def test_benchmark_typed_expectation_end_to_end_async(
     assert result.automated_score is not None
     assert result.automated_score.scored_expectation is not None
     assert result.automated_score.scored_expectation.conditions == (
-        AnswerMatches(correct_answer="Paris", correct_answer_index="1"),
+        AnswerMatches(correct_answer="Paris", correct_answer_label="1"),
     )
     sent = send.call_args.kwargs["message"]
     assert sent.get_value() == sample_question_entry.question

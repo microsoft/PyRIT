@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier
 
 
-_ANSWER_PATTERN_FIELDS = frozenset({"correct_answer", "correct_answer_index"})
+_ANSWER_PATTERN_FIELDS = frozenset({"correct_answer", "correct_answer_label"})
 
 
 def _pattern_fields(pattern: str) -> set[str]:
@@ -41,7 +41,7 @@ def _format_answer_pattern(*, pattern: str, answer: AnswerMatches) -> str | None
     """
     fields: dict[str, str | None] = {
         "correct_answer": answer.correct_answer,
-        "correct_answer_index": answer.correct_answer_index,
+        "correct_answer_label": answer.correct_answer_label,
     }
     if any(fields[name] is None for name in _pattern_fields(pattern)):
         return None
@@ -53,7 +53,7 @@ class QuestionAnswerScorer(MessageTrueFalseScorer):
     A class that represents a question answering scorer.
     """
 
-    CORRECT_ANSWER_MATCHING_PATTERNS = ["{correct_answer_index}:", "{correct_answer}"]
+    CORRECT_ANSWER_MATCHING_PATTERNS = ["{correct_answer_label}:", "{correct_answer}"]
     CONDITION_TYPE = AnswerMatches
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])

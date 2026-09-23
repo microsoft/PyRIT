@@ -175,13 +175,14 @@ print(system_prompt.value)
 #     conditions:
 #       - condition_type: answer_matches
 #         correct_answer: Paris
-#         correct_answer_index: "2"
+#         correct_answer_label: "2"
 #   - seed_type: prompt
 #     value: "What is the capital of France? 1: London; 2: Paris"
 #     prompt_group_alias: france
 # ```
 #
-# Use `QuestionAnswerScorer` or `SelfAskQuestionAnswerScorer` with this dataset. In Python, the same criterion is `AnswerMatches(correct_answer="Paris", correct_answer_index="2")` in `SeedObjective.conditions`. Quote choice indices in YAML, because both Q&A fields are strings, and omit `correct_answer_index` for an open-ended answer. Conditions are literal data, not Jinja templates.
+# Use `QuestionAnswerScorer` or `SelfAskQuestionAnswerScorer` with this dataset. In Python, the same criterion is `AnswerMatches(correct_answer="Paris", correct_answer_label="2")` in `SeedObjective.conditions`. Quote choice labels in YAML, because both Q&A fields are strings, and omit `correct_answer_label` for an open-ended answer. Labels must be nonempty, but are not checked against choices in prompt text. Conditions are literal data, not Jinja templates.
+# Unknown condition types and fields fail validation rather than being dropped: omitting a criterion could change the verdict. Use a version that supports the dataset's conditions.
 #
 # `SeedGroup.scoring_expectation` returns the objective text and its conditions. Load seeds into memory, retrieve their groups, and pass attack groups to `AttackExecutor.execute_attack_from_seed_groups_async`. The executor forwards the criteria to the configured scorers, and each condition must have a compatible scorer.
 #

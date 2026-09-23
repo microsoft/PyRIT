@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from sqlalchemy import String, select, update
+from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import SeedEntry, SeedIdentifierEntry
@@ -18,7 +19,7 @@ def _objective(*, answer: str = "Paris", dataset: str | None = "questions") -> S
     return SeedObjective(
         value="What is the capital?",
         dataset_name=dataset,
-        conditions=(AnswerMatches(correct_answer=answer, correct_answer_index="A"),),
+        conditions=(AnswerMatches(correct_answer=answer, correct_answer_label="A"),),
     )
 
 
@@ -47,12 +48,37 @@ class TestSeedConditions:
         assert restored.scoring_expectation.conditions == objective.conditions
         companion = next(seed for seed in restored.seeds if seed.value == prompt.value)
         assert (companion.id != original_id) is copy_to_new_group
+        assert prompt.id == companion.id
+        assert {seed.id for seed in group.seeds} == {seed.id for seed in restored.seeds}
         [original_prompt] = [
             seed for seed in sqlite_instance.get_seeds(prompt_group_ids=[original_group_id]) if seed.id == original_id
         ]
         assert original_prompt.prompt_group_id == original_group_id
         await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[group], added_by="tester")
         assert len(sqlite_instance.get_seeds()) == (4 if copy_to_new_group else 3)
+
+    async def test_copied_seed_id_changes_only_after_successful_insert_async(
+        self, sqlite_instance: MemoryInterface
+    ) -> None:
+        original = SeedGroup(seeds=[SeedPrompt(value="Choose an answer.")])
+        await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[original], added_by="tester")
+        [prompt] = sqlite_instance.get_seeds()
+        original_id = prompt.id
+        prompt.prompt_group_id = uuid.uuid4()
+        group = SeedGroup(seeds=[prompt, _objective()])
+        with (
+            patch.object(sqlite_instance, "_insert_entries", side_effect=SQLAlchemyError("insertion failed")),
+            pytest.raises(SQLAlchemyError, match="insertion failed"),
+        ):
+            await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[group], added_by="tester")
+
+        assert prompt.id == original_id
+        assert len(sqlite_instance.get_seeds()) == 1
+        await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[group], added_by="tester")
+        [restored] = sqlite_instance.get_seed_groups(prompt_group_ids=[prompt.prompt_group_id])
+        assert prompt.id != original_id
+        assert {seed.id for seed in group.seeds} == {seed.id for seed in restored.seeds}
+        assert len(sqlite_instance.get_seeds()) == 3
 
     async def test_seed_entry_roundtrip_async(self, sqlite_instance: MemoryInterface) -> None:
         objective = _objective()
@@ -61,7 +87,7 @@ class TestSeedConditions:
         with sqlite_instance.get_session() as session:
             entry = session.scalars(select(SeedEntry)).one()
             assert entry.conditions == [
-                {"condition_type": "answer_matches", "correct_answer": "Paris", "correct_answer_index": "A"}
+                {"condition_type": "answer_matches", "correct_answer": "Paris", "correct_answer_label": "A"}
             ]
             restored = entry.get_seed()
 
@@ -104,7 +130,7 @@ class TestSeedConditions:
     ) -> None:
         original_groups = []
         for answer in (first_answer, second_answer):
-            conditions = (AnswerMatches(correct_answer=answer, correct_answer_index="A"),) if answer else ()
+            conditions = (AnswerMatches(correct_answer=answer, correct_answer_label="A"),) if answer else ()
             group = SeedGroup(
                 seeds=[
                     SeedObjective(value="question", dataset_name="questions", conditions=conditions),
@@ -146,8 +172,13 @@ class TestSeedConditions:
         "payload",
         [
             [{"condition_type": "unknown_persisted_seed_condition"}],
-            [{"condition_type": "answer_matches", "correct_answer_index": "A"}],
-            [{"condition_type": "answer_matches", "correct_answer": "", "correct_answer_index": "A"}],
+            [
+                {"condition_type": "answer_matches", "correct_answer": "Paris"},
+                {"condition_type": "unknown_persisted_seed_condition"},
+            ],
+            [{"condition_type": "answer_matches", "correct_answer": "Paris", "future_field": "criterion"}],
+            [{"condition_type": "answer_matches", "correct_answer_label": "A"}],
+            [{"condition_type": "answer_matches", "correct_answer": "", "correct_answer_label": "A"}],
             {},
             "",
             [None],
@@ -160,7 +191,7 @@ class TestSeedConditions:
         with sqlite_instance.get_session() as session:
             session.execute(update(SeedEntry).values(conditions=payload))
             session.commit()
-        with pytest.raises(ValueError, match="condition|correct_answer_index|at least 1 character"):
+        with pytest.raises(ValueError, match="condition|correct_answer_label|at least 1 character"):
             sqlite_instance.get_seeds()
 
     def test_nonobjective_persisted_conditions_raise(self) -> None:
@@ -206,14 +237,14 @@ class TestSeedConditions:
     async def test_condition_order_is_identity_but_object_key_order_is_not_async(
         self, sqlite_instance: MemoryInterface
     ) -> None:
-        answer = AnswerMatches(correct_answer="Paris", correct_answer_index="A")
+        answer = AnswerMatches(correct_answer="Paris", correct_answer_label="A")
         first = SeedObjective(value="question", conditions=(answer, MatchesObjective()))
         reordered = SeedObjective(value="question", conditions=(MatchesObjective(), answer))
         equivalent = SeedObjective.model_validate(
             {
                 "value": "question",
                 "conditions": [
-                    {"correct_answer_index": "A", "correct_answer": "Paris", "condition_type": "answer_matches"},
+                    {"correct_answer_label": "A", "correct_answer": "Paris", "condition_type": "answer_matches"},
                     {"condition_type": "matches_objective"},
                 ],
             }
@@ -252,7 +283,7 @@ class TestSeedConditions:
                 SeedObjective(
                     value=f"question {index}",
                     dataset_name="questions",
-                    conditions=(AnswerMatches(correct_answer=answer, correct_answer_index="A"),),
+                    conditions=(AnswerMatches(correct_answer=answer, correct_answer_label="A"),),
                 )
                 for index in range(12)
             ]

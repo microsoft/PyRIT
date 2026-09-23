@@ -48,7 +48,7 @@ def _group(answer: str = "default") -> AttackSeedGroup:
         seeds=[
             SeedObjective(
                 value="Answer the question",
-                conditions=(AnswerMatches(correct_answer=answer, correct_answer_index="7"),),
+                conditions=(AnswerMatches(correct_answer=answer, correct_answer_label="7"),),
             ),
             SeedPrompt(value="Return one word"),
         ]
@@ -185,7 +185,9 @@ seeds:
         group = AttackSeedGroup(
             seeds=[
                 _group().objective,
-                SeedSimulatedConversation(num_turns=1, adversarial_chat_system_prompt_path="unused.yaml"),
+                SeedSimulatedConversation(
+                    num_turns=1, adversarial_chat_system_prompt=SeedPrompt(value="Prepare a conversation.")
+                ),
             ]
         )
         prepared = SimulatedConversationResult(
@@ -239,7 +241,7 @@ seeds:
     conditions:
       - condition_type: answer_matches
         correct_answer: default
-        correct_answer_index: "7"
+        correct_answer_label: "7"
   - value: Return one word
     prompt_group_alias: row
 """,
@@ -266,10 +268,11 @@ seeds:
         assert result.last_response is not None
         assert "correct_answer" not in result.last_response.prompt_metadata
         assert "correct_answer_index" not in result.last_response.prompt_metadata
+        assert "correct_answer_label" not in result.last_response.prompt_metadata
 
     async def test_shared_and_row_overrides_replace_seed_conditions_async(self) -> None:
-        replacement = ScoringExpectation(conditions=(AnswerMatches(correct_answer="other", correct_answer_index="8"),))
-        broadcast = ScoringExpectation(conditions=(AnswerMatches(correct_answer="default", correct_answer_index="7"),))
+        replacement = ScoringExpectation(conditions=(AnswerMatches(correct_answer="other", correct_answer_label="8"),))
+        broadcast = ScoringExpectation(conditions=(AnswerMatches(correct_answer="default", correct_answer_label="7"),))
         attack = PromptSendingAttack(
             objective_target=MockPromptTarget(),
             attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),

@@ -282,9 +282,6 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   type. Constructor-configured leaves declare none. Shared validation rejects missing and duplicate
   conditions before scoring. Wrappers expose their children; `get_condition_types()` derives their
   combined coverage. Use separate leaves and a composite for independent checks.
-  **Breaking change:** both Q&A scorers require `AnswerMatches`. The LLM Q&A scorer no longer
-  accepts an objective or inferred request text as ground truth. Objective text is question
-  context only; use `SelfAskTrueFalseScorer` to evaluate `MatchesObjective` separately.
 - `score_observation_async` coordinates replay of stored evidence without calling the target. Scorer target response replay owns the checks for the exact original expectation, scorer configuration, and response-handler contract; evidence resolution checks that scored evidence and response content are unchanged.
 - Tool-event observations can be matched against new tool-name expectations
   without querying the trace client again. This does not relax scorer target response replay rules.

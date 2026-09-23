@@ -36,7 +36,7 @@ def test_condition_identifier_and_group_hash_distinguish_answers() -> None:
         SeedIdentifier.from_seed(
             SeedObjective(
                 value="question",
-                conditions=(AnswerMatches(correct_answer=answer, correct_answer_index="A"),),
+                conditions=(AnswerMatches(correct_answer=answer, correct_answer_label="A"),),
             )
         )
         for answer in ("Paris", "Rome")
@@ -48,14 +48,14 @@ def test_condition_identifier_and_group_hash_distinguish_answers() -> None:
 
 
 def test_condition_identifier_canonicalization_preserves_condition_order() -> None:
-    condition = AnswerMatches(correct_answer="Paris", correct_answer_index="A")
+    condition = AnswerMatches(correct_answer="Paris", correct_answer_label="A")
     first = SeedIdentifier.from_seed(SeedObjective(value="question", conditions=(condition, MatchesObjective())))
     equivalent = SeedIdentifier.from_seed(
         SeedObjective.model_validate(
             {
                 "value": "question",
                 "conditions": [
-                    {"correct_answer_index": "A", "correct_answer": "Paris", "condition_type": "answer_matches"},
+                    {"correct_answer_label": "A", "correct_answer": "Paris", "condition_type": "answer_matches"},
                     {"condition_type": "matches_objective"},
                 ],
             }

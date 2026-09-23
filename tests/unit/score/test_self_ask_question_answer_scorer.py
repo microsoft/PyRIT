@@ -81,7 +81,7 @@ async def test_typed_answer_supplies_judge_ground_truth_async(
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
     expectation = ScoringExpectation(
         objective=objective,
-        conditions=[AnswerMatches(correct_answer="Paris", correct_answer_index="B")],
+        conditions=[AnswerMatches(correct_answer="Paris", correct_answer_label="B")],
     )
     assert scorer.condition_type is AnswerMatches
     assert scorer.get_condition_types() == frozenset({AnswerMatches})
@@ -154,7 +154,7 @@ async def test_legacy_objective_argument_requires_answer_condition_async(mock_ch
 
 def test_llm_question_answer_rejects_duplicate_answers(mock_chat_target: MagicMock) -> None:
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
-    answer = AnswerMatches(correct_answer="Paris", correct_answer_index="B")
+    answer = AnswerMatches(correct_answer="Paris", correct_answer_label="B")
     with pytest.raises(ValueError, match="2 AnswerMatches"):
         Scorer.validate_expectation_for_scorers(
             scorers=[scorer], expectation=ScoringExpectation(conditions=[answer, answer])
@@ -297,7 +297,7 @@ async def test_typed_answer_observation_replays_full_expectation_async(
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
     expectation = ScoringExpectation(
         objective="Capital of France?",
-        conditions=[AnswerMatches(correct_answer="Paris", correct_answer_index="B")],
+        conditions=[AnswerMatches(correct_answer="Paris", correct_answer_label="B")],
     )
     live = (await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation))[0]
     observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
@@ -308,7 +308,7 @@ async def test_typed_answer_observation_replays_full_expectation_async(
     assert scorer._judgment_replay_identifier()["answer_condition_version"] == 2
     changed_answer = ScoringExpectation(
         objective=expectation.objective,
-        conditions=[AnswerMatches(correct_answer="London", correct_answer_index="A")],
+        conditions=[AnswerMatches(correct_answer="London", correct_answer_label="A")],
     )
     with pytest.raises(NonReplayableObservationError, match="expectation"):
         await scorer.score_observation_async(observation=observation, expectation=changed_answer)

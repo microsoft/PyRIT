@@ -136,8 +136,8 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
         answer = self._get_required_condition(expectation=expectation, condition_type=AnswerMatches)
         objective = expectation.objective if expectation else None
         correct_answer = (
-            f"{answer.correct_answer_index}: {answer.correct_answer}"
-            if answer.correct_answer_index
+            f"{answer.correct_answer_label}: {answer.correct_answer}"
+            if answer.correct_answer_label
             else answer.correct_answer
         )
         objective = self._TYPED_ANSWER_PROMPT.format(

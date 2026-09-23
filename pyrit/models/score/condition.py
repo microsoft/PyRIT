@@ -205,8 +205,8 @@ class AnswerMatches(Condition):
 
     condition_type: Literal["answer_matches"] = "answer_matches"
     correct_answer: str = Field(min_length=1)
-    #: The choice label, for a question that offers choices.
-    correct_answer_index: str | None = Field(default=None, min_length=1)
+    #: A nonempty choice label. It is not cross-checked against choices in prompt text.
+    correct_answer_label: str | None = Field(default=None, min_length=1)
 
 
 def _parse_conditions(value: Any) -> Any:

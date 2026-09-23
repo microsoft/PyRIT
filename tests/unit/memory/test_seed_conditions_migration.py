@@ -42,7 +42,7 @@ def test_seed_conditions_migration_preserves_existing_rows() -> None:
             ).scalars().all() == [None, None]
 
             upgraded = sa.Table(seeds.name, sa.MetaData(), autoload_with=connection)
-            payload = [{"condition_type": "answer_matches", "correct_answer": "Paris", "correct_answer_index": "A"}]
+            payload = [{"condition_type": "answer_matches", "correct_answer": "Paris", "correct_answer_label": "A"}]
             connection.execute(upgraded.update().where(upgraded.c.id == 1).values(conditions=payload))
             stored = connection.execute(sa.select(upgraded.c.conditions).where(upgraded.c.id == 1)).scalar_one()
             assert stored == payload

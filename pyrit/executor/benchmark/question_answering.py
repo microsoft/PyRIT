@@ -184,7 +184,7 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
             conditions=[
                 AnswerMatches(
                     correct_answer=str(entry.get_correct_answer_text()),
-                    correct_answer_index=str(entry.correct_answer),
+                    correct_answer_label=str(entry.correct_answer),
                 )
             ],
         )

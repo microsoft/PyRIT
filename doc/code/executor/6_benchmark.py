@@ -22,19 +22,18 @@
 # The benchmark builds a `ScoringExpectation` containing `AnswerMatches` from each entry.
 # An explicit scoring configuration with an objective scorer that consumes `AnswerMatches` is required.
 # Expected answers are scoring criteria, not target-facing metadata. Choose the deterministic
-# `QuestionAnswerScorer` for case-insensitive answer text/index matching, or
+# `QuestionAnswerScorer` for case-insensitive answer text/label matching, or
 # `SelfAskQuestionAnswerScorer` for an LLM judgment. Both consume the same typed expectation.
 # A scorer configuration that cannot consume `AnswerMatches` fails before the target is called.
 #
-# **Migration:** `QuestionAnswerScorer` no longer reads `prompt_metadata["correct_answer"]`
-# or `prompt_metadata["correct_answer_index"]`. When scoring directly, pass
-# `expectation=ScoringExpectation(conditions=[AnswerMatches(correct_answer="Paris", correct_answer_index="0")])`.
-# `correct_answer` is required; omit `correct_answer_index` for an open-ended answer.
-# Custom `correct_answer_matching_patterns` still use `{correct_answer}` and `{correct_answer_index}`.
+# When scoring directly, pass
+# `expectation=ScoringExpectation(conditions=[AnswerMatches(correct_answer="Paris", correct_answer_label="0")])`.
+# `correct_answer` is required; omit `correct_answer_label` for an open-ended answer.
+# Custom `correct_answer_matching_patterns` use `{correct_answer}` and `{correct_answer_label}`.
+# Labels must be nonempty strings; the condition does not parse or validate choices in prompt text.
+# The benchmark checks that the structured entry's correct answer identifies an existing choice.
 #
-# **Breaking change:** `SelfAskQuestionAnswerScorer` now also requires `AnswerMatches`.
-# Objective-only calls, including `infer_objective_from_request=True` without an answer condition,
-# no longer supply ground truth. Put the expected answer in `AnswerMatches` and use `objective`
+# Put the expected answer in `AnswerMatches` and use `objective`
 # only for question context. Use `SelfAskTrueFalseScorer` for objective evaluation.
 # To check both answer correctness and an independent objective, combine those two scorers;
 # the Q&A leaf ignores the sibling's `MatchesObjective` condition.
