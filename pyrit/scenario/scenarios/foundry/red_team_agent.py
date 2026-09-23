@@ -444,7 +444,7 @@ class RedTeamAgent(Scenario):
                 )
             )
         return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(component.count for component in components),
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note="Counts one population per resolved Foundry composite, not per flattened constituent technique.",

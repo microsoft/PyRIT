@@ -7,6 +7,7 @@ import {
 } from '@fluentui/react-components'
 import { QuestionCircleRegular } from '@fluentui/react-icons'
 
+import LabelsBar from '@/components/Labels/LabelsBar'
 import { useTheme } from '@/hooks/useTheme'
 
 import { versionApi } from '../../services/api'
@@ -20,6 +21,10 @@ interface MainLayoutProps {
   onNavigate: (view: ViewName) => void
   onOpenFeedback: () => void
   canManageConfiguration: boolean
+  labels: Record<string, string>
+  onLabelsChange: (labels: Record<string, string>) => void
+  operatorReadOnly?: boolean
+  toolbarRef?: React.Ref<HTMLDivElement>
   onStartTour?: () => void
 }
 
@@ -29,6 +34,10 @@ export default function MainLayout({
   onNavigate,
   onOpenFeedback,
   canManageConfiguration,
+  labels,
+  onLabelsChange,
+  operatorReadOnly,
+  toolbarRef,
   onStartTour,
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
@@ -75,19 +84,22 @@ export default function MainLayout({
             className={styles.logo}
           />
         </Tooltip>
-        <Text className={styles.title}>{title}</Text>
+        <Text className={styles.title} title={title}>{title}</Text>
         <Text className={styles.subtitle}>Python Risk Identification Tool</Text>
         <div className={styles.spacer} />
         {onStartTour && (
-          <Button
-            appearance="subtle"
-            icon={<QuestionCircleRegular />}
-            onClick={onStartTour}
-            data-testid="start-tour"
-            className={styles.tourButton}
-          >
-            Take a tour
-          </Button>
+          <Tooltip content="Take a tour" relationship="description">
+            <Button
+              appearance="subtle"
+              icon={<QuestionCircleRegular />}
+              onClick={onStartTour}
+              data-testid="start-tour"
+              className={styles.tourButton}
+              aria-label="Take a tour"
+            >
+              <span className={styles.tourLabel}>Take a tour</span>
+            </Button>
+          </Tooltip>
         )}
         <UserAccountButton />
       </div>
@@ -116,6 +128,22 @@ export default function MainLayout({
               }}
             />
           )}
+          <section
+            className={styles.labelsSection}
+            aria-label="New run labels"
+            data-tour="labels-card"
+          >
+            <div className={styles.labelsRow}>
+              <div className={styles.labelsControls}>
+                <Text weight="semibold" className={styles.labelsTitle}>New run labels</Text>
+                <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly} />
+              </div>
+              <div ref={toolbarRef} className={styles.toolbarSlot} />
+            </div>
+            <Text size={200} className={styles.labelsHint}>
+              Used for new attacks and scans. Existing runs keep their original labels.
+            </Text>
+          </section>
           {children}
         </main>
       </div>

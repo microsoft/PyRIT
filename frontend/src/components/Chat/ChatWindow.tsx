@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
 import type { ChangeEvent } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Button,
   Breadcrumb,
@@ -45,14 +46,13 @@ import { useUserPreferences } from '@/hooks/useUserPreferences'
 import TargetSelect from '@/components/Config/TargetSelect'
 import {
   basenameFromValue,
+  applyConvertedValues,
   buildMediaUrl,
-  buildRequestConverterConfigurations,
   buildDraftPieceIds,
   dataTypeToAttachmentKind,
   isPathDataType,
   withDraftIdentity,
 } from './converterTypes'
-import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi, scoresApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
@@ -193,6 +193,8 @@ function matchesNarrowScreen(): boolean {
 }
 
 interface ChatWindowProps {
+  /** Shared layout slot; standalone chat renders its toolbar inline. */
+  toolbarContainer?: HTMLElement | null
   onNewAttack: () => void
   activeTarget: TargetInstance | null
   availableTargets: TargetInstance[]
@@ -215,8 +217,6 @@ interface ChatWindowProps {
   onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
   onAttackChange?: (attack: AttackSummary) => void
   labels?: Record<string, string>
-  onLabelsChange?: (labels: Record<string, string>) => void
-  operatorReadOnly?: boolean
   onNavigate?: (view: ViewName) => void
   /** Operator from the loaded attack (for operator locking). Null for new attacks. */
   attackOperator?: string | null
@@ -242,6 +242,7 @@ interface ChatWindowProps {
 }
 
 export default function ChatWindow({
+  toolbarContainer,
   onNewAttack,
   activeTarget,
   availableTargets,
@@ -259,8 +260,6 @@ export default function ChatWindow({
   onHumanScoreChange,
   onAttackChange,
   labels,
-  onLabelsChange,
-  operatorReadOnly,
   onNavigate,
   attackOperator,
   attackTarget,
@@ -358,8 +357,10 @@ export default function ChatWindow({
   }, [])
 
   const conversionRevisionKey = useMemo(
-    () => JSON.stringify({ applied: activePieceConversions, pipelines: converters.pipelines }),
-    [activePieceConversions, converters.pipelines],
+    () => JSON.stringify({
+      applied: activePieceConversions, pipelines: converters.pipelines, editRevision: converters.editRevision,
+    }),
+    [activePieceConversions, converters.pipelines, converters.editRevision],
   )
 
   // Auto-open conversation sidebar when loading a historical attack with multiple
@@ -633,14 +634,14 @@ export default function ChatWindow({
 
     try {
       // Build message pieces from text + attachments — always use original text
-      const pieces = await buildMessagePieces(originalValue, attachments)
-
-      // Send converter selections to the backend and let it apply conversions per piece.
-      // Avoid setting converted_value client-side because one converted value does not
-      // necessarily correspond to every piece of the same data type, and any locally
-      // preconverted piece may cause the backend to skip the configuration entirely.
-      const requestConverterConfigurations = buildRequestConverterConfigurations(
-        buildDraftPieceIds(originalValue, attachments),
+      const pieceIds = buildDraftPieceIds(originalValue, attachments, conversions)
+      const originalPieces = await buildMessagePieces(originalValue, attachments)
+      if (textConversion && !originalValue.trim()) {
+        originalPieces.unshift({ data_type: 'text', original_value: originalValue })
+      }
+      const pieces = applyConvertedValues(
+        originalPieces,
+        pieceIds,
         conversions,
       )
 
@@ -698,9 +699,6 @@ export default function ChatWindow({
         send: true,
         target_registry_name: activeTarget.target_registry_name,
         target_conversation_id: effectiveConvId,
-        request_converter_configurations: requestConverterConfigurations.length > 0
-          ? requestConverterConfigurations
-          : undefined,
       }
       const response = await attacksApi.addMessage(currentAttackResultId, addMessageRequest)
       onAttackChange?.(response.attack)
@@ -1198,6 +1196,102 @@ export default function ChatWindow({
     }
   }
 
+  // Chat owns these handlers and states even when the layout hosts the controls.
+  const toolbar = (
+    <div
+      className={toolbarContainer ? styles.sharedToolbar : styles.ribbon}
+      role="group"
+      aria-label="Chat controls"
+    >
+      <div className={mergeClasses(styles.conversationInfo, toolbarContainer ? styles.sharedTarget : undefined)}>
+        {!attackResultId && !isLoadingAttack ? (
+          <ChatTargetPicker
+            target={activeTarget}
+            targets={availableTargets}
+            loading={targetsLoading}
+            error={targetsError}
+            disabled={isSending}
+            onSelect={onSelectTarget}
+          />
+        ) : activeTarget ? (
+          <TargetBadge target={activeTarget} />
+        ) : (
+          <Text size={200} className={styles.noTarget}>
+            No target selected
+          </Text>
+        )}
+      </div>
+      <div className={mergeClasses(styles.ribbonActions, toolbarContainer ? styles.sharedActions : undefined)}>
+        <Tooltip content="Render all messages as Markdown by default" relationship="label">
+          <Switch
+            checked={globalMarkdown}
+            onChange={handleMarkdownChange}
+            label="Markdown"
+            data-testid="global-markdown-toggle"
+          />
+        </Tooltip>
+        <Menu>
+          <MenuTrigger disableButtonEnhancement>
+            <Tooltip content="Export conversation" relationship="label">
+              <Button
+                appearance="subtle"
+                className={styles.ribbonAction}
+                icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
+                disabled={!canExportConversation}
+                aria-label="Export conversation"
+                data-testid="export-conversation-btn"
+              />
+            </Tooltip>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              <MenuItem
+                onClick={() => handleExport('markdown')}
+                disabled={isExporting}
+                data-testid="export-markdown-item"
+              >
+                Export as Markdown (.md)
+              </MenuItem>
+              <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
+                Export as JSON (.json)
+              </MenuItem>
+              <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
+                Export as HTML (.html)
+              </MenuItem>
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+        <Tooltip content="Toggle conversations panel" relationship="label">
+          <Button
+            {...restoreFocusTargetAttributes}
+            appearance="subtle"
+            className={styles.ribbonAction}
+            icon={<PanelRightRegular />}
+            onClick={() => setIsPanelOpen((open) => !open)}
+            disabled={!attackResultId}
+            data-testid="toggle-panel-btn"
+            aria-label="Toggle conversations panel"
+            aria-expanded={isPanelOpen}
+            aria-controls="conversation-panel"
+          />
+        </Tooltip>
+        <Tooltip content="New Attack" relationship="label">
+          <Button
+            appearance="primary"
+            icon={<AddRegular />}
+            onClick={() => { setIsPanelOpen(false); onNewAttack() }}
+            disabled={!attackResultId}
+            data-testid="new-attack-btn"
+            aria-label="New Attack"
+            className={styles.newAttackButton}
+          >
+            <span className={styles.newAttackLabel}>New Attack</span>
+          </Button>
+        </Tooltip>
+      </div>
+    </div>
+  )
+
   return (
     <div className={styles.root}>
       <h1 className={styles.pageHeading}>Chat</h1>
@@ -1263,97 +1357,7 @@ export default function ChatWindow({
             </Breadcrumb>
           </div>
         )}
-        <div className={styles.ribbon}>
-          <div className={styles.conversationInfo}>
-            {!attackResultId && !isLoadingAttack ? (
-              <ChatTargetPicker
-                target={activeTarget}
-                targets={availableTargets}
-                loading={targetsLoading}
-                error={targetsError}
-                disabled={isSending}
-                onSelect={onSelectTarget}
-              />
-            ) : activeTarget ? (
-              <TargetBadge target={activeTarget} />
-            ) : (
-              <Text size={200} className={styles.noTarget}>
-                No target selected
-              </Text>
-            )}
-            {labels && onLabelsChange && (
-              <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly} />
-            )}
-          </div>
-          <div className={styles.ribbonActions}>
-            <Tooltip content="Render all messages as Markdown by default" relationship="label">
-              <Switch
-                checked={globalMarkdown}
-                onChange={handleMarkdownChange}
-                label="Markdown"
-                data-testid="global-markdown-toggle"
-              />
-            </Tooltip>
-            <Menu>
-              <MenuTrigger disableButtonEnhancement>
-                <Tooltip content="Export conversation" relationship="label">
-                  <Button
-                    appearance="subtle"
-                    className={styles.ribbonAction}
-                    icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
-                    disabled={!canExportConversation}
-                    aria-label="Export conversation"
-                    data-testid="export-conversation-btn"
-                  />
-                </Tooltip>
-              </MenuTrigger>
-              <MenuPopover>
-                <MenuList>
-                  <MenuItem
-                    onClick={() => handleExport('markdown')}
-                    disabled={isExporting}
-                    data-testid="export-markdown-item"
-                  >
-                    Export as Markdown (.md)
-                  </MenuItem>
-                  <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
-                    Export as JSON (.json)
-                  </MenuItem>
-                  <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
-                    Export as HTML (.html)
-                  </MenuItem>
-                </MenuList>
-              </MenuPopover>
-            </Menu>
-            <Tooltip content="Toggle conversations panel" relationship="label">
-              <Button
-                {...restoreFocusTargetAttributes}
-                appearance="subtle"
-                className={styles.ribbonAction}
-                icon={<PanelRightRegular />}
-                onClick={() => setIsPanelOpen((open) => !open)}
-                disabled={!attackResultId}
-                data-testid="toggle-panel-btn"
-                aria-label="Toggle conversations panel"
-                aria-expanded={isPanelOpen}
-                aria-controls="conversation-panel"
-              />
-            </Tooltip>
-            <Tooltip content="New Attack" relationship="label">
-              <Button
-                appearance="primary"
-                icon={<AddRegular />}
-                onClick={() => { setIsPanelOpen(false); onNewAttack() }}
-                disabled={!attackResultId}
-                data-testid="new-attack-btn"
-                aria-label="New Attack"
-                className={styles.newAttackButton}
-              >
-                <span className={styles.newAttackLabel}>New Attack</span>
-              </Button>
-            </Tooltip>
-          </div>
-        </div>
+        {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         <ObjectiveHeader
           key={`${attackResultId ?? 'new'}-${objective}-${pendingObjective}`}
           objective={objective || pendingObjective}

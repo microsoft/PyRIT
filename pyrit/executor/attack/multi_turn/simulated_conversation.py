@@ -10,6 +10,7 @@ against a simulated (compliant) target before executing the actual attack.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -31,11 +32,14 @@ from pyrit.models import (
     ConversationType,
     Message,
     SeedPrompt,
-    SeedSimulatedConversation,
+    load_next_message_prompt,
+    load_simulated_target_prompt,
+    warn_prompt_path_deprecated,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from pyrit.prompt_target import PromptTarget
@@ -52,6 +56,39 @@ class SimulatedConversationResult:
     related_conversations: frozenset[ConversationReference]
 
 
+async def _resolve_prompt_source_async(
+    *,
+    prompt: SeedPrompt | None,
+    path: str | Path | None,
+    prompt_name: str,
+    path_name: str,
+    load_prompt: Callable[[str | Path], SeedPrompt],
+) -> SeedPrompt | None:
+    """
+    Resolve a prompt source, loading a deprecated path input off the event loop.
+
+    The conflict check and the deprecation warning stay on the event loop so the warning points
+    at the caller; only the file read is sent to a worker thread.
+
+    Args:
+        prompt: The canonical prompt, if the caller supplied one.
+        path: The deprecated path input, if the caller supplied one.
+        prompt_name: Name of the canonical parameter, used in messages.
+        path_name: Name of the deprecated parameter, used in messages.
+        load_prompt: Loader that turns the path into a prompt.
+
+    Returns:
+        SeedPrompt | None: The resolved prompt, or None when neither input was supplied.
+
+    Raises:
+        ValueError: If both the canonical prompt and its deprecated path are supplied.
+    """
+    if path is None:
+        return prompt
+    warn_prompt_path_deprecated(prompt=prompt, prompt_name=prompt_name, path_name=path_name)
+    return await asyncio.to_thread(load_prompt, path)
+
+
 async def generate_simulated_conversation_async(
     *,
     objective: str,
@@ -59,7 +96,10 @@ async def generate_simulated_conversation_async(
     objective_scorer: TrueFalseScorer,
     num_turns: int = 3,
     starting_sequence: int = 0,
-    adversarial_chat_system_prompt_path: str | Path,
+    adversarial_chat_system_prompt: SeedPrompt | None = None,
+    simulated_target_system_prompt: SeedPrompt | None = None,
+    next_message_system_prompt: SeedPrompt | None = None,
+    adversarial_chat_system_prompt_path: str | Path | None = None,
     simulated_target_system_prompt_path: str | Path | None = None,
     next_message_system_prompt_path: str | Path | None = None,
     attack_converter_config: AttackConverterConfig | None = None,
@@ -86,14 +126,21 @@ async def generate_simulated_conversation_async(
         num_turns: Number of conversation turns to generate. Defaults to 3.
         starting_sequence: The starting sequence number for the generated SeedPrompts.
             Each message gets an incrementing sequence number. Defaults to 0.
-        adversarial_chat_system_prompt_path: Path to the system prompt for the adversarial chat.
-        simulated_target_system_prompt_path: Path to the system prompt for the simulated target.
+        adversarial_chat_system_prompt: System prompt for the adversarial chat. Required unless
+            the deprecated path input is used.
+        simulated_target_system_prompt: System prompt for the simulated target.
             If None, no system prompt is used for the simulated target.
-        next_message_system_prompt_path: Optional path to a system prompt for generating
-            a final user message. If provided, after the simulated conversation, a single
-            LLM call generates a user message that attempts to get the target to fulfill
-            the objective in their next response. The prompt template receives `objective`
-            and `conversation_so_far` parameters.
+        next_message_system_prompt: Optional system prompt for generating a final user message.
+            If provided, after the simulated conversation, a single LLM call generates a user
+            message that attempts to get the target to fulfill the objective in their next
+            response. The prompt template receives `objective` and `conversation_context`
+            parameters.
+        adversarial_chat_system_prompt_path: Deprecated. Path to the adversarial chat system
+            prompt YAML. Use ``adversarial_chat_system_prompt`` instead.
+        simulated_target_system_prompt_path: Deprecated. Path to the simulated target system
+            prompt YAML. Use ``simulated_target_system_prompt`` instead.
+        next_message_system_prompt_path: Deprecated. Path to the next message system prompt
+            YAML. Use ``next_message_system_prompt`` instead.
         attack_converter_config: Converter configuration for the attack. Defaults to None.
         memory_labels: Labels to associate with the conversation in memory. Defaults to None.
 
@@ -102,7 +149,8 @@ async def generate_simulated_conversation_async(
         start from ``starting_sequence`` and increment by 1 for each message.
 
     Raises:
-        ValueError: If num_turns is not a positive integer.
+        ValueError: If num_turns is not a positive integer, if no adversarial chat system prompt
+            is supplied, or if a prompt and its deprecated path input are both supplied.
     """
     # Use the same LLM for both adversarial chat and simulated target
     # They get different system prompts to play different roles
@@ -110,22 +158,40 @@ async def generate_simulated_conversation_async(
     if num_turns <= 0:
         raise ValueError("num_turns must be a positive integer")
 
-    # Load and configure simulated target system prompt using centralized validation
-    # Returns None if no path is provided (no system prompt for simulated target)
-    simulated_target_system_prompt = SeedSimulatedConversation.load_simulated_target_system_prompt(
-        objective=objective,
-        num_turns=num_turns,
-        simulated_target_system_prompt_path=simulated_target_system_prompt_path,
+    adversarial_chat_system_prompt = await _resolve_prompt_source_async(
+        prompt=adversarial_chat_system_prompt,
+        path=adversarial_chat_system_prompt_path,
+        prompt_name="adversarial_chat_system_prompt",
+        path_name="adversarial_chat_system_prompt_path",
+        load_prompt=SeedPrompt.from_yaml_file,
+    )
+    simulated_target_system_prompt = await _resolve_prompt_source_async(
+        prompt=simulated_target_system_prompt,
+        path=simulated_target_system_prompt_path,
+        prompt_name="simulated_target_system_prompt",
+        path_name="simulated_target_system_prompt_path",
+        load_prompt=load_simulated_target_prompt,
+    )
+    next_message_system_prompt = await _resolve_prompt_source_async(
+        prompt=next_message_system_prompt,
+        path=next_message_system_prompt_path,
+        prompt_name="next_message_system_prompt",
+        path_name="next_message_system_prompt_path",
+        load_prompt=load_next_message_prompt,
+    )
+    if adversarial_chat_system_prompt is None:
+        raise ValueError("adversarial_chat_system_prompt is required")
+
+    # Render the simulated target system prompt; None means the target gets no system prompt.
+    simulated_target_system_prompt_value = (
+        simulated_target_system_prompt.render_template_value(objective=objective, num_turns=num_turns)
+        if simulated_target_system_prompt is not None
+        else None
     )
 
-    # Create adversarial config for the simulation. Load the optional path into a SeedPrompt so the
-    # resolved prompt is stored directly on the configuration.
-    adversarial_system_prompt = (
-        SeedPrompt.from_yaml_file(adversarial_chat_system_prompt_path) if adversarial_chat_system_prompt_path else None
-    )
     adversarial_config = AttackAdversarialConfig(
         target=adversarial_chat,
-        system_prompt=adversarial_system_prompt,
+        system_prompt=adversarial_chat_system_prompt,
     )
 
     # Create scoring config
@@ -149,8 +215,8 @@ async def generate_simulated_conversation_async(
 
     # Build prepended_conversation - only include system message if prompt is provided
     prepended_conversation: list[Message] = []
-    if simulated_target_system_prompt:
-        prepended_conversation.append(Message.from_system_prompt(simulated_target_system_prompt))
+    if simulated_target_system_prompt_value:
+        prepended_conversation.append(Message.from_system_prompt(simulated_target_system_prompt_value))
 
     result = await attack.execute_async(
         objective=objective,
@@ -175,15 +241,15 @@ async def generate_simulated_conversation_async(
         *result.related_conversations,
     }
 
-    # If next_message_system_prompt_path is provided, generate a final user message
-    if next_message_system_prompt_path:
+    # If a next-message prompt is configured, generate a final user message
+    if next_message_system_prompt:
         next_message_conversation_id = str(uuid4())
         next_message = await _generate_next_message_async(
             objective=objective,
             conversation_messages=conversation_messages,
             adversarial_chat=adversarial_chat,
             conversation_id=next_message_conversation_id,
-            next_message_system_prompt_path=next_message_system_prompt_path,
+            next_message_system_prompt=next_message_system_prompt,
             prompt_normalizer=PromptNormalizer(),
             memory_labels=memory_labels,
         )
@@ -216,7 +282,7 @@ async def _generate_next_message_async(
     conversation_messages: list[Message],
     adversarial_chat: PromptTarget,
     conversation_id: str,
-    next_message_system_prompt_path: str | Path,
+    next_message_system_prompt: SeedPrompt,
     prompt_normalizer: PromptNormalizer,
     memory_labels: dict[str, str] | None = None,
 ) -> Message:
@@ -234,7 +300,8 @@ async def _generate_next_message_async(
         conversation_messages: The conversation generated so far as Messages.
         adversarial_chat: The LLM to use for generation.
         conversation_id: The conversation ID for the adversarial generation exchange.
-        next_message_system_prompt_path: Path to the system prompt template.
+        next_message_system_prompt: The next-message system-prompt SeedPrompt, rendered with the
+            conversation context.
         prompt_normalizer: The normalizer the manager sends the adversarial turn through.
         memory_labels: Optional memory labels to attach to the request.
 
@@ -249,17 +316,10 @@ async def _generate_next_message_async(
     normalizer = ConversationContextNormalizer()
     conversation_context = await normalizer.normalize_string_async(conversation_messages)
 
-    # Load the system prompt template (schema + prompt are a matched pair declared in the YAML)
-    template = SeedPrompt.from_yaml_with_required_parameters(
-        template_path=next_message_system_prompt_path,
-        required_parameters=["objective", "conversation_context"],
-        error_message="Next message system prompt must have objective and conversation_context parameters",
-    )
-
     # The manager owns schema resolution, setting the system prompt, the send, and JSON parse/retry.
     manager = _AdversarialConversationManager(
         adversarial_target=adversarial_chat,
-        adversarial_system_prompt=template,
+        adversarial_system_prompt=next_message_system_prompt,
         prompt_normalizer=prompt_normalizer,
         conversation_id=conversation_id,
         objective=objective,

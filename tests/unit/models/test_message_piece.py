@@ -40,6 +40,25 @@ def test_id_set():
     assert entry.id is not None
 
 
+@pytest.mark.parametrize(
+    ("converted_fields", "expected_value"),
+    [
+        ({}, "Original source"),
+        ({"converted_value": None}, "Original source"),
+        ({"converted_value": ""}, ""),
+        ({"converted_value": "Converted"}, "Converted"),
+    ],
+)
+def test_converted_value_defaults_only_when_missing_or_null(
+    *, converted_fields: dict[str, str | None], expected_value: str
+) -> None:
+    piece = MessagePiece.model_validate({"role": "user", "original_value": "Original source", **converted_fields})
+
+    assert piece.original_value == "Original source"
+    assert piece.converted_value == expected_value
+    assert MessagePiece.model_validate(piece.model_dump()).converted_value == expected_value
+
+
 def test_datetime_set():
     fake_now = datetime(2099, 1, 1, 12, 0, 0, tzinfo=UTC)
     with patch("pyrit.models.messages.message_piece.datetime") as mock_datetime:

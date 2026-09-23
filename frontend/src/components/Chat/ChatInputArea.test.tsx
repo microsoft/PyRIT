@@ -1142,6 +1142,27 @@ describe("ChatInputArea", () => {
     expect(onClearAllConversions).toHaveBeenCalled();
   });
 
+  it("should keep an explicitly empty converted value visible and send it unchanged", async () => {
+    const user = userEvent.setup();
+    const onSend = jest.fn().mockResolvedValue(sentOutcome);
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          onSend={onSend}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
+          convertedValue=""
+          originalValue="original"
+        />
+      </TestWrapper>
+    );
+    expect(screen.getByRole("textbox", { name: /converted prompt/i })).toHaveValue("");
+    expect(screen.getByTestId("clear-conversion-btn")).toBeInTheDocument();
+    await user.type(screen.getByTestId("chat-input"), "original");
+    await user.click(getSendButton());
+    expect(onSend).toHaveBeenCalledWith("original", "", []);
+  });
+
   it("should render converted file chip with Open link for text→file conversion", async () => {
     render(
       <TestWrapper>

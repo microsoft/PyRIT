@@ -15,6 +15,9 @@ jest.mock("../../services/api", () => ({
   versionApi: {
     getVersion: jest.fn(),
   },
+  labelsApi: {
+    getLabels: jest.fn().mockResolvedValue({ labels: {} }),
+  },
 }));
 
 // Mock Navigation to simplify testing
@@ -58,6 +61,8 @@ describe("MainLayout", () => {
     onNavigate: jest.fn(),
     onOpenFeedback: jest.fn(),
     canManageConfiguration: true,
+    labels: { operator: 'alice', operation: 'test_op' },
+    onLabelsChange: jest.fn(),
   };
 
   it("renders the header with title and subtitle", async () => {
@@ -262,7 +267,7 @@ describe("MainLayout", () => {
     });
   });
 
-  it("changes decoration without remounting workspace content", async () => {
+  it("changes decoration without remounting workspace content or the shared labels editor", async () => {
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
     const user = userEvent.setup();
 
@@ -280,6 +285,7 @@ describe("MainLayout", () => {
     render(<UserPreferencesProvider accountKey="local"><ThemeProvider><Workspace /></ThemeProvider></UserPreferencesProvider>);
     await screen.findByText("Co-PyRIT 1.0.0");
     const draft = screen.getByRole("textbox", { name: "Draft" });
+    const labels = screen.getByRole("region", { name: "New run labels" });
     await user.type(draft, "draft");
     expect(screen.queryByTestId("workspace-background")).not.toBeInTheDocument();
 
@@ -287,9 +293,13 @@ describe("MainLayout", () => {
     expect(screen.getByTestId("workspace-background")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByRole("textbox", { name: "Draft" })).toBe(draft);
     expect(draft).toHaveValue("draft");
+    expect(screen.getByRole("region", { name: "New run labels" })).toBe(labels);
+    expect(screen.getAllByTestId("labels-bar")).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: "Use Dark" }));
     expect(screen.queryByTestId("workspace-background")).not.toBeInTheDocument();
     expect(draft).toHaveValue("draft");
+    expect(screen.getByRole("region", { name: "New run labels" })).toBe(labels);
+    expect(screen.getAllByTestId("labels-bar")).toHaveLength(1);
   });
 });

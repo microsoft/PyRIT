@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import OrderedDict
 from functools import lru_cache
@@ -20,17 +21,20 @@ from pyrit.models.catalog.scenario import (
     ScenarioRunSizeEstimateRequest,
 )
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
-from pyrit.scenario.core import override_default_adversarial_target
+from pyrit.scenario.core import Scenario, override_default_adversarial_target
 from pyrit.scenario.core.dataset_configuration import read_only_dataset_resolution
 
 logger = logging.getLogger(__name__)
 _ESTIMATE_CACHE_SIZE = 128
-_ESTIMATE_CONCURRENCY = 1
+_ESTIMATE_CONCURRENCY = 4
+_CONFIGURED_ESTIMATE_CONCURRENCY = 4
+_DEFAULT_ESTIMATE_TIMEOUT_SECONDS = 3.0
 _ESTIMATE_INFLIGHT_SIZE = 256
 _UNAVAILABLE_CACHE_TTL_SECONDS = 30.0
 _EstimateCacheKey = tuple[str, int]
 _EstimateCacheValue = tuple[ScenarioRunSizeEstimate, float | None]
 _EstimateTask = asyncio.Task[ScenarioRunSizeEstimate]
+_ConfiguredEstimateKey = tuple[str, type[Scenario], str]
 
 
 def _metadata_to_registered_scenario(
@@ -82,6 +86,10 @@ class ScenarioService:
         self._estimate_tasks: OrderedDict[_EstimateCacheKey, _EstimateTask] = OrderedDict()
         self._estimate_task_lock = asyncio.Lock()
         self._estimate_semaphore = asyncio.Semaphore(_ESTIMATE_CONCURRENCY)
+        self._timed_out_estimate_workers: set[_EstimateTask] = set()
+        self._configured_estimate_tasks: dict[_ConfiguredEstimateKey, _EstimateTask] = {}
+        self._configured_estimate_task_lock = asyncio.Lock()
+        self._configured_estimate_semaphore = asyncio.Semaphore(_CONFIGURED_ESTIMATE_CONCURRENCY)
 
     async def list_scenarios_async(
         self,
@@ -162,19 +170,41 @@ class ScenarioService:
             ScenarioRunSizeEstimate | None: Estimate, or ``None`` when the scenario is unknown.
         """
         try:
-            self._registry.get_class(scenario_name)
+            scenario_class = self._registry.get_class(scenario_name)
         except KeyError:
             return None
 
-        semaphore = getattr(self, "_estimate_semaphore", None)
-        if semaphore is None:
-            semaphore = asyncio.Semaphore(_ESTIMATE_CONCURRENCY)
-            self._estimate_semaphore = semaphore
-        async with semaphore:
-            return await self._estimate_configured_run_size_async(
-                scenario_name=scenario_name,
-                request=request,
-            )
+        estimate_key = self._build_configured_estimate_key(
+            scenario_name=scenario_name, scenario_class=scenario_class, request=request
+        )
+        task_lock = getattr(self, "_configured_estimate_task_lock", None)
+        if task_lock is None:
+            task_lock = asyncio.Lock()
+            self._configured_estimate_task_lock = task_lock
+        async with task_lock:
+            tasks = getattr(self, "_configured_estimate_tasks", None)
+            if tasks is None:
+                tasks = {}
+                self._configured_estimate_tasks = tasks
+            task = tasks.get(estimate_key)
+            if task is None:
+                task = asyncio.create_task(
+                    self._run_configured_estimate_with_capacity_async(
+                        scenario_name=scenario_name,
+                        request=request,
+                    )
+                )
+                tasks[estimate_key] = task
+
+                def clear_estimate_task(completed_task: _EstimateTask) -> None:
+                    self._clear_configured_estimate_task(task=completed_task, estimate_key=estimate_key)
+
+                task.add_done_callback(clear_estimate_task)
+
+        await asyncio.wait({task})
+        estimate = task.result()
+        assert isinstance(estimate, ScenarioRunSizeEstimate)
+        return estimate
 
     async def _get_default_run_size_estimate_async(self, *, metadata: ScenarioMetadata) -> ScenarioRunSizeEstimate:
         """Return a cached, cancellation-safe scenario-owned estimate."""
@@ -259,16 +289,54 @@ class ScenarioService:
         if semaphore is None:
             semaphore = asyncio.Semaphore(_ESTIMATE_CONCURRENCY)
             self._estimate_semaphore = semaphore
-        async with semaphore:
-            try:
-                scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name)
-                with read_only_dataset_resolution():
-                    estimate = await scenario.get_default_run_size_estimate_async()
-            except Exception as exc:
-                logger.warning("Default-run estimate failed for scenario '%s': %s", scenario_name, exc)
-                estimate = ScenarioRunSizeEstimate.unavailable(
-                    note=f"The scenario could not resolve its default inputs for estimation ({type(exc).__name__})."
+        await semaphore.acquire()
+        construction_complete = asyncio.Event()
+        execution_timed_out = asyncio.Event()
+        try:
+            worker_task = asyncio.create_task(
+                self._run_default_estimate_with_capacity_async(
+                    scenario_name=scenario_name,
+                    semaphore=semaphore,
+                    construction_complete=construction_complete,
+                    execution_timed_out=execution_timed_out,
                 )
+            )
+        except Exception:
+            semaphore.release()
+            raise
+        try:
+            completed, _ = await asyncio.wait(
+                {worker_task},
+                timeout=_DEFAULT_ESTIMATE_TIMEOUT_SECONDS,
+            )
+            if completed:
+                estimate = worker_task.result()
+            else:
+                raise TimeoutError
+        except TimeoutError:
+            execution_timed_out.set()
+            if construction_complete.is_set():
+                worker_task.cancel()
+            self._track_timed_out_estimate_worker(worker_task)
+            logger.warning(
+                "Default-run estimate timed out for scenario '%s' after %.1f seconds",
+                scenario_name,
+                _DEFAULT_ESTIMATE_TIMEOUT_SECONDS,
+            )
+            estimate = ScenarioRunSizeEstimate.unavailable(
+                note="The default estimate timed out; open the scenario to calculate the configured run size."
+            )
+        except asyncio.CancelledError:
+            execution_timed_out.set()
+            if construction_complete.is_set():
+                worker_task.cancel()
+            self._track_timed_out_estimate_worker(worker_task)
+            raise
+        except Exception as exc:
+            logger.warning("Default-run estimate failed for scenario '%s': %s", scenario_name, exc)
+            estimate = ScenarioRunSizeEstimate.unavailable(
+                note=f"The scenario could not resolve its default inputs for estimation ({type(exc).__name__})."
+            )
 
         expires_at = monotonic() + _UNAVAILABLE_CACHE_TTL_SECONDS if estimate.estimated_attack_count is None else None
         cache = self._estimate_cache
@@ -278,11 +346,106 @@ class ScenarioService:
             cache.popitem(last=False)
         return estimate
 
+    async def _run_default_estimate_with_capacity_async(
+        self,
+        *,
+        scenario_name: str,
+        semaphore: asyncio.Semaphore,
+        construction_complete: asyncio.Event,
+        execution_timed_out: asyncio.Event,
+    ) -> ScenarioRunSizeEstimate:
+        """
+        Run one default estimate and release its capacity only after the worker exits.
+
+        Returns:
+            ScenarioRunSizeEstimate: The authoritative scenario estimate.
+        """
+        try:
+            return await self._run_default_estimate_async(
+                scenario_name=scenario_name,
+                construction_complete=construction_complete,
+                execution_timed_out=execution_timed_out,
+            )
+        finally:
+            semaphore.release()
+
+    async def _run_default_estimate_async(
+        self,
+        *,
+        scenario_name: str,
+        construction_complete: asyncio.Event,
+        execution_timed_out: asyncio.Event,
+    ) -> ScenarioRunSizeEstimate:
+        """
+        Run one default estimate.
+
+        Returns:
+            ScenarioRunSizeEstimate: The authoritative scenario estimate.
+        """
+        try:
+            scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name)
+        finally:
+            construction_complete.set()
+        if execution_timed_out.is_set():
+            raise asyncio.CancelledError
+        with read_only_dataset_resolution():
+            return await scenario.get_default_run_size_estimate_async()
+
     def _clear_estimate_task(self, *, task: _EstimateTask, cache_key: _EstimateCacheKey) -> None:
         """Remove a completed single-flight task without disturbing a replacement."""
         tasks = self._estimate_tasks
         if tasks.get(cache_key) is task:
             del tasks[cache_key]
+
+    def _track_timed_out_estimate_worker(self, task: _EstimateTask) -> None:
+        """Retain a timed-out worker until its non-cancellable blocking work exits."""
+        workers = getattr(self, "_timed_out_estimate_workers", None)
+        if workers is None:
+            workers = set()
+            self._timed_out_estimate_workers = workers
+        workers.add(task)
+        task.add_done_callback(self._clear_timed_out_estimate_worker)
+
+    def _clear_timed_out_estimate_worker(self, task: _EstimateTask) -> None:
+        """Release a completed timed-out worker reference and retrieve any exception."""
+        self._timed_out_estimate_workers.discard(task)
+        if not task.cancelled():
+            task.exception()
+
+    async def _run_configured_estimate_with_capacity_async(
+        self,
+        *,
+        scenario_name: str,
+        request: ScenarioRunSizeEstimateRequest,
+    ) -> ScenarioRunSizeEstimate:
+        """
+        Run one configured estimate within its independent capacity bound.
+
+        Returns:
+            ScenarioRunSizeEstimate: The configured scenario estimate.
+        """
+        semaphore = getattr(self, "_configured_estimate_semaphore", None)
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(_CONFIGURED_ESTIMATE_CONCURRENCY)
+            self._configured_estimate_semaphore = semaphore
+        async with semaphore:
+            return await self._estimate_configured_run_size_async(
+                scenario_name=scenario_name,
+                request=request,
+            )
+
+    def _clear_configured_estimate_task(
+        self,
+        *,
+        task: _EstimateTask,
+        estimate_key: _ConfiguredEstimateKey,
+    ) -> None:
+        """Remove a completed configured estimate task without disturbing a replacement."""
+        tasks = self._configured_estimate_tasks
+        if tasks.get(estimate_key) is task:
+            del tasks[estimate_key]
+        if not task.cancelled():
+            task.exception()
 
     async def _estimate_configured_run_size_async(
         self,
@@ -339,6 +502,26 @@ class ScenarioService:
         page = items[start_idx : start_idx + limit]
         has_more = len(items) > start_idx + limit
         return page, has_more
+
+    @staticmethod
+    def _build_configured_estimate_key(
+        *,
+        scenario_name: str,
+        scenario_class: type[Scenario],
+        request: ScenarioRunSizeEstimateRequest,
+    ) -> _ConfiguredEstimateKey:
+        """
+        Build a stable key for semantically identical configured estimate requests.
+
+        Returns:
+            _ConfiguredEstimateKey: Scenario identity and canonical request JSON.
+        """
+        request_json = json.dumps(
+            request.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return scenario_name, scenario_class, request_json
 
 
 @lru_cache(maxsize=1)

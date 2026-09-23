@@ -49,6 +49,7 @@ dependencies = [
     "numpy>=2.3.0; python_version >= '3.14'",
     "openai>=2.2.0",
     "openpyxl>=3.1.5",
+    "opentelemetry-sdk>=1.36,<2",
     "pillow>=12.2.0",
     "pydantic>=2.12.0",
     "PyJWT[crypto]>=2.8.0",
@@ -285,8 +286,10 @@ include = ["pyrit", "pyrit.*"]
 license-files = [
     "LICENSE",
     "LICENSES/Apache-2.0.txt",
+    "LICENSES/PromptInject-MIT.txt",
     "THIRD_PARTY_NOTICES.txt",
     "third_party/garak-provenance.json",
+    "third_party/promptinject-provenance.json",
 ]
 
 [tool.setuptools.package-data]

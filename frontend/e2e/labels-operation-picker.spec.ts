@@ -110,10 +110,18 @@ test.describe("operation picker placement", () => {
   test("keeps the list on screen when it opens above the input", async ({
     page,
   }) => {
-    // Too little room below the labels bar, so Fluent flips the list upwards.
+    // The shared bar is normally near the top. Move it down to exercise
+    // upward collision handling independently of the Home page layout.
     await page.setViewportSize({ width: 1280, height: 420 });
     await setupMocks(page, operations(60));
-    const listbox = await openOperationPicker(page);
+    await page.goto("/");
+    await page.getByRole("region", { name: "New run labels" }).evaluate(
+      (bar: HTMLElement) => { bar.style.marginTop = "240px"; },
+    );
+    await page.getByTestId("label-operation").click();
+
+    const listbox = page.getByRole("listbox");
+    await expect(listbox).toBeVisible();
 
     const box = (await listbox.boundingBox())!;
     const input = (await page
@@ -121,7 +129,11 @@ test.describe("operation picker placement", () => {
       .boundingBox())!;
     const viewport = page.viewportSize()!;
 
+    expect(input.y).toBeGreaterThanOrEqual(LIST_MAX_HEIGHT);
+    expect(viewport.height - (input.y + input.height)).toBeLessThan(LIST_MAX_HEIGHT);
     expect(box.y).toBeLessThan(input.y);
+    expect(box.y + box.height).toBeLessThanOrEqual(input.y);
+    expect(input.y - (box.y + box.height)).toBeLessThan(16);
     expect(box.y).toBeGreaterThanOrEqual(0);
     expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
   });

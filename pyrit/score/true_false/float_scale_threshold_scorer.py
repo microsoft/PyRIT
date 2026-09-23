@@ -19,7 +19,7 @@ from pyrit.models import (
 )
 from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggregatorFunc, FloatScaleScoreAggregator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
-from pyrit.score.observation import _merge_observation_ids
+from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 

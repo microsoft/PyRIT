@@ -28,7 +28,7 @@ from pyrit.backend.mappers.attack_mappers import (
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models._media import build_filename, infer_mime_type
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models.attacks import AddMessageRequest, MessagePieceRequest, ScoreView
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -36,6 +36,7 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    PromptDataType,
     Score,
 )
 from pyrit.models.conversation_stats import ConversationStats
@@ -1145,14 +1146,10 @@ class TestRequestToPyritMessage:
 
     def test_converts_request_to_domain(self) -> None:
         """Test that DTO request is correctly converted to domain message."""
-        request = MagicMock()
-        request.role = "user"
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.original_prompt_id = None
-        request.pieces = [piece]
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="hello")],
+            target_conversation_id="conv-1",
+        )
 
         result = request_to_pyrit_message(
             request=request,
@@ -1169,14 +1166,24 @@ class TestRequestToPyritMessage:
 class TestRequestPieceToPyritMessagePiece:
     """Tests for request_piece_to_pyrit_message_piece function."""
 
+    def test_preserves_blank_original_with_explicit_preview(self) -> None:
+        request = MessagePieceRequest(
+            original_value="",
+            converted_value="Manually edited preview",
+            converted_value_data_type="text",
+        )
+
+        piece = request_piece_to_pyrit_message_piece(piece=request, role="user", conversation_id="conv-1", sequence=0)
+
+        assert piece.original_value == ""
+        assert piece.original_value_data_type == "text"
+        assert piece.converted_value == "Manually edited preview"
+        assert piece.converted_value_data_type == "text"
+        assert piece.converter_identifiers == []
+
     def test_uses_converted_value_when_present(self) -> None:
         """Test that converted_value is used when provided."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "original"
-        piece.converted_value = "converted"
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(original_value="original", converted_value="converted")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1190,14 +1197,57 @@ class TestRequestPieceToPyritMessagePiece:
         assert result.api_role == "assistant"
         assert result.sequence == 5
 
+    @pytest.mark.parametrize(
+        ("original_type", "converted_type", "converted_value"),
+        [
+            ("text", "text", ""),
+            ("text", "image_path", "https://example.com/preview.png"),
+            ("image_path", "text", "Exact image description"),
+            ("image_path", "audio_path", "https://example.com/preview.wav"),
+            ("text", "function_call_output", '{"result": 1}'),
+        ],
+    )
+    def test_preserves_explicit_converted_value_and_type(
+        self, *, original_type: PromptDataType, converted_type: PromptDataType, converted_value: str
+    ) -> None:
+        original_value = "https://example.com/source.png" if original_type == "image_path" else "Original prompt"
+        original_id = str(uuid.uuid4())
+        request = MessagePieceRequest(
+            data_type=original_type,
+            original_value=original_value,
+            converted_value=converted_value,
+            converted_value_data_type=converted_type,
+            prompt_metadata={"source": "preview", "nested": {"preserved": True}},
+            original_prompt_id=original_id,
+        )
+
+        piece = request_piece_to_pyrit_message_piece(piece=request, role="user", conversation_id="conv-1", sequence=2)
+
+        assert isinstance(piece, MessagePiece)
+        assert piece.original_value == original_value
+        assert piece.original_value_data_type == original_type
+        assert piece.converted_value == converted_value
+        assert piece.converted_value_data_type == converted_type
+        assert piece.prompt_metadata == request.prompt_metadata
+        assert piece.original_prompt_id == uuid.UUID(original_id)
+        assert piece.converter_identifiers == []
+
+    @pytest.mark.parametrize("converted_value", [None, "https://example.com/converted.png"])
+    def test_omitted_converted_type_defaults_to_original(self, converted_value: str | None) -> None:
+        request = MessagePieceRequest(
+            data_type="image_path",
+            original_value="https://example.com/source.png",
+            converted_value=converted_value,
+        )
+
+        piece = request_piece_to_pyrit_message_piece(piece=request, role="user", conversation_id="conv-1", sequence=0)
+
+        assert piece.converted_value_data_type == "image_path"
+        assert piece.converted_value == (converted_value if converted_value is not None else request.original_value)
+
     def test_falls_back_to_original_when_no_converted(self) -> None:
         """Test that original_value is used when converted_value is None."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "fallback"
-        piece.converted_value = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(original_value="fallback")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1210,13 +1260,7 @@ class TestRequestPieceToPyritMessagePiece:
 
     def test_passes_mime_type_through_prompt_metadata(self) -> None:
         """Test that mime_type is stored in prompt_metadata."""
-        piece = MagicMock()
-        piece.data_type = "image_path"
-        piece.original_value = "base64data"
-        piece.converted_value = None
-        piece.mime_type = "image/png"
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(data_type="image_path", original_value="base64data", mime_type="image/png")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1229,13 +1273,12 @@ class TestRequestPieceToPyritMessagePiece:
 
     def test_prompt_metadata_takes_precedence_over_mime_type(self) -> None:
         """Test that prompt_metadata is used when provided, ignoring mime_type."""
-        piece = MagicMock()
-        piece.data_type = "video_path"
-        piece.original_value = "base64data"
-        piece.converted_value = None
-        piece.prompt_metadata = {"video_id": "abc-123"}
-        piece.mime_type = "video/mp4"
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(
+            data_type="video_path",
+            original_value="base64data",
+            prompt_metadata={"video_id": "abc-123"},
+            mime_type="video/mp4",
+        )
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1248,13 +1291,7 @@ class TestRequestPieceToPyritMessagePiece:
 
     def test_no_metadata_when_mime_type_absent(self) -> None:
         """Test that prompt_metadata is empty when mime_type is None."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(original_value="hello")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1267,12 +1304,7 @@ class TestRequestPieceToPyritMessagePiece:
 
     def test_original_prompt_id_forwarded_when_provided(self) -> None:
         """Test that original_prompt_id is passed through for lineage tracking."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.original_prompt_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        piece = MessagePieceRequest(original_value="hello", original_prompt_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,
@@ -1287,12 +1319,7 @@ class TestRequestPieceToPyritMessagePiece:
 
     def test_original_prompt_id_defaults_to_self_when_absent(self) -> None:
         """Test that original_prompt_id defaults to the piece's own id when not provided."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.original_prompt_id = None
+        piece = MessagePieceRequest(original_value="hello")
 
         result = request_piece_to_pyrit_message_piece(
             piece=piece,

@@ -364,9 +364,8 @@ test.describe("Chat processing recovery @seeded", () => {
       expect.objectContaining({ data_type: "text", original_value: "Recover this image" }),
       expect.objectContaining({ data_type: "image_path" }),
     ]);
-    expect(originalSend.request_converter_configurations).toEqual([
-      { converter_ids: [imageConverterId], indexes_to_apply: [1] },
-    ]);
+    expect(originalSend.pieces[1].applied_converter_ids).toEqual([imageConverterId]);
+    expect(originalSend.request_converter_configurations).toBeUndefined();
     expect(originalSend).not.toHaveProperty("converter_ids");
     const attackId = first.attack.attack_result_id;
     const otherId = await createConversation(request, attackId);
@@ -402,7 +401,7 @@ test.describe("Chat processing recovery @seeded", () => {
         })(),
       ]);
       const resent: AddMessageRequest = resentRequest.postDataJSON();
-      expect(resent.request_converter_configurations).toEqual(originalSend.request_converter_configurations);
+      expect(resent.pieces[1].applied_converter_ids).toEqual([imageConverterId]);
       expect(resent.pieces).toEqual(originalSend.pieces);
       expect(resent).not.toHaveProperty("converter_ids");
       expect(sent.messages.target_response_status?.response_error).toBe("none");

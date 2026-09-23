@@ -15,9 +15,6 @@ jest.mock("../../services/api", () => ({
   attacksApi: {
     listAttacks: jest.fn(),
   },
-  labelsApi: {
-    getLabels: jest.fn().mockResolvedValue({ source: "attacks", labels: {} }),
-  },
 }));
 
 const mockListAttacks = attacksApi.listAttacks as jest.Mock;
@@ -46,11 +43,7 @@ function makeAttack(overrides: Partial<AttackSummary> = {}): AttackSummary {
   };
 }
 
-const defaultLabels: Record<string, string> = { operator: "alice", operation: "op_alpha" };
-
 const defaultProps = {
-  labels: defaultLabels,
-  onLabelsChange: jest.fn(),
   activeTarget: null as TargetInstance | null,
   onNavigate: jest.fn(),
   onOpenAttack: jest.fn(),
@@ -72,6 +65,8 @@ describe("Home", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Labels" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Default objective target" })).toBeInTheDocument();
+    expect(screen.getByText("New run labels")).toBeInTheDocument();
+    expect(screen.queryByTestId("labels-bar")).not.toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 2, name: "Recent operations" })
     ).toBeInTheDocument();

@@ -18,6 +18,7 @@ from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.routes.scenarios import get_scenario_run_progress, list_scenario_runs
+from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
@@ -167,6 +168,70 @@ class TestStartScenarioRunRoute:
             "num_jailbreaks": 2,
             "num_jailbreak_attempts": 1,
         }
+
+
+class TestResumeScenarioRunRoute:
+    """The bodyless resume route uses only the saved result ID."""
+
+    def test_resume_returns_same_run_id(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as get_service:
+            service = get_service.return_value
+            service.resume_run_async = AsyncMock(
+                return_value=_mock_run_response(run_id="saved-id", run_status=ScenarioRunState.QUEUED)
+            )
+            response = client.post("/api/scenarios/runs/saved-id/resume")
+        assert response.status_code == 202
+        assert response.json()["scenario_result_id"] == "saved-id"
+        assert response.json()["status"] == "QUEUED"
+        service.resume_run_async.assert_awaited_once_with(scenario_result_id="saved-id")
+
+    def test_resume_has_no_get_preflight(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as get_service:
+            response = client.get("/api/scenarios/runs/saved-id/resume")
+            get_service.assert_not_called()
+        assert response.status_code == 405
+
+    def test_resume_schema_has_no_body_or_preflight(self) -> None:
+        schema = app.openapi()
+        path = schema["paths"]["/api/scenarios/runs/{scenario_result_id}/resume"]
+        assert set(path) == {"post"}
+        assert "requestBody" not in path["post"]
+        assert [(parameter["name"], parameter["in"]) for parameter in path["post"]["parameters"]] == [
+            ("scenario_result_id", "path")
+        ]
+        assert "ResumeScenarioRunRequest" not in schema["components"]["schemas"]
+        assert "ScenarioResumeOptions" not in schema["components"]["schemas"]
+
+    @pytest.mark.parametrize(
+        ("error", "expected_status"),
+        [
+            (ScenarioRunNotFoundError("Run not found"), 404),
+            (ScenarioRunConflictError("Already scheduled"), 409),
+            (ValueError("Target configuration changed"), 400),
+        ],
+    )
+    def test_resume_errors_are_explicit(self, *, client: TestClient, error: Exception, expected_status: int) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as get_service:
+            service = get_service.return_value
+            service.resume_run_async = AsyncMock(side_effect=error)
+            response = client.post("/api/scenarios/runs/saved-id/resume")
+        assert response.status_code == expected_status
+        assert response.json()["detail"] == str(error)
+
+    def test_older_run_returns_409_without_initialization(self, client: TestClient) -> None:
+        stored = make_scenario_result(scenario_run_state=ScenarioRunState.FAILED, attack_results={})
+        with patch.object(_svc_mod.CentralMemory, "get_memory_instance") as get_memory:
+            get_memory.return_value.get_scenario_result_header.return_value = stored
+            service = _svc_mod.ScenarioRunService()
+        with (
+            patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=service),
+            patch.object(service, "_prepare_run_blocking") as prepare,
+        ):
+            response = client.post(f"/api/scenarios/runs/{stored.id}/resume")
+            prepare.assert_not_called()
+        assert response.status_code == 409
+        assert "older run" in response.json()["detail"]
+        assert "cannot be resumed through the GUI" in response.json()["detail"]
 
 
 class TestListScenarioRunsRoute:

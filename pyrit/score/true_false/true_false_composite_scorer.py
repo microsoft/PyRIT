@@ -19,8 +19,8 @@ from pyrit.models import (
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.score.observation import _merge_observation_ids
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
+from pyrit.score.observation.execution import _merge_observation_ids
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,9 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
 
     Children are true/false scorers of any evidence kind, so a scorer over a message can be
     composed with one over evidence that is not a message at all.
+
+    Built-in AND, OR, and MAJORITY aggregators opt into order-independent evaluation
+    identity. Duplicates remain significant; custom aggregators and execution stay ordered.
     """
 
     def __init__(
@@ -77,7 +80,16 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
+        order_independent = any(
+            self._score_aggregator is aggregator
+            for aggregator in (
+                TrueFalseScoreAggregator.AND,
+                TrueFalseScoreAggregator.OR,
+                TrueFalseScoreAggregator.MAJORITY,
+            )
+        )
         return self._create_identifier(
+            params={"sub_scorers_order_independent": True} if order_independent else None,
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             sub_scorers=[s.get_identifier() for s in self._scorers],
         )

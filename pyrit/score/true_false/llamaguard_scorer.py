@@ -24,7 +24,7 @@ from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.models import Observation, ScoringExpectation
-    from pyrit.score.observation import _ObservationEvidence
+    from pyrit.score.observation.execution import _ObservationEvidence
 
 _LLAMAGUARD_DATA_PATH = SCORER_SEED_PROMPT_PATH / "llamaguard"
 _DEFAULT_LLAMA_GUARD_3_POLICY_PATH = _LLAMAGUARD_DATA_PATH / "llamaguard_3_policy.yaml"

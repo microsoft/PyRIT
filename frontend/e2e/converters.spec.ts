@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { test, expect, type APIRequestContext, type Page, type Request } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Locator, type Page, type Request } from "@playwright/test";
 
 import type {
   AddMessageRequest,
@@ -286,8 +286,8 @@ async function mockBackendAPIs(page: Page) {
           (p: Record<string, string>) => p.data_type === "text",
         );
         userText = textPiece?.original_value || "your message";
-        convertedText = textPiece?.converted_value || null;
-        converterIds = body?.request_converter_configurations
+        convertedText = textPiece?.converted_value ?? null;
+        converterIds = textPiece?.applied_converter_ids ?? body?.request_converter_configurations
           ?.flatMap((configuration: { converter_ids?: string[] }) => configuration.converter_ids ?? [])
           ?? body?.converter_ids
           ?? [];
@@ -296,7 +296,7 @@ async function mockBackendAPIs(page: Page) {
       }
 
       // Simulate backend conversion when the request carries converter configurations.
-      if (!convertedText && converterIds.length > 0) {
+      if (convertedText === null && converterIds.length > 0) {
         convertedText = Buffer.from(userText).toString("base64");
       }
 
@@ -520,12 +520,24 @@ async function addPipelineConverter(page: Page, converterId: string): Promise<vo
   await expect(page.getByTestId(`converter-item-${converterId}`)).toBeVisible();
 }
 
+async function selectText(editor: Locator, start: number, length: number): Promise<void> {
+  await editor.focus();
+  await editor.press("ControlOrMeta+Home");
+  for (let index = 0; index < start; index += 1) {
+    await editor.press("ArrowRight");
+  }
+  for (let index = 0; index < length; index += 1) {
+    await editor.press("Shift+ArrowRight");
+  }
+}
+
 test.describe("Shared per-piece converter pipelines @seeded", () => {
   test.setTimeout(90_000);
 
   let targetRegistryName: string;
   let base64Id: string;
   let caesarId: string;
+  let suffixId: string;
   let imageId: string;
   const registeredConverters: string[] = [];
   const image = readFileSync(new URL("../public/roakey.png", import.meta.url));
@@ -542,6 +554,8 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     registeredConverters.push(base64Id);
     caesarId = await registerConverter(request, "CaesarConverter", { caesar_offset: 1 });
     registeredConverters.push(caesarId);
+    suffixId = await registerConverter(request, "SuffixAppendConverter", { suffix: "tail" });
+    registeredConverters.push(suffixId);
     imageId = await registerConverter(request, "ImageCompressionConverter", {
       output_format: "PNG",
       min_compression_threshold: 0,
@@ -564,6 +578,39 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
       .selectOption(targetRegistryName);
     await page.getByTitle("Chat", { exact: true }).click();
     await expect(page.getByTestId("chat-input")).toBeEnabled();
+  });
+
+  test("should align highlighted text through wrapping, scrolling and resizing", async ({ page }) => {
+    await selectConverter(page, base64Id);
+    const editor = page.getByRole("textbox", { name: "Working input - Text", exact: true });
+    const highlight = page.getByTestId("conversion-highlight-layer");
+    const text = `${"plain words \u27eamarked text\u27eb ".repeat(12)}\n`.repeat(20);
+    await editor.fill(text);
+    const dimensions = (element: HTMLElement) => ({
+      width: element.clientWidth, height: element.clientHeight, scrollHeight: element.scrollHeight,
+    });
+
+    expect(await highlight.evaluate(dimensions)).toEqual(await editor.evaluate(dimensions));
+    await editor.press("ControlOrMeta+End");
+    await expect.poll(() => editor.evaluate((element: HTMLElement) => element.scrollTop)).toBeGreaterThan(0);
+    await expect.poll(() => highlight.evaluate((element: HTMLElement) => element.scrollTop))
+      .toBe(await editor.evaluate((element: HTMLElement) => element.scrollTop));
+
+    const bounds = await editor.boundingBox();
+    if (!bounds) throw new Error("Editor is not visible");
+    await page.mouse.move(bounds.x + bounds.width - 3, bounds.y + bounds.height - 3);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width - 3, bounds.y + bounds.height + 60);
+    await page.mouse.up();
+    await expect.poll(() => editor.evaluate((element: HTMLElement) => element.clientHeight))
+      .toBeGreaterThan(bounds.height);
+    expect(await highlight.evaluate(dimensions)).toEqual(await editor.evaluate(dimensions));
+    await editor.press("ControlOrMeta+Home");
+    await expect.poll(() => editor.evaluate((element: HTMLElement) => element.scrollTop))
+      .toBeLessThan(await editor.evaluate((element: HTMLElement) => element.clientHeight));
+    await expect.poll(() => highlight.evaluate((element: HTMLElement) => element.scrollTop))
+      .toBe(await editor.evaluate((element: HTMLElement) => element.scrollTop));
+    await expect(editor).toHaveValue(text);
   });
 
   test("should keep the same stage focused through repeated keyboard moves, including duplicates", async ({ page }) => {
@@ -632,14 +679,14 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await expect(page.getByTestId("converter-preview-result")).toHaveCount(0);
 
     await page.getByRole("button", { name: "Convert", exact: true }).click();
-    await expect(page.getByTestId("converter-stage-output-0")).toContainText("aGVsbG8=");
-    await expect(page.getByTestId("converter-stage-output-1")).toContainText("bHWtcH9=");
+    await expect(page.getByRole("textbox", { name: "Stage 1 output - Text", exact: true })).toHaveValue("aGVsbG8=");
+    await expect(page.getByRole("textbox", { name: "Stage 2 output - Text", exact: true })).toHaveValue("bHWtcH9=");
     await page.getByRole("button", { name: "Add converted value", exact: true }).click();
     await expect(page.getByTestId("converted-value-input")).toHaveValue("bHWtcH9=");
 
     await page.getByRole("button", { name: "Close converters", exact: true }).click();
     await page.getByTestId("toggle-converter-panel-btn").click();
-    await expect(page.getByTestId("converter-preview-result")).toContainText("bHWtcH9=");
+    await expect(page.getByTestId("converter-preview-result").getByRole("textbox")).toHaveValue("bHWtcH9=");
     await page.getByRole("button", { name: "Close converters", exact: true }).click();
 
     const [response] = await Promise.all([
@@ -650,11 +697,14 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     expect(response.status()).toBe(200);
     const sentRequest: AddMessageRequest = response.request().postDataJSON();
     expect(sentRequest.pieces).toHaveLength(1);
-    expect(sentRequest.pieces[0]).toMatchObject({ data_type: "text", original_value: "hello" });
-    expect(sentRequest.pieces[0]).not.toHaveProperty("converted_value");
-    expect(sentRequest.request_converter_configurations).toEqual([
-      { converter_ids: [base64Id, caesarId], indexes_to_apply: [0] },
-    ]);
+    expect(sentRequest.pieces[0]).toMatchObject({
+      data_type: "text",
+      original_value: "hello",
+      converted_value: "bHWtcH9=",
+      converted_value_data_type: "text",
+    });
+    expect(sentRequest.pieces[0].applied_converter_ids).toEqual([base64Id, caesarId]);
+    expect(sentRequest.request_converter_configurations).toBeUndefined();
 
     const sent: AddMessageResponse = await response.json();
     const historyResponse = await request.get(
@@ -670,6 +720,133 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
         converted_value_data_type: "text",
       }),
     ]);
+  });
+
+  test("should resume an empty edited stage without rerunning its prefix", async ({ page }) => {
+    await page.getByTestId("chat-input").fill("hello");
+    await selectConverter(page, base64Id);
+    await addPipelineConverter(page, suffixId);
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    const first = page.getByRole("textbox", { name: "Stage 1 output - Text", exact: true });
+    await expect(first).toHaveValue("aGVsbG8=");
+    await first.fill("");
+    const responsePromise = page.waitForResponse((response) => (
+      response.request().method() === "POST" && new URL(response.url()).pathname === "/api/converters/preview"
+    ));
+    await page.getByRole("button", { name: "Convert Text from stage 2 to end", exact: true }).click();
+    const response = await responsePromise;
+    expect(response.ok()).toBeTruthy();
+    expect(response.request().postDataJSON()).toEqual({
+      original_value: "", original_value_data_type: "text", converter_ids: [suffixId],
+    });
+    await expect(first).toHaveValue("");
+    await expect(page.getByRole("textbox", { name: "Stage 2 output - Text", exact: true })).toHaveValue(" tail");
+  });
+
+  test("should partially convert editable drafts through the remaining chain and send the exact applied result", async ({
+    page, request,
+  }) => {
+    const source = "The original chat message stays unchanged.";
+    const firstOutput = "keep Y2F0 tail";
+    const editedOutput = "stay \u27eadog\u27eb tail";
+    const remainingOutput = "stay eph tail";
+    const finalOutput = Buffer.from(remainingOutput).toString("base64");
+    const appliedOutput = `${finalOutput}\nReviewed exactly.`;
+    const previewRequests: ConverterPreviewRequest[] = [];
+    page.on("request", (preview: Request) => {
+      if (preview.method() === "POST" && new URL(preview.url()).pathname === "/api/converters/preview") {
+        previewRequests.push(preview.postDataJSON());
+      }
+    });
+
+    await page.getByTestId("chat-input").fill(source);
+    await selectConverter(page, base64Id);
+    await addPipelineConverter(page, caesarId);
+    await addPipelineConverter(page, base64Id);
+    const workingInput = page.getByRole("textbox", { name: "Working input - Text", exact: true });
+    await expect(workingInput).toHaveValue(source);
+    await workingInput.fill("keep cat tail");
+    await selectText(workingInput, 5, 3);
+    await page.getByRole("button", { name: "Convert selection only in Working input - Text", exact: true }).click();
+    await expect(workingInput).toHaveValue("keep \u27eacat\u27eb tail");
+    await expect(page.getByTestId("chat-input")).toHaveValue(source);
+
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    const firstStage = page.getByRole("textbox", { name: "Stage 1 output - Text", exact: true });
+    const secondStage = page.getByRole("textbox", { name: "Stage 2 output - Text", exact: true });
+    const finalStage = page.getByRole("textbox", { name: "Stage 3 output - Text", exact: true });
+    await expect(firstStage).toHaveValue(firstOutput);
+    await expect(secondStage).toHaveValue("lffq Z3G1 ubjm");
+    await expect(finalStage).toHaveValue(Buffer.from("lffq Z3G1 ubjm").toString("base64"));
+    expect(previewRequests).toEqual([{
+      original_value: "keep \u27eacat\u27eb tail",
+      original_value_data_type: "text",
+      converter_ids: [base64Id, caesarId, base64Id],
+    }]);
+
+    await firstStage.fill("stay dog tail");
+    await expect(page.getByTestId("converter-preview-result")).toHaveCount(0);
+    await selectText(firstStage, 5, 3);
+    await page.getByRole("button", { name: "Convert selection only in Stage 1 output - Text", exact: true }).click();
+    await expect(firstStage).toHaveValue(editedOutput);
+    await page.getByRole("button", { name: "Convert Text from stage 2 to end", exact: true }).click();
+    await expect(firstStage).toHaveValue(editedOutput);
+    await expect(secondStage).toHaveValue(remainingOutput);
+    await expect(finalStage).toHaveValue(finalOutput);
+    expect(previewRequests).toHaveLength(2);
+    expect(previewRequests[1]).toEqual({
+      original_value: editedOutput,
+      original_value_data_type: "text",
+      converter_ids: [caesarId, base64Id],
+    });
+    await expect(page.getByRole("button", { name: "Convert Text from stage 4 to end", exact: true })).toHaveCount(0);
+    await expect(workingInput).toHaveValue("keep \u27eacat\u27eb tail");
+    await expect(page.getByTestId("chat-input")).toHaveValue(source);
+
+    await finalStage.fill(appliedOutput);
+    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await expect(page.getByTestId("converted-value-input")).toHaveValue(appliedOutput);
+    await expect(page.getByTestId("chat-input")).toHaveValue(source);
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+
+    const [response] = await Promise.all([
+      page.waitForResponse((candidate) => candidate.request().method() === "POST"
+        && /\/api\/attacks\/[^/]+\/messages$/.test(new URL(candidate.url()).pathname)),
+      page.getByRole("button", { name: "Send message", exact: true }).click(),
+    ]);
+    expect(response.status()).toBe(200);
+    const sentRequest: AddMessageRequest = response.request().postDataJSON();
+    expect(sentRequest.pieces).toEqual([expect.objectContaining({
+      data_type: "text",
+      original_value: source,
+      converted_value: appliedOutput,
+      converted_value_data_type: "text",
+    })]);
+    expect(sentRequest.pieces[0].applied_converter_ids).toEqual([base64Id, caesarId, base64Id]);
+    expect(sentRequest.request_converter_configurations).toBeUndefined();
+    expect(previewRequests).toHaveLength(2);
+    const sent: AddMessageResponse = await response.json();
+    const expectedPiece = expect.objectContaining({
+      original_value: source,
+      original_value_data_type: "text",
+      converted_value: appliedOutput,
+      converted_value_data_type: "text",
+    });
+    expect(sent.messages.messages.find((message: BackendMessage) => message.role === "user")?.message_pieces)
+      .toEqual([expectedPiece]);
+
+    await expect(page).toHaveURL((url: URL) => url.pathname.includes(sent.attack.attack_result_id));
+    await expect(page.getByTestId("message-piece-0-0")).toHaveText(appliedOutput);
+    await page.reload();
+    await expect(page.getByTestId("original-section")).toContainText(source);
+    await expect(page.getByTestId("message-piece-0-0")).toHaveText(appliedOutput);
+    const historyResponse = await request.get(
+      `/api/attacks/${sent.attack.attack_result_id}/messages?conversation_id=${sent.attack.conversation_id}`,
+    );
+    expect(historyResponse.ok()).toBeTruthy();
+    const history: AddMessageResponse["messages"] = await historyResponse.json();
+    expect(history.messages.find((message: BackendMessage) => message.role === "user")?.message_pieces)
+      .toEqual([expectedPiece]);
   });
 
   test("should convert every configured input and keep duplicate image pieces independent", async ({ page }) => {
@@ -721,7 +898,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(1);
 
     await page.getByTestId("toggle-converter-panel-btn").click();
-    await expect(page.getByTestId("converter-preview-result")).toContainText("aGVsbG8=");
+    await expect(page.getByTestId("converter-preview-result").getByRole("textbox")).toHaveValue("aGVsbG8=");
     await page.getByRole("tab", { name: "Image (1)", exact: true }).click();
     await expect(page.getByTestId(`converter-item-${imageId}`)).toBeVisible();
     await expect(page.getByTestId("converter-input-value")).toHaveCount(1);
@@ -745,7 +922,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await expect(page.getByTestId("converter-preview-result")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Add converted value", exact: true })).toBeEnabled();
     await page.getByRole("tab", { name: "Text (1)", exact: true }).click();
-    await expect(page.getByTestId("converter-preview-result")).toContainText(
+    await expect(page.getByTestId("converter-preview-result").getByRole("textbox")).toHaveValue(
       Buffer.from("original text").toString("base64"),
     );
     await page.getByTestId("chat-input").fill("changed after conversion");
@@ -793,8 +970,8 @@ test.describe("Converter Panel", () => {
     // Select Base64Converter
     await selectConverter(page, "Base64Converter");
 
-    // The display-only input surface mirrors the chat input
-    await expect(page.getByTestId("converter-input-value")).toContainText("hello");
+    // The editable working input starts from the chat input.
+    await expect(page.getByRole("textbox", { name: "Working input - Text", exact: true })).toHaveValue("hello");
 
     // Description should be visible
     await expect(
@@ -805,7 +982,7 @@ test.describe("Converter Panel", () => {
     // Nothing converts until Convert is pressed
     await expect(page.getByTestId("converter-preview-result")).toHaveCount(0);
     await page.getByTestId("converter-preview-btn").click();
-    await expect(page.getByTestId("converter-preview-result")).toContainText("aGVsbG8=");
+    await expect(page.getByTestId("converter-preview-result").getByRole("textbox")).toHaveValue("aGVsbG8=");
   });
 
   test("should apply converted value and send message with original+converted sections", async ({ page }) => {
@@ -886,16 +1063,16 @@ test.describe("Converter Panel", () => {
     await expect(page.getByTestId("converter-item-Base64Converter")).toBeVisible();
     await expect(page.getByTestId("converter-item-CaesarConverter")).toBeVisible();
     await expect(page.getByTestId("converter-stage-output-0")).toContainText(
-      "Choose Convert to see this stage output.",
+      "Choose Convert above to see this stage output.",
     );
     await expect(page.getByTestId("converter-stage-output-1")).toContainText(
-      "Choose Convert to see this stage output.",
+      "Choose Convert above to see this stage output.",
     );
 
     await page.getByTestId("converter-preview-btn").click();
 
-    await expect(page.getByTestId("converter-stage-output-0")).toContainText("aGVsbG8=");
-    await expect(page.getByTestId("converter-stage-output-1")).toContainText(
+    await expect(page.getByRole("textbox", { name: "Stage 1 output - Text", exact: true })).toHaveValue("aGVsbG8=");
+    await expect(page.getByRole("textbox", { name: "Stage 2 output - Text", exact: true })).toHaveValue(
       Buffer.from("aGVsbG8=").toString("base64"),
     );
   });

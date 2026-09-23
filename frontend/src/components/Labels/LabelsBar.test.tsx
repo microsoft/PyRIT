@@ -63,7 +63,7 @@ describe('LabelsBar', () => {
     await user.click(operator)
     expect(screen.queryByTestId('edit-label-operator')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('labels-icon-btn'))
-    const popoverOperator = await screen.findByTestId('popover-label-operator')
+    const popoverOperator = await screen.findByTestId('popover-metadata-operator')
     expect(popoverOperator).toHaveAttribute('aria-disabled', 'true')
     await user.click(popoverOperator)
     expect(screen.queryByTestId('edit-label-operator')).not.toBeInTheDocument()
@@ -873,9 +873,9 @@ describe('LabelsBar', () => {
     expect(screen.getByTestId('remove-label-team')).toBeInTheDocument()
   })
 
-  it('always renders a labels icon button with a count of total labels', () => {
+  it('always renders a labels icon button with a count of custom labels', () => {
     // The labels icon is always present at the leftmost position with a
-    // badge showing the total label count, regardless of how many chips
+    // badge showing the custom-label count, regardless of how many chips
     // happen to fit inline. Clicking it opens a popover with the full
     // label list and the add form.
     render(
@@ -889,11 +889,34 @@ describe('LabelsBar', () => {
 
     const iconBtn = screen.getByTestId('labels-icon-btn')
     expect(iconBtn).toBeInTheDocument()
-    expect(iconBtn).toHaveAttribute('aria-label', expect.stringContaining('3'))
-    expect(iconBtn).toHaveTextContent('3')
+    expect(iconBtn).toHaveAttribute('aria-label', 'Labels (1)')
+    expect(iconBtn).toHaveTextContent('1')
   })
 
-  it('icon button opens a popover with all labels and the add form', async () => {
+  it('should show a zero count and empty state when there are no custom labels', async () => {
+    render(
+      <TestWrapper>
+        <LabelsBar
+          labels={{ operator: 'alice', operation: 'op_one' }}
+          onLabelsChange={jest.fn()}
+        />
+      </TestWrapper>
+    )
+
+    const iconBtn = screen.getByTestId('labels-icon-btn')
+    expect(iconBtn).toHaveAttribute('aria-label', 'Labels (0)')
+    expect(iconBtn).toHaveTextContent('0')
+
+    fireEvent.click(iconBtn)
+
+    expect(await screen.findByText('No labels yet')).toBeInTheDocument()
+    expect(screen.queryByTestId('popover-label-operator')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('popover-label-operation')).not.toBeInTheDocument()
+    expect(screen.getByTestId('popover-metadata-operator')).toBeInTheDocument()
+    expect(screen.getByTestId('popover-metadata-operation')).toBeInTheDocument()
+  })
+
+  it('icon button opens a popover with custom labels and the add form', async () => {
     render(
       <TestWrapper>
         <LabelsBar
@@ -906,10 +929,11 @@ describe('LabelsBar', () => {
     fireEvent.click(screen.getByTestId('labels-icon-btn'))
 
     await waitFor(() => {
-      expect(screen.getByTestId('popover-label-operator')).toBeInTheDocument()
+      expect(screen.getByTestId('popover-label-team')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('popover-label-operation')).toBeInTheDocument()
-    expect(screen.getByTestId('popover-label-team')).toBeInTheDocument()
+    expect(screen.queryByTestId('popover-label-operator')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('popover-label-operation')).not.toBeInTheDocument()
+    expect(screen.queryByText('No labels yet')).not.toBeInTheDocument()
     expect(screen.getByTestId('new-label-key')).toBeInTheDocument()
     expect(screen.getByTestId('new-label-value')).toBeInTheDocument()
     expect(screen.getByTestId('confirm-add-label')).toBeInTheDocument()
@@ -918,7 +942,7 @@ describe('LabelsBar', () => {
   it('hides only the chips that do not fit and never the icon button', async () => {
     // Regression guard for the narrow-viewport ribbon bug: even when the
     // available width is too small for every chip to fit, the labels icon
-    // (with full count) and as many chips as do fit should still render.
+    // (with the custom-label count) and as many chips as do fit should still render.
     // Tests sub the layout properties to simulate a narrow ribbon.
     const onChange = jest.fn()
     const { container, rerender } = render(
@@ -955,19 +979,28 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    // The icon button stays visible with the full count (5 labels).
+    // The icon button stays visible with the full count (3 custom labels).
     await waitFor(() => {
       const btn = screen.getByTestId('labels-icon-btn')
-      expect(btn).toHaveAttribute('aria-label', expect.stringContaining('5'))
+      expect(btn).toHaveAttribute('aria-label', 'Labels (3)')
     })
 
     // Some chips render inline and some don't (the heuristic decides which);
     // the important guarantee is that the popover is reachable for the rest.
+    expect(screen.getByTestId('label-operator')).toBeInTheDocument()
+    expect(screen.queryByTestId('label-operation')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('labels-icon-btn'))
     await waitFor(() => {
-      expect(screen.getByTestId('popover-label-operator')).toBeInTheDocument()
+      expect(screen.getByTestId('popover-label-team')).toBeInTheDocument()
     })
     expect(screen.getByTestId('popover-label-extra')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('popover-metadata-operator'))
+    expect(await screen.findByTestId('edit-label-operator')).toBeInTheDocument()
+    fireEvent.keyDown(screen.getByTestId('edit-label-operator'), { key: 'Enter' })
+
+    fireEvent.click(screen.getByTestId('popover-metadata-operation'))
+    expect(await screen.findByTestId('edit-label-operation')).toBeInTheDocument()
   })
 
   describe('operation picker', () => {
@@ -1154,22 +1187,6 @@ describe('LabelsBar', () => {
       expect(await screen.findByRole('option', { name: /loading operations/i })).toBeInTheDocument()
     })
 
-    it('should edit the operation from the popover list', async () => {
-      const onChange = jest.fn()
-      renderWithOperations(onChange)
-      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
-
-      fireEvent.click(screen.getByTestId('labels-icon-btn'))
-      fireEvent.click(await screen.findByTestId('popover-label-operation'))
-
-      fireEvent.click(await screen.findByRole('option', { name: 'op_2026_08_probe' }))
-
-      expect(onChange).toHaveBeenCalledWith({
-        ...DEFAULT_GLOBAL_LABELS,
-        operation: 'op_2026_08_probe',
-      })
-    })
-
     it('should dismiss the picker when the user clicks away', async () => {
       const user = userEvent.setup()
       const onChange = jest.fn()
@@ -1203,24 +1220,6 @@ describe('LabelsBar', () => {
       const input = await screen.findByTestId('edit-label-operation')
       expect(await screen.findByRole('option', { name: 'op_2026_08_probe' })).toBeInTheDocument()
       await waitFor(() => expect(input).toHaveFocus())
-    })
-
-    it('should end the edit when the popover is dismissed', async () => {
-      const onChange = jest.fn()
-      renderWithOperations(onChange)
-      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
-
-      fireEvent.click(screen.getByTestId('labels-icon-btn'))
-      fireEvent.click(await screen.findByTestId('popover-label-operation'))
-      expect(await screen.findByTestId('edit-label-operation')).toBeInTheDocument()
-
-      // Toggle the popover shut; the edit must not reappear on the inline chip.
-      fireEvent.click(screen.getByTestId('labels-icon-btn'))
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('edit-label-operation')).not.toBeInTheDocument()
-      })
-      expect(screen.getByTestId('label-operation')).toBeInTheDocument()
     })
 
     it('should not commit an operation when the user tabs away', async () => {
@@ -1299,22 +1298,6 @@ describe('LabelsBar', () => {
 
       expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_GLOBAL_LABELS })
       expect(screen.queryByTestId('edit-label-team')).not.toBeInTheDocument()
-    })
-
-    it('should open the picker from the keyboard inside the popover', async () => {
-      const user = userEvent.setup()
-      const onChange = jest.fn()
-      renderWithOperations(onChange)
-      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
-
-      fireEvent.click(screen.getByTestId('labels-icon-btn'))
-      const row = await screen.findByTestId('popover-label-operation')
-      expect(row).toHaveAttribute('role', 'button')
-      row.focus()
-      expect(row).toHaveFocus()
-      await user.keyboard(' ')
-
-      expect(await screen.findByRole('option', { name: 'op_2026_08_probe' })).toBeInTheDocument()
     })
 
     it('should remove a custom label with the keyboard from the popover', async () => {

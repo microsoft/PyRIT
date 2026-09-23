@@ -84,7 +84,7 @@ All seed types inherit from [`Seed`](../../../pyrit/models/seeds/seed.py), which
 
 - [`SeedObjective`](../../../pyrit/models/seeds/seed_objective.py) — The goal of an attack (e.g., "Generate hate speech content"). Always text. Cannot be a general technique.
 
-- [`SeedSimulatedConversation`](../../../pyrit/models/seeds/seed_simulated_conversation.py) — Configuration for dynamically generating multi-turn conversations. Specifies system prompt paths, number of turns, and sequence offsets. The actual generation happens in the executor layer.
+- [`SeedSimulatedConversation`](../../../pyrit/models/seeds/seed_simulated_conversation.py) — Configuration for dynamically generating multi-turn conversations. Carries the adversarial, simulated-target, and next-message system prompts, the number of turns, and sequence offsets. The actual generation happens in the executor layer.
 
 ### Seed Groups
 

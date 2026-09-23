@@ -102,7 +102,7 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 #### Sending Messages
 
-For a new chat, your default objective target is preselected if it is available. Click the target badge at the left of the ribbon to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target; their badge does not change the target.
+For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside **New run labels** to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target; their badge does not change the target.
 
 Clicking **Chat** while already in a new chat keeps its target and draft. Starting
 a new attack resets both. Default changes in another tab apply to the next new
@@ -111,6 +111,47 @@ chat, not the current draft.
 Type a message and press Enter (or click Send) to send it to the chat target. The response appears below. Shift+Enter inserts a newline without sending.
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
+
+#### Editing Converter Pipelines
+
+Open **Converters** and use the picker above the working input to add registered
+converters in the order you want them to run.
+The top text box is an editable working copy: changing it does not change the original
+chat message. The top **Convert** button runs the active tab's configured pipeline
+and any configured inputs that do not have results yet. After every configured input
+has a result, it reruns only the active tab. For attachment tabs, it converts every
+attachment shown on that tab.
+
+Each text stage output is also editable. After changing an intermediate output, use
+the **Convert** button below it to run **all remaining stages** from that value,
+without rerunning earlier stages. Empty and whitespace-only intermediate values can
+also be passed to the remaining stages. Editing a value invalidates its downstream results
+until you convert again. The final output has no Convert or selection-only button;
+you can edit it directly before applying it.
+
+To convert only part of a text value, select it and click **Convert selection only**.
+This wraps the selection in `⟪` and `⟫`. The next converter transforms only the marked
+regions and removes their markers, preserving everything outside them. Marked regions
+have a colored highlight while their markers stay visible. Later stages convert the
+whole result unless you select another region. Multiple and multiline
+regions are supported; unmatched and nested regions are rejected. Empty regions
+pass an empty string to the converter. Partial
+conversion requires text input and text output. Without markers, converters retain
+their normal whole-value behavior, including media conversions.
+
+Click **Add converted value** to apply the final result, then **Send**. The exact
+applied value is sent and stored alongside the unchanged original; the backend does
+not rerun the pipeline. The exact ordered list of applied converters is retained
+as provenance, including duplicates and converters that change the data type, and
+reloading the conversation shows the same original and converted values. You can
+also edit only the top working input and apply it as a manual conversion without
+adding or running a registered converter.
+
+API clients submit this list as `applied_converter_ids` on each preconverted
+message piece. The backend resolves the IDs through the registry. An empty list
+represents a manual conversion. `request_converter_configurations` controls
+conversion of pieces without a preconverted value; it does not describe which
+converters already ran.
 
 #### Attachments
 
@@ -162,9 +203,15 @@ Export stays available for read-only historical conversations, and is disabled w
 
 #### Labels
 
-The labels bar in the ribbon displays the current attack's labels (e.g., `operator`, `operation`). Labels are key-value pairs that help organize and filter attacks. You can add, edit, and remove labels inline. The `operator` and `operation` labels are required and cannot be removed.
+The **New run labels** bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. You can add, edit, and remove labels without leaving the page. The `operator` and `operation` labels are required and cannot be removed.
 
-Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. The operation you pick is applied to attacks you start from then on; it does not change attacks that already exist.
+In Chat, the active target, Markdown toggle, export menu, conversations panel toggle, and **New Attack** button share the right side of this bar. They wrap below the labels on narrow screens.
+
+Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. On narrow screens, use the labels icon to view or edit labels that do not fit inline.
+
+Your choices persist in this browser across navigation and refreshes. Backend configuration supplies defaults for labels you have not chosen, and the signed-in account alias takes precedence over the default or remembered operator during initialization. Scanner launches receive the active labels from this bar.
+
+Changing these labels does not relabel existing attacks or scenario runs. History attribution and the **Run configuration** shown for a scenario run still describe that saved run. Operator and target restrictions on existing attacks remain in effect.
 
 #### Behavioral Guards
 
@@ -220,6 +267,32 @@ Click any row to open the attack in the Chat view.
 
 Results are paginated (25 per page) with "First" and "Next" navigation buttons.
 
+### Resuming a Failed Scanner Run
+
+Select **Resume run** on a failed run's detail page or **Resume** in **Scanner
+History**. Resume keeps the same run ID and saved result, including previous
+results and errors. It retries unfinished and errored objectives, skipping
+completed non-error objectives. Recovery is at the objective level, not the last
+turn of an interrupted conversation.
+
+Resume restores the original scenario configuration, target, sampled execution
+plan, and labels, rather than using the current launch form or active chat target.
+Refreshing the GUI does not automatically resume a run.
+
+Resume requires a saved launch configuration. Runs created before that
+configuration was recorded cannot resume through the GUI; an error explains
+the limitation without changing their saved progress.
+
+If the saved configuration cannot be restored, Resume shows an error without
+discarding progress or starting a replacement run. Restore any missing target,
+technique, or dataset before trying again.
+
+### Scenario Run Results
+
+In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.
+
+Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
+
 ### Target Configuration
 
 The Configuration view manages the targets available for attacks.
@@ -258,6 +331,8 @@ The override changes `get_default_adversarial_target()` for the current executio
 Resolution order is: explicit scenario/technique target, scoped override, registered `adversarial_chat`, then the existing OpenAI fallback. Nested scopes restore the previous choice when they exit. Passing `None` leaves the current scope unchanged. The override does not modify the shared registry or scorer defaults.
 
 REST run and request-specific estimate payloads accept an optional `adversarial_target_name`. The backend resolves the registered target and applies the same core override during preparation and execution. Omitting the field preserves server behavior.
+
+New runs save the adversarial target selection with their launch configuration. Resuming a failed run uses this saved selection, not the current browser default.
 
 #### Creating Targets
 

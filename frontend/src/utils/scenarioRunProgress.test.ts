@@ -2,6 +2,7 @@ import type {
   ScenarioProgressResult,
   ScenarioRunPlan,
   ScenarioRunProgress,
+  ScenarioRunSummary,
 } from '@/types'
 
 import {
@@ -68,6 +69,42 @@ function makePage(overrides: Partial<ScenarioRunProgress> = {}): ScenarioRunProg
 }
 
 describe('scenarioRunProgressReducer', () => {
+  it('applies failure details from resume immediately and clears them on a subsequent resume', () => {
+    const first = scenarioRunProgressReducer(INITIAL_SCENARIO_RUN_PROGRESS_STATE, {
+      type: 'apply-page',
+      page: makePage({ results: [makeResult('attempt-1', 1)] }),
+      fresh: true,
+    })
+    const run: ScenarioRunSummary = {
+      ...makePage().run,
+      status: 'FAILED',
+      updated_at: '2026-01-01T00:02:00Z',
+      techniques_used: [],
+      total_attacks: 3,
+      completed_attacks: 1,
+      objective_achieved_rate: 100,
+      failed_attacks: [],
+      attack_retries: [],
+      total_retries: 0,
+      labels: {},
+      error: 'Execution failed immediately.',
+      error_type: 'ValueError',
+    }
+    const failed = scenarioRunProgressReducer(first, { type: 'apply-run-summary', run })
+    expect(failed.run).toMatchObject({
+      status: 'FAILED', error: run.error, error_type: run.error_type,
+    })
+    expect(failed.results).toEqual(first.results)
+    expect(failed.error).toBeNull()
+
+    const resumed = scenarioRunProgressReducer(failed, {
+      type: 'apply-run-summary',
+      run: { ...run, status: 'QUEUED', error: null, error_type: null },
+    })
+    expect(resumed.run).toMatchObject({ status: 'QUEUED', error: null, error_type: null })
+    expect(resumed.results).toEqual(first.results)
+  })
+
   it('merges duplicated pages idempotently and uses the latest backend summary', () => {
     const result = makeResult('attempt-1', 1)
     const first = scenarioRunProgressReducer(INITIAL_SCENARIO_RUN_PROGRESS_STATE, {

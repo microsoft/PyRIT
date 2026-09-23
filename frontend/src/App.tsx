@@ -190,6 +190,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const routeConversationId = conversationMatch?.params.conversationId ?? null
   const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
   const [canManageConfiguration, setCanManageConfiguration] = useState(false)
+  const [chatToolbarContainer, setChatToolbarContainer] = useState<HTMLDivElement | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -538,6 +539,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   ) : (
     <ChatWindow
       key={draftSession.key}
+      toolbarContainer={chatToolbarContainer}
       onNewAttack={handleNewAttack}
       activeTarget={activeTarget}
       availableTargets={registry.targets}
@@ -557,8 +559,6 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       onHumanScoreChange={handleHumanScoreChange}
       onAttackChange={handleAttackChange}
       labels={globalLabels}
-      onLabelsChange={handleGlobalLabelsChange}
-      operatorReadOnly={Boolean(operatorAlias)}
       onNavigate={handleNavigate}
       attackOperator={readyAttack ? readyAttack.operator : null}
       attackTarget={readyAttack ? readyAttack.target : null}
@@ -596,6 +596,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
             onOpenFeedback={() => setFeedbackOpen(true)}
             canManageConfiguration={canManageConfiguration}
             onStartTour={startTour}
+            labels={globalLabels}
+            onLabelsChange={handleGlobalLabelsChange}
+            operatorReadOnly={Boolean(operatorAlias)}
+            toolbarRef={setChatToolbarContainer}
           >
             {preferenceError && (
               <MessageBar intent="warning">
@@ -623,9 +627,6 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 path="/"
                 element={
                   <Home
-                    labels={globalLabels}
-                    onLabelsChange={handleGlobalLabelsChange}
-                    operatorReadOnly={Boolean(operatorAlias)}
                     activeTarget={targetDefaults.objectiveTarget}
                     onNavigate={handleNavigate}
                     onOpenAttack={handleOpenAttack}

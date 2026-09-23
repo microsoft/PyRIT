@@ -26,8 +26,8 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
     {
       target: '[data-tour="labels-card"]',
       content:
-        'Labels like "operator" and "operation" tag every attack you run, making them easy to find later. ' +
-        'Update the defaults before you start!',
+        'The New run labels bar stays available across views, including scanner setup. Set "operator", "operation", ' +
+        'and other labels here before starting an attack or scan. Existing runs keep their original labels.',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'home',
