@@ -92,7 +92,7 @@ await output_attack_async(results.completed_results[0])
 
 # %%
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SIMULATED_TARGET_PATH
-from pyrit.models import SeedSimulatedConversation
+from pyrit.models import SeedSimulatedConversation, load_next_message_prompt
 
 seed_group = AttackSeedGroup(
     seeds=[
@@ -102,10 +102,12 @@ seed_group = AttackSeedGroup(
             role="system",
         ),
         SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=EXECUTOR_RED_TEAM_PATH / "naive_crescendo.yaml",
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "naive_crescendo.yaml"),
             sequence=1,
             num_turns=4,
-            next_message_system_prompt_path=EXECUTOR_SIMULATED_TARGET_PATH / "direct_next_message.yaml",
+            next_message_system_prompt=load_next_message_prompt(
+                EXECUTOR_SIMULATED_TARGET_PATH / "direct_next_message.yaml"
+            ),
         ),
     ]
 )

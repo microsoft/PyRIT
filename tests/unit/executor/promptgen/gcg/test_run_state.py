@@ -89,6 +89,12 @@ class TestProgressiveScheduleState:
         assert schedule.loss == float("inf")
         assert schedule.stop_inner_on_success is False
 
+    def test_exported_class_identity_matches_progressive_schedule_module(self) -> None:
+        from pyrit.executor.promptgen.gcg.attack.base import progressive_schedule
+
+        assert ProgressiveScheduleState is progressive_schedule.ProgressiveScheduleState
+        assert attack_manager_mod.ProgressiveScheduleState is progressive_schedule.ProgressiveScheduleState
+
 
 class TestMultiPromptRunStateTracking:
     def test_run_sets_max_steps_reached_when_loop_exhausts(self) -> None:
@@ -319,7 +325,9 @@ class TestProgressiveRunScheduleState:
         control, steps = progressive.run(n_steps=10, stop_on_success=True)
 
         assert (control, steps) == ("ctrl", 2)
-        schedule: ProgressiveScheduleState = progressive.last_schedule_state
+        schedule = progressive.last_schedule_state
+        assert isinstance(schedule, attack_manager_mod.ProgressiveScheduleState)
+        assert isinstance(schedule, ProgressiveScheduleState)
         assert schedule.steps_completed == 2
         assert schedule.goals_admitted == 1
         assert schedule.workers_admitted == 1

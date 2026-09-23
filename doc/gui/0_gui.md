@@ -67,6 +67,47 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 Type a message and press Enter (or click Send) to send it to the active target. The response appears below. Shift+Enter inserts a newline without sending.
 
+#### Editing Converter Pipelines
+
+Open **Converters** and use the picker above the working input to add registered
+converters in the order you want them to run.
+The top text box is an editable working copy: changing it does not change the original
+chat message. The top **Convert** button runs the active tab's configured pipeline
+and any configured inputs that do not have results yet. After every configured input
+has a result, it reruns only the active tab. For attachment tabs, it converts every
+attachment shown on that tab.
+
+Each text stage output is also editable. After changing an intermediate output, use
+the **Convert** button below it to run **all remaining stages** from that value,
+without rerunning earlier stages. Empty and whitespace-only intermediate values can
+also be passed to the remaining stages. Editing a value invalidates its downstream results
+until you convert again. The final output has no Convert or selection-only button;
+you can edit it directly before applying it.
+
+To convert only part of a text value, select it and click **Convert selection only**.
+This wraps the selection in `⟪` and `⟫`. The next converter transforms only the marked
+regions and removes their markers, preserving everything outside them. Marked regions
+have a colored highlight while their markers stay visible. Later stages convert the
+whole result unless you select another region. Multiple and multiline
+regions are supported; unmatched and nested regions are rejected. Empty regions
+pass an empty string to the converter. Partial
+conversion requires text input and text output. Without markers, converters retain
+their normal whole-value behavior, including media conversions.
+
+Click **Add converted value** to apply the final result, then **Send**. The exact
+applied value is sent and stored alongside the unchanged original; the backend does
+not rerun the pipeline. The exact ordered list of applied converters is retained
+as provenance, including duplicates and converters that change the data type, and
+reloading the conversation shows the same original and converted values. You can
+also edit only the top working input and apply it as a manual conversion without
+adding or running a registered converter.
+
+API clients submit this list as `applied_converter_ids` on each preconverted
+message piece. The backend resolves the IDs through the registry. An empty list
+represents a manual conversion. `request_converter_configurations` controls
+conversion of pieces without a preconverted value; it does not describe which
+converters already ran.
+
 #### Attachments
 
 Click the attachment button to add images, audio, video, or documents to your message. Supported types include `image/*`, `audio/*`, `video/*`, `.pdf`, `.doc`, `.docx`, and `.txt`. Attachments are displayed as chips below the input with type icons and file sizes.
@@ -178,6 +219,32 @@ Click any row to open the attack in the Chat view.
 #### Pagination
 
 Results are paginated (25 per page) with "First" and "Next" navigation buttons.
+
+### Resuming a Failed Scanner Run
+
+Select **Resume run** on a failed run's detail page or **Resume** in **Scanner
+History**. Resume keeps the same run ID and saved result, including previous
+results and errors. It retries unfinished and errored objectives, skipping
+completed non-error objectives. Recovery is at the objective level, not the last
+turn of an interrupted conversation.
+
+Resume restores the original scenario configuration, target, sampled execution
+plan, and labels, rather than using the current launch form or active chat target.
+Refreshing the GUI does not automatically resume a run.
+
+Resume requires a saved launch configuration. Runs created before that
+configuration was recorded cannot resume through the GUI; an error explains
+the limitation without changing their saved progress.
+
+If the saved configuration cannot be restored, Resume shows an error without
+discarding progress or starting a replacement run. Restore any missing target,
+technique, or dataset before trying again.
+
+### Scenario Run Results
+
+In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.
+
+Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
 
 ### Target Configuration
 

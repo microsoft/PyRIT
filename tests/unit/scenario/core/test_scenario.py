@@ -31,7 +31,8 @@ from pyrit.scenario import (
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.score import Scorer
+from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from tests.unit.mocks import make_scenario_identifier, make_scenario_result
 
 # Reusable test scorer identifier
@@ -1553,6 +1554,51 @@ class TestValidateStoredScenario:
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioResumption:
     """Tests for scenario resumption logic in initialize_async."""
+
+    @pytest.mark.parametrize("aggregator", [TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND])
+    @pytest.mark.parametrize("replacement_substrings", [["b", "a"], ["a", "c"], ["a", "b", "b"]])
+    async def test_resume_with_composite_scorer_async(
+        self,
+        mock_objective_target: PromptTarget,
+        aggregator: TrueFalseAggregatorFunc,
+        replacement_substrings: list[str],
+    ) -> None:
+        scorer = TrueFalseCompositeScorer(
+            aggregator=aggregator, scorers=[SubStringScorer(substring=value) for value in ("a", "b")]
+        )
+        dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        dataset_config.get_attack_groups_by_dataset_async.return_value = {
+            "default": [AttackSeedGroup(seeds=[SeedObjective(value="test objective")])]
+        }
+        args = {"objective_target": mock_objective_target, "dataset_config": dataset_config}
+        original = ConcreteScenarioWithTrueFalseScorer(name="Composite resume", version=1, objective_scorer=scorer)
+        original.set_params_from_args(args=args)
+        await original.initialize_async()
+        assert original.atomic_attack_count == 1
+        original_id = original._scenario_result_id
+        header = original._memory.get_scenario_result_header(scenario_result_id=original_id)
+        assert header is not None
+        stored_plan = header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
+
+        replacement = TrueFalseCompositeScorer(
+            aggregator=aggregator,
+            scorers=[SubStringScorer(substring=value) for value in replacement_substrings],
+        )
+        resumed = ConcreteScenarioWithTrueFalseScorer(
+            name="Composite resume", version=1, objective_scorer=replacement, scenario_result_id=original_id
+        )
+        resumed.set_params_from_args(args=args)
+        if replacement_substrings != ["b", "a"]:
+            with pytest.raises(ValueError, match="does not match the current"):
+                await resumed.initialize_async()
+            return
+
+        await resumed.initialize_async()
+        assert resumed._scenario_result_id == original_id
+        assert resumed._atomic_attacks[0].objectives == ["test objective"]
+        resumed_header = resumed._memory.get_scenario_result_header(scenario_result_id=original_id)
+        assert resumed_header is not None
+        assert resumed_header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY] == stored_plan
 
     async def test_resume_succeeds_when_stored_result_matches(self, mock_objective_target, mock_atomic_attacks):
         """When scenario_result_id finds a matching result, no new result is created."""

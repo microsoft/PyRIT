@@ -490,4 +490,9 @@ export const scenariosApi = {
     )
     return response.data
   },
+
+  resumeRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
+    const response = await apiClient.post(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/resume`)
+    return response.data
+  },
 }

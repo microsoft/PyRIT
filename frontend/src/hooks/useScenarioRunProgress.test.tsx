@@ -4,6 +4,7 @@ import { scenariosApi } from '@/services/api'
 import type {
   ScenarioProgressResult,
   ScenarioRunProgress,
+  ScenarioRunState,
   ScenarioRunSummary,
 } from '@/types'
 
@@ -457,8 +458,8 @@ describe('useScenarioRunProgress', () => {
     unmount()
   })
 
-  it('applies a nonterminal run summary without forcing a catch-up request', async () => {
-    mockGetRunProgress.mockResolvedValueOnce(makePage({ next_cursor: 'cursor-1' }))
+  it('refreshes immediately after applying a nonterminal run summary', async () => {
+    mockGetRunProgress.mockResolvedValue(makePage({ next_cursor: 'cursor-1' }))
     const { result, unmount } = renderHook(() => useScenarioRunProgress('run-1'))
     await waitFor(() => expect(mockGetRunProgress).toHaveBeenCalledTimes(1))
     mockGetRunProgress.mockClear()
@@ -471,7 +472,130 @@ describe('useScenarioRunProgress', () => {
     })
 
     expect(result.current.state.run?.status).toBe('IN_PROGRESS')
-    expect(mockGetRunProgress).not.toHaveBeenCalled()
+    await waitFor(() => expect(mockGetRunProgress).toHaveBeenCalledTimes(1))
+    unmount()
+  })
+
+  it.each<ScenarioRunState>(['CREATED', 'QUEUED', 'IN_PROGRESS'])(
+    'restarts stopped polling on resume to %s, keeping finished results and the delta cursor',
+    async (status: ScenarioRunState) => {
+      jest.useFakeTimers()
+      const completedResult = makeResult('finished-before-resume')
+      const remainingResult = makeResult('finished-after-resume')
+      const initialPage = makePage({
+        run: { ...makePage().run, status: 'FAILED' },
+        results: [completedResult],
+        next_cursor: 'saved-cursor',
+        summary: {
+          ...makePage().summary,
+          overall: { ...makePage().summary.overall, planned: 2, completed: 1 },
+        },
+      })
+      let resolveCatchUp: ((page: ScenarioRunProgress) => void) | undefined
+      mockGetRunProgress
+        .mockResolvedValueOnce(initialPage)
+        .mockImplementationOnce(() => new Promise<ScenarioRunProgress>((resolve) => {
+          resolveCatchUp = resolve
+        }))
+        .mockResolvedValueOnce(makePage({
+          run: { ...initialPage.run, status: 'COMPLETED' },
+          plan: null,
+          results: [remainingResult],
+          next_cursor: 'completed-cursor',
+          summary: {
+            ...initialPage.summary,
+            overall: { ...initialPage.summary.overall, completed: 2 },
+          },
+        }))
+
+      const { result, unmount } = renderHook(() => useScenarioRunProgress('run-1'))
+      await act(async () => Promise.resolve())
+      await act(async () => jest.advanceTimersByTimeAsync(SCENARIO_RUN_POLL_INTERVAL_MS * 2))
+      expect(mockGetRunProgress).toHaveBeenCalledTimes(1)
+
+      act(() => result.current.applyRunSummary(makeSummary({ status, completed_attacks: 1, total_attacks: 2 })))
+
+      expect(result.current.state.run?.scenario_result_id).toBe('run-1')
+      expect(result.current.state.run?.status).toBe(status)
+      expect(result.current.state.results).toEqual([completedResult])
+      expect(result.current.state.summary?.overall.completed).toBe(1)
+      expect(mockGetRunProgress).toHaveBeenLastCalledWith(
+        'run-1', { since: 'saved-cursor', limit: 500 }, expect.any(AbortSignal),
+      )
+
+      await act(async () => {
+        resolveCatchUp?.(makePage({
+          run: { ...initialPage.run, status: 'IN_PROGRESS' },
+          plan: null,
+          next_cursor: 'saved-cursor',
+          summary: initialPage.summary,
+        }))
+      })
+      await act(async () => jest.advanceTimersByTimeAsync(SCENARIO_RUN_POLL_INTERVAL_MS))
+
+      expect(result.current.state.results).toEqual([remainingResult, completedResult])
+      expect(result.current.state.plan).toEqual(initialPage.plan)
+      expect(result.current.state.summary?.overall.completed).toBe(2)
+      expect(result.current.state.run?.status).toBe('COMPLETED')
+      await act(async () => jest.advanceTimersByTimeAsync(SCENARIO_RUN_POLL_INTERVAL_MS * 2))
+      expect(mockGetRunProgress).toHaveBeenCalledTimes(3)
+      unmount()
+    },
+  )
+
+  it('ignores an in-flight stale terminal response when a resume summary restarts polling', async () => {
+    let resolveOldRequest: ((page: ScenarioRunProgress) => void) | undefined
+    mockGetRunProgress
+      .mockImplementationOnce(() => new Promise<ScenarioRunProgress>((resolve) => {
+        resolveOldRequest = resolve
+      }))
+      .mockResolvedValueOnce(makePage())
+    const { result, unmount } = renderHook(() => useScenarioRunProgress('run-1'))
+    const oldSignal: AbortSignal = mockGetRunProgress.mock.calls[0][2]
+
+    act(() => result.current.applyRunSummary(makeSummary()))
+    await waitFor(() => expect(result.current.state.run?.status).toBe('IN_PROGRESS'))
+    await act(async () => {
+      resolveOldRequest?.(makePage({ run: { ...makePage().run, status: 'FAILED' } }))
+    })
+
+    expect(oldSignal.aborted).toBe(true)
+    expect(result.current.state.run?.status).toBe('IN_PROGRESS')
+    unmount()
+  })
+
+  it('drains final deltas once when resume immediately returns FAILED and does not keep polling', async () => {
+    jest.useFakeTimers()
+    const failure = { error: 'Execution failed immediately.', error_type: 'ValueError' }
+    const failedPage = makePage({
+      run: { ...makePage().run, status: 'FAILED' },
+      results: [makeResult('finished-before-resume')],
+      next_cursor: 'saved-cursor',
+    })
+    mockGetRunProgress
+      .mockResolvedValueOnce(failedPage)
+      .mockResolvedValueOnce({
+        ...failedPage,
+        run: { ...failedPage.run, ...failure },
+        plan: null,
+        results: [makeResult('finished-during-resume')],
+        next_cursor: 'final-cursor',
+      })
+    const { result, unmount } = renderHook(() => useScenarioRunProgress('run-1'))
+    await act(async () => Promise.resolve())
+
+    act(() => result.current.applyRunSummary(makeSummary({ status: 'FAILED', ...failure })))
+    expect(result.current.state.run).toMatchObject(failure)
+    await act(async () => Promise.resolve())
+    await act(async () => jest.advanceTimersByTimeAsync(SCENARIO_RUN_POLL_INTERVAL_MS * 5))
+
+    expect(result.current.state.run?.status).toBe('FAILED')
+    expect(result.current.state.run).toMatchObject(failure)
+    expect(result.current.state.results).toHaveLength(2)
+    expect(mockGetRunProgress).toHaveBeenCalledTimes(2)
+    expect(mockGetRunProgress).toHaveBeenLastCalledWith(
+      'run-1', { since: 'saved-cursor', limit: 500 }, expect.any(AbortSignal),
+    )
     unmount()
   })
 })

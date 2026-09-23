@@ -36,8 +36,8 @@ export default defineConfig({
       overlay: false,
       clientPort: 3000,
     },
-    // Reduce request overhead
-    cors: true,
+    // Same-origin API requests do not need CORS. Do not bypass backend preflights.
+    cors: false,
     proxy: {
       '/api': {
         // Use 127.0.0.1 to avoid Node.js 17+ resolving localhost to IPv6 ::1

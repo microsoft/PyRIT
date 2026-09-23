@@ -27,6 +27,7 @@ from pyrit.models import (
     Score,
     SeedPrompt,
     SimulatedTargetSystemPromptPaths,
+    load_next_message_prompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -926,7 +927,7 @@ class TestGenerateNextMessageAsync:
                 conversation_messages=[],
                 adversarial_chat=mock_adversarial_chat,
                 conversation_id="next-message-conversation",
-                next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+                next_message_system_prompt=load_next_message_prompt(NextMessageSystemPromptPaths.DIRECT.value),
                 prompt_normalizer=normalizer,
             )
 
@@ -956,7 +957,7 @@ class TestGenerateNextMessageAsync:
                     conversation_messages=[],
                     adversarial_chat=mock_adversarial_chat,
                     conversation_id="next-message-conversation",
-                    next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+                    next_message_system_prompt=load_next_message_prompt(NextMessageSystemPromptPaths.DIRECT.value),
                     prompt_normalizer=normalizer,
                 )
 
@@ -978,6 +979,147 @@ class TestGenerateNextMessageAsync:
                     conversation_messages=[],
                     adversarial_chat=mock_adversarial_chat,
                     conversation_id="next-message-conversation",
-                    next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+                    next_message_system_prompt=load_next_message_prompt(NextMessageSystemPromptPaths.DIRECT.value),
                     prompt_normalizer=normalizer,
                 )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestSimulatedConversationPromptSources:
+    """Tests for the canonical prompt inputs and the deprecated path inputs."""
+
+    @staticmethod
+    def _mock_attack(conversation_id: str) -> MagicMock:
+        attack = MagicMock()
+        attack.get_identifier.return_value = ComponentIdentifier(
+            class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+        )
+        attack.execute_async = AsyncMock(
+            return_value=AttackResult(
+                atomic_attack_identifier=ComponentIdentifier(
+                    class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                ),
+                conversation_id=conversation_id,
+                objective="Test objective",
+                outcome=AttackOutcome.SUCCESS,
+                executed_turns=2,
+            )
+        )
+        return attack
+
+    async def test_canonical_prompts_never_read_from_disk(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        sample_conversation: list[Message],
+    ):
+        """Canonical prompts are carried in, so the async path performs no YAML loading."""
+        with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
+            mock_attack_class.return_value = self._mock_attack(str(uuid.uuid4()))
+
+            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+                mock_memory = MagicMock()
+                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory_class.get_memory_instance.return_value = mock_memory
+
+                with patch("pyrit.models.seeds.yaml_seed_loader.load_seed_from_yaml") as mock_load:
+                    await generate_simulated_conversation_async(
+                        objective="Test objective",
+                        adversarial_chat=mock_adversarial_chat,
+                        objective_scorer=mock_objective_scorer,
+                        adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+                        simulated_target_system_prompt=SeedPrompt(
+                            value="Objective: {{ objective }} Turns: {{ num_turns }}",
+                            parameters=["objective", "num_turns"],
+                        ),
+                        num_turns=2,
+                    )
+
+                mock_load.assert_not_called()
+
+    async def test_simulated_target_prompt_is_rendered_into_system_message(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        sample_conversation: list[Message],
+    ):
+        """The simulated target template is rendered with the objective and turn count."""
+        with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
+            mock_attack = self._mock_attack(str(uuid.uuid4()))
+            mock_attack_class.return_value = mock_attack
+
+            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+                mock_memory = MagicMock()
+                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory_class.get_memory_instance.return_value = mock_memory
+
+                await generate_simulated_conversation_async(
+                    objective="Test objective",
+                    adversarial_chat=mock_adversarial_chat,
+                    objective_scorer=mock_objective_scorer,
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+                    simulated_target_system_prompt=SeedPrompt(
+                        value="Objective: {{ objective }} Turns: {{ num_turns }}",
+                        parameters=["objective", "num_turns"],
+                    ),
+                    num_turns=2,
+                )
+
+        prepended = mock_attack.execute_async.call_args.kwargs["prepended_conversation"]
+        assert prepended[0].get_value() == "Objective: Test objective Turns: 2"
+
+    async def test_deprecated_path_input_warns(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        adversarial_system_prompt_path: Path,
+        sample_conversation: list[Message],
+    ):
+        """A deprecated path input still works and warns."""
+        with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
+            mock_attack_class.return_value = self._mock_attack(str(uuid.uuid4()))
+
+            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+                mock_memory = MagicMock()
+                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory_class.get_memory_instance.return_value = mock_memory
+
+                with pytest.warns(DeprecationWarning, match="adversarial_chat_system_prompt_path"):
+                    await generate_simulated_conversation_async(
+                        objective="Test objective",
+                        adversarial_chat=mock_adversarial_chat,
+                        objective_scorer=mock_objective_scorer,
+                        adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                        num_turns=2,
+                    )
+
+    async def test_prompt_and_path_together_raises(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        adversarial_system_prompt_path: Path,
+    ):
+        """Supplying both a canonical prompt and its deprecated path is ambiguous."""
+        with pytest.raises(ValueError, match="Set only one of adversarial_chat_system_prompt"):
+            await generate_simulated_conversation_async(
+                objective="Test objective",
+                adversarial_chat=mock_adversarial_chat,
+                objective_scorer=mock_objective_scorer,
+                adversarial_chat_system_prompt=SeedPrompt(value="adversarial"),
+                adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                num_turns=2,
+            )
+
+    async def test_missing_adversarial_prompt_raises(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+    ):
+        """The adversarial system prompt is required."""
+        with pytest.raises(ValueError, match="adversarial_chat_system_prompt is required"):
+            await generate_simulated_conversation_async(
+                objective="Test objective",
+                adversarial_chat=mock_adversarial_chat,
+                objective_scorer=mock_objective_scorer,
+                num_turns=2,
+            )

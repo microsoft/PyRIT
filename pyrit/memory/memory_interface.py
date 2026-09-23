@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select
+from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select, update
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -670,9 +670,9 @@ class MemoryInterface(abc.ABC):
         rather than threaded through every write.
 
         Registration is idempotent only for an identical conversation: re-registering the
-        same ``conversation_id`` with the same target is a no-op (so repeated per-turn
-        registration is safe). Re-registering an existing ``conversation_id`` with a
-        different target is a conflict and raises ``ValueError`` -- a conversation is held
+        same ``conversation_id`` with the same target identity is a no-op, even across
+        PyRIT versions (so repeated per-turn registration is safe). Re-registering an existing
+        ``conversation_id`` with a different target is a conflict and raises ``ValueError`` -- a conversation is held
         with exactly one target and is never re-targeted.
 
         Args:
@@ -725,7 +725,20 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the message pieces or converter identifiers cannot be persisted.
         """
-        entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
+        with closing(self.get_session()) as session:
+            try:
+                self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting prompt memory entries: {e}")
+                raise
+
+    def _add_message_pieces_to_session(self, *, session: Session, message_pieces: Sequence[MessagePiece]) -> None:
+        """Insert pieces and their identifiers in the caller's transaction, without committing."""
+        pieces = [piece for piece in message_pieces if not piece.not_in_memory]
+        self._validate_persistable_conversation_ids(message_pieces=pieces)
+        entries = [PromptMemoryEntry(entry=piece) for piece in pieces]
         # Sequence orders messages, so timestamp preserves the input order of pieces within one message.
         latest_timestamp_by_message: dict[tuple[str, int], datetime] = {}
         for entry in entries:
@@ -734,24 +747,17 @@ class MemoryInterface(abc.ABC):
             if latest_timestamp is not None and entry.timestamp <= latest_timestamp:
                 entry.timestamp = latest_timestamp + timedelta(microseconds=1)
             latest_timestamp_by_message[message_key] = entry.timestamp
-        with closing(self.get_session()) as session:
-            try:
-                for piece, entry in zip(message_pieces, entries, strict=True):
-                    for position, identifier in enumerate(piece.converter_identifiers):
-                        converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
-                        self._persist_identifier(session=session, identifier=converter_identifier)
-                        entry.converter_identifier_links.append(
-                            PromptConverterIdentifierEntry(
-                                position=position,
-                                converter_identifier_hash=converter_identifier.hash,
-                            )
-                        )
-                session.add_all(entries)
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error inserting prompt memory entries: {e}")
-                raise
+        for piece, entry in zip(pieces, entries, strict=True):
+            for position, identifier in enumerate(piece.converter_identifiers):
+                converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
+                self._persist_identifier(session=session, identifier=converter_identifier)
+                entry.converter_identifier_links.append(
+                    PromptConverterIdentifierEntry(
+                        position=position,
+                        converter_identifier_hash=converter_identifier.hash,
+                    )
+                )
+        session.add_all(entries)
 
     @staticmethod
     def _validate_persistable_conversation_ids(*, message_pieces: Sequence[MessagePiece]) -> None:
@@ -795,36 +801,43 @@ class MemoryInterface(abc.ABC):
                 with the same id already exists with a different target.
             SQLAlchemyError: If the insert fails.
         """
-        if not conversation.conversation_id:
-            raise ValueError("Cannot register a conversation without a conversation_id.")
-        entry = ConversationEntry(conversation=conversation)
         with closing(self.get_session()) as session:
             try:
-                existing = session.get(ConversationEntry, conversation.conversation_id)
-                if existing is None:
-                    if conversation.target_identifier is not None:
-                        self._persist_target_identifier(
-                            session=session,
-                            target_identifier=TargetIdentifier.from_component_identifier(
-                                conversation.target_identifier
-                            ),
-                        )
-                    session.add(entry)
-                elif (
-                    entry.target_identifier is not None
-                    and existing.target_identifier is not None
-                    and existing.target_identifier != entry.target_identifier
-                ):
-                    raise ValueError(
-                        f"Conversation {conversation.conversation_id} is already registered with a different "
-                        f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
-                        f"target and cannot be re-registered with {entry.target_identifier!r}."
-                    )
+                self._insert_conversation_in_session(session=session, conversation=conversation)
                 session.commit()
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error registering conversation {conversation.conversation_id}: {e}")
                 raise
+
+    def _insert_conversation_in_session(self, *, session: Session, conversation: Conversation) -> None:
+        """
+        Register conversation metadata in the caller's transaction, without committing.
+
+        Raises:
+            ValueError: If the ID is empty or the conversation is already held with a different target.
+        """
+        if not conversation.conversation_id:
+            raise ValueError("Cannot register a conversation without a conversation_id.")
+        entry = ConversationEntry(conversation=conversation)
+        existing = session.get(ConversationEntry, conversation.conversation_id)
+        if existing is None:
+            if conversation.target_identifier is not None:
+                self._persist_target_identifier(
+                    session=session,
+                    target_identifier=TargetIdentifier.from_component_identifier(conversation.target_identifier),
+                )
+            session.add(entry)
+        elif (
+            entry.target_identifier is not None
+            and existing.target_identifier is not None
+            and ComponentIdentifier.model_validate(existing.target_identifier) != conversation.target_identifier
+        ):
+            raise ValueError(
+                f"Conversation {conversation.conversation_id} is already registered with a different "
+                f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
+                f"target and cannot be re-registered with {entry.target_identifier!r}."
+            )
 
     def add_conversation_retry(self, *, conversation_id: str, sequence: int, reason: ConversationRetryReason) -> None:
         """
@@ -3912,6 +3925,102 @@ class MemoryInterface(abc.ABC):
             except SQLAlchemyError:
                 session.rollback()
                 raise
+
+    def add_conversation_branches_to_attack(
+        self,
+        *,
+        attack_result_id: str,
+        conversations: Sequence[Conversation],
+        message_pieces: Sequence[MessagePiece],
+        source_conversation: Conversation | None = None,
+    ) -> bool:
+        """
+        Atomically store prepared conversations, copied pieces, and their attack references.
+
+        The caller prepares the copies. This method only persists them, preserving the usual
+        conversation and message insertion invariants. A supplied source must still be an
+        active objective conversation when the transaction acquires the attack's write lock.
+
+        Returns:
+            bool: False when the attack no longer exists.
+
+        Raises:
+            ValueError: If the source is unrelated, branch IDs repeat, or pieces belong elsewhere.
+            SQLAlchemyError: If persistence fails; the complete preparation is rolled back.
+        """
+        conversation_ids = [conversation.conversation_id for conversation in conversations]
+        if len(set(conversation_ids)) != len(conversation_ids):
+            raise ValueError("Prepared branch conversation IDs must be unique")
+        if source_conversation and source_conversation.conversation_id in conversation_ids:
+            raise ValueError("A prepared branch cannot replace the source conversation")
+        if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
+            raise ValueError("Copied message pieces must belong to the prepared branches")
+
+        with closing(self.get_session()) as session, session.begin():
+            entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
+            if entry is None:
+                return False
+            if source_conversation is not None:
+                active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
+                if source_conversation.conversation_id not in active_ids:
+                    raise ValueError("Source conversation is not an active objective conversation of this attack")
+                self._insert_conversation_in_session(session=session, conversation=source_conversation)
+            for conversation in conversations:
+                self._insert_conversation_in_session(session=session, conversation=conversation)
+            self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
+            pruned_ids = list(entry.pruned_conversation_ids or [])
+            for conversation_id in conversation_ids:
+                if conversation_id != entry.conversation_id and conversation_id not in pruned_ids:
+                    pruned_ids.append(conversation_id)
+            entry.pruned_conversation_ids = pruned_ids or None
+            entry.timestamp = datetime.now(UTC)
+        return True
+
+    def promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
+        """
+        Promote an existing related conversation without losing concurrent branch additions.
+
+        Returns:
+            bool: False when the attack no longer exists.
+
+        Raises:
+            ValueError: If the requested conversation is not part of this attack.
+            SQLAlchemyError: If the transaction fails.
+        """
+        with closing(self.get_session()) as session, session.begin():
+            entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
+            if entry is None:
+                return False
+            if entry.conversation_id == conversation_id:
+                return True
+            pruned = list(entry.pruned_conversation_ids or [])
+            if conversation_id not in pruned:
+                raise ValueError(f"Conversation '{conversation_id}' is not part of this attack")
+            pruned = [item for item in pruned if item != conversation_id]
+            if entry.conversation_id not in pruned:
+                pruned.append(entry.conversation_id)
+            entry.pruned_conversation_ids = pruned or None
+            entry.conversation_id = conversation_id
+            entry.timestamp = datetime.now(UTC)
+        return True
+
+    @staticmethod
+    def _get_locked_attack_result(*, session: Session, attack_result_id: str) -> AttackResultEntry | None:
+        """
+        Acquire the write lock before reading references, on SQLite and SQL Server alike.
+
+        Returns:
+            AttackResultEntry | None: The current row, held until the caller ends its transaction.
+        """
+        result_id = uuid.UUID(attack_result_id)
+        # SELECT FOR UPDATE does not provide the required guard on both supported backends.
+        session.execute(
+            update(AttackResultEntry)
+            .where(AttackResultEntry.id == result_id)
+            .values(timestamp=AttackResultEntry.timestamp)
+            .execution_options(synchronize_session=False)
+        )
+        return session.get(AttackResultEntry, result_id, populate_existing=True)
 
     def update_attack_result(self, *, conversation_id: str, update_fields: dict[str, Any]) -> bool:
         """
