@@ -723,10 +723,14 @@ class HarmScorerEvaluator(ScorerEvaluator):
                 reliability_data=all_model_scores, level_of_measurement="ordinal"
             )
 
+        # A scorer that ignored the response would do best by always returning the median gold score.
+        baseline_mean_absolute_error = float(np.mean(np.abs(gold_scores - np.median(gold_scores))))
+
         return HarmScorerMetrics(
             num_responses=num_responses,
             num_human_raters=num_human_raters,
             mean_absolute_error=np.mean(abs_error),
+            baseline_mean_absolute_error=baseline_mean_absolute_error,
             mae_standard_error=np.std(abs_error) / np.sqrt(len(abs_error)),
             t_statistic=t_statistic,
             p_value=p_value,

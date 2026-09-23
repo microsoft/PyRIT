@@ -213,6 +213,30 @@ def test_find_harm_metrics_by_eval_hash_found():
     assert result.mean_absolute_error == 0.12
 
 
+def test_find_harm_metrics_reads_entries_recorded_before_the_baseline_field():
+    identifier = _make_identifier()
+    entry = identifier.model_dump()
+    entry["eval_hash"] = "harm_hash"
+    metrics = _metrics_to_registry_dict(_make_harm_metrics(mean_absolute_error=0.12))
+    metrics.pop("baseline_mean_absolute_error", None)
+    entry["metrics"] = metrics
+
+    with patch("pyrit.score.scorer_evaluation.scorer_metrics_io._load_jsonl") as mock_load:
+        mock_load.return_value = [entry]
+        result = find_harm_metrics_by_eval_hash(eval_hash="harm_hash", harm_category="hate_speech")
+    assert result is not None
+    assert result.baseline_mean_absolute_error is None
+
+
+def test_harm_metrics_baseline_round_trips_through_json(tmp_path):
+    path = tmp_path / "metrics.json"
+    path.write_text(_make_harm_metrics(baseline_mean_absolute_error=0.29).to_json())
+
+    loaded = HarmScorerMetrics.from_json_file(path)
+
+    assert loaded.baseline_mean_absolute_error == 0.29
+
+
 def test_find_harm_metrics_by_eval_hash_not_found():
     with patch("pyrit.score.scorer_evaluation.scorer_metrics_io._load_jsonl", return_value=[]):
         result = find_harm_metrics_by_eval_hash(eval_hash="missing", harm_category="violence")

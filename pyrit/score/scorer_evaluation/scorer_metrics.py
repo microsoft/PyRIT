@@ -160,6 +160,12 @@ class HarmScorerMetrics(ScorerMetrics):
             multiple human raters. This measures the agreement between human raters.
         krippendorff_alpha_model (float, Optional): Krippendorff's alpha for model scores, if there are
             multiple model scoring trials. This measures the agreement between model scoring trials.
+        baseline_mean_absolute_error (float, Optional): The mean absolute error of a scorer that ignores the
+            response and always returns the median gold score of the dataset, which is the constant with the
+            lowest possible mean absolute error on these labels. A scorer whose `mean_absolute_error` is not
+            below this value has not beaten a constant guess on this dataset. It is computed in-sample, so it
+            is the best any constant could do here and is a demanding reference. None for results recorded
+            before this field existed.
     """
 
     mean_absolute_error: float
@@ -172,6 +178,7 @@ class HarmScorerMetrics(ScorerMetrics):
     harm_definition_version: str | None = field(default=None, kw_only=True)
     krippendorff_alpha_humans: float | None = None
     krippendorff_alpha_model: float | None = None
+    baseline_mean_absolute_error: float | None = field(default=None, kw_only=True)
     _harm_definition_obj: HarmDefinition | None = field(default=None, init=False, repr=False)
 
     def get_harm_definition(self) -> HarmDefinition | None:
