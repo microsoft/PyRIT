@@ -18,6 +18,8 @@ from pyrit.models import (
     AttackSeedGroup,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
     Seed,
     SeedObjective,
     SeedPrompt,
@@ -260,12 +262,20 @@ class ApiKey(Scenario):
         groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
         for dataset in datasets:
             dataset.kind = "synthesized"
+        components = [
+            ScenarioRunSizeComponent(
+                label=f"{name} prompts",
+                count=len(population),
+                factors=[
+                    ScenarioRunSizeFactor(label="selected synthesized requests", count=len(population)),
+                ],
+            )
+            for name, population in groups.items()
+        ]
         return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(len(population) for population in groups.values()),
-            components=[
-                ScenarioRunSizeComponent(label=f"{name} prompts", count=len(population))
-                for name, population in groups.items()
-            ],
+            status=ScenarioRunSizeEstimateStatus.Exact,
+            total_attack_count=sum(component.count for component in components),
+            components=components,
             datasets=datasets,
         )
 
