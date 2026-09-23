@@ -16,6 +16,17 @@ than invoking `pytest` directly on `tests/unit`. The target runs in parallel
 make unit-test
 ```
 
+```{note}
+`make` is not part of the [local dev setup](../getting_started/install_local_dev.md) and is
+often missing on Windows. If you get `make: command not found` (or
+`'make' is not recognized`), run the equivalent command directly — this is exactly what the
+target expands to:
+
+    uv run -m pytest -n 4 --dist=loadfile tests/unit
+
+The same substitution works for the other targets on this page.
+```
+
 ## Running a subset while iterating
 
 For a narrower run, invoke `pytest` directly. You can invoke pytest if it's in your path or via python; either `pytest` or `python -m pytest`. For the following examples, we will use `pytest`.
