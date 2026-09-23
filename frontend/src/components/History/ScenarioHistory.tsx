@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type MouseEvent, useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -23,13 +23,15 @@ import {
   ArrowRightRegular,
   ArrowSyncRegular,
   FilterDismissRegular,
+  PlayRegular,
   ScriptRegular,
 } from '@fluentui/react-icons'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
+import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
 import { labelsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ScenarioQueueSnapshot, ScenarioRunListItem, ScenarioRunState } from '@/types'
+import type { ScenarioQueueSnapshot, ScenarioRunListItem, ScenarioRunState, ScenarioRunSummary } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import type { ViewName } from '../Sidebar/Navigation'
@@ -127,6 +129,19 @@ export default function ScenarioHistory({
     setError(null)
     setFetchToken((previous) => ({ cursor, filterKey, nonce: previous.nonce + 1 }))
   }, [filterKey])
+  const resume = useScenarioRunResume({
+    onResumed: (resumedRun: ScenarioRunSummary): void => {
+      setRuns((current: ScenarioRunListItem[]) => current.map((run: ScenarioRunListItem) =>
+        run.scenario_result_id === resumedRun.scenario_result_id
+          ? { ...run, status: resumedRun.status, completed_at: resumedRun.completed_at }
+          : run,
+      ))
+    },
+    onRefresh: (): void => {
+      requestPage(fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined)
+      queue.retry()
+    },
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -316,6 +331,11 @@ export default function ScenarioHistory({
             <MessageBarBody>{optionsError}</MessageBarBody>
           </MessageBar>
         )}
+        {(resume.error || resume.executionError) && (
+          <MessageBar intent="error">
+            <MessageBarBody>{resume.error || resume.executionError}</MessageBarBody>
+          </MessageBar>
+        )}
       </header>
 
       <div className={styles.content}>
@@ -343,6 +363,8 @@ export default function ScenarioHistory({
             runs={runs}
             queueSnapshot={queue.snapshot}
             onOpenRun={onOpenRun}
+            onResume={resume.requestResume}
+            resumingRunId={resume.pendingRunId}
             now={now}
           />
         )}
@@ -385,10 +407,14 @@ interface ScenarioHistoryTableProps {
   runs: ScenarioRunListItem[]
   queueSnapshot: ScenarioQueueSnapshot | null
   onOpenRun: (scenarioResultId: string) => void
+  onResume: (scenarioResultId: string) => void
+  resumingRunId: string | null
   now: number
 }
 
-function ScenarioHistoryTable({ runs, queueSnapshot, onOpenRun, now }: ScenarioHistoryTableProps) {
+function ScenarioHistoryTable({
+  runs, queueSnapshot, onOpenRun, onResume, resumingRunId, now,
+}: ScenarioHistoryTableProps) {
   const styles = useScenarioHistoryStyles()
   return (
     <Table className={styles.table} aria-label="Scanner history" data-testid="scenario-history-table">
@@ -403,6 +429,7 @@ function ScenarioHistoryTable({ runs, queueSnapshot, onOpenRun, now }: ScenarioH
           <TableHeaderCell>Attack Success</TableHeaderCell>
           <TableHeaderCell>Errors / retries</TableHeaderCell>
           <TableHeaderCell>Labels</TableHeaderCell>
+          <TableHeaderCell>Actions</TableHeaderCell>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -480,6 +507,23 @@ function ScenarioHistoryTable({ runs, queueSnapshot, onOpenRun, now }: ScenarioH
                     <Badge key={key} appearance="tint" size="small">{key}: {value}</Badge>
                   ))}
               </div>
+            </TableCell>
+            <TableCell>
+              {run.status === 'FAILED' && (
+                <Button
+                  className={styles.touchTarget}
+                  icon={<PlayRegular />}
+                  disabled={resumingRunId !== null}
+                  aria-label={`Resume ${run.scenario_registry_name ?? run.scenario_name} run ${run.scenario_result_id}`}
+                  onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                    event.stopPropagation()
+                    onResume(run.scenario_result_id)
+                  }}
+                  data-testid={`scenario-history-resume-${run.scenario_result_id}`}
+                >
+                  {resumingRunId === run.scenario_result_id ? 'Resuming...' : 'Resume'}
+                </Button>
+              )}
             </TableCell>
             </TableRow>
           )

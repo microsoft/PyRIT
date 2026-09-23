@@ -32,6 +32,7 @@ import {
   ChevronRightRegular,
   DismissCircleRegular,
   ErrorCircleRegular,
+  PlayRegular,
   StopRegular,
 } from '@fluentui/react-icons'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
@@ -44,6 +45,7 @@ import {
   objectivePreview,
 } from '@/components/AttackResults/attackAttemptFormatting'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
+import { useScenarioRunResume } from '@/hooks/useScenarioRunResume'
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -113,6 +115,13 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState<string | null>(null)
+  const resume = useScenarioRunResume({
+    onResumed: applyRunSummary,
+    onRefresh: (succeeded: boolean): void => {
+      queue.retry()
+      if (!succeeded) retry()
+    },
+  })
   const [selectedTechnique, setSelectedTechnique] = useState<ScenarioTechniqueProgress | null>(null)
   const [selectedObjective, setSelectedObjective] = useState<ScenarioRunPlanSeedGroup | null>(null)
   const [atomicGroupsExpandedChoice, setAtomicGroupsExpandedChoice] = useState<boolean | null>(null)
@@ -337,7 +346,27 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
               </Button>
             </div>
           )}
+          {run.status === 'FAILED' && (
+            <div className={styles.headerActions}>
+              <Button
+                appearance="primary"
+                className={mergeClasses(styles.touchTarget, styles.wideButton)}
+                icon={<PlayRegular />}
+                disabled={resume.pendingRunId !== null}
+                onClick={() => { resume.requestResume(scenarioResultId) }}
+                data-testid="scenario-run-resume"
+              >
+                {resume.pendingRunId !== null ? 'Resuming...' : 'Resume run'}
+              </Button>
+            </div>
+          )}
         </header>
+
+        {resume.error && (
+          <MessageBar intent="error">
+            <MessageBarBody>{resume.error}</MessageBarBody>
+          </MessageBar>
+        )}
 
         <div className={styles.metadata} aria-label="Run metadata">
           <div className={styles.metadataItem}>
@@ -435,6 +464,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
           <MessageBar intent="error">
             <MessageBarBody>
               {formatRunFailure(run)}
+              {' '}Resume continues the remaining work with the original configuration and the same run ID.
             </MessageBarBody>
           </MessageBar>
         )}

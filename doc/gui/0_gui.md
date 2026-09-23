@@ -179,6 +179,26 @@ Click any row to open the attack in the Chat view.
 
 Results are paginated (25 per page) with "First" and "Next" navigation buttons.
 
+### Resuming a Failed Scanner Run
+
+Select **Resume run** on a failed run's detail page or **Resume** in **Scanner
+History**. Resume keeps the same run ID and saved result, including previous
+results and errors. It retries unfinished and errored objectives, skipping
+completed non-error objectives. Recovery is at the objective level, not the last
+turn of an interrupted conversation.
+
+Resume restores the original scenario configuration, target, sampled execution
+plan, and labels, rather than using the current launch form or active chat target.
+Refreshing the GUI does not automatically resume a run.
+
+Resume requires a saved launch configuration. Runs created before that
+configuration was recorded cannot resume through the GUI; an error explains
+the limitation without changing their saved progress.
+
+If the saved configuration cannot be restored, Resume shows an error without
+discarding progress or starting a replacement run. Restore any missing target,
+technique, or dataset before trying again.
+
 ### Scenario Run Results
 
 In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.

@@ -1,10 +1,10 @@
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { labelsApi, scenariosApi } from '@/services/api'
-import type { ScenarioRunListItem } from '@/types'
+import type { ScenarioRunListItem, ScenarioRunListResponse, ScenarioRunState, ScenarioRunSummary } from '@/types'
 
 import ScenarioHistory from './ScenarioHistory'
 import { DEFAULT_SCENARIO_HISTORY_FILTERS } from './scenarioHistoryFilters'
@@ -13,6 +13,7 @@ jest.mock('@/services/api', () => ({
   scenariosApi: {
     listCatalog: jest.fn(),
     listRuns: jest.fn(),
+    resumeRun: jest.fn(),
   },
   labelsApi: {
     getLabels: jest.fn(),
@@ -26,6 +27,7 @@ jest.mock('@/hooks/useScenarioQueue', () => ({
 const mockedScenariosApi = scenariosApi as jest.Mocked<typeof scenariosApi>
 const mockedLabelsApi = labelsApi as jest.Mocked<typeof labelsApi>
 const mockUseScenarioQueue = useScenarioQueue as jest.Mock
+const mockQueueRetry = jest.fn()
 
 const RUN: ScenarioRunListItem = {
   scenario_result_id: 'run-1',
@@ -82,7 +84,7 @@ describe('ScenarioHistory', () => {
       loading: false,
       stale: false,
       error: null,
-      retry: jest.fn(),
+      retry: mockQueueRetry,
     })
     mockedScenariosApi.listCatalog.mockResolvedValue({
       items: [{ scenario_name: 'foundry.red_team' }] as Awaited<ReturnType<typeof scenariosApi.listCatalog>>['items'],
@@ -96,6 +98,196 @@ describe('ScenarioHistory', () => {
 
   afterEach(() => {
     jest.restoreAllMocks()
+  })
+
+  it('resumes a failed history run by keyboard without navigating or replacing its ID and completed counts', async () => {
+    const user = userEvent.setup()
+    const resumedRun: ScenarioRunSummary = {
+      ...RUN,
+      total_attacks: 2,
+      status: 'IN_PROGRESS',
+      completed_attacks: 1,
+      completed_at: null,
+      failed_attacks: [],
+      attack_retries: [],
+    }
+    let resolveResume: ((summary: ScenarioRunSummary) => void) | undefined
+    mockedScenariosApi.resumeRun.mockImplementationOnce(() => new Promise<ScenarioRunSummary>((resolve) => {
+      resolveResume = resolve
+    }))
+    mockedScenariosApi.listRuns
+      .mockResolvedValueOnce({
+        items: [{ ...RUN, status: 'FAILED', completed_attacks: 1 }],
+        pagination: { limit: 25, has_more: false },
+      })
+      .mockResolvedValueOnce({
+        items: [{ ...RUN, status: 'IN_PROGRESS', completed_attacks: 1, completed_at: null }],
+        pagination: { limit: 25, has_more: false },
+      })
+    renderHistory()
+    const resumeButton = await screen.findByRole('button', { name: 'Resume foundry.red_team run run-1' })
+    expect(mockedScenariosApi.resumeRun).not.toHaveBeenCalled()
+    resumeButton.focus()
+    await user.keyboard('{Enter}')
+    expect(resumeButton).toBeDisabled()
+    expect(resumeButton).toHaveTextContent('Resuming...')
+    await user.dblClick(resumeButton)
+    expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
+    expect(mockedScenariosApi.resumeRun).toHaveBeenCalledWith('run-1')
+    expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
+    expect(screen.getByText('1/2 attacks complete')).toBeInTheDocument()
+
+    await act(async () => { resolveResume?.(resumedRun) })
+
+    const row = await screen.findByRole('row', { name: /foundry.red_team.*In progress/ })
+    expect(within(row).getByText('1/2 attacks complete')).toBeInTheDocument()
+    expect(within(row).getByRole('link')).toHaveAttribute('href', '/scanner-history/run-1')
+    expect(screen.queryByRole('button', { name: /Resume foundry/ })).not.toBeInTheDocument()
+    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+    expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+    expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
+  })
+
+  it('guards history resume clicks synchronously before the disabled render', async () => {
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [{ ...RUN, status: 'FAILED' }],
+      pagination: { limit: 25, has_more: false },
+    })
+    let rejectResume: ((error: Error) => void) | undefined
+    mockedScenariosApi.resumeRun.mockImplementationOnce(() => new Promise<ScenarioRunSummary>((_resolve, reject) => {
+      rejectResume = reject
+    }))
+    renderHistory()
+    const resumeButton = await screen.findByRole('button', { name: /Resume foundry/ })
+
+    act(() => {
+      resumeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      resumeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    await waitFor(() => expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1))
+    expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
+    expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
+    await act(async () => { rejectResume?.(new Error('Network unavailable')) })
+    expect(await screen.findByText('Network unavailable')).toBeInTheDocument()
+    expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it.each<string | null>(['The saved target rejected execution.', null])(
+    'keeps immediate execution failure feedback in history after refresh: %s',
+    async (error: string | null) => {
+      const user = userEvent.setup()
+      const failedRun: ScenarioRunSummary = {
+        ...RUN,
+        status: 'FAILED',
+        completed_attacks: 1,
+        failed_attacks: [],
+        attack_retries: [],
+        error,
+      }
+      mockedScenariosApi.listRuns.mockResolvedValue({
+        items: [{ ...RUN, status: 'FAILED', completed_attacks: 1 }],
+        pagination: { limit: 25, has_more: false },
+      })
+      mockedScenariosApi.resumeRun.mockResolvedValueOnce(failedRun)
+      renderHistory()
+      await user.click(await screen.findByRole('button', { name: /Resume foundry/ }))
+
+      const message = error || 'The resumed run failed. Finished results remain available.'
+      expect(await screen.findByText(message)).toBeInTheDocument()
+      expect(await screen.findByRole('row', { name: /foundry.red_team.*Failed/ })).toHaveTextContent('1/2 attacks complete')
+      expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+      expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+      expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
+      expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
+
+      mockedScenariosApi.resumeRun.mockResolvedValueOnce({ ...failedRun, status: 'QUEUED', error: null })
+      mockedScenariosApi.listRuns.mockResolvedValueOnce({
+        items: [{ ...RUN, status: 'QUEUED', completed_attacks: 1 }],
+        pagination: { limit: 25, has_more: false },
+      })
+      await user.click(screen.getByRole('button', { name: /Resume foundry/ }))
+      await screen.findByRole('row', { name: /foundry.red_team.*Queued/ })
+
+      expect(screen.queryByText(message)).not.toBeInTheDocument()
+      expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it.each<[number, string]>([
+    [404, 'Scenario run not found.'],
+    [409, 'This run is already active or lacks safe saved configuration.'],
+    [400, 'Saved configuration no longer matches the registered scenario.'],
+    [500, 'Unable to resume this run.'],
+  ])('keeps HTTP %s resume feedback visible during and after state refresh', async (status: number, detail: string) => {
+    const user = userEvent.setup()
+    let resolveRefresh: ((response: ScenarioRunListResponse) => void) | undefined
+    mockedScenariosApi.listRuns
+      .mockResolvedValueOnce({
+        items: [{ ...RUN, status: 'FAILED' }],
+        pagination: { limit: 25, has_more: false },
+      })
+      .mockImplementationOnce(() => new Promise<ScenarioRunListResponse>((resolve) => {
+        resolveRefresh = resolve
+      }))
+    mockedScenariosApi.resumeRun.mockRejectedValueOnce({
+      isAxiosError: true, response: { status, data: { detail } },
+    })
+    renderHistory()
+    await user.click(await screen.findByRole('button', { name: /Resume foundry/ }))
+
+    expect(await screen.findByText(detail)).toBeInTheDocument()
+    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+    expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveRefresh?.({
+        items: status === 404 ? [] : [{ ...RUN, status: 'IN_PROGRESS' }],
+        pagination: { limit: 25, has_more: false },
+      })
+    })
+
+    expect(screen.getByText(detail)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Resume foundry/ })).not.toBeInTheDocument()
+    expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
+    expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
+  })
+
+  it.each<ScenarioRunState>(['CREATED', 'QUEUED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'])(
+    'does not offer resume for %s history runs',
+    async (status: ScenarioRunState) => {
+      mockedScenariosApi.listRuns.mockResolvedValue({
+        items: [{ ...RUN, status }],
+        pagination: { limit: 25, has_more: false },
+      })
+      renderHistory()
+      await screen.findByRole('table', { name: 'Scanner history' })
+      expect(screen.queryByRole('button', { name: /Resume/ })).not.toBeInTheDocument()
+      expect(mockedScenariosApi.resumeRun).not.toHaveBeenCalled()
+    },
+  )
+
+  it('keeps missing launch configuration conflicts visible after refresh without opening a dialog', async () => {
+    const user = userEvent.setup()
+    const detail = 'This run has no saved launch configuration and cannot be resumed.'
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [{ ...RUN, status: 'FAILED' }],
+      pagination: { limit: 25, has_more: false },
+    })
+    mockedScenariosApi.resumeRun.mockRejectedValueOnce({
+      isAxiosError: true, response: { status: 409, data: { detail } },
+    })
+    renderHistory()
+    await user.click(await screen.findByRole('button', { name: /Resume foundry/ }))
+
+    expect(await screen.findByText(detail)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /Resume foundry/ })).toBeEnabled()
+    expect(mockedScenariosApi.resumeRun).toHaveBeenCalledWith('run-1')
+    expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+    expect(mockQueueRetry).toHaveBeenCalledTimes(1)
+    expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
   })
 
   it('renders safe run metadata and opens rows by click or keyboard', async () => {
@@ -123,6 +315,7 @@ describe('ScenarioHistory', () => {
       'Attack Success',
       'Errors / retries',
       'Labels',
+      'Actions',
     ])
     expect(screen.getByText('55s')).toBeInTheDocument()
     expect(within(row).getByText('alice')).toBeInTheDocument()

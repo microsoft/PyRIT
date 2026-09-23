@@ -1488,7 +1488,13 @@ class TestScenarioRoutes:
             )
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.json()["estimated_attack_count"] == 12
+        payload = response.json()
+        assert payload["status"] == "exact"
+        assert payload["total_attack_count"] == 12
+        assert payload["estimated_attack_count"] == 12
+        assert payload["minimum_attack_count"] == 12
+        assert payload["maximum_attack_count"] == 12
+        assert payload["components"][0]["factors"] == []
         request = mock_service.estimate_scenario_run_size_async.await_args.kwargs["request"]
         assert request.techniques == ["prompt_sending"]
         assert request.include_baseline is False
