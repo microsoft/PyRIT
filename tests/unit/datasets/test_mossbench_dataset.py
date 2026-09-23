@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import os
 from typing import Any
 from unittest.mock import patch
 
@@ -10,7 +11,6 @@ from pyrit.datasets.seed_datasets.remote.mossbench_dataset import (
     MossBenchOversensitivityType,
     _MossBenchDataset,
 )
-from pyrit.memory import SQLiteMemory
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import SeedDataset
 
@@ -48,16 +48,38 @@ def _make_information_json(examples: list[dict[str, Any]]) -> dict[str, dict[str
     return {ex["pid"]: ex for ex in examples}
 
 
+@pytest.mark.usefixtures("sqlite_instance")
 class TestMossBenchDataset:
     """Unit tests for ``_MossBenchDataset``."""
 
-    @pytest.fixture(autouse=True)
-    def setup_memory(self):
-        """Set up memory instance for image downloads."""
-        memory = SQLiteMemory()
-        CentralMemory.set_memory_instance(memory)
-        yield
-        CentralMemory.set_memory_instance(None)
+    def test_dataset_uses_isolated_memory_and_results_path(self):
+        """Prove per-test database and results-directory isolation.
+
+        The original ``setup_memory`` fixture constructed a default, file-backed
+        ``SQLiteMemory()`` and only cleared the ``CentralMemory`` pointer at
+        teardown, bypassing the isolated ``sqlite_instance`` fixture introduced
+        in PR #2640.  A CI run on ubuntu-latest / Python 3.11 / dev failed with
+        ``OperationalError: table "PromptMemoryEntries" already exists`` during
+        ``setup_memory`` (see #2775).
+
+        The exact remote collision mechanism (which other test or worker created
+        the conflicting default database) has not been conclusively identified.
+        This test does not claim to reproduce that collision; it deterministically
+        verifies that the replacement fixture provides an in-memory database and
+        a scoped temporary results directory, eliminating the file-backed
+        precondition that made the collision possible.
+
+        Singleton and ``CentralMemory`` restoration after each test is exercised
+        by the ``sqlite_instance`` fixture's own regression suite in
+        ``tests/unit/memory/test_sqlite_fixtures.py`` (PR #2640).
+        """
+        memory = CentralMemory.get_memory_instance()
+        # Prove database isolation: in-memory, no shared file on disk.
+        assert memory.engine.url.database == ":memory:"
+        # Prove results-directory isolation: scoped to a temporary folder,
+        # not the default persistent "results/" directory.
+        assert os.path.isabs(memory.results_path)
+        assert "results" not in os.path.basename(memory.results_path)
 
     def test_dataset_name(self):
         dataset = _MossBenchDataset()
