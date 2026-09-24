@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo, useTransition } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams, useSearchParams, matchPath } from 'react-router'
 import { useMsal } from '@azure/msal-react'
 import { Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
@@ -157,6 +157,7 @@ function ConnectionBannerContainer() {
 
 function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const navigate = useNavigate()
+  const [isNavigatingToCreatedAttack, startCreatedAttackTransition] = useTransition()
   const location = useLocation()
   const registry = useTargetRegistry()
   const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
@@ -397,7 +398,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const readyAttack = attackForRoute?.status === 'success' ? attackForRoute : null
   const isAttackNotFound = attackForRoute?.status === 'not-found'
   const isAttackError = attackForRoute?.status === 'error'
-  const isLoadingAttack = routeAttackId !== null && !readyAttack && !isAttackNotFound && !isAttackError
+  const isLoadingAttack = isNavigatingToCreatedAttack
+    || (routeAttackId !== null && !readyAttack && !isAttackNotFound && !isAttackError)
   const {
     activeTarget: resolvedChatTarget,
     resolutionStatus: targetResolutionStatus,
@@ -485,8 +487,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     })
     // Replace when promoting an empty /chat to its attack url (first message);
     // push when branching from an existing attack so Back returns to the source.
-    navigate(attackRoutePath(arId), { replace: routeAttackId === null })
-  }, [activeTarget, routeAttackId, navigate])
+    // Keep sends blocked until the new route exposes the created attack's identity.
+    startCreatedAttackTransition(() => {
+      navigate(attackRoutePath(arId), { replace: routeAttackId === null })
+    })
+  }, [activeTarget, routeAttackId, navigate, startCreatedAttackTransition])
 
   const handleObjectiveChange = useCallback((objective: string) => {
     setLoadedAttack((current) => current ? { ...current, objective } : current)
