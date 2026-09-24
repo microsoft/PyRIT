@@ -23,18 +23,14 @@ async def test_replacement_precedence_interpolation_empty_and_omission(tmp_path:
     other.write_text("VALUE=ignored\n", encoding="utf-8")
     local.write_text("VALUE=local\n", encoding="utf-8")
     with patch.dict(os.environ, {"VALUE": "old", "EMPTY": "old", "OMITTED": "keep"}):
-        values = await resolve_environment_async(
-            env_files=[base, other, local], env_akv_ref=None, env_akv_strict=True
-        )
+        values = await resolve_environment_async(env_files=[base, other, local], env_akv_ref=None, env_akv_strict=True)
         assert values == {"VALUE": "local", "EMPTY": "", "INTERPOLATED": "local/suffix"}
         assert os.environ["VALUE"] == "old"
         with (
             patch("pyrit.setup.initialization.validate_reinitialization_memory", return_value=object()),
             patch.object(CentralMemory, "set_memory_instance"),
         ):
-            await initialize_pyrit_async(
-                "InMemory", reinitialize=True, environment_values=values, load_defaults=False
-            )
+            await initialize_pyrit_async("InMemory", reinitialize=True, environment_values=values, load_defaults=False)
         assert os.environ["VALUE"] == "local"
         assert os.environ["EMPTY"] == ""
         assert os.environ["OMITTED"] == "keep"
@@ -45,9 +41,10 @@ async def test_key_vault_selection_skips_default_base_and_overrides_process(tmp_
     (tmp_path / ".env.local").write_text("VALUE=local\n", encoding="utf-8")
     with (
         patch("pyrit.setup.environment_loading.path.CONFIGURATION_DIRECTORY_PATH", tmp_path),
-        patch("pyrit.setup.environment_loading._fetch_akv_document_async", AsyncMock(
-            return_value=("VALUE=vault\nDERIVED=${VALUE}\n", "https://test.vault.azure.net")
-        )),
+        patch(
+            "pyrit.setup.environment_loading._fetch_akv_document_async",
+            AsyncMock(return_value=("VALUE=vault\nDERIVED=${VALUE}\n", "https://test.vault.azure.net")),
+        ),
         patch.dict(os.environ, {"VALUE": "stale"}),
     ):
         values = await resolve_environment_async(
@@ -62,9 +59,9 @@ async def test_reload_changed_and_removed_scripts_preserves_memory_and_history(
 ) -> None:
     from pyrit.models import Message, MessagePiece
 
-    message = Message(message_pieces=[
-        MessagePiece(role="user", original_value="history", conversation_id=str(uuid.uuid4()))
-    ])
+    message = Message(
+        message_pieces=[MessagePiece(role="user", original_value="history", conversation_id=str(uuid.uuid4()))]
+    )
     sqlite_instance.add_message_to_memory(request=message)
     source = tmp_path / "scripts"
     source.mkdir()
@@ -85,8 +82,11 @@ class CustomInitializer(PyRITInitializer):
 """
     script.write_text(template.replace("TARGET_NAME", "first"), encoding="utf-8")
     config = ConfigurationLoader(
-        memory_db_type="in_memory", env_files=[], initializers=["custom"],
-        allow_custom_initializers=True, custom_initializers_source=str(source),
+        memory_db_type="in_memory",
+        env_files=[],
+        initializers=["custom"],
+        allow_custom_initializers=True,
+        custom_initializers_source=str(source),
     )
     try:
         await config.initialize_pyrit_async(reinitialize=True)
@@ -136,11 +136,14 @@ def test_malformed_default_layer_is_not_silently_ignored(tmp_path: Path) -> None
             ConfigurationLoader.load_with_overrides(strict=True)
 
 
-@pytest.mark.parametrize("key", [
-    AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING,
-    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL,
-    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN,
-])
+@pytest.mark.parametrize(
+    "key",
+    [
+        AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING,
+        AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL,
+        AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN,
+    ],
+)
 def test_azure_connection_and_storage_changes_require_restart(key: str) -> None:
     memory = MagicMock(spec=AzureSQLMemory)
     memory.AZURE_SQL_DB_CONNECTION_STRING = AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING

@@ -284,9 +284,9 @@ async def test_admitted_body_cannot_launch_after_stop_even_when_pending_apply_ca
         yield b'{"scenario_name":"test","target_name":"target"}'
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-        request = asyncio.create_task(client.post(
-            "/api/scenarios/runs", content=body_async(), headers={"Content-Type": "application/json"}
-        ))
+        request = asyncio.create_task(
+            client.post("/api/scenarios/runs", content=body_async(), headers={"Content-Type": "application/json"})
+        )
         await receiving.wait()
         runtime.DRAIN_TIMEOUT_SECONDS = 0
         await apply_async(runtime, stop=True, revision=runtime.work_revision)
@@ -346,17 +346,22 @@ class SavedInitializer(PyRITInitializer):
                 if cold_failure:
                     assert (await client.get("/api/config")).status_code == 200
                     assert (await client.delete("/api/initializers/saved")).status_code == 204
-                    assert (await client.post("/api/initializers", json={
-                        "name": "saved", "script_content": script
-                    })).status_code == 201
-                response = await client.post("/api/initializers", json={
-                    "name": "replacement", "script_content": script.replace("saved_target", "replacement_target")
-                })
+                    assert (
+                        await client.post("/api/initializers", json={"name": "saved", "script_content": script})
+                    ).status_code == 201
+                response = await client.post(
+                    "/api/initializers",
+                    json={
+                        "name": "replacement",
+                        "script_content": script.replace("saved_target", "replacement_target"),
+                    },
+                )
                 assert response.status_code == 201, response.text
                 saved = (await client.get("/api/config")).json()
-                response = await client.put("/api/config", json={
-                    "version": saved["version"], "content": content.replace("[saved]", "[replacement]")
-                })
+                response = await client.put(
+                    "/api/config",
+                    json={"version": saved["version"], "content": content.replace("[saved]", "[replacement]")},
+                )
                 assert response.status_code == 200, response.text
                 version = response.json()["version"]
                 assert (await client.post("/api/config/runtime/apply", json={"version": version})).status_code == 202
@@ -372,9 +377,15 @@ class SavedInitializer(PyRITInitializer):
                 assert (await client.get("/api/config")).status_code == 200
                 assert (await client.get("/api/initializers/custom")).status_code == 200
                 assert (await client.delete("/api/initializers/replacement")).status_code == 204
-                assert (await client.post("/api/initializers", json={
-                    "name": "replacement", "script_content": script.replace("saved_target", "repaired_target")
-                })).status_code == 201
+                assert (
+                    await client.post(
+                        "/api/initializers",
+                        json={
+                            "name": "replacement",
+                            "script_content": script.replace("saved_target", "repaired_target"),
+                        },
+                    )
+                ).status_code == 201
                 await client.post("/api/config/runtime/apply", json={"version": version})
                 await runtime.apply_task
                 assert runtime.state == "ready"

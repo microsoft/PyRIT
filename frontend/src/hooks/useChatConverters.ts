@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { buildConverterInputs } from '@/components/Chat/converterTypes'
 import { useRuntime } from '@/hooks/useRuntime'
@@ -174,7 +174,6 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   const activeRun = useRef<number | null>(null)
 
   if (state.generation !== generation) {
-    activeRun.current = null
     setState({
       ...state,
       generation,
@@ -191,6 +190,10 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   } else if (state.sourceInputs !== inputs) {
     setState(reconcileInputs(state, inputs))
   }
+
+  useEffect(() => {
+    activeRun.current = null
+  }, [generation])
 
   const setPipeline = useCallback((
     pieceType: string,

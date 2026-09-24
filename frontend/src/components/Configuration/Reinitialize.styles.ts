@@ -20,11 +20,7 @@ export const useReinitializeStyles = makeStyles({
       borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     },
   },
-  workLabel: {
-    width: '10rem',
-    fontWeight: tokens.fontWeightSemibold,
-  },
-  scenarioList: {
+  identifier: {
     overflowWrap: 'anywhere',
   },
 })

@@ -27,9 +27,18 @@ class RuntimeAdmissionMiddleware:
             return
         runtime: RuntimeLifecycle | None = getattr(scope["app"].state, "runtime_lifecycle", None)
         path = scope["path"]
-        if runtime is None or not path.startswith("/api/") or path in (
-            "/api/health", "/api/runtime", "/api/auth/config", "/api/auth/access",
-        ) or path.startswith("/api/auth/"):
+        if (
+            runtime is None
+            or not path.startswith("/api/")
+            or path
+            in (
+                "/api/health",
+                "/api/runtime",
+                "/api/auth/config",
+                "/api/auth/access",
+            )
+            or path.startswith("/api/auth/")
+        ):
             await self.app(scope, receive, send)
             return
         management = path == "/api/config" or path.startswith(("/api/config/", "/api/initializers"))
@@ -41,7 +50,8 @@ class RuntimeAdmissionMiddleware:
             or (path.startswith("/api/initializers") and runtime.edit_lock.locked())
             or (path.startswith("/api/initializers") and runtime.state == "initializing")
             or (
-                not management and runtime.state != "ready"
+                not management
+                and runtime.state != "ready"
                 and not (cancel and runtime.state in ("stopping", "blocked"))
             )
         ):

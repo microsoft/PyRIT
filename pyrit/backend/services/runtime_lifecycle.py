@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from pyrit.backend.models.initializers import ConfiguredInitializerSetting
+from pyrit.backend.services.attack_service import get_attack_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
@@ -34,8 +35,11 @@ class RuntimeLifecycle:
         """Bind lifecycle state to one app and its immutable configuration source."""
         self.app = app
         self.app.state.auth_environment = {
-            key: os.getenv(key, "") for key in (
-                "ENTRA_CLIENT_ID", "ENTRA_TENANT_ID", "ENTRA_ALLOWED_GROUP_IDS",
+            key: os.getenv(key, "")
+            for key in (
+                "ENTRA_CLIENT_ID",
+                "ENTRA_TENANT_ID",
+                "ENTRA_ALLOWED_GROUP_IDS",
                 "PYRIT_ALLOW_UNAUTHENTICATED_ADMIN",
             )
         }
@@ -67,17 +71,29 @@ class RuntimeLifecycle:
         service = peek_scenario_run_service()
         runs, preparing = service.active_work() if service else ([], 0)
         return {
-            "scenario_ids": runs, "preparing": preparing,
+            "scenario_ids": runs,
+            "preparing": preparing,
             "sends": sum(path.startswith("POST ") and "/messages" in path for path in self.operations.values()),
-            "requests": len(self.operations), "estimates": outstanding_estimates(),
+            "requests": len(self.operations),
+            "estimates": outstanding_estimates(),
         }
 
     def status(self) -> dict[str, Any]:
         """Return status recoverable after a disconnected apply."""
+        service = peek_scenario_run_service()
         return {
-            "state": self.state, "generation": self.generation, "version": self.version,
-            "outcome": self.outcome, "message": self.message, "enabled": self.enabled,
-            "work_revision": self.work_revision, "active_work": self.active_work(),
+            "state": self.state,
+            "generation": self.generation,
+            "version": self.version,
+            "outcome": self.outcome,
+            "message": self.message,
+            "enabled": self.enabled,
+            "work_revision": self.work_revision,
+            "active_work": self.active_work(),
+            "scenario_queue": service.scenario_queue() if service else [],
+            "active_chats": (
+                get_attack_service().recent_chat_activity() if get_attack_service.cache_info().currsize else []
+            ),
             "applying": self.apply_task is not None and not self.apply_task.done(),
         }
 
@@ -94,7 +110,8 @@ class RuntimeLifecycle:
             )
         self.app.state.environment_file_service = EnvironmentFileService(
             resolved_env_files=list(resolved) if resolved is not None else None,
-            env_akv_ref=config.env_akv_ref, env_akv_strict=config.env_akv_strict,
+            env_akv_ref=config.env_akv_ref,
+            env_akv_strict=config.env_akv_strict,
             read_only_file_sources=read_only,
         )
         self.app.state.allow_custom_initializers = config.allow_custom_initializers
@@ -143,14 +160,16 @@ class RuntimeLifecycle:
             dict[str, Any]: Accepted operation or admission rejection.
         """
         if not self.enabled:
-            return {**self.status(), "outcome": "unsupported", "message": (
-                "Reinitialization requires one backend worker and one replica."
-            )}
+            return {
+                **self.status(),
+                "outcome": "unsupported",
+                "message": ("Reinitialization requires one backend worker and one replica."),
+            }
         if (self.apply_task and not self.apply_task.done()) or self.edit_lock.locked() or self.management_operations:
             return {**self.status(), "outcome": "busy"}
-        self.apply_task = asyncio.create_task(self._apply_async(
-            version=version, stop_scenarios=stop_scenarios, work_revision=work_revision
-        ))
+        self.apply_task = asyncio.create_task(
+            self._apply_async(version=version, stop_scenarios=stop_scenarios, work_revision=work_revision)
+        )
         self.outcome, self.message = "validating", "Validating saved sources."
         return {**self.status(), "outcome": "accepted"}
 
@@ -168,8 +187,10 @@ class RuntimeLifecycle:
                     memory_db_type=config._MEMORY_DB_TYPE_MAP[config.memory_db_type], environment={}
                 )
                 values = await resolve_environment_async(
-                    env_files=config.resolve_env_files(), env_akv_ref=config.env_akv_ref,
-                    env_akv_strict=config.env_akv_strict, silent=True,
+                    env_files=config.resolve_env_files(),
+                    env_akv_ref=config.env_akv_ref,
+                    env_akv_strict=config.env_akv_strict,
+                    silent=True,
                 )
                 validate_reinitialization_memory(
                     memory_db_type=config._MEMORY_DB_TYPE_MAP[config.memory_db_type], environment=values
@@ -179,9 +200,11 @@ class RuntimeLifecycle:
                     self.outcome, self.message = "version-conflict", "Configuration changed during validation."
                     return
                 work = self.active_work()
-                if self.state != "blocked" and (
-                    work["scenario_ids"] or work["preparing"] or work["requests"] or work["estimates"]
-                ) and (not stop_scenarios or work_revision != self.work_revision):
+                if (
+                    self.state != "blocked"
+                    and (work["scenario_ids"] or work["preparing"] or work["requests"] or work["estimates"])
+                    and (not stop_scenarios or work_revision != self.work_revision)
+                ):
                     self.outcome, self.message = "confirmation-required", "Review current work and confirm stopping."
                     return
                 if self.state != "blocked":
@@ -214,7 +237,8 @@ class RuntimeLifecycle:
                     self.state = "failed"
                 self.message = (
                     "Initialization failed; runtime is blocked. Repair saved sources and retry."
-                    if mutated else "Configuration or memory settings are invalid. Memory changes require a restart."
+                    if mutated
+                    else "Configuration or memory settings are invalid. Memory changes require a restart."
                 )
             finally:
                 logger.info("PyRIT apply outcome=%s generation=%s", self.outcome, self.generation)

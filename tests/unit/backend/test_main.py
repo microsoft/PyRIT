@@ -33,9 +33,13 @@ def mock_scenario_run_lifecycle():
     """Mock scenario scheduling lifecycle hooks."""
     service = MagicMock(
         reconcile_interrupted_runs_async=AsyncMock(return_value=0),
-        shutdown_async=AsyncMock(),
+        active_work=MagicMock(return_value=([], 0)),
+        scenario_queue=MagicMock(return_value=[]),
     )
-    with patch("pyrit.backend.main.get_scenario_run_service", return_value=service):
+    with (
+        patch("pyrit.backend.services.runtime_lifecycle.get_scenario_run_service", return_value=service),
+        patch("pyrit.backend.services.runtime_lifecycle.peek_scenario_run_service", return_value=service),
+    ):
         yield service
 
 
@@ -115,7 +119,7 @@ class TestLifespan:
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False
             mock_scenario_run_lifecycle.reconcile_interrupted_runs_async.assert_awaited_once()
-            mock_scenario_run_lifecycle.shutdown_async.assert_awaited_once()
+            mock_scenario_run_lifecycle.request_stop.assert_called_once()
 
     async def test_lifespan_warns_when_custom_initializers_allowed(self, mock_scenario_run_lifecycle) -> None:
         """Test that lifespan logs a warning when allow_custom_initializers is enabled."""
@@ -143,7 +147,8 @@ class TestLifespan:
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
-            patch("pyrit.backend.main.get_scenario_run_service", return_value=service),
+            patch("pyrit.backend.services.runtime_lifecycle.get_scenario_run_service", return_value=service),
+            patch("pyrit.backend.services.runtime_lifecycle.peek_scenario_run_service", return_value=service),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):

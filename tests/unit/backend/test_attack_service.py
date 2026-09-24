@@ -1490,6 +1490,8 @@ class TestAddMessage:
     async def test_add_message_send_false_without_registry_name_succeeds(self, attack_service, mock_memory) -> None:
         """Test that add_message with send=False does not require target_registry_name."""
         ar = make_attack_result(conversation_id="test-id")
+        ar.operator = "alice"
+        ar.operation = "nightly"
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = []
         mock_memory.get_conversation_messages.return_value = []
@@ -1503,6 +1505,11 @@ class TestAddMessage:
 
         result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
         assert result.attack is not None
+        chats = attack_service.recent_chat_activity()
+        assert len(chats) == 1
+        assert chats[0]["conversation_id"] == "test-id"
+        assert chats[0]["operator"] == "alice"
+        assert chats[0]["operation"] == "nightly"
 
     async def test_add_message_with_send_sends_via_normalizer(self, attack_service, mock_memory) -> None:
         """Test that add_message with send=True sends message via normalizer."""

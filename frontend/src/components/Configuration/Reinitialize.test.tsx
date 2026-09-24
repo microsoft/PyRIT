@@ -24,6 +24,8 @@ function TestWrapper({ children }: { children: ReactNode }) {
 const ready: RuntimeStatus = {
   state: 'ready', generation: 'old', version: 'saved-v1', enabled: true, applying: false,
   outcome: 'success', message: 'PyRIT is ready.', work_revision: 4,
+  scenario_queue: [],
+  active_chats: [],
   active_work: { scenario_ids: [], preparing: 0, sends: 0, requests: 0, estimates: 0 },
 }
 const api = jest.mocked(configurationApi)
@@ -60,21 +62,53 @@ describe('Reinitialize', () => {
   it('requires explicit stop confirmation and sends the displayed version and work revision', async () => {
     const user = userEvent.setup()
     api.getRuntimeStatus.mockResolvedValue({
-      ...ready, active_work: { ...ready.active_work, scenario_ids: ['run-42'], preparing: 1, sends: 2 },
+      ...ready,
+      scenario_queue: [{
+        scenario_result_id: 'run-42',
+        scenario_name: 'red-team',
+        state: 'Running',
+        operator: 'alice',
+        operation: 'nightly',
+      }],
+      active_chats: [{
+        conversation_id: 'conversation-123',
+        operator: 'bob',
+        operation: 'manual-testing',
+        last_activity: new Date().toISOString(),
+      }],
+      active_work: { ...ready.active_work, scenario_ids: ['run-42'], sends: 1 },
     })
     render(<TestWrapper><Reinitialize version="saved-v1" hasUnsavedChanges={false} /></TestWrapper>)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
     const dialog = await screen.findByRole('dialog')
-    const table = within(dialog).getByRole('table', { name: 'Active runtime work' })
-    expect(within(table).getByText('Scenarios')).toBeInTheDocument()
-    expect(within(table).getByText('run-42')).toBeInTheDocument()
-    expect(within(table).getByText('Preparing')).toBeInTheDocument()
+    const scenarioTable = within(dialog).getByRole('table', { name: 'Scenario Queue' })
+    expect(within(scenarioTable).getByText('run-42')).toBeInTheDocument()
+    expect(within(scenarioTable).getByText('Running')).toBeInTheDocument()
+    expect(within(scenarioTable).getByText('alice')).toBeInTheDocument()
+    expect(within(scenarioTable).getByText('nightly')).toBeInTheDocument()
+    const chatTable = within(dialog).getByRole('table', { name: 'Active chats' })
+    expect(within(chatTable).getByText('conversation-123')).toBeInTheDocument()
+    expect(within(chatTable).getByText('bob')).toBeInTheDocument()
+    expect(within(chatTable).getByText('manual-testing')).toBeInTheDocument()
+    expect(within(chatTable).getByText('Just now')).toBeInTheDocument()
     expect(within(dialog).queryByText(/Preparation threads/)).not.toBeInTheDocument()
     expect(api.reinitialize).not.toHaveBeenCalled()
     await user.click(within(dialog).getByRole('button', { name: 'Stop scenarios and reinitialize' }))
     await waitFor(() => expect(api.reinitialize).toHaveBeenCalledWith('saved-v1', true, 4))
     expect(await screen.findByText(/Runtime: stopping/)).toBeInTheDocument()
+  })
+
+  it('uses concise empty states instead of empty tables', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><Reinitialize version="saved-v1" hasUnsavedChanges={false} /></TestWrapper>)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).queryByRole('table', { name: 'Scenario Queue' })).not.toBeInTheDocument()
+    expect(within(dialog).getByText('There are currently no scenarios in the queue.')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('table', { name: 'Active chats' })).not.toBeInTheDocument()
+    expect(within(dialog).getByText('There are no active chats.')).toBeInTheDocument()
   })
 
   it('keeps retry and pending cancellation available after a drain timeout', async () => {

@@ -10,6 +10,7 @@ retrieving results, and cancellation.
 
 import asyncio
 import base64
+import contextlib
 import functools
 import json
 import logging
@@ -143,11 +144,13 @@ class _ActiveTask:
     """Tracks an in-flight scenario run's asyncio task."""
 
     scenario_result_id: str
+    scenario_name: str = ""
+    operator: str | None = None
+    operation: str | None = None
     task: asyncio.Task[None] | None = None
     scenario: Scenario | None = None
     adversarial_target: PromptTarget | None = None
     error: str | None = None
-    scenario_name: str = ""
     scenario_registry_name: str = ""
     created_at: datetime | None = None
     enqueued_at: datetime | None = None
@@ -207,6 +210,8 @@ class ScenarioRunService:
         # which is the point of the offload.
         self._prepare_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pyrit-scenario-prep")
         self._preparations: set[asyncio.Future[_PreparedRun]] = set()
+        self._preparation_items: dict[asyncio.Future[_PreparedRun], dict[str, str | None]] = {}
+        self._failed_stops: dict[str, _ActiveTask] = {}
         self._terminal_errors: OrderedDict[str, str] = OrderedDict()
         self._active_scenario_result_id: str | None = None
         self._queued_runs: deque[_ActiveTask] = deque()
@@ -225,15 +230,62 @@ class ScenarioRunService:
         scenario_ids = [
             *([self._active_scenario_result_id] if self._active_scenario_result_id else []),
             *(run.scenario_result_id for run in self._queued_runs),
+            *self._failed_stops,
         ]
-        return scenario_ids, len(self._preparations) + len(self._stop_tasks) + len(self._handoff_retry_tasks)
+        return list(dict.fromkeys(scenario_ids)), (
+            len(self._preparations) + len(self._stop_tasks) + len(self._handoff_retry_tasks) + len(self._failed_stops)
+        )
+
+    def scenario_queue(self) -> list[dict[str, str | None]]:
+        """Return scenarios that are preparing, running, or stopping."""
+        queued = [
+            {
+                **item,
+                "state": "Preparing",
+            }
+            for preparation, item in self._preparation_items.items()
+            if not preparation.done()
+        ]
+        queued.extend(
+            {
+                "scenario_result_id": active.scenario_result_id,
+                "scenario_name": active.scenario_name,
+                "state": "Stopping" if self._stopping else "Running",
+                "operator": active.operator,
+                "operation": active.operation,
+            }
+            for active in self._active_tasks.values()
+            if active.task is not None and not active.task.done()
+        )
+        queued.extend(
+            {
+                "scenario_result_id": item.scenario_result_id,
+                "scenario_name": item.scenario_name,
+                "state": "Stopping" if self._stopping else "Queued",
+                "operator": item.operator,
+                "operation": item.operation,
+            }
+            for item in self._queued_runs
+        )
+        queued.extend(
+            {
+                "scenario_result_id": item.scenario_result_id,
+                "scenario_name": item.scenario_name,
+                "state": "Stopping",
+                "operator": item.operator,
+                "operation": item.operation,
+            }
+            for item in self._failed_stops.values()
+        )
+        return queued
 
     def request_stop(self) -> None:
         """Stop admission and request cancellation for all scheduled scenarios."""
-        if self._stopping:
+        if self._stopping and any(not task.done() for task in self._stop_tasks):
             return
-        self._stopping = True
-        self._stop_epoch += 1
+        if not self._stopping:
+            self._stopping = True
+            self._stop_epoch += 1
         stop_task = asyncio.create_task(self._stop_scenarios_async())
         self._stop_tasks.add(stop_task)
         stop_task.add_done_callback(self._stop_tasks.discard)
@@ -242,6 +294,24 @@ class ScenarioRunService:
         active_task: asyncio.Task[None] | None = None
         retry_tasks: list[asyncio.Task[None]] = []
         async with self._scheduler_lock:
+            for scenario_result_id in tuple(self._failed_stops):
+                try:
+                    await asyncio.to_thread(
+                        self._memory.try_update_scenario_run_state,
+                        scenario_result_id=scenario_result_id,
+                        expected_states={
+                            ScenarioRunState.CREATED,
+                            ScenarioRunState.QUEUED,
+                            ScenarioRunState.IN_PROGRESS,
+                        },
+                        scenario_run_state=ScenarioRunState.CANCELLED,
+                        error_message="Stopped for PyRIT reinitialization.",
+                        error_type="CancelledError",
+                    )
+                except Exception:
+                    logger.exception("Could not persist scenario %s cancellation.", scenario_result_id)
+                else:
+                    self._failed_stops.pop(scenario_result_id, None)
             for queued in tuple(self._queued_runs):
                 try:
                     await asyncio.to_thread(
@@ -278,9 +348,30 @@ class ScenarioRunService:
     def reopen(self) -> None:
         """Reopen admission without restarting scenarios cancelled during draining."""
         self._stopping = False
+        if self._failed_stops:
+            retry_task = asyncio.create_task(self._retry_failed_stops_async())
+            self._stop_tasks.add(retry_task)
+            retry_task.add_done_callback(self._stop_tasks.discard)
         for active in tuple(self._active_tasks.values()):
             if active.task is not None and active.task.done():
                 self._schedule_terminalization_retry(active=active)
+
+    async def _retry_failed_stops_async(self) -> None:
+        """Retry cancellation persistence after a pending apply is cancelled."""
+        for scenario_result_id, failed in tuple(self._failed_stops.items()):
+            try:
+                await asyncio.to_thread(
+                    self._memory.try_update_scenario_run_state,
+                    scenario_result_id=scenario_result_id,
+                    expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED, ScenarioRunState.IN_PROGRESS},
+                    scenario_run_state=ScenarioRunState.CANCELLED,
+                    error_message=failed.cancellation_reason,
+                    error_type=failed.cancellation_error_type,
+                )
+            except Exception:
+                logger.exception("Could not persist scenario %s cancellation.", scenario_result_id)
+            else:
+                self._failed_stops.pop(scenario_result_id, None)
 
     async def close_async(self) -> None:
         """Close a service only after all tracked work has drained."""
@@ -444,7 +535,14 @@ class ScenarioRunService:
             functools.partial(self._prepare_run_blocking, request=request),
         )
         self._preparations.add(prepare_task)
-        prepare_task.add_done_callback(self._preparations.discard)
+        labels = request.labels or {}
+        self._preparation_items[prepare_task] = {
+            "scenario_result_id": request.scenario_result_id,
+            "scenario_name": request.scenario_name,
+            "operator": labels.get("operator"),
+            "operation": labels.get("operation"),
+        }
+        prepare_task.add_done_callback(self._discard_preparation)
         if request.scenario_result_id:
             prepare_task.add_done_callback(lambda _: self._preparing_run_ids.discard(request.scenario_result_id or ""))
         try:
@@ -466,14 +564,24 @@ class ScenarioRunService:
         if request.scenario_result_id and scenario_result_id != request.scenario_result_id:
             raise ValueError("Scenario initialization changed the saved result ID; resume was not started.")
         if admitted_epoch != self._stop_epoch:
-            await asyncio.to_thread(
-                self._memory.try_update_scenario_run_state,
+            stopped = _ActiveTask(
                 scenario_result_id=scenario_result_id,
-                expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED},
-                scenario_run_state=ScenarioRunState.CANCELLED,
-                error_message="Stopped for PyRIT reinitialization.",
-                error_type="CancelledError",
+                scenario_name=request.scenario_name,
+                operator=labels.get("operator"),
+                operation=labels.get("operation"),
             )
+            try:
+                await asyncio.to_thread(
+                    self._memory.try_update_scenario_run_state,
+                    scenario_result_id=scenario_result_id,
+                    expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED},
+                    scenario_run_state=ScenarioRunState.CANCELLED,
+                    error_message="Stopped for PyRIT reinitialization.",
+                    error_type="CancelledError",
+                )
+            except Exception:
+                self._failed_stops[scenario_result_id] = stopped
+                raise
             raise RuntimeError("Scenario preparation stopped for PyRIT reinitialization.")
         persisted = await asyncio.to_thread(
             self._memory.get_scenario_results,
@@ -507,6 +615,8 @@ class ScenarioRunService:
             raise RuntimeError(f"Scenario run {scenario_result_id} was not found in the database after initialization.")
         scheduled = _ActiveTask(
             scenario_result_id=scenario_result_id,
+            operator=labels.get("operator"),
+            operation=labels.get("operation"),
             scenario=scenario,
             adversarial_target=prepared.adversarial_target,
             scenario_name=persisted[0].scenario_name,
@@ -527,6 +637,10 @@ class ScenarioRunService:
         if response is None:
             raise RuntimeError(f"Scenario run {scenario_result_id} was not found in the database after initialization.")
         return response
+
+    def _discard_preparation(self, preparation: asyncio.Future[_PreparedRun]) -> None:
+        self._preparations.discard(preparation)
+        self._preparation_items.pop(preparation, None)
 
     def _is_run_cancelled(self, *, scenario_result_id: str | None) -> bool:
         """
@@ -577,7 +691,10 @@ class ScenarioRunService:
                     error_message="The start request was cancelled while the scenario was being initialized.",
                 )
             except Exception as update_error:
-                self._failed_stops[scenario_result_id] = _ActiveTask(scenario_result_id=scenario_result_id)
+                self._failed_stops[scenario_result_id] = _ActiveTask(
+                    scenario_result_id=scenario_result_id,
+                    cancellation_reason="The start request was cancelled while the scenario was being initialized.",
+                )
                 logger.warning(
                     f"Could not mark abandoned scenario run {scenario_result_id} as cancelled: {update_error}"
                 )

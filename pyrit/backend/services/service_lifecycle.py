@@ -25,7 +25,11 @@ async def close_services_async() -> None:
         await get_converter_service().close_async()
     await reset_scenario_run_service_async()
     for factory in (
-        get_attack_service, get_converter_service, get_dataset_service,
-        get_initializer_service, get_scenario_service, get_target_service,
+        get_attack_service,
+        get_converter_service,
+        get_dataset_service,
+        get_initializer_service,
+        get_scenario_service,
+        get_target_service,
     ):
         factory.cache_clear()
