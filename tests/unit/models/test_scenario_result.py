@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from pyrit.models import (
     ComponentIdentifier,
@@ -144,6 +144,90 @@ class TestScenarioResult:
         assert sr.objective_achieved_rate(atomic_attack_name="s1") == 100
         assert sr.objective_achieved_rate(atomic_attack_name="s2") == 0
         assert sr.objective_achieved_rate(atomic_attack_name="missing") == 0
+
+    def _attempt(self, *, outcome, objective="obj", minutes=0, seed_group_id=None):
+        return AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective=objective,
+            outcome=outcome,
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC) + timedelta(minutes=minutes),
+            attribution_data={"seed_group_id": seed_group_id} if seed_group_id else None,
+        )
+
+    def _scenario(self, attack_results):
+        return make_scenario_result(
+            scenario_name="TestScenario",
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
+            attack_results=attack_results,
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
+        )
+
+    def test_objective_achieved_rate_ignores_errors_recovered_by_retry(self):
+        sr = self._scenario(
+            {
+                "s1": [
+                    self._attempt(outcome=AttackOutcome.SUCCESS, objective="a", minutes=0),
+                    self._attempt(outcome=AttackOutcome.ERROR, objective="b", minutes=1),
+                    self._attempt(outcome=AttackOutcome.ERROR, objective="b", minutes=2),
+                    self._attempt(outcome=AttackOutcome.SUCCESS, objective="b", minutes=3),
+                ]
+            }
+        )
+
+        assert sr.objective_achieved_rate() == 100
+        assert sr.objective_achieved_rate(atomic_attack_name="s1") == 100
+        assert [r.objective for r in sr.get_latest_attack_results()["s1"]] == ["a", "b"]
+
+    def test_objective_achieved_rate_counts_unrecovered_error_once(self):
+        sr = self._scenario(
+            {
+                "s1": [
+                    self._attempt(outcome=AttackOutcome.SUCCESS, objective="a", minutes=0),
+                    self._attempt(outcome=AttackOutcome.ERROR, objective="b", minutes=1),
+                    self._attempt(outcome=AttackOutcome.ERROR, objective="b", minutes=2),
+                ]
+            }
+        )
+
+        latest = sr.get_latest_attack_results()["s1"]
+        assert [r.outcome for r in latest] == [AttackOutcome.SUCCESS, AttackOutcome.ERROR]
+        assert sr.objective_achieved_rate() == 50
+
+    def test_errors_are_only_superseded_within_the_same_seed_group(self):
+        sr = self._scenario(
+            {
+                "s1": [
+                    self._attempt(outcome=AttackOutcome.ERROR, objective="same", minutes=0, seed_group_id="g1"),
+                    self._attempt(outcome=AttackOutcome.SUCCESS, objective="same", minutes=1, seed_group_id="g2"),
+                ]
+            }
+        )
+
+        assert len(sr.get_latest_attack_results()["s1"]) == 2
+        assert sr.objective_achieved_rate() == 50
+
+    def test_errors_are_only_superseded_within_the_same_atomic_attack(self):
+        sr = self._scenario(
+            {
+                "s1": [self._attempt(outcome=AttackOutcome.ERROR, objective="same", minutes=0)],
+                "s2": [self._attempt(outcome=AttackOutcome.SUCCESS, objective="same", minutes=1)],
+            }
+        )
+
+        assert sr.objective_achieved_rate() == 50
+
+    def test_get_display_groups_latest_attempts_only(self):
+        sr = self._scenario(
+            {
+                "s1": [
+                    self._attempt(outcome=AttackOutcome.ERROR, objective="b", minutes=0),
+                    self._attempt(outcome=AttackOutcome.SUCCESS, objective="b", minutes=1),
+                ]
+            }
+        )
+
+        assert len(sr.get_display_groups()["s1"]) == 2
+        assert [r.outcome for r in sr.get_display_groups(latest_attempts_only=True)["s1"]] == [AttackOutcome.SUCCESS]
 
     def test_normalize_scenario_name_snake_case(self):
         assert ScenarioResult.normalize_scenario_name("content_harms") == "ContentHarms"

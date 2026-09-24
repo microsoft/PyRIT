@@ -118,11 +118,12 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         target = resolve_target_info(result.objective_target_identifier)
 
         display_groups = result.get_display_groups()
+        latest_groups = result.get_display_groups(latest_attempts_only=True)
         groups = [
             {
                 "name": group_name,
                 "num_results": len(group_results),
-                "success_rate": group_success_rate(group_results),
+                "success_rate": group_success_rate(latest_groups.get(group_name, [])),
             }
             for group_name, group_results in display_groups.items()
         ]

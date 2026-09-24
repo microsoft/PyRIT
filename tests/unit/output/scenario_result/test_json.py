@@ -3,6 +3,7 @@
 
 import json
 import uuid
+from datetime import timedelta
 
 import pytest
 from unit.mocks import make_scenario_result
@@ -84,6 +85,19 @@ async def test_overview_reports_scenario_and_stats(printer):
     assert payload["stats"]["total_results"] == 3
     assert payload["stats"]["unique_objectives"] == 1
     assert {g["name"] for g in payload["groups"]} == {"technique_a", "technique_b"}
+
+
+async def test_overview_success_rates_ignore_errors_recovered_by_retry(printer):
+    error = _attack_result(outcome=AttackOutcome.ERROR, objective="obj")
+    retried = _attack_result(outcome=AttackOutcome.SUCCESS, objective="obj")
+    retried.timestamp = error.timestamp + timedelta(seconds=1)
+    result = _scenario_result(attack_results={"technique_a": [error, retried]})
+
+    payload = json.loads(await printer.render_async(result))
+
+    assert payload["stats"]["overall_success_rate"] == 100
+    assert payload["stats"]["total_results"] == 2
+    assert payload["groups"] == [{"name": "technique_a", "num_results": 2, "success_rate": 100}]
 
 
 async def test_overview_prefers_underlying_model_name(printer):

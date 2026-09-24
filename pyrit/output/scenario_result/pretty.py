@@ -214,9 +214,10 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
 
         lines.append(self._render_section_header("Per-Group Breakdown"))
         display_groups = result.get_display_groups()
+        latest_groups = result.get_display_groups(latest_attempts_only=True)
 
         group_summaries: list[tuple[str, int, int]] = [
-            (group_name, len(group_results), group_success_rate(group_results))
+            (group_name, len(group_results), group_success_rate(latest_groups.get(group_name, [])))
             for group_name, group_results in display_groups.items()
         ]
 
