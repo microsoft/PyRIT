@@ -7,10 +7,10 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-import requests
+import httpx
 
 
-def get_http_target_json_response_callback_function(key: str) -> Callable[[requests.Response], str]:
+def get_http_target_json_response_callback_function(key: str) -> Callable[[httpx.Response], str]:
     """
     Determine proper parsing response function for an HTTP Request.
 
@@ -24,7 +24,7 @@ def get_http_target_json_response_callback_function(key: str) -> Callable[[reque
         Callable: proper output parsing response
     """
 
-    def parse_json_http_response(response: requests.Response) -> str:
+    def parse_json_http_response(response: httpx.Response) -> str:
         """
         Parse JSON outputs.
 
@@ -43,7 +43,7 @@ def get_http_target_json_response_callback_function(key: str) -> Callable[[reque
 
 def get_http_target_regex_matching_callback_function(
     key: str, url: str | None = None
-) -> Callable[[requests.Response], str]:
+) -> Callable[[httpx.Response], str]:
     """
     Get a callback function that parses HTTP responses using regex matching.
 
@@ -55,7 +55,7 @@ def get_http_target_regex_matching_callback_function(
         Callable: A function that parses responses using the provided regex pattern.
     """
 
-    def parse_using_regex(response: requests.Response) -> str:
+    def parse_using_regex(response: httpx.Response) -> str:
         """
         Parse text outputs using regex.
 
