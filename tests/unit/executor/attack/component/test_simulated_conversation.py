@@ -70,6 +70,12 @@ def mock_objective_scorer() -> MagicMock:
 
 
 @pytest.fixture
+def adversarial_system_prompt() -> SeedPrompt:
+    """Return a valid, already-resolved adversarial chat system prompt for testing."""
+    return SeedPrompt.from_yaml_file(RTASystemPromptPaths.TEXT_GENERATION.value)
+
+
+@pytest.fixture
 def adversarial_system_prompt_path() -> Path:
     """Return a valid adversarial chat system prompt path for testing."""
     return RTASystemPromptPaths.TEXT_GENERATION.value
@@ -126,7 +132,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
     ):
         """Test that zero num_turns raises ValueError."""
         with pytest.raises(ValueError, match="num_turns must be a positive integer"):
@@ -134,7 +140,7 @@ class TestGenerateSimulatedConversationAsync:
                 objective="Test objective",
                 adversarial_chat=mock_adversarial_chat,
                 objective_scorer=mock_objective_scorer,
-                adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                adversarial_chat_system_prompt=adversarial_system_prompt,
                 num_turns=0,
             )
 
@@ -142,7 +148,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
     ):
         """Test that negative num_turns raises ValueError."""
         with pytest.raises(ValueError, match="num_turns must be a positive integer"):
@@ -150,15 +156,59 @@ class TestGenerateSimulatedConversationAsync:
                 objective="Test objective",
                 adversarial_chat=mock_adversarial_chat,
                 objective_scorer=mock_objective_scorer,
-                adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                adversarial_chat_system_prompt=adversarial_system_prompt,
                 num_turns=-1,
             )
+
+    async def test_deprecated_system_prompt_path_still_resolves_and_warns(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        sample_conversation: list[Message],
+    ):
+        """Test that the deprecated adversarial_chat_system_prompt_path still works and warns."""
+        with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
+            mock_attack = MagicMock()
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
+            mock_attack.execute_async = AsyncMock(
+                return_value=AttackResult(
+                    atomic_attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
+                    conversation_id=str(uuid.uuid4()),
+                    objective="Test objective",
+                    outcome=AttackOutcome.SUCCESS,
+                    executed_turns=3,
+                )
+            )
+            mock_attack_class.return_value = mock_attack
+
+            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+                mock_memory = MagicMock()
+                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory_class.get_memory_instance.return_value = mock_memory
+
+                with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
+                    await generate_simulated_conversation_async(
+                        objective="Test objective",
+                        adversarial_chat=mock_adversarial_chat,
+                        objective_scorer=mock_objective_scorer,
+                        adversarial_chat_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
+                        num_turns=3,
+                    )
+
+                call_kwargs = mock_attack_class.call_args.kwargs
+                resolved_prompt = call_kwargs["attack_adversarial_config"].system_prompt
+                expected_prompt = SeedPrompt.from_yaml_file(RTASystemPromptPaths.TEXT_GENERATION.value)
+                assert resolved_prompt.value == expected_prompt.value
 
     async def test_uses_adversarial_chat_as_simulated_target(
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that the same adversarial_chat is used as simulated target."""
@@ -190,7 +240,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                 )
 
@@ -199,11 +249,58 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["objective_target"] == mock_adversarial_chat
 
+    async def test_passes_system_prompt_to_adversarial_config(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        adversarial_system_prompt: SeedPrompt,
+        sample_conversation: list[Message],
+    ):
+        """Test that adversarial_chat_system_prompt is forwarded as-is onto the adversarial config."""
+        with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
+            mock_attack = MagicMock()
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
+            mock_attack.execute_async = AsyncMock(
+                return_value=AttackResult(
+                    atomic_attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
+                    conversation_id=str(uuid.uuid4()),
+                    objective="Test objective",
+                    outcome=AttackOutcome.SUCCESS,
+                    executed_turns=3,
+                )
+            )
+            mock_attack_class.return_value = mock_attack
+
+            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+                mock_memory = MagicMock()
+                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory_class.get_memory_instance.return_value = mock_memory
+
+                await generate_simulated_conversation_async(
+                    objective="Test objective",
+                    adversarial_chat=mock_adversarial_chat,
+                    objective_scorer=mock_objective_scorer,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
+                    num_turns=3,
+                )
+
+                call_kwargs = mock_attack_class.call_args.kwargs
+                adversarial_config = call_kwargs["attack_adversarial_config"]
+                # This function no longer composes a prefix itself - callers are expected to pass
+                # an already-resolved adversarial_chat_system_prompt (e.g. via
+                # SeedSimulatedConversation.with_layered_prefix) before calling in.
+                assert adversarial_config.system_prompt is adversarial_system_prompt
+                assert adversarial_config.system_prompt_prefix is None
+
     async def test_creates_attack_with_score_last_turn_only_true(
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that the attack is created with score_last_turn_only=True."""
@@ -234,7 +331,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                 )
 
@@ -246,7 +343,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that the attack is created with the specified num_turns as max_turns."""
@@ -277,7 +374,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=5,
                 )
 
@@ -289,7 +386,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that the function returns a list of SeedPrompts."""
@@ -324,7 +421,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                 )
 
@@ -340,7 +437,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that the simulated target system prompt is passed via prepended_conversation."""
@@ -372,7 +469,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     simulated_target_system_prompt_path=SimulatedTargetSystemPromptPaths.COMPLIANT.value,
                     num_turns=3,
                 )
@@ -389,7 +486,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that memory_labels are passed to attack.execute_async."""
@@ -422,7 +519,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     memory_labels=memory_labels,
                 )
@@ -436,7 +533,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ) -> None:
         """The transient helper retains both sides of its conversation lineage."""
@@ -468,7 +565,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                 )
 
         assert {
@@ -482,7 +579,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that attack_converter_config is passed to RedTeamingAttack."""
@@ -515,7 +612,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     attack_converter_config=converter_config,
                 )
@@ -528,7 +625,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that a system message is prepended when executing the attack."""
@@ -560,7 +657,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     simulated_target_system_prompt_path=SimulatedTargetSystemPromptPaths.COMPLIANT.value,
                     num_turns=3,
                 )
@@ -576,7 +673,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that default num_turns is 3."""
@@ -608,7 +705,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                 )
 
                 # Verify default max_turns is 3
@@ -619,7 +716,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that next_message_system_prompt_path generates a final user message via LLM call."""
@@ -676,7 +773,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
                 )
@@ -703,7 +800,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that next_message_system_prompt_path sets a system prompt on adversarial_chat."""
@@ -758,7 +855,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
                 )
@@ -770,7 +867,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Regression: the next-message system prompt must be scoped to a concrete conversation id.
@@ -830,7 +927,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
                 )
@@ -849,7 +946,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that starting_sequence sets the sequence number of the first prompt."""
@@ -882,7 +979,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     starting_sequence=5,
                 )

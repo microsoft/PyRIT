@@ -1,6 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import math
+
+import pytest
+
 from pyrit.analytics.text_matching import ApproximateTextMatching, ExactTextMatching
 
 
@@ -113,6 +117,16 @@ class TestApproximateTextMatching:
         # Partial match should be between 0 and 1
         score = matcher.get_overlap_score(target="hello", text="hallo")
         assert 0.0 < score < 1.0
+
+    @pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf, -0.1, 1.1])
+    def test_invalid_threshold_rejected(self, threshold):
+        with pytest.raises(ValueError, match="threshold"):
+            ApproximateTextMatching(threshold=threshold)
+
+    @pytest.mark.parametrize("threshold", [0.0, 1.0])
+    def test_boundary_threshold_accepted(self, threshold):
+        matcher = ApproximateTextMatching(threshold=threshold)
+        assert matcher.is_match(target="hello", text="hello world") is True
 
     def test_default_parameters(self):
         matcher = ApproximateTextMatching()  # Default threshold=0.5, n=3, case_sensitive=False

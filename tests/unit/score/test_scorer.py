@@ -12,6 +12,7 @@ from unit.mocks import get_mock_target_identifier, store_message
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    AnswerMatches,
     ChatMessageRole,
     ComponentIdentifier,
     ContentScorable,
@@ -1687,6 +1688,19 @@ class TestLegacyDirectScorerSubclass:
 
         assert len(scores) == 1
         assert scorer.scored_messages[0].get_value() == "legacy response"
+
+    async def test_legacy_base_cannot_drop_matched_conditions_async(self, patch_central_database) -> None:
+        legacy_class = self._build_legacy_scorer_class()
+        with pytest.warns(DeprecationWarning):
+            scorer = legacy_class(validator=DummyValidator())
+        expectation = ScoringExpectation(conditions=(AnswerMatches(correct_answer="Paris"),))
+        with (
+            patch.object(legacy_class, "CONDITION_TYPE", AnswerMatches),
+            pytest.warns(DeprecationWarning, match="_score_async"),
+            pytest.raises(RuntimeError, match="matched typed conditions"),
+        ):
+            await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+        assert scorer.scored_messages == []
 
     async def test_legacy_piece_only_scorer_is_adapted(self, patch_central_database):
         class LegacyPieceScorer(TrueFalseScorer):

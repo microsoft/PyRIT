@@ -125,6 +125,7 @@ def _score(*, value: bool, name: str, rationale: str) -> Score:
 def _scorer(name: str) -> MagicMock:
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_async = AsyncMock()
+    scorer.prepare_expectation.side_effect = lambda *, expectation: expectation
     scorer.get_identifier.return_value = _identifier(name)
     return scorer
 

@@ -96,6 +96,7 @@ from pyrit.models import (
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
+    SeedObjective,
     SeedType,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
@@ -107,6 +108,9 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+#: Canonical criteria key of a seed that carries no conditions.
+_NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
 
 
 Model = TypeVar("Model")
@@ -3528,8 +3532,12 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Seeds already present in storage are skipped. Duplicates *within* ``seeds`` are all
-        inserted, because the check looks at what storage held when the call started.
+        Seeds with the same value hash, dataset, and canonical conditions already present
+        in storage are skipped. Duplicates *within* ``seeds`` are all inserted, because the
+        check looks at what storage held when the call started.
+        Groups introducing new objective criteria retain the other seeds in the same group
+        even when their content is already stored in another group. When a stored seed is
+        copied to a new group, its caller-visible ID is updated after successful insertion.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -3543,25 +3551,101 @@ class MemoryInterface(abc.ABC):
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
         existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
+        new_condition_group_ids = self._get_new_condition_group_ids(
+            seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
+        )
+        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in new_condition_group_ids]
+        stored_groups = (
+            {
+                entry.id: entry.prompt_group_id
+                for entry in self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.id, batch_values=retained_seed_ids
+                )
+            }
+            if retained_seed_ids
+            else {}
+        )
 
         entries: MutableSequence[SeedEntry] = []
+        copied_seed_ids: list[tuple[Seed, uuid.UUID]] = []
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
+            conditions_key = self._seed_conditions_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
-            if prompt.dataset_name:
-                if (prompt.value_sha256, prompt.dataset_name) in existing_pairs:
+            if prompt.prompt_group_id in new_condition_group_ids:
+                if prompt.id in stored_groups and stored_groups[prompt.id] == prompt.prompt_group_id:
                     continue
-            elif prompt.value_sha256 in existing_hashes:
+                entry = SeedEntry(entry=prompt)
+                if prompt.id in stored_groups:
+                    entry.id = uuid.uuid4()
+                    copied_seed_ids.append((prompt, entry.id))
+                entries.append(entry)
+                continue
+            if prompt.dataset_name:
+                if (prompt.value_sha256, prompt.dataset_name, conditions_key) in existing_pairs:
+                    continue
+            elif (prompt.value_sha256, conditions_key) in existing_hashes:
                 continue
             entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
+        for prompt, new_id in copied_seed_ids:
+            prompt.id = new_id
 
-    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed]) -> tuple[set[tuple[str, str]], set[str]]:
+    @staticmethod
+    def _seed_conditions_key(seed: Seed) -> str:
         """
-        Look up which of these seeds' hashes are already stored.
+        Serialize criteria canonically, preserving condition order.
+
+        Returns:
+            str: Canonical JSON used for criteria identity.
+        """
+        conditions = seed.model_dump(mode="json", include={"conditions"}).get("conditions", [])
+        if not conditions:
+            return _NO_CONDITIONS_KEY
+        return json.dumps(conditions, sort_keys=True, separators=(",", ":"))
+
+    def _get_new_condition_group_ids(
+        self,
+        *,
+        seeds: Sequence[Seed],
+        existing_pairs: set[tuple[str, str, str]],
+        existing_hashes: set[tuple[str, str]],
+    ) -> set[uuid.UUID]:
+        """
+        Identify groups whose newly authored criteria require retaining all input seeds.
+
+        Other seeds in the same group do not own conditions. Their ordinary content
+        deduplication must not strip them from a new condition-bearing group, or from a group that
+        removes previously stored criteria. Purely condition-free loading is unchanged.
+
+        Returns:
+            set[uuid.UUID]: Group IDs whose complete input membership must be retained.
+        """
+        conditions_by_value: dict[tuple[str, str | None], set[str]] = {}
+        for value_hash, dataset, conditions in existing_pairs:
+            conditions_by_value.setdefault((value_hash, dataset), set()).add(conditions)
+        for value_hash, conditions in existing_hashes:
+            conditions_by_value.setdefault((value_hash, None), set()).add(conditions)
+
+        group_ids: set[uuid.UUID] = set()
+        for seed in seeds:
+            if not isinstance(seed, SeedObjective) or seed.prompt_group_id is None or not seed.value_sha256:
+                continue
+            stored_conditions = conditions_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
+            if self._seed_conditions_key(seed) in stored_conditions:
+                continue
+            if seed.conditions or stored_conditions - {_NO_CONDITIONS_KEY}:
+                group_ids.add(seed.prompt_group_id)
+        return group_ids
+
+    def _get_existing_seed_keys(
+        self, *, seeds: Sequence[Seed]
+    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
+        """
+        Look up which value hashes and canonical conditions are already stored.
 
         Queries in chunks rather than once per seed, which otherwise dominates the cost of
         loading a large dataset. ``get_seeds`` issues the statement directly instead of going
@@ -3578,9 +3662,9 @@ class MemoryInterface(abc.ABC):
             seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
 
         Returns:
-            tuple[set[tuple[str, str]], set[str]]: The stored (value_sha256, dataset_name)
-                pairs keyed by the requested dataset name, and the stored hashes irrespective
-                of dataset.
+            tuple[set[tuple[str, str, str]], set[tuple[str, str]]]: The stored
+                (value_sha256, dataset_name, conditions) keys, using the requested
+                dataset name, and (value_sha256, conditions) keys irrespective of dataset.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
         for prompt in seeds:
@@ -3590,8 +3674,8 @@ class MemoryInterface(abc.ABC):
                 # cannot disagree.
                 hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
 
-        existing_pairs: set[tuple[str, str]] = set()
-        existing_hashes: set[str] = set()
+        existing_pairs: set[tuple[str, str, str]] = set()
+        existing_hashes: set[tuple[str, str]] = set()
         for dataset_name, dataset_hashes in hashes_by_dataset.items():
             hashes = sorted(dataset_hashes)
             # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
@@ -3602,13 +3686,14 @@ class MemoryInterface(abc.ABC):
                 for existing in self.get_seeds(value_sha256=chunk, dataset_name=dataset_name):
                     if not existing.value_sha256:
                         continue
+                    conditions_key = self._seed_conditions_key(existing)
                     if dataset_name:
                         # The database decided the name matched, so record the name that was
                         # asked for; the stored spelling can differ under a case-insensitive
                         # collation.
-                        existing_pairs.add((existing.value_sha256, dataset_name))
+                        existing_pairs.add((existing.value_sha256, dataset_name, conditions_key))
                     else:
-                        existing_hashes.add(existing.value_sha256)
+                        existing_hashes.add((existing.value_sha256, conditions_key))
 
         return existing_pairs, existing_hashes
 
