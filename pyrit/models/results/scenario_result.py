@@ -11,70 +11,15 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from pyrit.common.deprecation import print_deprecation_message
+
 # Runtime-required by Pydantic field / computed-field annotations.
-from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
-from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier  # noqa: TC001
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier  # noqa: TC001
 from pyrit.models.identifiers.target_identifier import TargetIdentifier  # noqa: TC001
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 
 logger = logging.getLogger(__name__)
-
-
-def _attempt_unit_key(attack_result: AttackResult) -> str:
-    """
-    Return the execution unit (seed group, falling back to objective) an attack attempt belongs to.
-
-    Mirrors the unit identity the GUI progress read model uses, so retried and resumed attempts of the
-    same unit can be recognized.
-
-    Returns:
-        str: A key identifying the unit within its atomic attack.
-    """
-    attribution_data = attack_result.attribution_data
-    seed_group_id = attribution_data.get("seed_group_id") if isinstance(attribution_data, dict) else None
-    if seed_group_id:
-        return f"seed_group:{seed_group_id}"
-    atomic_identifier = attack_result.atomic_attack_identifier
-    if isinstance(atomic_identifier, ComponentIdentifier):
-        typed_identifier = AtomicAttackIdentifier.from_component_identifier(atomic_identifier)
-        if typed_identifier.seed_identifiers:
-            return f"seed_group:{typed_identifier.logical_seed_group_id}"
-    return f"objective:{attack_result.objective}"
-
-
-def _attempt_order_key(attack_result: AttackResult) -> tuple[datetime, str]:
-    """
-    Return a deterministic chronological key for one attack attempt.
-
-    Returns:
-        tuple[datetime, str]: The attempt timestamp and its attack result ID.
-    """
-    return attack_result.timestamp, str(attack_result.attack_result_id)
-
-
-def _without_superseded_errors(results: list[AttackResult]) -> list[AttackResult]:
-    """
-    Drop ERROR attempts that a later attempt of the same execution unit superseded.
-
-    Non-error results are always kept, and the original order is preserved.
-
-    Returns:
-        list[AttackResult]: The results without superseded ERROR attempts.
-    """
-    latest_by_unit: dict[str, tuple[datetime, str]] = {}
-    for result in results:
-        unit = _attempt_unit_key(result)
-        order_key = _attempt_order_key(result)
-        if unit not in latest_by_unit or order_key > latest_by_unit[unit]:
-            latest_by_unit[unit] = order_key
-    return [
-        result
-        for result in results
-        if result.outcome != AttackOutcome.ERROR
-        or _attempt_order_key(result) == latest_by_unit[_attempt_unit_key(result)]
-    ]
 
 
 __all__ = ["ScenarioResult", "ScenarioRunState"]
@@ -224,7 +169,7 @@ class ScenarioResult(BaseModel):
         """
         return list(self.get_display_groups().keys())
 
-    def get_display_groups(self, *, latest_attempts_only: bool = False) -> dict[str, list[AttackResult]]:
+    def get_display_groups(self) -> dict[str, list[AttackResult]]:
         """
         Aggregate attack results by display group.
 
@@ -233,19 +178,14 @@ class ScenarioResult(BaseModel):
         merged into a single list. When no map was provided, this returns
         the same structure as ``attack_results`` (identity mapping).
 
-        Args:
-            latest_attempts_only (bool): When True, superseded ERROR attempts are dropped first
-                (see ``get_latest_attack_results``). Defaults to False.
-
         Returns:
             dict[str, list[AttackResult]]: Results grouped by display label.
         """
-        attack_results = self.get_latest_attack_results() if latest_attempts_only else self.attack_results
         if not self.display_group_map:
-            return dict(attack_results)
+            return dict(self.attack_results)
 
         grouped: dict[str, list[AttackResult]] = {}
-        for attack_name, results in attack_results.items():
+        for attack_name, results in self.attack_results.items():
             group = self.display_group_map.get(attack_name, attack_name)
             grouped.setdefault(group, []).extend(results)
         return grouped
@@ -280,27 +220,9 @@ class ScenarioResult(BaseModel):
 
         return list(set(objectives))
 
-    def get_latest_attack_results(self) -> dict[str, list[AttackResult]]:
-        """
-        Get attack results without superseded ERROR attempts.
-
-        Retries and resumed runs persist a new result for the same execution unit (atomic attack
-        and seed group, falling back to the objective) and keep the earlier ERROR attempts as
-        history. This drops ERROR attempts that a later attempt of the same unit superseded, so
-        recovered errors are not counted, as in the GUI progress view. Non-error results are
-        always kept.
-
-        Returns:
-            dict[str, list[AttackResult]]: The remaining results, grouped by atomic attack name.
-        """
-        return {name: _without_superseded_errors(results) for name, results in self.attack_results.items()}
-
     def objective_achieved_rate(self, *, atomic_attack_name: str | None = None) -> int:
         """
         Get the success rate of this scenario.
-
-        ERROR attempts that were later retried or resumed are not counted (see
-        ``get_latest_attack_results``), so recovered errors do not lower the rate.
 
         Args:
             atomic_attack_name (str | None): Name of specific atomic attack to calculate rate for.
@@ -309,17 +231,25 @@ class ScenarioResult(BaseModel):
         Returns:
             int: Success rate as a percentage (0-100).
 
+        .. deprecated:: 1.2.0
+            Counts every persisted attempt, including ERROR attempts that were later retried or resumed.
+            Use ``pyrit.analytics.compute_scenario_statistics(result)``, which counts each execution unit
+            once and is shared with the GUI backend and the reports. Removed in 1.4.0.
         """
-        latest_results = self.get_latest_attack_results()
+        print_deprecation_message(
+            old_item="ScenarioResult.objective_achieved_rate",
+            new_item="pyrit.analytics.compute_scenario_statistics",
+            removed_in="1.4.0",
+        )
         if not atomic_attack_name:
             # Calculate rate across all atomic attacks
             all_results = []
-            for results in latest_results.values():
+            for results in self.attack_results.values():
                 all_results.extend(results)
         else:
             # Calculate rate for specific atomic attack
-            if atomic_attack_name in latest_results:
-                all_results = latest_results[atomic_attack_name]
+            if atomic_attack_name in self.attack_results:
+                all_results = self.attack_results[atomic_attack_name]
             else:
                 return 0
 

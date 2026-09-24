@@ -8,9 +8,9 @@ from unit.mocks import make_scenario_result
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, Score, ScoreStatus
 from pyrit.output._derivation import (
     attack_score_display,
-    group_success_rate,
     resolve_scorer_name,
     resolve_target_info,
+    scenario_success_rates,
     select_attacks,
 )
 
@@ -47,21 +47,27 @@ def test_resolve_target_info_missing_fields_are_none():
     assert info.endpoint is None
 
 
-# --- group_success_rate ---
+# --- scenario_success_rates ---
 
 
-def test_group_success_rate_empty_is_zero():
-    assert group_success_rate([]) == 0
+def test_scenario_success_rates_empty_is_zero():
+    result = make_scenario_result(scenario_name="S", attack_results={"s1": []})
+    assert scenario_success_rates(result) == (0, {})
 
 
-def test_group_success_rate_counts_success():
-    attacks = [
-        _attack(outcome=AttackOutcome.SUCCESS),
-        _attack(outcome=AttackOutcome.FAILURE),
-        _attack(outcome=AttackOutcome.SUCCESS),
-        _attack(outcome=AttackOutcome.UNDETERMINED),
-    ]
-    assert group_success_rate(attacks) == 50
+def test_scenario_success_rates_per_display_group():
+    result = make_scenario_result(
+        scenario_name="S",
+        attack_results={
+            "base64": [
+                AttackResult(conversation_id="c1", objective="o1", outcome=AttackOutcome.SUCCESS),
+                AttackResult(conversation_id="c2", objective="o2", outcome=AttackOutcome.FAILURE),
+            ],
+            "rot13": [AttackResult(conversation_id="c3", objective="o1", outcome=AttackOutcome.SUCCESS)],
+        },
+        display_group_map={"base64": "encoding", "rot13": "encoding"},
+    )
+    assert scenario_success_rates(result) == (66, {"encoding": 66})
 
 
 # --- attack_score_display ---

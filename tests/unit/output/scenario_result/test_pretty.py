@@ -152,7 +152,9 @@ async def test_write_async_raises_when_scorer_identifier_present_without_scorer_
 )
 async def test_write_async_color_bands_for_success_rate(patch_central_database, capsys, expected_rate, attack_outcomes):
     p = PrettyScenarioResultMemoryPrinter(enable_colors=True)
-    result = _scenario_result(attack_results={"s": [_attack_result(outcome=o) for o in attack_outcomes]})
+    result = _scenario_result(
+        attack_results={"s": [_attack_result(outcome=o, objective=f"obj{i}") for i, o in enumerate(attack_outcomes)]}
+    )
     await p.write_async(result)
     out = capsys.readouterr().out
     assert f"Overall Success Rate: {expected_rate}%" in out
@@ -219,8 +221,8 @@ async def test_write_async_sorts_groups_by_success_rate_descending(patch_central
             "low": [_attack_result(outcome=AttackOutcome.FAILURE)],
             "high": [_attack_result(outcome=AttackOutcome.SUCCESS)],
             "mid": [
-                _attack_result(outcome=AttackOutcome.SUCCESS),
-                _attack_result(outcome=AttackOutcome.FAILURE),
+                _attack_result(outcome=AttackOutcome.SUCCESS, objective="obj1"),
+                _attack_result(outcome=AttackOutcome.FAILURE, objective="obj2"),
             ],
         },
     )

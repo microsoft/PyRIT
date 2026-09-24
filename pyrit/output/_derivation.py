@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
-from pyrit.models import AttackOutcome
-
 if TYPE_CHECKING:
     from pyrit.models import AttackResult, ComponentIdentifier, ScenarioResult, Score
 
@@ -53,21 +51,25 @@ def resolve_target_info(target_id: ComponentIdentifier | None) -> TargetInfo:
     )
 
 
-def group_success_rate(attacks: list[AttackResult]) -> int:
+def scenario_success_rates(result: ScenarioResult) -> tuple[int, dict[str, int]]:
     """
-    Return the percentage of *attacks* whose outcome is SUCCESS (0 when empty).
+    Return the overall and per-display-group success rates of a scenario result.
+
+    The numbers come from ``pyrit.analytics.compute_scenario_statistics``, the calculation shared with
+    the SDK and the GUI backend, so every report shows the same effective execution-unit statistics.
+    Groups with no completed unit report 0.
 
     Args:
-        attacks (list[AttackResult]): The attacks to score.
+        result (ScenarioResult): The scenario result to summarize.
 
     Returns:
-        int: The success rate as an integer percent.
+        tuple[int, dict[str, int]]: The overall rate and the rate for each display group, as integer percents.
     """
-    total = len(attacks)
-    if not total:
-        return 0
-    successful = sum(1 for attack in attacks if attack.outcome == AttackOutcome.SUCCESS)
-    return int((successful / total) * 100)
+    from pyrit.analytics.scenario_statistics import compute_scenario_statistics
+
+    statistics = compute_scenario_statistics(result)
+    group_rates = {name: counts.success_percentage or 0 for name, counts in statistics.display_groups.items()}
+    return statistics.overall.success_percentage or 0, group_rates
 
 
 def attack_score_display(attack: AttackResult, *, none_value: str | None = None) -> str | None:

@@ -5,7 +5,12 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from pyrit.models import AttackResult, ScenarioResult
-from pyrit.output._derivation import attack_score_display, group_success_rate, resolve_target_info, select_attacks
+from pyrit.output._derivation import (
+    attack_score_display,
+    resolve_target_info,
+    scenario_success_rates,
+    select_attacks,
+)
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase, ScenarioView
 from pyrit.output.sink import Sink
 
@@ -117,13 +122,13 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         """
         target = resolve_target_info(result.objective_target_identifier)
 
+        overall_rate, group_rates = scenario_success_rates(result)
         display_groups = result.get_display_groups()
-        latest_groups = result.get_display_groups(latest_attempts_only=True)
         groups = [
             {
                 "name": group_name,
                 "num_results": len(group_results),
-                "success_rate": group_success_rate(latest_groups.get(group_name, [])),
+                "success_rate": group_rates.get(group_name, 0),
             }
             for group_name, group_results in display_groups.items()
         ]
@@ -154,7 +159,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
             "stats": {
                 "total_techniques": len(result.get_techniques_used()),
                 "total_results": sum(len(results) for results in result.attack_results.values()),
-                "overall_success_rate": result.objective_achieved_rate(),
+                "overall_success_rate": overall_rate,
                 "unique_objectives": len(result.get_objectives()),
             },
             "groups": groups,

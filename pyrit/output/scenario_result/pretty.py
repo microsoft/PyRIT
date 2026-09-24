@@ -6,7 +6,12 @@ import textwrap
 from colorama import Fore, Style
 
 from pyrit.models import AttackOutcome, ScenarioResult
-from pyrit.output._derivation import attack_score_display, group_success_rate, resolve_target_info, select_attacks
+from pyrit.output._derivation import (
+    attack_score_display,
+    resolve_target_info,
+    scenario_success_rates,
+    select_attacks,
+)
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase, ScenarioView
 from pyrit.output.scorer.base import ScorerPrinterBase
@@ -198,7 +203,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         lines.append(self._render_section_header("Overall Statistics"))
         total_results = sum(len(results) for results in result.attack_results.values())
         total_techniques = len(result.get_techniques_used())
-        overall_rate = result.objective_achieved_rate()
+        overall_rate, group_rates = scenario_success_rates(result)
 
         lines.append(self._format_colored(f"{self._indent}📈 Summary", Style.BRIGHT))
         lines.append(self._format_colored(f"{self._indent * 2}• Total Techniques: {total_techniques}", Fore.GREEN))
@@ -214,10 +219,9 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
 
         lines.append(self._render_section_header("Per-Group Breakdown"))
         display_groups = result.get_display_groups()
-        latest_groups = result.get_display_groups(latest_attempts_only=True)
 
         group_summaries: list[tuple[str, int, int]] = [
-            (group_name, len(group_results), group_success_rate(latest_groups.get(group_name, [])))
+            (group_name, len(group_results), group_rates.get(group_name, 0))
             for group_name, group_results in display_groups.items()
         ]
 
