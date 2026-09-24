@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyrit.registry import ConverterRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
@@ -19,6 +20,23 @@ _CONVERTER_MODIFIER_PREFIX = "converter."
 
 class ScenarioConfigurationResolver:
     """Resolve registry-backed scenario inputs for launch and estimation."""
+
+    @classmethod
+    def resolve_adversarial_target(cls, *, target_name: str | None) -> PromptTarget | None:
+        """
+        Resolve and validate an optional request-scoped adversarial default.
+
+        Returns:
+            PromptTarget | None: The selected registered instance, or no override.
+
+        Raises:
+            ValueError: If the explicit selection is missing or lacks required capabilities.
+        """
+        if target_name is None:
+            return None
+        target = cls.resolve_target(target_name=target_name)
+        validate_default_adversarial_target(target)
+        return target
 
     @staticmethod
     def resolve_scenario_class(*, scenario_name: str) -> type[Scenario]:

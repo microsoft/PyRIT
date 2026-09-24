@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select
+from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select, update
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -93,8 +93,10 @@ from pyrit.models import (
     ScoreStatus,
     Seed,
     SeedDataset,
+    SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
+    SeedObjective,
     SeedType,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
@@ -106,6 +108,9 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+#: Canonical criteria key of a seed that carries no conditions.
+_NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
 
 
 Model = TypeVar("Model")
@@ -666,9 +671,9 @@ class MemoryInterface(abc.ABC):
         rather than threaded through every write.
 
         Registration is idempotent only for an identical conversation: re-registering the
-        same ``conversation_id`` with the same target is a no-op (so repeated per-turn
-        registration is safe). Re-registering an existing ``conversation_id`` with a
-        different target is a conflict and raises ``ValueError`` -- a conversation is held
+        same ``conversation_id`` with the same target identity is a no-op, even across
+        PyRIT versions (so repeated per-turn registration is safe). Re-registering an existing
+        ``conversation_id`` with a different target is a conflict and raises ``ValueError`` -- a conversation is held
         with exactly one target and is never re-targeted.
 
         Args:
@@ -721,7 +726,20 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the message pieces or converter identifiers cannot be persisted.
         """
-        entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
+        with closing(self.get_session()) as session:
+            try:
+                self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting prompt memory entries: {e}")
+                raise
+
+    def _add_message_pieces_to_session(self, *, session: Session, message_pieces: Sequence[MessagePiece]) -> None:
+        """Insert pieces and their identifiers in the caller's transaction, without committing."""
+        pieces = [piece for piece in message_pieces if not piece.not_in_memory]
+        self._validate_persistable_conversation_ids(message_pieces=pieces)
+        entries = [PromptMemoryEntry(entry=piece) for piece in pieces]
         # Sequence orders messages, so timestamp preserves the input order of pieces within one message.
         latest_timestamp_by_message: dict[tuple[str, int], datetime] = {}
         for entry in entries:
@@ -730,24 +748,17 @@ class MemoryInterface(abc.ABC):
             if latest_timestamp is not None and entry.timestamp <= latest_timestamp:
                 entry.timestamp = latest_timestamp + timedelta(microseconds=1)
             latest_timestamp_by_message[message_key] = entry.timestamp
-        with closing(self.get_session()) as session:
-            try:
-                for piece, entry in zip(message_pieces, entries, strict=True):
-                    for position, identifier in enumerate(piece.converter_identifiers):
-                        converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
-                        self._persist_identifier(session=session, identifier=converter_identifier)
-                        entry.converter_identifier_links.append(
-                            PromptConverterIdentifierEntry(
-                                position=position,
-                                converter_identifier_hash=converter_identifier.hash,
-                            )
-                        )
-                session.add_all(entries)
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error inserting prompt memory entries: {e}")
-                raise
+        for piece, entry in zip(pieces, entries, strict=True):
+            for position, identifier in enumerate(piece.converter_identifiers):
+                converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
+                self._persist_identifier(session=session, identifier=converter_identifier)
+                entry.converter_identifier_links.append(
+                    PromptConverterIdentifierEntry(
+                        position=position,
+                        converter_identifier_hash=converter_identifier.hash,
+                    )
+                )
+        session.add_all(entries)
 
     @staticmethod
     def _validate_persistable_conversation_ids(*, message_pieces: Sequence[MessagePiece]) -> None:
@@ -791,36 +802,43 @@ class MemoryInterface(abc.ABC):
                 with the same id already exists with a different target.
             SQLAlchemyError: If the insert fails.
         """
-        if not conversation.conversation_id:
-            raise ValueError("Cannot register a conversation without a conversation_id.")
-        entry = ConversationEntry(conversation=conversation)
         with closing(self.get_session()) as session:
             try:
-                existing = session.get(ConversationEntry, conversation.conversation_id)
-                if existing is None:
-                    if conversation.target_identifier is not None:
-                        self._persist_target_identifier(
-                            session=session,
-                            target_identifier=TargetIdentifier.from_component_identifier(
-                                conversation.target_identifier
-                            ),
-                        )
-                    session.add(entry)
-                elif (
-                    entry.target_identifier is not None
-                    and existing.target_identifier is not None
-                    and existing.target_identifier != entry.target_identifier
-                ):
-                    raise ValueError(
-                        f"Conversation {conversation.conversation_id} is already registered with a different "
-                        f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
-                        f"target and cannot be re-registered with {entry.target_identifier!r}."
-                    )
+                self._insert_conversation_in_session(session=session, conversation=conversation)
                 session.commit()
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error registering conversation {conversation.conversation_id}: {e}")
                 raise
+
+    def _insert_conversation_in_session(self, *, session: Session, conversation: Conversation) -> None:
+        """
+        Register conversation metadata in the caller's transaction, without committing.
+
+        Raises:
+            ValueError: If the ID is empty or the conversation is already held with a different target.
+        """
+        if not conversation.conversation_id:
+            raise ValueError("Cannot register a conversation without a conversation_id.")
+        entry = ConversationEntry(conversation=conversation)
+        existing = session.get(ConversationEntry, conversation.conversation_id)
+        if existing is None:
+            if conversation.target_identifier is not None:
+                self._persist_target_identifier(
+                    session=session,
+                    target_identifier=TargetIdentifier.from_component_identifier(conversation.target_identifier),
+                )
+            session.add(entry)
+        elif (
+            entry.target_identifier is not None
+            and existing.target_identifier is not None
+            and ComponentIdentifier.model_validate(existing.target_identifier) != conversation.target_identifier
+        ):
+            raise ValueError(
+                f"Conversation {conversation.conversation_id} is already registered with a different "
+                f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
+                f"target and cannot be re-registered with {entry.target_identifier!r}."
+            )
 
     def add_conversation_retry(self, *, conversation_id: str, sequence: int, reason: ConversationRetryReason) -> None:
         """
@@ -3494,8 +3512,12 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Seeds already present in storage are skipped. Duplicates *within* ``seeds`` are all
-        inserted, because the check looks at what storage held when the call started.
+        Seeds with the same value hash, dataset, and canonical conditions already present
+        in storage are skipped. Duplicates *within* ``seeds`` are all inserted, because the
+        check looks at what storage held when the call started.
+        Groups introducing new objective criteria retain the other seeds in the same group
+        even when their content is already stored in another group. When a stored seed is
+        copied to a new group, its caller-visible ID is updated after successful insertion.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -3509,25 +3531,101 @@ class MemoryInterface(abc.ABC):
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
         existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
+        new_condition_group_ids = self._get_new_condition_group_ids(
+            seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
+        )
+        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in new_condition_group_ids]
+        stored_groups = (
+            {
+                entry.id: entry.prompt_group_id
+                for entry in self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.id, batch_values=retained_seed_ids
+                )
+            }
+            if retained_seed_ids
+            else {}
+        )
 
         entries: MutableSequence[SeedEntry] = []
+        copied_seed_ids: list[tuple[Seed, uuid.UUID]] = []
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
+            conditions_key = self._seed_conditions_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
-            if prompt.dataset_name:
-                if (prompt.value_sha256, prompt.dataset_name) in existing_pairs:
+            if prompt.prompt_group_id in new_condition_group_ids:
+                if prompt.id in stored_groups and stored_groups[prompt.id] == prompt.prompt_group_id:
                     continue
-            elif prompt.value_sha256 in existing_hashes:
+                entry = SeedEntry(entry=prompt)
+                if prompt.id in stored_groups:
+                    entry.id = uuid.uuid4()
+                    copied_seed_ids.append((prompt, entry.id))
+                entries.append(entry)
+                continue
+            if prompt.dataset_name:
+                if (prompt.value_sha256, prompt.dataset_name, conditions_key) in existing_pairs:
+                    continue
+            elif (prompt.value_sha256, conditions_key) in existing_hashes:
                 continue
             entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
+        for prompt, new_id in copied_seed_ids:
+            prompt.id = new_id
 
-    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed]) -> tuple[set[tuple[str, str]], set[str]]:
+    @staticmethod
+    def _seed_conditions_key(seed: Seed) -> str:
         """
-        Look up which of these seeds' hashes are already stored.
+        Serialize criteria canonically, preserving condition order.
+
+        Returns:
+            str: Canonical JSON used for criteria identity.
+        """
+        conditions = seed.model_dump(mode="json", include={"conditions"}).get("conditions", [])
+        if not conditions:
+            return _NO_CONDITIONS_KEY
+        return json.dumps(conditions, sort_keys=True, separators=(",", ":"))
+
+    def _get_new_condition_group_ids(
+        self,
+        *,
+        seeds: Sequence[Seed],
+        existing_pairs: set[tuple[str, str, str]],
+        existing_hashes: set[tuple[str, str]],
+    ) -> set[uuid.UUID]:
+        """
+        Identify groups whose newly authored criteria require retaining all input seeds.
+
+        Other seeds in the same group do not own conditions. Their ordinary content
+        deduplication must not strip them from a new condition-bearing group, or from a group that
+        removes previously stored criteria. Purely condition-free loading is unchanged.
+
+        Returns:
+            set[uuid.UUID]: Group IDs whose complete input membership must be retained.
+        """
+        conditions_by_value: dict[tuple[str, str | None], set[str]] = {}
+        for value_hash, dataset, conditions in existing_pairs:
+            conditions_by_value.setdefault((value_hash, dataset), set()).add(conditions)
+        for value_hash, conditions in existing_hashes:
+            conditions_by_value.setdefault((value_hash, None), set()).add(conditions)
+
+        group_ids: set[uuid.UUID] = set()
+        for seed in seeds:
+            if not isinstance(seed, SeedObjective) or seed.prompt_group_id is None or not seed.value_sha256:
+                continue
+            stored_conditions = conditions_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
+            if self._seed_conditions_key(seed) in stored_conditions:
+                continue
+            if seed.conditions or stored_conditions - {_NO_CONDITIONS_KEY}:
+                group_ids.add(seed.prompt_group_id)
+        return group_ids
+
+    def _get_existing_seed_keys(
+        self, *, seeds: Sequence[Seed]
+    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
+        """
+        Look up which value hashes and canonical conditions are already stored.
 
         Queries in chunks rather than once per seed, which otherwise dominates the cost of
         loading a large dataset. ``get_seeds`` issues the statement directly instead of going
@@ -3544,9 +3642,9 @@ class MemoryInterface(abc.ABC):
             seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
 
         Returns:
-            tuple[set[tuple[str, str]], set[str]]: The stored (value_sha256, dataset_name)
-                pairs keyed by the requested dataset name, and the stored hashes irrespective
-                of dataset.
+            tuple[set[tuple[str, str, str]], set[tuple[str, str]]]: The stored
+                (value_sha256, dataset_name, conditions) keys, using the requested
+                dataset name, and (value_sha256, conditions) keys irrespective of dataset.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
         for prompt in seeds:
@@ -3556,8 +3654,8 @@ class MemoryInterface(abc.ABC):
                 # cannot disagree.
                 hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
 
-        existing_pairs: set[tuple[str, str]] = set()
-        existing_hashes: set[str] = set()
+        existing_pairs: set[tuple[str, str, str]] = set()
+        existing_hashes: set[tuple[str, str]] = set()
         for dataset_name, dataset_hashes in hashes_by_dataset.items():
             hashes = sorted(dataset_hashes)
             # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
@@ -3568,13 +3666,14 @@ class MemoryInterface(abc.ABC):
                 for existing in self.get_seeds(value_sha256=chunk, dataset_name=dataset_name):
                     if not existing.value_sha256:
                         continue
+                    conditions_key = self._seed_conditions_key(existing)
                     if dataset_name:
                         # The database decided the name matched, so record the name that was
                         # asked for; the stored spelling can differ under a case-insensitive
                         # collation.
-                        existing_pairs.add((existing.value_sha256, dataset_name))
+                        existing_pairs.add((existing.value_sha256, dataset_name, conditions_key))
                     else:
-                        existing_hashes.add(existing.value_sha256)
+                        existing_hashes.add((existing.value_sha256, conditions_key))
 
         return existing_pairs, existing_hashes
 
@@ -3588,6 +3687,126 @@ class MemoryInterface(abc.ABC):
         """
         for dataset in datasets:
             await self.add_seeds_to_memory_async(seeds=dataset.seeds, added_by=added_by)
+
+    def get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
+        """
+        Return aggregate metadata for datasets already loaded in memory.
+
+        The queries intentionally project only dataset metadata and counts. Seed values and
+        media are never hydrated, so callers can build dataset cards without materializing
+        every prompt or fetching providers.
+
+        Named dataset grouping and metadata matching stay on the original collated
+        dataset_name column. NULL and empty names are aggregated separately into the
+        unnamed population so their shared logical groups are counted exactly once.
+
+        Returns:
+            Sequence[SeedDatasetSummary]: One summary for each stored dataset, including
+            a single deterministic entry for seeds without a dataset name.
+        """
+        try:
+            logical_example_id = func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id)
+            named_condition = and_(SeedEntry.dataset_name.is_not(None), SeedEntry.dataset_name != "")
+            unnamed_condition = or_(SeedEntry.dataset_name.is_(None), SeedEntry.dataset_name == "")
+
+            named_aggregate = (
+                select(
+                    SeedEntry.dataset_name.label("dataset_name"),
+                    func.count().label("seed_pieces"),
+                    func.count(func.distinct(logical_example_id)).label("logical_examples"),
+                    func.sum(case((SeedEntry.seed_type == "objective", 1), else_=0)).label("objectives"),
+                )
+                .where(named_condition)
+                .group_by(SeedEntry.dataset_name)
+                .subquery()
+            )
+            named_metadata = (
+                select(
+                    SeedEntry.dataset_name.label("dataset_name"),
+                    SeedEntry.data_type,
+                    SeedEntry.harm_categories,
+                )
+                .where(named_condition)
+                .distinct()
+                .subquery()
+            )
+            named_statement = select(
+                named_aggregate.c.dataset_name,
+                named_aggregate.c.seed_pieces,
+                named_aggregate.c.logical_examples,
+                named_aggregate.c.objectives,
+                named_metadata.c.data_type,
+                named_metadata.c.harm_categories,
+            ).join(
+                named_metadata,
+                named_aggregate.c.dataset_name == named_metadata.c.dataset_name,
+            )
+
+            unnamed_aggregate = (
+                select(
+                    literal(None, type_=SeedEntry.dataset_name.type).label("dataset_name"),
+                    func.count().label("seed_pieces"),
+                    func.count(func.distinct(logical_example_id)).label("logical_examples"),
+                    func.sum(case((SeedEntry.seed_type == "objective", 1), else_=0)).label("objectives"),
+                )
+                .where(unnamed_condition)
+                .subquery()
+            )
+            unnamed_metadata = (
+                select(SeedEntry.data_type, SeedEntry.harm_categories).where(unnamed_condition).distinct().subquery()
+            )
+            unnamed_statement = select(
+                unnamed_aggregate.c.dataset_name,
+                unnamed_aggregate.c.seed_pieces,
+                unnamed_aggregate.c.logical_examples,
+                unnamed_aggregate.c.objectives,
+                unnamed_metadata.c.data_type,
+                unnamed_metadata.c.harm_categories,
+            ).select_from(unnamed_aggregate.join(unnamed_metadata, literal(True)))
+
+            combined_statement = named_statement.union_all(unnamed_statement)
+
+            with closing(self.get_session()) as session:
+                rows = session.execute(combined_statement).all()
+
+            summaries_by_dataset: dict[str | None, dict[str, Any]] = {}
+            dataset_order: list[str | None] = []
+            for row in rows:
+                dataset_name = row.dataset_name
+                if dataset_name not in summaries_by_dataset:
+                    summaries_by_dataset[dataset_name] = {
+                        "seed_pieces": int(row.seed_pieces or 0),
+                        "logical_examples": int(row.logical_examples or 0),
+                        "objectives": int(row.objectives or 0),
+                        "modalities": set(),
+                        "harm_categories": set(),
+                        "has_unlabeled_harm_categories": False,
+                    }
+                    dataset_order.append(dataset_name)
+                summary = summaries_by_dataset[dataset_name]
+                if row.data_type:
+                    summary["modalities"].add(row.data_type)
+                categories = row.harm_categories or []
+                if categories:
+                    summary["harm_categories"].update(categories)
+                else:
+                    summary["has_unlabeled_harm_categories"] = True
+
+            return [
+                SeedDatasetSummary(
+                    dataset_name=dataset_name,
+                    logical_examples=summaries_by_dataset[dataset_name]["logical_examples"],
+                    seed_pieces=summaries_by_dataset[dataset_name]["seed_pieces"],
+                    objectives=summaries_by_dataset[dataset_name]["objectives"],
+                    modalities=tuple(sorted(summaries_by_dataset[dataset_name]["modalities"])),
+                    harm_categories=tuple(sorted(summaries_by_dataset[dataset_name]["harm_categories"])),
+                    has_unlabeled_harm_categories=summaries_by_dataset[dataset_name]["has_unlabeled_harm_categories"],
+                )
+                for dataset_name in dataset_order
+            ]
+        except Exception as e:
+            logger.exception(f"Failed to retrieve dataset summaries with error {e}")
+            raise
 
     def get_seed_dataset_names(self) -> Sequence[str]:
         """
@@ -3832,6 +4051,102 @@ class MemoryInterface(abc.ABC):
             except SQLAlchemyError:
                 session.rollback()
                 raise
+
+    def add_conversation_branches_to_attack(
+        self,
+        *,
+        attack_result_id: str,
+        conversations: Sequence[Conversation],
+        message_pieces: Sequence[MessagePiece],
+        source_conversation: Conversation | None = None,
+    ) -> bool:
+        """
+        Atomically store prepared conversations, copied pieces, and their attack references.
+
+        The caller prepares the copies. This method only persists them, preserving the usual
+        conversation and message insertion invariants. A supplied source must still be an
+        active objective conversation when the transaction acquires the attack's write lock.
+
+        Returns:
+            bool: False when the attack no longer exists.
+
+        Raises:
+            ValueError: If the source is unrelated, branch IDs repeat, or pieces belong elsewhere.
+            SQLAlchemyError: If persistence fails; the complete preparation is rolled back.
+        """
+        conversation_ids = [conversation.conversation_id for conversation in conversations]
+        if len(set(conversation_ids)) != len(conversation_ids):
+            raise ValueError("Prepared branch conversation IDs must be unique")
+        if source_conversation and source_conversation.conversation_id in conversation_ids:
+            raise ValueError("A prepared branch cannot replace the source conversation")
+        if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
+            raise ValueError("Copied message pieces must belong to the prepared branches")
+
+        with closing(self.get_session()) as session, session.begin():
+            entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
+            if entry is None:
+                return False
+            if source_conversation is not None:
+                active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
+                if source_conversation.conversation_id not in active_ids:
+                    raise ValueError("Source conversation is not an active objective conversation of this attack")
+                self._insert_conversation_in_session(session=session, conversation=source_conversation)
+            for conversation in conversations:
+                self._insert_conversation_in_session(session=session, conversation=conversation)
+            self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
+            pruned_ids = list(entry.pruned_conversation_ids or [])
+            for conversation_id in conversation_ids:
+                if conversation_id != entry.conversation_id and conversation_id not in pruned_ids:
+                    pruned_ids.append(conversation_id)
+            entry.pruned_conversation_ids = pruned_ids or None
+            entry.timestamp = datetime.now(UTC)
+        return True
+
+    def promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
+        """
+        Promote an existing related conversation without losing concurrent branch additions.
+
+        Returns:
+            bool: False when the attack no longer exists.
+
+        Raises:
+            ValueError: If the requested conversation is not part of this attack.
+            SQLAlchemyError: If the transaction fails.
+        """
+        with closing(self.get_session()) as session, session.begin():
+            entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
+            if entry is None:
+                return False
+            if entry.conversation_id == conversation_id:
+                return True
+            pruned = list(entry.pruned_conversation_ids or [])
+            if conversation_id not in pruned:
+                raise ValueError(f"Conversation '{conversation_id}' is not part of this attack")
+            pruned = [item for item in pruned if item != conversation_id]
+            if entry.conversation_id not in pruned:
+                pruned.append(entry.conversation_id)
+            entry.pruned_conversation_ids = pruned or None
+            entry.conversation_id = conversation_id
+            entry.timestamp = datetime.now(UTC)
+        return True
+
+    @staticmethod
+    def _get_locked_attack_result(*, session: Session, attack_result_id: str) -> AttackResultEntry | None:
+        """
+        Acquire the write lock before reading references, on SQLite and SQL Server alike.
+
+        Returns:
+            AttackResultEntry | None: The current row, held until the caller ends its transaction.
+        """
+        result_id = uuid.UUID(attack_result_id)
+        # SELECT FOR UPDATE does not provide the required guard on both supported backends.
+        session.execute(
+            update(AttackResultEntry)
+            .where(AttackResultEntry.id == result_id)
+            .values(timestamp=AttackResultEntry.timestamp)
+            .execution_options(synchronize_session=False)
+        )
+        return session.get(AttackResultEntry, result_id, populate_existing=True)
 
     def update_attack_result(self, *, conversation_id: str, update_fields: dict[str, Any]) -> bool:
         """

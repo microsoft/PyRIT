@@ -3,12 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { ThemeProvider } from '@/hooks/useTheme'
 import { attacksApi, labelsApi, scenariosApi, targetsApi, versionApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { RegisteredScenario } from '@/types'
 import { exportConversation } from '@/utils/conversationExport'
 import { INITIAL_SCENARIO_RUN_PROGRESS_STATE } from '@/utils/scenarioRunProgress'
+import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
 
@@ -73,6 +73,7 @@ const SCENARIO: RegisteredScenario = {
   baseline_policy: 'forbidden',
   include_baseline_by_default: false,
   supported_parameters: [],
+  uses_default_adversarial_target: false,
   default_run_size: { estimated_attack_count: 1, components: [], datasets: [], note: null },
 }
 const TARGET = makeTarget({ target_registry_name: 'test_target', identifier_hash: 'test_hash' })
@@ -80,36 +81,30 @@ const DEFAULT_LABELS = { operator: 'config_user', operation: 'config_op', team: 
 const SAVED_LABELS = { operator: 'original_user', operation: 'original_op', team: 'original_team' }
 const SCENARIO_PATH = '/scanner/test.scenario'
 
-function TestWrapper({ children }: { children: React.ReactNode }) {
-  return <ThemeProvider>{children}</ThemeProvider>
-}
-
 function renderApp(path = SCENARIO_PATH) {
   return render(
-    <TestWrapper>
-      <MemoryRouter initialEntries={[path]}>
-        <App />
-      </MemoryRouter>
-    </TestWrapper>,
+    <MemoryRouter initialEntries={[path]}>
+      <App />
+    </MemoryRouter>,
   )
 }
 
 function currentLabels(): HTMLElement {
-  return screen.getByRole('region', { name: 'New run labels' })
+  return screen.getByRole('region', { name: 'Default Labels' })
 }
 
 async function chooseOperation(user: ReturnType<typeof userEvent.setup>, operation: string): Promise<void> {
-  await user.click(within(currentLabels()).getByRole('button', { name: /^Edit operation label/ }))
+  await user.click(within(currentLabels()).getByRole('button', { name: /^Edit operation, currently / }))
   await user.click(screen.getByRole('combobox', { name: 'Operation' }))
   await user.paste(operation)
   await user.keyboard('{ArrowDown}')
   await user.click(await screen.findByRole('option', { name: `Create "${operation}"` }))
-  expect(within(currentLabels()).getByRole('button', { name: `Edit operation label, currently ${operation}` }))
+  expect(within(currentLabels()).getByRole('button', { name: `Edit operation, currently ${operation}` }))
     .toBeInTheDocument()
 }
 
 async function launchScenario(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Target' }), 'test_target')
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Objective Target' }), 'test_target')
   await user.click(screen.getByRole('button', { name: 'Launch scan' }))
   const dialog = await screen.findByRole('dialog')
   await user.click(within(dialog).getByRole('button', { name: 'Launch scan' }))
@@ -167,19 +162,20 @@ describe('Shared new run labels', () => {
   it('edits operator, operation, and custom labels during scenario setup and sends them on launch', async () => {
     const user = userEvent.setup()
     renderApp()
-    await user.click(await screen.findByRole('button', { name: 'Edit operator label, currently config_user' }))
+    await user.click(await screen.findByRole('button', { name: 'Edit operator, currently config_user' }))
     const operator = screen.getByRole('textbox', { name: 'Value for operator label' })
     await user.clear(operator)
     await user.paste('test_user')
     await user.keyboard('{Enter}')
     await chooseOperation(user, 'test_op')
 
-    await user.click(screen.getByRole('button', { name: /3 labels .* click to view or add/ }))
+    await user.click(screen.getByRole('button', { name: /^1 label .* click to view or add$/ }))
     await user.click(screen.getByRole('textbox', { name: 'Label key' }))
     await user.paste('campaign')
     await user.click(screen.getByRole('textbox', { name: 'Label value' }))
     await user.paste('regression')
     await user.click(screen.getByRole('button', { name: 'Add', exact: true }))
+    expect(screen.getByRole('button', { name: /^2 labels .* click to view or add$/ })).toBeInTheDocument()
 
     await launchScenario(user)
     expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
@@ -191,7 +187,7 @@ describe('Shared new run labels', () => {
   it('keeps one editor through navigation and restores choices without pinning backend defaults', async () => {
     const user = userEvent.setup()
     const app = renderApp()
-    await screen.findByRole('button', { name: 'Edit operation label, currently config_op' })
+    await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
     await chooseOperation(user, 'remembered_op')
     const bar = currentLabels()
 
@@ -202,9 +198,9 @@ describe('Shared new run labels', () => {
       expect(within(bar).getByRole('button', { name: /currently remembered_op$/ })).toBeInTheDocument()
     }
     await user.click(await screen.findByRole('link', { name: 'test.scenario' }))
-    await screen.findByRole('combobox', { name: 'Target' })
+    await screen.findByRole('combobox', { name: 'Objective Target' })
     expect(currentLabels()).toBe(bar)
-    expect(JSON.parse(window.localStorage.getItem('pyrit.globalLabels') ?? '{}'))
+    expect(readUserPreferences('local').labels)
       .toEqual({ operation: 'remembered_op' })
 
     app.unmount()
@@ -218,10 +214,18 @@ describe('Shared new run labels', () => {
 
   it('uses the signed-in alias ahead of stored and backend operators when launching', async () => {
     const user = userEvent.setup()
-    window.localStorage.setItem('pyrit.globalLabels', JSON.stringify({ operator: 'remembered_user', operation: 'remembered_op' }))
-    mockGetActiveAccount.mockReturnValue({ username: 'Signed.In@contoso.com' })
+    writeUserPreferences('tenant:signed-in', {
+      ...DEFAULT_USER_PREFERENCES,
+      labels: { operator: 'remembered_user', operation: 'remembered_op' },
+    })
+    mockGetActiveAccount.mockReturnValue({
+      username: 'Signed.In@contoso.com', tenantId: 'tenant', homeAccountId: 'signed-in',
+    })
     renderApp()
-    await screen.findByRole('button', { name: 'Edit operator label, currently signed.in' })
+    const operator = await screen.findByRole('button', { name: 'Signed-in operator: signed.in' })
+    expect(operator).toHaveAttribute('aria-disabled', 'true')
+    await user.click(operator)
+    expect(screen.queryByRole('textbox', { name: 'Value for operator label' })).not.toBeInTheDocument()
     await chooseOperation(user, 'signed_in_op')
     await launchScenario(user)
     expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
@@ -234,6 +238,10 @@ describe('Shared new run labels', () => {
     const user = userEvent.setup()
     renderApp('/chat')
     const toolbar = within(currentLabels()).getByRole('group', { name: 'Chat controls' })
+    const targetPicker = await within(toolbar).findByRole('combobox', { name: 'Chat target' })
+    await waitFor(() => expect(targetPicker).toBeEnabled())
+    await user.selectOptions(targetPicker, 'test_target')
+    expect(targetPicker).toHaveValue('test_target')
     expect(within(screen.getByTestId('chat-area')).queryByRole('group', { name: 'Chat controls' }))
       .not.toBeInTheDocument()
     expect(within(toolbar).getByRole('button', { name: 'Export conversation' })).toBeDisabled()
@@ -241,7 +249,7 @@ describe('Shared new run labels', () => {
     expect(within(toolbar).getByRole('button', { name: 'New Attack' })).toBeDisabled()
     const markdown = within(toolbar).getByRole('switch')
     await user.click(markdown)
-    expect(window.localStorage.getItem('pyrit.chatMarkdownMode')).toBe('markdown')
+    expect(readUserPreferences('local').chatMarkdown).toBe(true)
 
     await user.click(screen.getByRole('button', { name: 'Home', exact: true }))
     expect(screen.queryByRole('group', { name: 'Chat controls' })).not.toBeInTheDocument()
@@ -260,7 +268,7 @@ describe('Shared new run labels', () => {
     renderApp()
     await chooseOperation(user, 'early_choice')
     await act(async () => { resolveVersion({ version: '1.0.0', default_labels: DEFAULT_LABELS }) })
-    await screen.findByRole('button', { name: 'Edit operator label, currently config_user' })
+    await screen.findByRole('button', { name: 'Edit operator, currently config_user' })
     expect(screen.getByRole('button', { name: /currently early_choice$/ })).toBeInTheDocument()
   })
 
@@ -268,13 +276,13 @@ describe('Shared new run labels', () => {
     const user = userEvent.setup()
     renderApp('/scanner-history/saved_run')
     const saved = screen.getByRole('region', { name: 'Run configuration' })
-    await screen.findByRole('button', { name: 'Edit operation label, currently config_op' })
+    await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
     await chooseOperation(user, 'future_op')
     expect(saved).toHaveTextContent('original_user')
     expect(saved).toHaveTextContent('original_op')
     expect(saved).toHaveTextContent('original_team')
     expect(saved).not.toHaveTextContent('future_op')
-    expect(within(saved).queryByRole('button', { name: /Edit .* label/ })).not.toBeInTheDocument()
+    expect(within(saved).queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument()
     expect(scenariosApi.startRun).not.toHaveBeenCalled()
     expect(scenariosApi.cancelRun).not.toHaveBeenCalled()
   })

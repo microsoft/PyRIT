@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from functools import cache
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import apply_defaults
+from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -18,6 +20,10 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
+    ScenarioRunSizeEstimateCondition,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
+    SeedPrompt,
 )
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
@@ -39,6 +45,17 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+@cache
+def _get_benchmark_adversarial_guidance() -> str:
+    """
+    Load the static guidance prepended to every selected adversarial technique.
+
+    Returns:
+        str: The benchmark-owned cross-technique guidance.
+    """
+    return SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "benchmark" / "adversarial_guidance.yaml").value
 
 
 @cache
@@ -88,13 +105,16 @@ class AdversarialBenchmark(Scenario):
     already be registered in ``TargetRegistry`` — typically by
     ``TargetInitializer`` from ``ADVERSARIAL_CHAT_*`` env vars, or
     programmatically via ``TargetRegistry.get_registry_singleton().instances.register``.
+    Every selected adversarial technique prepends one shared benchmark guidance
+    layer to its native adversarial system prompt at creation time; global
+    factories and canonical prompt files are left unchanged.
 
     At run time, ``_build_atomic_attacks_async`` performs the
     ``(technique × adversarial_target × dataset)`` cross-product: for each
     selected adversarial-capable factory in the
     ``AttackTechniqueRegistry`` and each requested target, it calls
-    ``factory.create(adversarial_chat=...)`` with the
-    resolved target — no global registry mutation. The resulting
+    ``factory.create(adversarial_chat=...)`` with the resolved target — no global
+    registry mutation. The resulting
     ``AtomicAttack`` is named ``f"{technique}__{target}_{dataset}"`` with
     ``display_group`` set to the target's registry name so per-model ASR
     rolls up naturally in result displays.
@@ -109,10 +129,12 @@ class AdversarialBenchmark(Scenario):
     #: initializer registered rather than only core-tagged factories.
     #: Bumped from 3 → 4 when the no-selection default changed from the ``light``
     #: aggregate to ``role_play_video_game``, ``crescendo_simulated``, and ``tap``.
-    #: ``VERSION`` participates in resume identity, so v3 results cannot be resumed
-    #: as v4. The separate ``use_cached`` behavioral cache intentionally remains
+    #: Bumped from 4 → 5 when every selected adversarial technique began prepending
+    #: shared benchmark guidance to its native system prompt.
+    #: ``VERSION`` participates in resume identity, so older results cannot be resumed
+    #: as v5. The separate ``use_cached`` behavioral cache intentionally remains
     #: keyed by technique and objective-target identity across scenario versions.
-    VERSION: int = 4
+    VERSION: int = 5
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
@@ -123,7 +145,7 @@ class AdversarialBenchmark(Scenario):
         """
         Declare the ``adversarial_targets`` parameter.
 
-        The list is treated as required at run time:
+        The target list is treated as required at run time:
         ``_build_atomic_attacks_async`` raises ``ValueError`` if
         ``self.params["adversarial_targets"]`` is empty or missing. The
         scenario-side error (rather than a declaration-side default) lets
@@ -194,6 +216,7 @@ class AdversarialBenchmark(Scenario):
 
         super().__init__(
             version=self.VERSION,
+            uses_default_adversarial_target=False,
             objective_scorer=self._objective_scorer,
             technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
@@ -227,6 +250,10 @@ class AdversarialBenchmark(Scenario):
                 ScenarioRunSizeComponent(
                     label=technique.value,
                     count=compatible_count,
+                    factors=[
+                        ScenarioRunSizeFactor(label="selected concrete techniques", count=1),
+                        ScenarioRunSizeFactor(label="compatible logical seed groups", count=compatible_count),
+                    ],
                     note="Count per adversarial target.",
                 )
             )
@@ -247,7 +274,9 @@ class AdversarialBenchmark(Scenario):
         target_names = self.params.get("adversarial_targets") or []
         if not target_names:
             return ScenarioRunSizeEstimate(
+                status=ScenarioRunSizeEstimateStatus.Conditional,
                 minimum_attack_count=per_target_minimum,
+                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
                 components=per_target_components,
                 datasets=datasets,
                 note=(
@@ -259,13 +288,24 @@ class AdversarialBenchmark(Scenario):
         resolved_targets = self._resolve_adversarial_targets(target_names=target_names)
         target_count = len(resolved_targets)
         components = [
-            component.model_copy(update={"count": component.count * target_count, "note": None})
+            ScenarioRunSizeComponent(
+                label=component.label,
+                count=component.count * target_count,
+                factors=[
+                    *component.factors[:1],
+                    ScenarioRunSizeFactor(label="adversarial targets", count=target_count),
+                    *component.factors[1:],
+                ],
+                is_baseline=component.is_baseline,
+            )
             for component in per_target_components
         ]
         if self._use_cached:
             return ScenarioRunSizeEstimate(
+                status=ScenarioRunSizeEstimateStatus.Conditional,
                 minimum_attack_count=0,
                 maximum_attack_count=per_target_maximum * target_count if per_target_maximum is not None else None,
+                condition=ScenarioRunSizeEstimateCondition.PriorExecutionResults,
                 components=components,
                 datasets=datasets,
                 note=(
@@ -275,6 +315,8 @@ class AdversarialBenchmark(Scenario):
             )
         if self._estimate_has_binding_size_cap and compatibility_bounds is None:
             return ScenarioRunSizeEstimate(
+                status=ScenarioRunSizeEstimateStatus.Conditional,
+                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
                 components=components,
                 datasets=datasets,
                 note=(
@@ -289,8 +331,10 @@ class AdversarialBenchmark(Scenario):
             and per_target_minimum != per_target_maximum
         ):
             return ScenarioRunSizeEstimate(
+                status=ScenarioRunSizeEstimateStatus.Conditional,
                 minimum_attack_count=per_target_minimum * target_count,
                 maximum_attack_count=per_target_maximum * target_count,
+                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
                 components=components,
                 datasets=datasets,
                 note=(
@@ -299,7 +343,8 @@ class AdversarialBenchmark(Scenario):
                 ),
             )
         return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(component.count for component in components),
+            status=ScenarioRunSizeEstimateStatus.Exact,
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note="Baseline is forbidden; retries and internal attack turns are excluded.",
@@ -312,10 +357,13 @@ class AdversarialBenchmark(Scenario):
         Reads the user-supplied ``adversarial_targets`` parameter, resolves each name to a
         ``PromptTarget`` via ``TargetRegistry``, and delegates the
         ``(technique × target × dataset)`` cross-product to ``MatrixAtomicAttackBuilder``
-        with the resolved targets as its adversarial-target axis. Each pair calls
-        ``factory.create(adversarial_chat=...)`` with the resolved target — no global
-        registry state is touched. When ``self._use_cached`` is set, the resulting candidate
-        list is filtered against the live behavioral cache via
+        with the resolved targets as its adversarial-target axis. Each resolved factory is
+        explicitly derived via ``factory.with_adversarial_system_prompt_prefix(...)`` to layer
+        the shared benchmark guidance ahead of its native adversarial system prompt, before
+        being handed to the builder — the builder and factory stay generic and never see this
+        concept. Each pair then calls ``factory.create(adversarial_chat=...)`` with the
+        resolved target — no global registry state is touched. When ``self._use_cached`` is
+        set, the resulting candidate list is filtered against the live behavioral cache via
         ``_collect_cached_completion_pairs``, which delegates to
         ``pyrit.analytics.get_cached_results_for_technique`` for each unique
         ``(technique_eval_hash, objective_target_eval_hash)`` pair.
@@ -340,7 +388,11 @@ class AdversarialBenchmark(Scenario):
             )
 
         resolved_targets = self._resolve_adversarial_targets(target_names=target_names)
-        technique_factories = resolve_technique_factories(context=context)
+        guidance = await asyncio.to_thread(_get_benchmark_adversarial_guidance)
+        technique_factories = {
+            name: factory.with_adversarial_system_prompt_prefix(guidance)
+            for name, factory in resolve_technique_factories(context=context).items()
+        }
 
         builder = MatrixAtomicAttackBuilder(
             objective_target=context.objective_target,

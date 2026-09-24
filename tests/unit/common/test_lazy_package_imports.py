@@ -29,6 +29,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "pyrit.models.question_answering",
     ),
     (
+        "pyrit.models",
+        "SeedDatasetSummary",
+        "pyrit.models.seeds.seed_dataset_summary",
+        "pyrit.memory",
+    ),
+    (
         "pyrit.models.catalog",
         "RegisteredInitializer",
         "pyrit.models.catalog.initializer",
@@ -63,6 +69,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "Seed",
         "pyrit.models.seeds.seed",
         "pyrit.models.seeds.yaml_seed_loader",
+    ),
+    (
+        "pyrit.models.seeds",
+        "SeedDatasetSummary",
+        "pyrit.models.seeds.seed_dataset_summary",
+        "pyrit.memory",
     ),
     (
         "pyrit.models.target",
@@ -350,6 +362,40 @@ def test_lazy_packages_do_not_load_child_modules() -> None:
             assert not descendants, (package_name, descendants)
             assert package.__all__ == list(package._LAZY_EXPORTS)
             assert set(package._LAZY_EXPORTS) <= set(dir(package))
+        """
+    )
+
+
+def test_analytics_foundations_do_not_load_higher_layers() -> None:
+    _assert_subprocess_succeeds(
+        """
+        import importlib
+        import sys
+
+        import pyrit.common.pagination
+        assert not any(name.startswith("pyrit.models") for name in sys.modules)
+
+        import pyrit.models
+        assert "pyrit.models.analytics" not in sys.modules
+        names = [
+            name for name, module in pyrit.models._LAZY_EXPORTS.items()
+            if module == "pyrit.models.analytics"
+        ]
+        assert len(names) == 21
+        for name in names:
+            exported = getattr(pyrit.models, name)
+            assert exported is getattr(importlib.import_module("pyrit.models.analytics"), name)
+            assert pyrit.models.__dict__[name] is exported
+
+        forbidden = (
+            "pyrit.analytics", "pyrit.backend", "pyrit.memory", "pyrit.executor",
+            "pyrit.scenario", "pyrit.prompt_target", "pyrit.score", "fastapi", "sqlalchemy",
+        )
+        loaded = [
+            name for name in sys.modules
+            if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden)
+        ]
+        assert not loaded, loaded
         """
     )
 

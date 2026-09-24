@@ -3,10 +3,14 @@
 
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
+from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
+from pyrit.score import FloatScaleScorer
+from pyrit.score.scorer_evaluation.scorer_evaluator import HarmScorerEvaluator
 from pyrit.score.scorer_evaluation.scorer_metrics import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
@@ -157,6 +161,73 @@ async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys
     assert "Krippendorff Alpha (Combined)" in output
     assert "Krippendorff Alpha (Model)" in output
     mock_find.assert_called_once_with(eval_hash="harm_hash", harm_category="hate")
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_shows_baseline_when_beaten(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_harm_metrics(mean_absolute_error=0.16, baseline_mean_absolute_error=0.31)
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="violence")
+    output = capsys.readouterr().out
+    assert "Constant-Guess Baseline MAE: 0.3100" in output
+    assert "does not beat it" not in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_flags_scorer_that_does_not_beat_baseline(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_harm_metrics(mean_absolute_error=0.37, baseline_mean_absolute_error=0.29)
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="privacy")
+    output = capsys.readouterr().out
+    assert "Constant-Guess Baseline MAE: 0.2900 (scorer does not beat it)" in output
+
+
+def _harm_metrics_from_evaluator(*, human_scores: list[list[float]], model_scores: list[list[float]]):
+    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer._memory = MagicMock(spec=MemoryInterface)
+    evaluator = HarmScorerEvaluator(scorer=scorer)
+    return evaluator._compute_metrics(
+        all_human_scores=np.array(human_scores), all_model_scores=np.array(model_scores), num_scorer_trials=1
+    )
+
+
+def test_render_harm_metrics_treats_a_floating_point_tie_with_the_baseline_as_not_beating_it():
+    # An all-zero scorer has the same MAE as the constant-guess baseline, but the two are computed
+    # differently and come out 0.15 and 0.15000000000000002.
+    metrics = _harm_metrics_from_evaluator(human_scores=[[0.0, 0.0, 0.1, 0.5]], model_scores=[[0.0, 0.0, 0.0, 0.0]])
+    assert metrics.mean_absolute_error != metrics.baseline_mean_absolute_error
+
+    output = PrettyScorerMemoryPrinter(enable_colors=False)._render_harm_metrics(metrics)
+
+    assert "Constant-Guess Baseline MAE: 0.1500 (scorer does not beat it)" in output
+
+
+def test_render_harm_metrics_keeps_a_small_real_improvement_over_the_baseline():
+    # Both values print as 0.1500, but the scorer is genuinely better and must not be flagged.
+    metrics = _make_harm_metrics(mean_absolute_error=0.14999, baseline_mean_absolute_error=0.15)
+
+    output = PrettyScorerMemoryPrinter(enable_colors=False)._render_harm_metrics(metrics)
+
+    assert "Constant-Guess Baseline MAE: 0.1500" in output
+    assert "does not beat it" not in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_omits_baseline_for_older_results(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_harm_metrics()
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="violence")
+    output = capsys.readouterr().out
+    assert "Constant-Guess Baseline" not in output
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")

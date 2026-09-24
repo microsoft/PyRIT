@@ -66,21 +66,21 @@ describe('useTour', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home', false))
     const steps = result.current.tourProps.steps
 
-    expect(steps[2].content).toContain('target selection happens in the Target Registry')
-    expect(steps[2].content).toContain('choose Configure a target')
-    expect(steps[2].content).toContain('use Set Active there')
+    expect(steps[2].content).toContain('Select a target from the Chat dropdown')
+    expect(steps[2].content).toContain('Target Registry')
+    expect(steps[2].content).toContain('defaults for your account')
     expect(steps[3].target).toBe('[data-tour="chat-prerequisite"]')
-    expect(steps[3].content).toContain('before the message composer is available')
-    expect(steps[3].content).toContain('converter control appear once a target is active')
+    expect(steps[3].content).toContain('to enable the message composer')
+    expect(steps[3].content).toContain('automatically select their original registered target')
   })
 
   it('uses the active target card and visible converter control when a target is active', () => {
     const { result } = renderHook(() => useTour(onNavigate, true, 'home', true))
     const steps = result.current.tourProps.steps
 
-    expect(steps[2].content).toContain('target currently active for Chat')
-    expect(steps[2].content).toContain('after the tour')
-    expect(steps[2].content).toContain('use Set Active in the Target Registry')
+    expect(steps[2].content).toContain('default objective target')
+    expect(steps[2].content).toContain('new chats and scanner runs')
+    expect(steps[2].content).toContain('adversarial defaults in the Target Registry')
     expect(steps[3].target).toBe('[data-tour="converter-toggle"]')
     expect(steps[3].content).toContain('Chat shows the message composer')
     expect(steps[3].content).toContain('Toggle converter panel')
@@ -150,11 +150,11 @@ describe('useTour', () => {
     })
 
     rerender({ currentView: 'registry', hasActiveTarget: false })
-    expect(result.current.tourProps.steps[2].content).toContain('Configure a target')
+    expect(result.current.tourProps.steps[2].content).toContain('Select a target')
 
     rerender({ currentView: 'registry', hasActiveTarget: true })
     expect(result.current.tourProps.steps[2].target).toBe('body')
-    expect(result.current.tourProps.steps[2].content).toContain('target currently active for Chat')
+    expect(result.current.tourProps.steps[2].content).toContain('default objective target')
     expect(result.current.tourProps.steps[3].target).toBe('[data-tour="converter-toggle"]')
 
     act(() => {

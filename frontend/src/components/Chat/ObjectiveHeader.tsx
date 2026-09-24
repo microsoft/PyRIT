@@ -263,7 +263,7 @@ export default function ObjectiveHeader({
     return (
       <div className={mergeClasses(styles.root, styles.emptyRoot)} data-testid="objective-header">
         {canShowObjective && (
-          <div className={styles.headerSection}>
+          <div className={mergeClasses(styles.headerSection, styles.emptyHeaderSection)}>
             <Badge className={styles.label} appearance="tint" color="brand" size="small">
               Objective
             </Badge>

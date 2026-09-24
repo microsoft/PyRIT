@@ -1098,14 +1098,15 @@ class TestDoScenarioResults:
         assert "do it" in out
         assert client.get_conversation_messages_async.await_count == 2
 
-    def test_full_view_prints_table_then_transcripts(self, shell, capsys):
+    def test_full_view_prints_overview_then_transcripts(self, shell, capsys):
         s, client = shell
         client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
         client.get_conversation_messages_async = AsyncMock(return_value={"messages": []})
         s.do_scenario_results("rid-1 --view full")
         out = capsys.readouterr().out
-        assert "Attack Results" in out
+        assert "SCENARIO RESULTS" in out
         assert "Conversations" in out
+        assert "▼ Attack Results" not in out
 
     def test_conversations_view_reports_fetch_error(self, shell, capsys):
         s, client = shell
@@ -1119,6 +1120,20 @@ class TestDoScenarioResults:
         client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("nope"))
         s.do_scenario_results("rid-1")
         assert "Error (RuntimeError): nope" in capsys.readouterr().out
+
+    def test_html_format_writes_full_report(self, shell, tmp_path):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        client.get_conversation_messages_async = AsyncMock(return_value={"messages": []})
+        out_file = tmp_path / "report.html"
+        # shlex.split is posix, so pass a forward-slash path to avoid backslash escapes.
+        s.do_scenario_results(f"rid-1 --view full --format html --output {out_file.as_posix()}")
+        assert out_file.read_text(encoding="utf-8").lstrip().startswith("<!DOCTYPE html>")
+
+    def test_html_format_without_output_errors(self, shell, capsys):
+        s, _ = shell
+        s.do_scenario_results("rid-1 --format html")
+        assert "Error" in capsys.readouterr().out
 
     def test_print_scenario_alias_warns_and_delegates(self, shell, capsys):
         s, client = shell

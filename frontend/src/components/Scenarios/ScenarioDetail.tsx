@@ -30,6 +30,7 @@ import {
 import { Link, useNavigate, useParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
+import TargetSelect from '@/components/Config/TargetSelect'
 import ParameterField from '@/components/Parameters/ParameterField'
 import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import {
@@ -38,7 +39,7 @@ import {
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
 import type { ViewName } from '@/components/Sidebar/Navigation'
-import { scenariosApi, targetsApi } from '@/services/api'
+import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
   Parameter,
@@ -51,18 +52,14 @@ import type {
   ScenarioTechniqueSummary,
   TargetInstance,
 } from '@/types'
-import { fetchAllPages } from '@/utils/fetchAllPages'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
-import { targetModelName } from '@/utils/targetIdentity'
+import { sameTarget, targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { ScenarioRunEstimateDetails } from './ScenarioRunEstimate'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { mapScenarioRunEstimate } from './scenarioRunEstimateAdapter'
 import { techniqueSetName } from './scenarioTechniqueSets'
-
-/** Items requested per target page while paging through the full list. */
-const TARGET_PAGE_SIZE = 200
 
 /**
  * Common/opaque parameters every scenario declares via
@@ -245,6 +242,7 @@ function estimateNotes(state: ScenarioRunEstimateState): string | null {
 interface BuildEstimateRequestInput {
   scenario: RegisteredScenario
   targetName: string
+  adversarialTargetName: string
   techniques: string[]
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
@@ -299,7 +297,9 @@ type EstimateRequestState =
     }
 
 function buildEstimateRequest({
+  scenario,
   targetName,
+  adversarialTargetName,
   techniques,
   dynamicParameters,
   scenarioParamValues,
@@ -338,6 +338,9 @@ function buildEstimateRequest({
   }
   if (targetName) {
     request.target_name = targetName
+  }
+  if (scenario.uses_default_adversarial_target && adversarialTargetName) {
+    request.adversarial_target_name = adversarialTargetName
   }
   if (datasetNames.length > 0) {
     request.dataset_names = datasetNames
@@ -398,6 +401,9 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
     include_baseline: estimateRequest.include_baseline,
     labels: input.labels,
   }
+  if (estimateRequest.adversarial_target_name !== undefined) {
+    request.adversarial_target_name = estimateRequest.adversarial_target_name
+  }
   if (estimateRequest.dataset_names !== undefined) {
     request.dataset_names = estimateRequest.dataset_names
   }
@@ -414,7 +420,9 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
 }
 
 interface ScenarioDetailProps {
-  activeTarget: TargetInstance | null
+  targets: TargetInstance[]
+  defaultObjectiveTarget: TargetInstance | null
+  defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
   onNavigate: (view: ViewName) => void
 }
@@ -433,7 +441,9 @@ interface ScenarioDetailContentProps extends ScenarioDetailProps {
 
 function ScenarioDetailContent({
   encodedScenarioName,
-  activeTarget,
+  targets,
+  defaultObjectiveTarget,
+  defaultAdversarialTarget,
   labels,
   onNavigate,
 }: ScenarioDetailContentProps) {
@@ -443,8 +453,6 @@ function ScenarioDetailContent({
   const [scenario, setScenario] = useState<RegisteredScenario | null>(null)
   const [scenarioStatus, setScenarioStatus] = useState<LoadStatus>('loading')
   const [scenarioError, setScenarioError] = useState<string | null>(null)
-  const [targets, setTargets] = useState<TargetInstance[] | null>(null)
-  const [targetsError, setTargetsError] = useState<string | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
 
   useEffect(() => {
@@ -469,37 +477,13 @@ function ScenarioDetailContent({
     }
   }, [decodedScenarioName, refetchCount])
 
-  useEffect(() => {
-    let cancelled = false
-    fetchAllPages(
-      (cursor) => targetsApi.listTargets(TARGET_PAGE_SIZE, cursor),
-      undefined,
-      (target) => target.target_registry_name,
-    )
-      .then((items) => {
-        if (cancelled) return
-        setTargets(items)
-        setTargetsError(null)
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setTargets([])
-        setTargetsError(toApiError(err).detail)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [refetchCount])
-
   const handleRetry = (): void => {
     setScenarioStatus('loading')
     setScenarioError(null)
-    setTargets(null)
-    setTargetsError(null)
     setRefetchCount((count) => count + 1)
   }
 
-  if (scenarioStatus === 'loading' || targets === null) {
+  if (scenarioStatus === 'loading') {
     return (
       <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
         <div className={styles.centeredState}>
@@ -525,7 +509,7 @@ function ScenarioDetailContent({
     )
   }
 
-  if (scenarioStatus === 'error' || targetsError) {
+  if (scenarioStatus === 'error') {
     return (
       <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
         <div className={styles.content}>
@@ -534,7 +518,7 @@ function ScenarioDetailContent({
           </Link>
           <div className={styles.centeredState} data-testid="scenario-error">
             <MessageBar intent="error">
-              <MessageBarBody>{scenarioError ?? targetsError}</MessageBarBody>
+              <MessageBarBody>{scenarioError}</MessageBarBody>
             </MessageBar>
             <Button
               className={styles.touchTarget}
@@ -561,7 +545,8 @@ function ScenarioDetailContent({
       key={scenario.scenario_name}
       scenario={scenario}
       targets={targets}
-      activeTarget={activeTarget}
+      defaultObjectiveTarget={defaultObjectiveTarget}
+      defaultAdversarialTarget={defaultAdversarialTarget}
       labels={labels}
       onNavigate={onNavigate}
     />
@@ -571,7 +556,8 @@ function ScenarioDetailContent({
 interface ScenarioLaunchFormProps {
   scenario: RegisteredScenario
   targets: TargetInstance[]
-  activeTarget: TargetInstance | null
+  defaultObjectiveTarget: TargetInstance | null
+  defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
   onNavigate: (view: ViewName) => void
 }
@@ -579,7 +565,8 @@ interface ScenarioLaunchFormProps {
 function ScenarioLaunchForm({
   scenario,
   targets,
-  activeTarget,
+  defaultObjectiveTarget,
+  defaultAdversarialTarget,
   labels,
   onNavigate,
 }: ScenarioLaunchFormProps) {
@@ -600,11 +587,21 @@ function ScenarioLaunchForm({
   const isBaselineForbidden = scenario.baseline_policy === 'forbidden'
 
   const [targetName, setTargetName] = useState(() => {
-    if (activeTarget && targets.some((target) =>
-      target.target_registry_name === activeTarget.target_registry_name)) {
-      return activeTarget.target_registry_name
+    if (defaultObjectiveTarget && targets.some((target: TargetInstance) =>
+      sameTarget(target, defaultObjectiveTarget))) {
+      return defaultObjectiveTarget.target_registry_name
     }
-    return targets[0]?.target_registry_name ?? ''
+    return ''
+  })
+  const adversarialTargets = targets.filter(
+    (target: TargetInstance) => target.capabilities?.supports_multi_turn === true,
+  )
+  const [adversarialTargetName, setAdversarialTargetName] = useState(() => {
+    if (defaultAdversarialTarget && adversarialTargets.some((target: TargetInstance) =>
+      sameTarget(target, defaultAdversarialTarget))) {
+      return defaultAdversarialTarget.target_registry_name
+    }
+    return ''
   })
   const [selectedTechniques, setSelectedTechniques] = useState<string[]>(() => defaultTechniques)
   const [baselineChecked, setBaselineChecked] = useState(
@@ -632,6 +629,25 @@ function ScenarioLaunchForm({
   // Synchronous guard against a double-submit racing ahead of the state update.
   const isSubmittingRef = useRef(false)
   const estimateSequenceRef = useRef(0)
+  const launchButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  const restoreLaunchFocus = (): void => {
+    const focus = () => {
+      launchButtonRef.current?.focus()
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(focus)
+    } else {
+      setTimeout(focus, 0)
+    }
+  }
+
+  const handleDismissPreview = (): void => {
+    if (!submitting) {
+      setPreviewOpen(false)
+      restoreLaunchFocus()
+    }
+  }
 
   const selectableTechniques = useMemo<SelectableTechnique[]>(
     () => [
@@ -657,6 +673,7 @@ function ScenarioLaunchForm({
     () => buildEstimateRequest({
       scenario,
       targetName,
+      adversarialTargetName,
       techniques,
       dynamicParameters,
       scenarioParamValues,
@@ -667,6 +684,7 @@ function ScenarioLaunchForm({
       includeBaseline: isBaselineForbidden ? false : baselineChecked,
     }),
     [
+      adversarialTargetName,
       baselineChecked,
       datasetOverride,
       dataTypesFilter,
@@ -684,6 +702,7 @@ function ScenarioLaunchForm({
     () => buildRunRequest({
       scenario,
       targetName,
+      adversarialTargetName,
       techniques,
       dynamicParameters,
       scenarioParamValues,
@@ -697,6 +716,7 @@ function ScenarioLaunchForm({
       labels,
     }),
     [
+      adversarialTargetName,
       baselineChecked,
       datasetOverride,
       dataTypesFilter,
@@ -957,7 +977,7 @@ function ScenarioLaunchForm({
             </section>
 
             <section className={styles.section} aria-labelledby="target-section-title">
-              <Text id="target-section-title" as="h2" size={400} weight="semibold">Target</Text>
+              <Text id="target-section-title" as="h2" size={400} weight="semibold">Objective Target</Text>
               <Field hint="The registered target this scenario will run against.">
                 <Select
                   className={styles.control}
@@ -965,9 +985,9 @@ function ScenarioLaunchForm({
                   disabled={submitting}
                   onChange={(_, data) => setTargetName(data.value)}
                   data-testid="scenario-target-select"
-                  aria-label="Target"
+                  aria-label="Objective Target"
                 >
-                  {targets.length === 0 && <option value="">No targets configured</option>}
+                  <option value="">{targets.length === 0 ? 'No targets configured' : 'Select an objective target'}</option>
                   {targets.map((target) => (
                     <option key={target.target_registry_name} value={target.target_registry_name}>
                       {targetOptionLabel(target)}
@@ -1068,6 +1088,19 @@ function ScenarioLaunchForm({
                     testIdPrefix="scenario-param"
                   />
                 ))}
+                {scenario.uses_default_adversarial_target && (
+                  <TargetSelect
+                    targets={adversarialTargets}
+                    value={adversarialTargetName}
+                    onChange={(target: TargetInstance | null) => {
+                      setAdversarialTargetName(target?.target_registry_name ?? '')
+                    }}
+                    label="Adversarial Target"
+                    hint="The registered target this scenario uses to generate attacks."
+                    placeholder="Use server default"
+                    disabled={submitting}
+                  />
+                )}
                 <Field
                   label="Dataset override"
                   hint="Comma-separated dataset names. Leave blank to use the scenario's default datasets."
@@ -1217,6 +1250,7 @@ function ScenarioLaunchForm({
 
             <section className={styles.launchSection} aria-label="Launch scan">
               <Button
+                ref={launchButtonRef}
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
@@ -1233,6 +1267,9 @@ function ScenarioLaunchForm({
             onOpenChange={(_, data) => {
               if (!submitting) {
                 setPreviewOpen(data.open)
+                if (!data.open) {
+                  restoreLaunchFocus()
+                }
               }
             }}
           >
@@ -1242,8 +1279,14 @@ function ScenarioLaunchForm({
                 <DialogContent className={styles.dialogContent}>
                   <dl className={styles.previewList}>
                     <div className={styles.previewGroup}>
-                      <dt>Target</dt>
+                      <dt>Objective Target</dt>
                       <dd>{targetName}</dd>
+                      {scenario.uses_default_adversarial_target && (
+                        <>
+                          <dt>Adversarial Target</dt>
+                          <dd>{adversarialTargetName || 'Use server default'}</dd>
+                        </>
+                      )}
                     </div>
                     <div className={styles.previewGroup}>
                       <dt>Techniques</dt>
@@ -1325,7 +1368,7 @@ function ScenarioLaunchForm({
                   <Button
                     appearance="secondary"
                     disabled={submitting}
-                    onClick={() => setPreviewOpen(false)}
+                    onClick={handleDismissPreview}
                   >
                     Cancel
                   </Button>

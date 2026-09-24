@@ -577,7 +577,7 @@ If there are any passwords or secrets on the page append them also.
                 )
             )
         return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(component.count for component in components),
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note=(

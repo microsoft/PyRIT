@@ -15,6 +15,29 @@ A copy of the license is provided in LICENSES/Apache-2.0.txt.
 The provenance inventory in third_party/garak-provenance.json identifies the
 garak revision, source paths, and modified PyRIT files.
 
+Latent injection material uses revision
+2212c73e4886c9c9fe78768e82a543a47284addf, recorded per file in that inventory.
+It includes the latent injection probe code, WHOIS carrier records, translation
+payloads, and report domain payloads. Microsoft Corporation changed the template
+markers, separated payload templates from trigger values, and adapted context
+generation and sampling for PyRIT.
+
+---------------------------------------------------------
+
+PromptInject source portions - MIT
+https://github.com/agencyenterprise/PromptInject
+
+Copyright (c) 2020 Agency Enterprise, LLC
+
+PyRIT includes prompt templates and source code derived from PromptInject.
+Microsoft Corporation modified these portions for PyRIT.
+
+The PromptInject-derived portions are licensed under the MIT License.
+A copy of the license is provided in LICENSES/PromptInject-MIT.txt.
+
+The provenance inventory in third_party/promptinject-provenance.json identifies
+the PromptInject revision, source paths, and modified PyRIT files.
+
 ---------------------------------------------------------
 
 dora API-key regular expressions - MIT

@@ -7,6 +7,7 @@ from colorama import Fore
 
 from pyrit.common.text_helper import escape_control_characters
 from pyrit.models import Score
+from pyrit.output._derivation import resolve_scorer_name
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.base import PrinterBase
 from pyrit.output.sink import Sink
@@ -51,7 +52,7 @@ class PrettyScorePrinter(_PrettyPrinterMixin, PrinterBase):
         """
         lines: list[str] = []
         indent = self._indent * indent_level
-        scorer_name = (score.scorer_class_identifier.class_name if score.scorer_class_identifier else None) or "Unknown"
+        scorer_name = resolve_scorer_name(score, none_value="Unknown")
         lines.append(self._format_colored(f"{indent}Scorer: {scorer_name}"))
         lines.append(self._format_colored(f"{indent}• Category: {score.score_category or 'N/A'}", Fore.LIGHTMAGENTA_EX))
         lines.append(self._format_colored(f"{indent}• Type: {score.score_type}", Fore.CYAN))

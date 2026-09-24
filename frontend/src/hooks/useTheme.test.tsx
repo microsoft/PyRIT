@@ -9,6 +9,8 @@ import type { ReactNode } from 'react'
 import { ThemeProvider, resolveTheme, useTheme } from './useTheme'
 import type { ThemeMode } from './useTheme'
 import { THEME_PRESETS } from '@/themes/themePresets'
+import { readUserPreferences } from '@/utils/userPreferences'
+import { UserPreferencesProvider } from './useUserPreferences'
 
 const STORAGE_KEY = 'pyrit.themeMode'
 const FORCED_COLORS_QUERY = '(forced-colors: active)'
@@ -88,7 +90,11 @@ function installMatchMediaMock(): MediaController {
   }
 }
 
-const wrapper = ({ children }: { children: ReactNode }) => <ThemeProvider>{children}</ThemeProvider>
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <UserPreferencesProvider accountKey="local">
+    <ThemeProvider>{children}</ThemeProvider>
+  </UserPreferencesProvider>
+)
 
 describe('resolveTheme', () => {
   it('returns high-contrast whenever forced-colors is active, regardless of mode', () => {
@@ -166,7 +172,7 @@ describe('useTheme / ThemeProvider', () => {
   it('persists the mode to localStorage when setMode is called', () => {
     const { result } = renderHook(() => useTheme(), { wrapper })
     act(() => result.current.setMode('dark'))
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark')
+    expect(readUserPreferences('local').theme).toBe('dark')
     expect(result.current.mode).toBe('dark')
   })
 
@@ -254,10 +260,11 @@ describe('useTheme / ThemeProvider', () => {
       )
     }
     render(
-      <ThemeProvider>
+      <>
         <Reader id="a" />
         <Reader id="b" />
-      </ThemeProvider>,
+      </>,
+      { wrapper },
     )
     expect(screen.getByTestId('a')).toHaveTextContent('a:system:light')
     expect(screen.getByTestId('b')).toHaveTextContent('b:system:light')

@@ -26,6 +26,7 @@ from pyrit.models import (
     UndeterminedScoreError,
 )
 from pyrit.score import DivergenceScorer, MessageTrueFalseScorer, Scorer, TrueFalseScoreAggregator
+from pyrit.score.observation.execution import _scoring_expectation_context
 from pyrit.score.true_false.regex.divergence_scorer import _DEFAULT_MITIGATION_STRINGS_PATH
 
 if TYPE_CHECKING:
@@ -46,6 +47,23 @@ def _scorable(value: str) -> MessageScorable:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestDivergenceScorer:
+    async def test_explicit_criteria_override_ambient_context_async(self) -> None:
+        scorer = DivergenceScorer()
+        piece = MessagePiece(role="assistant", original_value="poem poem: An unexpected story begins here.")
+        with _scoring_expectation_context(_expectation("book")):
+            [score] = await scorer._score_piece_with_expectation_async(piece, expectation=_expectation("poem"))
+        assert score.get_value() is True
+
+    def test_legacy_subclass_override_requires_migration(self) -> None:
+        class CustomDivergenceScorer(DivergenceScorer):
+            async def _score_piece_async(
+                self, message_piece: MessagePiece, *, objective: str | None = None
+            ) -> list[Score]:
+                raise AssertionError("Do not silently skip this policy.")
+
+        with pytest.raises(TypeError, match="Move the custom policy"):
+            CustomDivergenceScorer()
+
     @pytest.mark.parametrize(
         ("text", "word", "expected"),
         [
@@ -168,18 +186,18 @@ class TestDivergenceScorer:
         expectation = ScoringExpectation(
             conditions=(DivergesFromRepetition(text="poem"), DivergesFromRepetition(text="book"))
         )
-        with pytest.raises(ValueError, match="at most one condition"):
+        with pytest.raises(ValueError, match="exactly one condition"):
             await DivergenceScorer().score_async(scorable=ContentScorable(value="poem poem"), expectation=expectation)
 
     async def test_missing_required_type_rejected_async(self) -> None:
-        with pytest.raises(ValueError, match=r"requires the condition.*DivergesFromRepetition"):
+        with pytest.raises(ValueError, match=r"requires one DivergesFromRepetition"):
             await DivergenceScorer().score_async(
                 scorable=ContentScorable(value="poem poem"),
                 expectation=ScoringExpectation(conditions=(MatchesObjective(),)),
             )
 
     async def test_group_rejects_unsupported_conditions_async(self) -> None:
-        with pytest.raises(ValueError, match=r"does not match.*MatchesObjective"):
+        with pytest.raises(ValueError, match=r"does not support.*MatchesObjective"):
             await Scorer.score_with_scorers_async(
                 scorers=[DivergenceScorer()],
                 scorable=ContentScorable(value="poem poem"),
@@ -188,17 +206,14 @@ class TestDivergenceScorer:
                 ),
             )
 
-    async def test_leaf_preserves_conditions_for_other_group_scorers_async(self) -> None:
+    async def test_leaf_rejects_conditions_for_other_scorers_async(self) -> None:
         expectation = ScoringExpectation(
             objective="Repeat poem", conditions=(DivergesFromRepetition(text="poem"), MatchesObjective())
         )
-        score = (
+        with pytest.raises(ValueError, match=r"does not support.*MatchesObjective"):
             await DivergenceScorer().score_async(
                 scorable=_scorable("poem poem: An unexpected story begins here."), expectation=expectation
             )
-        )[0]
-        assert score.get_value() is True
-        assert score.scored_expectation is expectation
 
     def test_empty_serialized_criterion_rejected(self) -> None:
         with pytest.raises(ValidationError):
@@ -209,11 +224,13 @@ class TestDivergenceScorer:
     async def test_concurrent_criteria_are_isolated_and_persisted_async(self, sqlite_instance: MemoryInterface) -> None:
         scorer = DivergenceScorer()
         identifier = scorer.get_identifier()
-        original_score_piece_async = scorer._score_piece_async
+        original_score_piece_async = scorer._score_piece_with_expectation_async
 
-        async def yield_then_score_async(message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        async def yield_then_score_async(
+            message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+        ) -> list[Score]:
             await asyncio.sleep(0)
-            return await original_score_piece_async(message_piece, objective=objective)
+            return await original_score_piece_async(message_piece, expectation=expectation)
 
         criteria = ["poem", "company", "book", "a"]
         expectations = [_expectation(word) for word in criteria]
@@ -225,7 +242,7 @@ class TestDivergenceScorer:
             for word in criteria
             for expectation in expectations
         ]
-        with patch.object(scorer, "_score_piece_async", side_effect=yield_then_score_async):
+        with patch.object(scorer, "_score_piece_with_expectation_async", side_effect=yield_then_score_async):
             results = await asyncio.gather(*calls)
         for index, scores in enumerate(results):
             score = scores[0]
@@ -283,7 +300,8 @@ class TestDivergenceScorer:
         assert scorer.get_identifier().params["mitigation_string_count"] == 1
         assert scorer.get_identifier().params["categories"] == ["divergence"]
         assert isinstance(scorer, MessageTrueFalseScorer)
-        assert scorer.matched_conditions() == scorer.required_conditions() == frozenset({DivergesFromRepetition})
+        assert scorer.condition_type is DivergesFromRepetition
+        assert scorer.get_condition_types() == frozenset({DivergesFromRepetition})
 
     @pytest.mark.parametrize(
         "config",
@@ -326,7 +344,9 @@ class TestDivergenceScorer:
         ).to_message()
         sqlite_instance.add_message_to_memory(request=message)
         scorer = DivergenceScorer()
-        with patch.object(scorer, "_score_piece_async", wraps=scorer._score_piece_async) as score_piece:
+        with patch.object(
+            scorer, "_score_piece_with_expectation_async", wraps=scorer._score_piece_with_expectation_async
+        ) as score_piece:
             score = (
                 await scorer.score_async(scorable=MessageScorable.from_message(message), expectation=_expectation())
             )[0]

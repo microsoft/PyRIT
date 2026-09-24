@@ -16,6 +16,7 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.models.score.condition import (
+        AnswerMatches,
         Condition,
         DivergesFromRepetition,
         MatchesObjective,
@@ -61,6 +62,7 @@ if TYPE_CHECKING:
 
 _LAZY_EXPORTS: dict[str, str] = {
     "Acquisition": "pyrit.models.score.observation",
+    "AnswerMatches": "pyrit.models.score.condition",
     "ComponentIdentifierField": "pyrit.models.score.score",
     "Condition": "pyrit.models.score.condition",
     "ContentEntryScorable": "pyrit.models.score.scorable",

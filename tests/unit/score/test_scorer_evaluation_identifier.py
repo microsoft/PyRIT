@@ -7,9 +7,15 @@ Tests for pyrit.score.scorer_evaluation.scorer_evaluation_identifier.
 Covers ``ScorerEvaluationIdentifier`` ClassVar values and eval-hash delegation.
 """
 
+from collections.abc import Iterable
+from itertools import permutations
+
 import pytest
 
-from pyrit.models import ComponentIdentifier, Identifiable, ScorerEvaluationIdentifier, compute_eval_hash
+from pyrit.models import ComponentIdentifier, Identifiable, Score, ScorerEvaluationIdentifier, compute_eval_hash
+from pyrit.score import SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
+from pyrit.score.score_aggregator_result import ScoreAggregatorResult
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 
 
 class TestScorerEvaluationIdentifierConstants:
@@ -22,7 +28,11 @@ class TestScorerEvaluationIdentifierConstants:
         is the global wrapper-passthrough rule derived from
         ``TargetIdentifier.targets`` (it only fires on nested multi-targets).
         """
-        assert set(ScorerEvaluationIdentifier.CHILD_EVAL_RULES.keys()) == {"prompt_target", "targets"}
+        assert set(ScorerEvaluationIdentifier.CHILD_EVAL_RULES.keys()) == {"prompt_target", "targets", "sub_scorers"}
+
+    def test_sub_scorers_require_explicit_order_independence(self) -> None:
+        rule = ScorerEvaluationIdentifier.CHILD_EVAL_RULES["sub_scorers"]
+        assert rule.unordered_when == "sub_scorers_order_independent"
 
     def test_prompt_target_rule(self):
         """Test that prompt_target has the expected included params and fallbacks."""
@@ -85,6 +95,99 @@ class TestScorerEvaluationIdentifierEvalHash:
             child_eval_rules=ScorerEvaluationIdentifier.CHILD_EVAL_RULES,
         )
         assert identity.eval_hash == expected
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCompositeEvaluationOrder:
+    @pytest.mark.parametrize(
+        "aggregator",
+        [TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND, TrueFalseScoreAggregator.MAJORITY],
+    )
+    def test_permutations_preserve_eval_identity_and_content_order(self, aggregator: TrueFalseAggregatorFunc) -> None:
+        children = [SubStringScorer(substring=value) for value in ("a", "b", "c")]
+        identifiers = [
+            TrueFalseCompositeScorer(aggregator=aggregator, scorers=list(order)).get_identifier()
+            for order in permutations(children)
+        ]
+
+        assert len({ScorerEvaluationIdentifier(identifier).eval_hash for identifier in identifiers}) == 1
+        assert len({identifier.hash for identifier in identifiers}) == 6
+        for order, identifier in zip(permutations(children), identifiers, strict=True):
+            assert [child.hash for child in identifier.get_child_list("sub_scorers")] == [
+                child.get_identifier().hash for child in order
+            ]
+            restored = ComponentIdentifier.model_validate_json(identifier.model_dump_json())
+            assert restored.hash == identifier.hash
+            assert ScorerEvaluationIdentifier(restored).eval_hash == identifier.eval_hash
+
+    def test_nested_permutations_preserve_eval_identity(self) -> None:
+        a, b, c = [SubStringScorer(substring=value) for value in ("a", "b", "c")]
+        first = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.OR,
+            scorers=[TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[a, b]), c],
+        )
+        second = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.OR,
+            scorers=[c, TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[b, a])],
+        )
+        assert first.get_identifier().eval_hash == second.get_identifier().eval_hash
+        assert first.get_identifier().hash != second.get_identifier().hash
+
+    def test_configuration_aggregator_and_multiplicity_remain_distinct(self) -> None:
+        a, b, c = [SubStringScorer(substring=value) for value in ("a", "b", "c")]
+        configurations = [
+            (TrueFalseScoreAggregator.OR, [a, b]),
+            (TrueFalseScoreAggregator.OR, [a, c]),
+            (TrueFalseScoreAggregator.AND, [a, b]),
+            (TrueFalseScoreAggregator.MAJORITY, [a, b]),
+            (TrueFalseScoreAggregator.MAJORITY, [a, a, b]),
+            (TrueFalseScoreAggregator.MAJORITY, [a, b, b]),
+        ]
+        hashes = {
+            TrueFalseCompositeScorer(aggregator=aggregator, scorers=scorers).get_identifier().eval_hash
+            for aggregator, scorers in configurations
+        }
+        assert len(hashes) == len(configurations)
+
+    def test_custom_aggregator_with_builtin_name_remains_ordered(self) -> None:
+        def first_score(scores: Iterable[Score]) -> ScoreAggregatorResult:
+            return TrueFalseScoreAggregator.OR([next(iter(scores))])
+
+        first_score.__name__ = TrueFalseScoreAggregator.OR.__name__
+        a, b = [SubStringScorer(substring=value) for value in ("a", "b")]
+        first = TrueFalseCompositeScorer(aggregator=first_score, scorers=[a, b]).get_identifier()
+        second = TrueFalseCompositeScorer(aggregator=first_score, scorers=[b, a]).get_identifier()
+        builtin = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[a, b]).get_identifier()
+
+        assert "sub_scorers_order_independent" not in first.params
+        assert first.eval_hash != second.eval_hash
+        assert first.eval_hash != builtin.eval_hash
+        outer_first = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.AND,
+            scorers=[TrueFalseCompositeScorer(aggregator=first_score, scorers=[a, b]), a],
+        )
+        outer_second = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.AND,
+            scorers=[a, TrueFalseCompositeScorer(aggregator=first_score, scorers=[b, a])],
+        )
+        assert outer_first.get_identifier().eval_hash != outer_second.get_identifier().eval_hash
+
+    def test_legacy_identifiers_are_not_inferred_from_aggregator_names(self) -> None:
+        a, b = [SubStringScorer(substring=value) for value in ("a", "b")]
+        current = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[a, b]).get_identifier()
+        legacy_data = current.model_dump()
+        del legacy_data["sub_scorers_order_independent"]
+        legacy = ComponentIdentifier.model_validate(legacy_data)
+        reversed_legacy = ComponentIdentifier(
+            class_name=legacy.class_name,
+            class_module=legacy.class_module,
+            params=legacy.params,
+            children={"sub_scorers": list(reversed(legacy.get_child_list("sub_scorers")))},
+        )
+
+        assert ScorerEvaluationIdentifier(legacy).eval_hash != ScorerEvaluationIdentifier(reversed_legacy).eval_hash
+        assert ScorerEvaluationIdentifier(legacy).eval_hash != current.eval_hash
+        assert legacy.hash != current.hash
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -145,6 +145,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Datasets should never be retrieved from SeedDatasetProviders; SeedDatasetProviders should load into memory, and then components retrieve from memory
 - Most components should always work with seeds passed directly in (except scenarios which may package them from memory). Never use SeedDatasetProviders, file paths, etc. Either pass the seed as an argument or retrieve from memory.
 - There is a Seed hierarchy and the right types should be used (SeedObjective, SeedPrompt, SimulatedSeedPrompt, AttackSeedGroup, ...)
+- `SeedObjective.conditions` holds typed criteria beside its objective text. Seed storage and
+  identity retain those criteria; `SeedGroup.scoring_expectation` exposes them for execution.
 - **Does not own**: a dataset defines and holds seeds; it doesn't package them for an attack. Specifically not:
   - selecting or combining which seeds an attack uses (that's a scenario / attack technique)
   - rendering or parameterizing prompts at send time (converters / normalizers)
@@ -202,6 +204,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Executors should use scoring and target capabilities implicitly. Executors should support multi-modal.
 - Seeds author goals and criteria; execution parameters carry an optional `ScoringExpectation`
   beside the attack objective. Attacks forward its conditions; scorers interpret them.
+- The attack assigns scorer roles. Its objective scorer must cover every condition. Auxiliary
+  scorers are optional diagnostics: the attack gives each one its supported conditions and skips
+  it when a required condition is absent.
 - Compound attacks are possible, combining different attacks in different ways.
 - **Does not own**: packaging the attack. Those are passed in as configuration by the **attack technique**, not assembled here:
   - prepended / system prompts, role-play framing, the converter stack, or dataset selection (e.g. if an executor assembles its own prompt scaffolding for a simulated conversation, that is attack-technique work bleeding into the executor)
@@ -278,6 +283,14 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   supports caller-owned, in-process capture, not a remote collector or durable store.
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.
+- Scorer trees check that all conditions have a matching leaf. Wrappers route supported subsets
+  to their children; leaves reject unsupported conditions. Typed message scorers receive criteria
+  through `_score_piece_with_expectation_async`; old objective-only hooks must not discard
+  conditions they claim to match. Subclasses of a migrated scorer must use its typed hook.
+- A condition-based leaf declares one `CONDITION_TYPE` and requires exactly one condition of that
+  type. Constructor-configured leaves declare none. Shared validation rejects missing and duplicate
+  conditions before scoring. Wrappers expose their children; `get_condition_types()` derives their
+  combined coverage. Use separate leaves and a composite for independent checks.
 - `score_observation_async` coordinates replay of stored evidence without calling the target. Scorer target response replay owns the checks for the exact original expectation, scorer configuration, and response-handler contract; evidence resolution checks that scored evidence and response content are unchanged.
 - Tool-event observations can be matched against new tool-name expectations
   without querying the trace client again. This does not relax scorer target response replay rules.
@@ -305,6 +318,8 @@ The below talks about responsibilities of most modules in the PyRIT library
 - This is where cross-run analysis belongs: e.g. "which attack performed best for this objective?", "how often did a technique succeed?", or "which responses match known content?".
 - **Does not own**: live, in-attack decisions — any decision made *during* an attack is a scorer's job. Analytics only operates on stored results, after the fact.
 - Today it includes `ConversationAnalytics` (inspecting conversation history), `analyze_results` / `AttackStats` (aggregating outcomes across techniques), and text-matching strategies (`ExactTextMatching`, `ApproximateTextMatching`).
+- Shared analytics contracts (filters, dimensions, typed values, reports, facets, result pages, and `AttackStats`) live in `pyrit.models.analytics`. They validate data without querying memory or calculating statistics. `AttackResultSelection` defines selection modes without changing existing callers.
+- Filter-bound cursor and label-normalization helpers live in `pyrit.common.pagination`. The backend pagination module retains compatibility exports, including History's invalid-cursor first-page fallback.
 
 ## Auth
 

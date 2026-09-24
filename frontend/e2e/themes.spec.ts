@@ -129,7 +129,9 @@ test.describe('Theme presets', () => {
       await page.emulateMedia({ forcedColors: 'active' })
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'high-contrast')
       await expect(background).toHaveCount(0)
-      expect(await page.evaluate(() => localStorage.getItem('pyrit.themeMode'))).toBe(id)
+      expect(await page.evaluate(() => JSON.parse(
+        localStorage.getItem('pyrit.userPreferences.v1.local') ?? '{}',
+      ).theme)).toBe(id)
       if (id === 'jimothy') {
         await page.screenshot({ path: testInfo.outputPath('high-contrast.png') })
       }
