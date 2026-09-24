@@ -108,9 +108,17 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
 
             metadata: dict[str, str | int] = {key: value for key, value in example.items() if key != "Behavior"}
 
+            # Contextual behaviors only make sense together with their context (e.g. "Modify this code ...").
+            # Combine them the way HarmBench does (baselines/direct_request/direct_request.py).
+            value = example["Behavior"]
+            context_string = example.get("ContextString")
+            if context_string:
+                value = f"{context_string}\n\n---\n\n{value}"
+                metadata["Behavior"] = example["Behavior"]
+
             # Create SeedPrompt
             seed_prompt = SeedObjective(
-                value=example["Behavior"],
+                value=value,
                 name="HarmBench Examples",
                 dataset_name=self.dataset_name,
                 harm_categories=standardized_categories,
