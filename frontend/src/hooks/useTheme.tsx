@@ -12,10 +12,11 @@ import {
   createHighContrastTheme,
 } from '@fluentui/react-components'
 
-import { isThemeMode, THEME_PRESETS } from '@/themes/themePresets'
+import { THEME_PRESETS } from '@/themes/themePresets'
 import type { ResolvedTheme, ThemeContextValue, ThemeMode, ThemePreset } from '@/types'
 
 import { useThemeProviderStyles } from './ThemeProvider.styles'
+import { useUserPreferences } from './useUserPreferences'
 
 export type { ResolvedTheme, ThemeContextValue, ThemeMode } from '@/types'
 
@@ -23,7 +24,6 @@ export type { ResolvedTheme, ThemeContextValue, ThemeMode } from '@/types'
 // Constants
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = 'pyrit.themeMode'
 const FORCED_COLORS_QUERY = '(forced-colors: active)'
 const PREFERS_DARK_QUERY = '(prefers-color-scheme: dark)'
 
@@ -34,25 +34,6 @@ const HIGH_CONTRAST_THEME = createHighContrastTheme()
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function readStoredMode(): ThemeMode {
-  if (typeof window === 'undefined') return 'system'
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    return isThemeMode(raw) ? raw : 'system'
-  } catch {
-    return 'system'
-  }
-}
-
-function persistMode(mode: ThemeMode): void {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(STORAGE_KEY, mode)
-  } catch {
-    /* localStorage may be unavailable (private mode, quota, sandboxed iframe). */
-  }
-}
 
 function safeMatchMedia(query: string): MediaQueryList | null {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -114,15 +95,13 @@ export function useTheme(): ThemeContextValue {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const styles = useThemeProviderStyles()
-  // Lazy initializer reads from localStorage exactly once, so the first paint
-  // is correct (no flash of wrong theme) and StrictMode double-render is safe.
-  const [mode, setModeState] = useState<ThemeMode>(() => readStoredMode())
+  const { preferences, updatePreferences } = useUserPreferences()
+  const mode = preferences.theme
   const [signals, setSignals] = useState<SystemSignals>(() => readSystemSignals())
 
   const setMode = useCallback((next: ThemeMode) => {
-    setModeState(next)
-    persistMode(next)
-  }, [])
+    updatePreferences((current) => ({ ...current, theme: next }))
+  }, [updatePreferences])
 
   // Subscribe to OS-level signals. Both `forced-colors` and
   // `prefers-color-scheme` can change at runtime (Windows HC toggle, macOS

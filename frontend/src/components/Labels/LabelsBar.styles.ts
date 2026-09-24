@@ -28,7 +28,8 @@ export const useLabelsBarStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
     flexWrap: 'nowrap',
-    overflow: 'hidden',
+    // Metadata has no popover fallback, so keep it reachable on narrow bars.
+    overflowX: 'auto',
     flex: '1 1 0',
     minWidth: 0,
   },
@@ -183,5 +184,6 @@ export const useLabelsBarStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     flexShrink: 0,
+    ...mobileTouchTarget,
   },
 })

@@ -28,9 +28,12 @@ def test_third_party_provenance_uses_immutable_revisions() -> None:
     for path in (GARAK_PROVENANCE_PATH, PROMPTINJECT_PROVENANCE_PATH):
         provenance = _load_provenance(path=path)
 
-        revision = provenance["revision"]
-        assert len(revision) == 40
-        assert all(character in "0123456789abcdef" for character in revision)
+        revisions = [provenance["revision"]] + [
+            entry["revision"] for entry in provenance["redistributed_files"] if "revision" in entry
+        ]
+        for revision in revisions:
+            assert len(revision) == 40
+            assert all(character in "0123456789abcdef" for character in revision)
 
 
 def test_redistributed_files_have_license_specific_attribution() -> None:
@@ -55,16 +58,18 @@ def test_garak_local_datasets_use_declared_immutable_source_urls() -> None:
     ]
     local_dataset_dir = REPOSITORY_ROOT / "pyrit" / "datasets" / "seed_datasets" / "local" / "garak"
     provenance_by_path = {
-        entry["path"]: provenance for provenance in provenances for entry in provenance["redistributed_files"]
+        entry["path"]: (provenance, entry) for provenance in provenances for entry in provenance["redistributed_files"]
     }
 
     for file_path in local_dataset_dir.glob("*.prompt"):
         content = file_path.read_text(encoding="utf-8")
         relative_path = file_path.relative_to(REPOSITORY_ROOT).as_posix()
         assert relative_path in provenance_by_path
-        provenance = provenance_by_path[relative_path]
-        immutable_source_prefix = f"{provenance['repository']}/blob/{provenance['revision']}/"
+        provenance, entry = provenance_by_path[relative_path]
+        revision = entry.get("revision", provenance["revision"])
+        immutable_source_prefix = f"{provenance['repository']}/blob/{revision}/"
         assert immutable_source_prefix in content
+        assert any(immutable_source_prefix + source in content for source in entry["sources"])
 
 
 def test_third_party_license_files_are_configured_for_distribution() -> None:

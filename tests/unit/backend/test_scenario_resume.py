@@ -16,6 +16,7 @@ from pyrit.backend.services.scenario_run_service import (
     ScenarioRunConflictError,
     ScenarioRunNotFoundError,
     ScenarioRunService,
+    _PreparedRun,
 )
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
@@ -380,6 +381,7 @@ async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
             request=RunScenarioRequest(
                 scenario_name=_SCENARIO_NAME,
                 target_name=_TARGET_NAME,
+                adversarial_target_name=_TARGET_NAME,
                 include_baseline=False,
                 labels=_LABELS,
                 initializers=["test-initializer"],
@@ -395,6 +397,7 @@ async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
     assert stored is not None
     saved = stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]
     assert saved["target_name"] == _TARGET_NAME
+    assert saved["adversarial_target_name"] == _TARGET_NAME
     assert saved["max_concurrency"] == 1
     assert saved["include_baseline"] is False
     assert not {"initializer_args", "initializers", "scenario_params", "labels"} & saved.keys()
@@ -445,7 +448,7 @@ async def test_resume_missing_scenario_registration_is_explicit_async(
             await service.resume_run_async(scenario_result_id=str(stored.id))
 
 
-@pytest.mark.parametrize("missing", _LAUNCH_REQUEST_FIELDS)
+@pytest.mark.parametrize("missing", [name for name in _LAUNCH_REQUEST_FIELDS if name != "adversarial_target_name"])
 async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
     *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], missing: str
 ) -> None:
@@ -461,6 +464,33 @@ async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
         prepare.assert_not_called()
 
 
+async def test_resume_older_launch_record_without_adversarial_selection_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    del stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["adversarial_target_name"]
+    request = service._restore_launch_request(stored=stored)
+    assert request.adversarial_target_name is None
+
+
+async def test_resume_restores_selected_adversarial_target_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    adversarial = MockPromptTarget()
+    TargetRegistry.get_registry_singleton().instances.register(adversarial, name="saved-adversarial")
+    stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["adversarial_target_name"] = "saved-adversarial"
+    CentralMemory.get_memory_instance().update_scenario_metadata(
+        scenario_result_id=str(stored.id), metadata=stored.metadata
+    )
+    with patch.object(service, "_enqueue_run_async", wraps=service._enqueue_run_async) as enqueue:
+        await service.resume_run_async(scenario_result_id=str(stored.id))
+        await _wait_for_idle_async(service)
+    assert enqueue.await_args.kwargs["scheduled"].adversarial_target is adversarial
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -473,6 +503,7 @@ async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
         ("include_baseline", "false"),
         ("scenario_name", ""),
         ("target_name", " "),
+        ("adversarial_target_name", 42),
         ("techniques", "direct"),
         ("dataset_names", "dataset"),
         ("max_dataset_size", 0),
@@ -517,6 +548,7 @@ async def test_restore_launch_request_keeps_saved_settings_and_canonical_params_
     stored = await _create_failed_run_async(target=target, legacy=False)
     saved = stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]
     saved.update(
+        adversarial_target_name="saved-adversarial",
         techniques=["direct:converter.saved"],
         dataset_names=["saved-dataset"],
         max_dataset_size=7,
@@ -621,7 +653,7 @@ async def test_resume_never_schedules_replacement_result_id_async(
     stored = await _create_failed_run_async(target=target, legacy=False)
     replacement = _OfflineResumeScenario(scenario_result_id="different-result-id")
     with (
-        patch.object(service, "_prepare_run_blocking", return_value=replacement),
+        patch.object(service, "_prepare_run_blocking", return_value=_PreparedRun(scenario=replacement)),
         patch.object(service, "_enqueue_run_async") as enqueue,
     ):
         with pytest.raises(ValueError, match="changed the saved result ID"):

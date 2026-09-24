@@ -114,6 +114,12 @@ FIXTURES = ["patch_central_database", "mock_runtime_env"]
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestTextAdaptiveBasics:
+    def test_default_adversarial_usage_comes_from_adaptive_pool(self, mock_objective_scorer: MagicMock) -> None:
+        scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
+        assert scenario.uses_default_adversarial_target is True
+        with patch.object(scenario, "_get_attack_technique_factories", return_value={}):
+            assert scenario.uses_default_adversarial_target is False
+
     def test_version(self):
         assert TextAdaptive.VERSION == 1
 

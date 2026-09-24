@@ -24,7 +24,11 @@ if TYPE_CHECKING:
         require_nonempty,
     )
     from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-    from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
+    from pyrit.scenario.core.scenario_target_defaults import (
+        get_default_adversarial_target,
+        get_default_scorer_target,
+        override_default_adversarial_target,
+    )
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
@@ -46,6 +50,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScorerOverridePolicy": "pyrit.scenario.core.attack_technique_factory",
     "get_default_scorer_target": "pyrit.scenario.core.scenario_target_defaults",
     "get_default_adversarial_target": "pyrit.scenario.core.scenario_target_defaults",
+    "override_default_adversarial_target": "pyrit.scenario.core.scenario_target_defaults",
 }
 
 __all__ = list(_LAZY_EXPORTS)

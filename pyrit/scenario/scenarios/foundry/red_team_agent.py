@@ -341,6 +341,7 @@ class RedTeamAgent(Scenario):
         # Call super().__init__() first to initialize self._memory
         super().__init__(
             version=self.VERSION,
+            uses_default_adversarial_target=adversarial_chat is None,
             technique_class=FoundryTechnique,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
             objective_scorer=objective_scorer,
