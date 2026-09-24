@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     2. ``~/.pyrit/.pyrit_conf`` when present
     3. ``PYRIT_CONFIG_FILE`` local path or Azure Blob URI when set
     """
-    app.state.compatibility_id = _compatibility.get_compatibility_id()
+    app.state.compatibility_id = await asyncio.to_thread(_compatibility.get_compatibility_id)
     configuration_file_service = ConfigurationFileService(config_file_value=os.getenv("PYRIT_CONFIG_FILE"))
     app.state.configuration_file_service = configuration_file_service
     async with configuration_file_service.resolve_async() as config_file:
