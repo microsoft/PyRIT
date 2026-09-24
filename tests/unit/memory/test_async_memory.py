@@ -28,6 +28,30 @@ def test_public_memory_io_has_explicit_async_counterparts() -> None:
         assert inspect.iscoroutinefunction(getattr(MemoryInterface, name + "_async", None)), name
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        name
+        for name, method in inspect.getmembers(MemoryInterface, inspect.isfunction)
+        if not name.startswith("_")
+        and not inspect.iscoroutinefunction(method)
+        and inspect.iscoroutinefunction(getattr(MemoryInterface, name + "_async", None))
+    ],
+)
+def test_public_sync_memory_method_is_deprecated(name: str, sqlite_instance: SQLiteMemory) -> None:
+    method = getattr(sqlite_instance, name)
+    required = {
+        parameter.name: None
+        for parameter in inspect.signature(method).parameters.values()
+        if parameter.default is inspect.Parameter.empty
+        and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    with patch("pyrit.memory.memory_interface.print_deprecation_message", side_effect=DeprecationWarning) as warning:
+        with pytest.raises(DeprecationWarning):
+            method(**required)
+    assert warning.call_args.kwargs["new_item"] == f"MemoryInterface.{name}_async"
+
+
 def test_library_does_not_reference_sync_memory_outside_compatibility() -> None:
     root = Path(__file__).resolve().parents[3] / "pyrit"
     sync_names = {

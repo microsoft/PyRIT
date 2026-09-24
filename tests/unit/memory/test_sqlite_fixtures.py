@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import gc
 import sqlite3
 import weakref
 from collections.abc import Generator
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, closing, contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -269,21 +269,19 @@ async def test_sqlite_instance_reset_still_runs_real_migrations(sqlite_instance:
     assert _schema_snapshot(sqlite_instance.engine) == before
 
 
-def test_sqlite_instance_keeps_real_threaded_sessions(sqlite_instance: SQLiteMemory) -> None:
+async def test_sqlite_instance_keeps_real_async_sessions_async(sqlite_instance: SQLiteMemory) -> None:
     with sqlite_instance.engine.begin() as connection:
         connection.execute(text("CREATE TABLE fixture_threads (value INTEGER)"))
 
-    def write_rows(worker: int) -> None:
+    async def write_rows_async(worker: int) -> None:
         assert CentralMemory.get_memory_instance() is sqlite_instance
         for index in range(10):
-            with closing(sqlite_instance.get_session()) as session:
-                session.execute(
+            async with await sqlite_instance.get_session_async() as session:
+                await session.execute(
                     text("INSERT INTO fixture_threads (value) VALUES (:value)"), {"value": worker * 10 + index}
                 )
-                session.commit()
+                await session.commit()
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        for future in [executor.submit(write_rows, worker) for worker in range(4)]:
-            future.result(timeout=30)
-    with closing(sqlite_instance.get_session()) as session:
-        assert session.execute(text("SELECT COUNT(DISTINCT value) FROM fixture_threads")).scalar_one() == 40
+    await asyncio.gather(*(write_rows_async(worker) for worker in range(4)))
+    async with await sqlite_instance.get_session_async() as session:
+        assert (await session.execute(text("SELECT COUNT(DISTINCT value) FROM fixture_threads"))).scalar_one() == 40

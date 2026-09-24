@@ -56,14 +56,14 @@ async def test_insert_entry(memory_interface):
     memory_interface._insert_entry(entry)
 
     # Verify the entry was inserted
-    with memory_interface.get_session() as session:
-        inserted_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
+    async with await memory_interface.get_session_async() as session:
+        inserted_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))).first()
         assert inserted_entry is not None
         assert inserted_entry.role == "user"
         assert inserted_entry.original_value == "Hello"
 
 
-def test_insert_entries(memory_interface: AzureSQLMemory):
+async def test_insert_entries_async(memory_interface: AzureSQLMemory):
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
@@ -77,10 +77,11 @@ def test_insert_entries(memory_interface: AzureSQLMemory):
     ]
 
     # Now, get a new session to query the database and verify the entries were inserted
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        # Use the insert_entries method to insert multiple entries into the database
-        memory_interface._insert_entries(entries=entries)
-        inserted_entries = session.query(PromptMemoryEntry).order_by(PromptMemoryEntry.conversation_id).all()
+    memory_interface._insert_entries(entries=entries)
+    async with await memory_interface.get_session_async() as session:
+        inserted_entries = (
+            await session.scalars(select(PromptMemoryEntry).order_by(PromptMemoryEntry.conversation_id))
+        ).all()
         assert len(inserted_entries) == 5
         for i, entry in enumerate(inserted_entries):
             assert entry.conversation_id == str(i)
@@ -89,7 +90,7 @@ def test_insert_entries(memory_interface: AzureSQLMemory):
             assert entry.converted_value == f"CMessage {i}"
 
 
-def test_insert_embedding_entry(memory_interface: AzureSQLMemory):
+async def test_insert_embedding_entry_async(memory_interface: AzureSQLMemory):
     # Create a ConversationData entry
     conversation_entry = PromptMemoryEntry(
         entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="abc")
@@ -99,9 +100,11 @@ def test_insert_embedding_entry(memory_interface: AzureSQLMemory):
     memory_interface._insert_entry(conversation_entry)
 
     # Re-query the ConversationData entry within a new session to ensure it's attached
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
+    async with await memory_interface.get_session_async() as session:
         # Assuming uuid is the primary key and is set upon insertion
-        reattached_conversation_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").one()
+        reattached_conversation_entry = (
+            await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))
+        ).one()
         uuid = reattached_conversation_entry.id
 
     # Now that we have the uuid, we can create and insert the EmbeddingData entry
@@ -109,8 +112,8 @@ def test_insert_embedding_entry(memory_interface: AzureSQLMemory):
     memory_interface._insert_entry(embedding_entry)
 
     # Verify the EmbeddingData entry was inserted correctly
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        persisted_embedding_entry = session.query(EmbeddingDataEntry).filter_by(id=uuid).first()
+    async with await memory_interface.get_session_async() as session:
+        persisted_embedding_entry = (await session.scalars(select(EmbeddingDataEntry).filter_by(id=uuid))).first()
         assert persisted_embedding_entry is not None
         assert persisted_embedding_entry.embedding == [1, 2, 3]
         assert persisted_embedding_entry.embedding_type_name == "test_type"
@@ -145,8 +148,8 @@ def test_default_embedding_raises(memory_interface: AzureSQLMemory):
         memory_interface.enable_embedding()
 
 
-def test_reset_database_recreates_versioned_schema(memory_interface: AzureSQLMemory):
-    memory_interface.reset_database()
+async def test_reset_database_recreates_versioned_schema_async(memory_interface: AzureSQLMemory):
+    await memory_interface.reset_database_async()
 
     inspector = inspect(memory_interface.engine)
     table_names = set(inspector.get_table_names())
@@ -306,7 +309,7 @@ def test_get_message_pieces_memory_label_conditions_bind_params(uninitialized_me
     assert params == {"are_ml_operation": "test_op"}
 
 
-def test_update_entries(memory_interface: AzureSQLMemory):
+async def test_update_entries_async(memory_interface: AzureSQLMemory):
     # Insert a test entry
     entry = PromptMemoryEntry(
         entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
@@ -321,8 +324,8 @@ def test_update_entries(memory_interface: AzureSQLMemory):
     memory_interface._update_entries(entries=entries_to_update, update_fields={"original_value": "Updated Hello"})
 
     # Verify the entry was updated
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        updated_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
+    async with await memory_interface.get_session_async() as session:
+        updated_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))).first()
         assert updated_entry.original_value == "Updated Hello"
 
 
@@ -376,8 +379,10 @@ async def test_update_prompt_entries_by_conversation_id(memory_interface: AzureS
     assert update_result is True
 
     # Verify the entry was updated
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        updated_entries = session.query(PromptMemoryEntry).filter_by(conversation_id=specific_conversation_id)
+    async with await memory_interface.get_session_async() as session:
+        updated_entries = (
+            await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id=specific_conversation_id))
+        ).all()
         for entry in updated_entries:
             assert entry.original_value == "Updated Hello"
             assert entry.role == "assistant"
@@ -669,8 +674,8 @@ async def test_update_prompt_metadata_by_conversation_id(memory_interface: Azure
     )
 
     # Verify the metadata was updated
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        updated_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
+    async with await memory_interface.get_session_async() as session:
+        updated_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))).first()
         assert updated_entry.prompt_metadata == {"updated": "updated"}
 
 

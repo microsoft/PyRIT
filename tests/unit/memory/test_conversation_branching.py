@@ -6,7 +6,6 @@
 import asyncio
 import uuid
 from collections.abc import AsyncGenerator
-from contextlib import closing
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -34,6 +33,7 @@ from pyrit.models import (
     MessagePiece,
     TargetIdentifier,
 )
+from unit.mocks import run_memory_session_async
 
 
 @pytest.fixture
@@ -114,12 +114,15 @@ class TestAtomicConversationBranching:
         assert [piece.converted_value_sha256 for piece in saved] == ["converted-hash-0", "converted-hash-1"]
         assert [piece.converter_identifiers for piece in saved] == [converters, converters]
         assert (await sqlite_instance.get_message_pieces_async(prompt_ids=[ephemeral.id])) == []
-        with closing(sqlite_instance.get_session()) as session:
-            links = session.scalars(
+
+        def load_links(session):
+            return session.scalars(
                 select(PromptConverterIdentifierEntry).where(
                     PromptConverterIdentifierEntry.prompt_memory_entry_id.in_([piece.id for piece in copies])
                 )
             ).all()
+
+        links = await run_memory_session_async(memory=sqlite_instance, operation=load_links)
         assert len(links) == 4
         assert sorted(link.position for link in links) == [0, 0, 1, 1]
 
@@ -203,7 +206,8 @@ class TestAtomicConversationBranching:
             piece.id
             for piece in (await sqlite_instance.get_message_pieces_async(conversation_id=source.conversation_id))
         ] == [original.id]
-        with closing(sqlite_instance.get_session()) as session:
+
+        def check_links(session):
             assert session.get(TargetIdentifierEntry, new_target.hash) is None
             assert session.get(ConverterIdentifierEntry, new_converter.hash) is None
             assert (session.get(TargetIdentifierEntry, source_target.hash) is not None) == source_registered
@@ -215,6 +219,8 @@ class TestAtomicConversationBranching:
                 ).all()
                 == []
             )
+
+        await run_memory_session_async(memory=sqlite_instance, operation=check_links)
 
     @pytest.mark.parametrize("column", [None, "adversarial_chat_conversation_ids", "preparation_conversation_ids"])
     async def test_unrelated_and_diagnostic_sources_are_rejected(

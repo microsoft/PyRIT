@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects import mssql
 from unit.mocks import get_mock_target_identifier, make_scenario_result
 
@@ -1293,18 +1293,16 @@ async def test_get_unique_attack_labels_no_labels(sqlite_instance: MemoryInterfa
 
 async def test_get_unique_attack_labels_non_string_values_skipped(sqlite_instance: MemoryInterface):
     """Non-string label values are ignored."""
-    from contextlib import closing
-
     from sqlalchemy import text
 
     ar = create_attack_result("conv_1", 1, labels={"env": "prod"})
     (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar]))
-    with closing(sqlite_instance.get_session()) as session:
-        session.execute(
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(
             text('UPDATE "AttackResultEntries" SET labels = :labels'),
             {"labels": '{"env":"prod","count":42}'},
         )
-        session.commit()
+        await session.commit()
 
     result = await sqlite_instance.get_unique_attack_labels_async()
     assert result == {"env": ["prod"]}
@@ -1324,8 +1322,6 @@ async def test_get_unique_attack_labels_keys_sorted(sqlite_instance: MemoryInter
 
 async def test_get_unique_attack_labels_non_dict_labels_skipped(sqlite_instance: MemoryInterface):
     """Labels stored as a non-dict JSON value (e.g. a string) are skipped."""
-    from contextlib import closing
-
     from sqlalchemy import text
 
     ar1 = create_attack_result("conv_1", 1, labels={"env": "prod"})
@@ -1333,12 +1329,12 @@ async def test_get_unique_attack_labels_non_dict_labels_skipped(sqlite_instance:
 
     ar2 = create_attack_result("conv_2", 2, labels={"placeholder": "x"})
     (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar2]))
-    with closing(sqlite_instance.get_session()) as session:
-        session.execute(
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(
             text('UPDATE "AttackResultEntries" SET labels = :labels WHERE conversation_id = :cid'),
             {"labels": '"just_a_string"', "cid": "conv_2"},
         )
-        session.commit()
+        await session.commit()
 
     result = await sqlite_instance.get_unique_attack_labels_async()
     # Only the dict labels from conv_1 should appear
@@ -2238,9 +2234,9 @@ async def test_get_attack_results_keyset_pagination_stable_under_delete(sqlite_i
 
     # Delete a row that was already returned on page 1 (above the anchor). With an offset this
     # shifts the window and skips "conv-2"; the keyset anchor is unaffected.
-    with sqlite_instance.get_session() as session:
-        session.query(AttackResultEntry).filter(AttackResultEntry.conversation_id == "conv-4").delete()
-        session.commit()
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(delete(AttackResultEntry).where(AttackResultEntry.conversation_id == "conv-4"))
+        await session.commit()
 
     page2 = [r.conversation_id for r in (await sqlite_instance.get_attack_results_async(limit=3, after=_after(page1)))]
     assert page2 == ["conv-2", "conv-1", "conv-0"]

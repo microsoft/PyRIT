@@ -13,7 +13,7 @@ from contextlib import closing
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import ARRAY, DateTime, Integer, String, create_engine, event, inspect, text
+from sqlalchemy import ARRAY, DateTime, Integer, String, create_engine, event, inspect, select, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
@@ -303,8 +303,8 @@ def test_run_schema_migrations_isolates_foreign_alembic_version_table():
             engine.dispose()
 
 
-def test_reset_database_recreates_schema(sqlite_instance):
-    sqlite_instance.reset_database()
+async def test_reset_database_recreates_schema_async(sqlite_instance):
+    await sqlite_instance.reset_database_async()
 
     inspector = inspect(sqlite_instance.engine)
     table_names = set(inspector.get_table_names())
@@ -325,11 +325,11 @@ def test_reset_database_recreates_schema(sqlite_instance):
     assert version
 
 
-def test_reset_database_keeps_foreign_alembic_version_table(sqlite_instance):
+async def test_reset_database_keeps_foreign_alembic_version_table_async(sqlite_instance):
     with sqlite_instance.engine.begin() as connection:
         connection.execute(text('CREATE TABLE "alembic_version" (version_num VARCHAR(32) NOT NULL)'))
 
-    sqlite_instance.reset_database()
+    await sqlite_instance.reset_database_async()
 
     table_names = set(inspect(sqlite_instance.engine).get_table_names())
     assert "alembic_version" in table_names
@@ -352,11 +352,11 @@ async def test_insert_entry(sqlite_instance):
 
     entry = PromptMemoryEntry(entry=message_piece_entry)
     # Use the insert_entry method to insert the entry into the database
-    sqlite_instance._insert_entry(entry)
+    await sqlite_instance._run_database_operation_async(sqlite_instance._insert_entry, entry)
 
     # Now, get a new session to query the database and verify the entry was inserted
-    with sqlite_instance.get_session() as session:
-        inserted_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
+    async with await sqlite_instance.get_session_async() as session:
+        inserted_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))).first()
         assert inserted_entry is not None
         assert inserted_entry.role == "user"
         assert inserted_entry.original_value == "Hello"
@@ -367,7 +367,7 @@ async def test_insert_entry(sqlite_instance):
         assert inserted_entry.converted_value_sha256 == converted_sha256
 
 
-def test_insert_entry_violates_constraint(sqlite_instance):
+async def test_insert_entry_violates_constraint_async(sqlite_instance):
     # Generate a fixed UUID
     fixed_uuid = uuid.uuid4()
     # Create two entries with the same UUID
@@ -392,18 +392,18 @@ def test_insert_entry_violates_constraint(sqlite_instance):
     )
 
     # Insert the first entry
-    with sqlite_instance.get_session() as session:
+    async with await sqlite_instance.get_session_async() as session:
         session.add(entry1)
-        session.commit()
+        await session.commit()
 
     # Attempt to insert the second entry with the same UUID
-    with sqlite_instance.get_session() as session:
+    async with await sqlite_instance.get_session_async() as session:
         session.add(entry2)
         with pytest.raises(SQLAlchemyError):
-            session.commit()
+            await session.commit()
 
 
-def test_insert_entries(sqlite_instance):
+async def test_insert_entries_async(sqlite_instance):
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
@@ -417,10 +417,9 @@ def test_insert_entries(sqlite_instance):
     ]
 
     # Now, get a new session to query the database and verify the entries were inserted
-    with sqlite_instance.get_session() as session:
-        # Use the insert_entries method to insert multiple entries into the database
-        sqlite_instance._insert_entries(entries=entries)
-        inserted_entries = session.query(PromptMemoryEntry).all()
+    await sqlite_instance._run_database_operation_async(sqlite_instance._insert_entries, entries=entries)
+    async with await sqlite_instance.get_session_async() as session:
+        inserted_entries = (await session.scalars(select(PromptMemoryEntry))).all()
         assert len(inserted_entries) == 5
         for i, entry in enumerate(inserted_entries):
             assert entry.conversation_id == str(i)
@@ -429,28 +428,30 @@ def test_insert_entries(sqlite_instance):
             assert entry.converted_value == f"CMessage {i}"
 
 
-def test_insert_embedding_entry(sqlite_instance):
+async def test_insert_embedding_entry_async(sqlite_instance):
     # Create a ConversationData entry
     conversation_entry = PromptMemoryEntry(
         entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="abc")
     )
 
     # Insert the ConversationData entry using the insert_entry method
-    sqlite_instance._insert_entry(conversation_entry)
+    await sqlite_instance._run_database_operation_async(sqlite_instance._insert_entry, conversation_entry)
 
     # Re-query the ConversationData entry within a new session to ensure it's attached
-    with sqlite_instance.get_session() as session:
+    async with await sqlite_instance.get_session_async() as session:
         # Assuming uuid is the primary key and is set upon insertion
-        reattached_conversation_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").one()
+        reattached_conversation_entry = (
+            await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))
+        ).one()
         uuid = reattached_conversation_entry.id
 
     # Now that we have the uuid, we can create and insert the EmbeddingData entry
     embedding_entry = EmbeddingDataEntry(id=uuid, embedding=[1, 2, 3], embedding_type_name="test_type")
-    sqlite_instance._insert_entry(embedding_entry)
+    await sqlite_instance._run_database_operation_async(sqlite_instance._insert_entry, embedding_entry)
 
     # Verify the EmbeddingData entry was inserted correctly
-    with sqlite_instance.get_session() as session:
-        persisted_embedding_entry = session.query(EmbeddingDataEntry).filter_by(id=uuid).first()
+    async with await sqlite_instance.get_session_async() as session:
+        persisted_embedding_entry = (await session.scalars(select(EmbeddingDataEntry).filter_by(id=uuid))).first()
         assert persisted_embedding_entry is not None
         assert persisted_embedding_entry.embedding == [1, 2, 3]
         assert persisted_embedding_entry.embedding_type_name == "test_type"
@@ -602,57 +603,63 @@ async def test_register_conversation_none_target_does_not_clobber(sqlite_instanc
     assert metadata.target_identifier.class_name == "TextTarget"
 
 
-def test_update_entries(sqlite_instance):
+async def test_update_entries_async(sqlite_instance):
     # Insert a test entry
     entry = PromptMemoryEntry(
         entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
     )
 
-    sqlite_instance._insert_entry(entry)
+    await sqlite_instance._run_database_operation_async(sqlite_instance._insert_entry, entry)
 
     # Fetch the entry to update and update its content
-    entries_to_update = sqlite_instance._query_entries(
-        PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == "123"
+    entries_to_update = await sqlite_instance._run_database_operation_async(
+        sqlite_instance._query_entries, PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == "123"
     )
-    sqlite_instance._update_entries(entries=entries_to_update, update_fields={"original_value": "Updated Hello"})
+    await sqlite_instance._run_database_operation_async(
+        sqlite_instance._update_entries, entries=entries_to_update, update_fields={"original_value": "Updated Hello"}
+    )
 
     # Verify the entry was updated
-    with sqlite_instance.get_session() as session:
-        updated_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
+    async with await sqlite_instance.get_session_async() as session:
+        updated_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))).first()
         assert updated_entry.original_value == "Updated Hello"
 
 
-def test_update_entries_empty_update_fields(sqlite_instance):
+async def test_update_entries_empty_update_fields_async(sqlite_instance):
     # Insert a test entry
     entry = PromptMemoryEntry(
         entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
     )
 
-    sqlite_instance._insert_entry(entry)
+    await sqlite_instance._run_database_operation_async(sqlite_instance._insert_entry, entry)
 
     # Fetch the entry to update and update its content
-    entries_to_update = sqlite_instance._query_entries(
-        PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == "123"
+    entries_to_update = await sqlite_instance._run_database_operation_async(
+        sqlite_instance._query_entries, PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == "123"
     )
     with pytest.raises(ValueError):
-        sqlite_instance._update_entries(entries=entries_to_update, update_fields={})
+        await sqlite_instance._run_database_operation_async(
+            sqlite_instance._update_entries, entries=entries_to_update, update_fields={}
+        )
 
 
-def test_update_entries_nonexistent_fields(sqlite_instance):
+async def test_update_entries_nonexistent_fields_async(sqlite_instance):
     # Insert a test entry
     entry = PromptMemoryEntry(
         entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
     )
 
-    sqlite_instance._insert_entry(entry)
+    await sqlite_instance._run_database_operation_async(sqlite_instance._insert_entry, entry)
 
     # Fetch the entry to update and update its content
-    entries_to_update = sqlite_instance._query_entries(
-        PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == "123"
+    entries_to_update = await sqlite_instance._run_database_operation_async(
+        sqlite_instance._query_entries, PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == "123"
     )
     with pytest.raises(ValueError):
-        sqlite_instance._update_entries(
-            entries=entries_to_update, update_fields={"original_value": "Updated", "nonexistent_field": "Updated Hello"}
+        await sqlite_instance._run_database_operation_async(
+            sqlite_instance._update_entries,
+            entries=entries_to_update,
+            update_fields={"original_value": "Updated", "nonexistent_field": "Updated Hello"},
         )
     # Verify changes were rolled back and entry was not updated
     assert entries_to_update[0].original_value == "Hello"
@@ -668,32 +675,25 @@ async def test_update_entries_by_conversation_id(sqlite_instance, sample_convers
     sample_conversation_entries[1].conversation_id = "other_id"
     original_content = sample_conversation_entries[1].original_value
 
-    # Insert the ConversationData entries using the insert_entries method within a session
-    with sqlite_instance.get_session() as session:
-        sqlite_instance._insert_entries(entries=sample_conversation_entries)
-        session.commit()  # Ensure all entries are committed to the database
+    await sqlite_instance._run_database_operation_async(
+        sqlite_instance._insert_entries, entries=sample_conversation_entries
+    )
+    update_result = await sqlite_instance.update_prompt_entries_by_conversation_id_async(
+        conversation_id=specific_conversation_id,
+        update_fields={"original_value": "Updated content", "role": "assistant"},
+    )
+    assert update_result is True
 
-        # Define the fields to update for entries with the specific conversation_id
-        update_fields = {"original_value": "Updated content", "role": "assistant"}
-
-        # Use the update_prompt_entries_by_conversation_id method to update the entries
-        update_result = await sqlite_instance.update_prompt_entries_by_conversation_id_async(
-            conversation_id=specific_conversation_id, update_fields=update_fields
-        )
-
-        assert update_result is True  # Ensure the update operation was reported as successful
-
-        # Verify that the entries with the specific conversation_id were updated
-        updated_entries = sqlite_instance._query_entries(
-            PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == specific_conversation_id
-        )
+    async with await sqlite_instance.get_session_async() as session:
+        updated_entries = (
+            await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id=specific_conversation_id))
+        ).all()
         for entry in updated_entries:
             assert entry.original_value == "Updated content"
             assert entry.role == "assistant"
 
-        # Verify that the entry with a different conversation_id was not updated
-        other_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="other_id").first()
-        assert other_entry.original_value == original_content  # Content should remain unchanged
+        other_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="other_id"))).first()
+        assert other_entry.original_value == original_content
 
 
 async def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample_conversation_entries):
@@ -706,30 +706,23 @@ async def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample
     sample_conversation_entries[1].conversation_id = "other_id"
     original_metadata = sample_conversation_entries[1].prompt_metadata
 
-    # Insert the ConversationData entries using the insert_entries method within a session
-    with sqlite_instance.get_session() as session:
-        sqlite_instance._insert_entries(entries=sample_conversation_entries)
-        session.commit()  # Ensure all entries are committed to the database
+    await sqlite_instance._run_database_operation_async(
+        sqlite_instance._insert_entries, entries=sample_conversation_entries
+    )
+    update_result = await sqlite_instance.update_prompt_entries_by_conversation_id_async(
+        conversation_id=specific_conversation_id, update_fields={"prompt_metadata": "updated_metadata"}
+    )
+    assert update_result is True
 
-        # Define the fields to update for entries with the specific conversation_id
-        update_fields = {"prompt_metadata": "updated_metadata"}
-        # Use the update_prompt_entries_by_conversation_id method to update the entries
-        update_result = await sqlite_instance.update_prompt_entries_by_conversation_id_async(
-            conversation_id=specific_conversation_id, update_fields=update_fields
-        )
-
-        assert update_result is True  # Ensure the update operation was reported as successful
-
-        # Verify that the entries with the specific conversation_id were updated
-        updated_entries = sqlite_instance._query_entries(
-            PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == specific_conversation_id
-        )
+    async with await sqlite_instance.get_session_async() as session:
+        updated_entries = (
+            await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id=specific_conversation_id))
+        ).all()
         for entry in updated_entries:
             assert entry.prompt_metadata == "updated_metadata"
 
-        # Verify that the entry with a different conversation_id was not updated
-        other_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="other_id").first()
-        assert other_entry.prompt_metadata == original_metadata  # Metadata should remain unchanged
+        other_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="other_id"))).first()
+        assert other_entry.prompt_metadata == original_metadata
 
 
 async def test_get_conversation_stats_returns_empty_for_no_ids(sqlite_instance):
@@ -945,7 +938,7 @@ async def test_get_conversation_stats_uses_last_piece_data_type(sqlite_instance)
     assert stats.last_message_preview == audio_path
 
 
-def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):
+async def test_dispose_engine_tolerates_closed_log_stream_async(sqlite_instance, capsys):
     """Verify dispose_engine does not raise or emit 'Logging error' when streams are closed (GH-1520)."""
     pyrit_logger = logging.getLogger("pyrit")
     prev_level = pyrit_logger.level
@@ -958,7 +951,7 @@ def test_dispose_engine_tolerates_closed_log_stream(sqlite_instance, capsys):
 
     try:
         stream.close()
-        sqlite_instance.dispose_engine()
+        await sqlite_instance.dispose_engine_async()
     finally:
         root.removeHandler(handler)
         pyrit_logger.setLevel(prev_level)
@@ -1033,7 +1026,7 @@ def test_run_schema_migrations_no_memory_tables():
 
 
 @pytest.fixture
-def isolated_memory_factory():
+async def isolated_memory_factory():
     """Build SQLiteMemory instances that are not the shared process-wide singleton."""
     saved = Singleton._instances.copy()
     Singleton._instances.clear()
@@ -1049,12 +1042,12 @@ def isolated_memory_factory():
         yield _factory
     finally:
         for memory in created:
-            memory.dispose_engine()
+            await memory.dispose_engine_async()
         Singleton._instances.clear()
         Singleton._instances.update(saved)
 
 
-def test_in_memory_database_serializes_sessions_across_threads(isolated_memory_factory):
+def test_legacy_in_memory_database_serializes_sessions_across_threads(isolated_memory_factory):
     """
     An in-memory database shares one DBAPI connection, so overlapping sessions corrupt writes.
     Without serialization this loses rows and raises sqlite3.InterfaceError.
@@ -1090,46 +1083,46 @@ def test_in_memory_database_serializes_sessions_across_threads(isolated_memory_f
         assert session.execute(text("SELECT COUNT(*) FROM lock_probe")).scalar() == 120
 
 
-def test_in_memory_database_allows_nested_sessions_on_one_thread(isolated_memory_factory):
-    """The lock is re-entrant so a caller that opens a second session cannot deadlock itself."""
+def test_legacy_in_memory_database_allows_nested_sessions_on_one_thread(isolated_memory_factory):
+    """The sync driver's lock is re-entrant for nested sessions on one thread."""
     memory = isolated_memory_factory(db_path=":memory:")
-    with closing(memory.get_session()) as outer:
-        with closing(memory.get_session()) as inner:
+    with closing(memory._get_sync_session()) as outer:
+        with closing(memory._get_sync_session()) as inner:
             assert inner.execute(text("SELECT 1")).scalar() == 1
         assert outer.execute(text("SELECT 1")).scalar() == 1
 
 
-def test_in_memory_session_close_is_idempotent(isolated_memory_factory):
-    """A double close must not release the lock twice and free it for another thread."""
+def test_legacy_in_memory_session_close_is_idempotent(isolated_memory_factory):
+    """A double close must not free the sync driver's lock for another thread."""
     memory = isolated_memory_factory(db_path=":memory:")
-    session = memory.get_session()
+    session = memory._get_sync_session()
     session.close()
     session.close()
 
     assert not memory._connection_lock._is_owned()
-    with closing(memory.get_session()) as session:
+    with closing(memory._get_sync_session()) as session:
         assert session.execute(text("SELECT 1")).scalar() == 1
 
 
-def test_in_memory_session_discarded_without_close_frees_the_lock(isolated_memory_factory):
-    """One caller that forgets to close must not stall every other thread forever."""
+def test_legacy_in_memory_session_discarded_without_close_frees_the_lock(isolated_memory_factory):
+    """A discarded sync driver session must not stall other threads."""
     memory = isolated_memory_factory(db_path=":memory:")
 
     def _leak_a_session() -> None:
-        memory.get_session()
+        memory._get_sync_session()
 
     _leak_a_session()
     gc.collect()
 
     assert not memory._connection_lock._is_owned()
-    with closing(memory.get_session()) as session:
+    with closing(memory._get_sync_session()) as session:
         assert session.execute(text("SELECT 1")).scalar() == 1
 
 
-def test_file_backed_database_is_not_serialized(isolated_memory_factory):
+async def test_file_backed_database_is_not_serialized_async(isolated_memory_factory):
     """File-backed databases get a connection per checkout, so they must not pay for the lock."""
     with tempfile.TemporaryDirectory() as temp_dir:
         memory = isolated_memory_factory(db_path=os.path.join(temp_dir, "locking.db"))
         assert memory._connection_lock is None
         # Windows cannot remove the temp directory while the engine still holds the file open.
-        memory.dispose_engine()
+        await memory.dispose_engine_async()

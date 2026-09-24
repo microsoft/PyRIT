@@ -4,7 +4,6 @@
 import asyncio
 import uuid
 from collections.abc import Sequence
-from contextlib import closing
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -12,7 +11,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import text, update
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.memory import MemoryInterface
@@ -81,22 +80,22 @@ def _scorer(
     return SelfAskTrueFalseScorer(chat_target=target)
 
 
-def _force_conversation_value_update(
+async def _force_conversation_value_update_async(
     *,
     memory: MemoryInterface,
     conversation_id: str,
     converted_value: str,
 ) -> None:
     """Simulate a direct database edit that bypasses observation immutability checks."""
-    with closing(memory.get_session()) as session:
-        session.execute(text('DROP TRIGGER IF EXISTS "trg_observation_prompt_immutable_update"'))
-        updated = (
-            session.query(PromptMemoryEntry)
-            .filter(PromptMemoryEntry.conversation_id == conversation_id)
-            .update({"converted_value": converted_value}, synchronize_session=False)
+    async with await memory.get_session_async() as session:
+        await session.execute(text('DROP TRIGGER IF EXISTS "trg_observation_prompt_immutable_update"'))
+        result = await session.execute(
+            update(PromptMemoryEntry)
+            .where(PromptMemoryEntry.conversation_id == conversation_id)
+            .values(converted_value=converted_value)
         )
-        session.commit()
-    assert updated
+        await session.commit()
+    assert result.rowcount
 
 
 class _LegacyResponseHandler(ResponseHandler):
@@ -1131,7 +1130,7 @@ async def test_judgment_observation_rejects_modified_referenced_response_async(
                 update_fields={"converted_value": changed_value},
             )
         )
-    _force_conversation_value_update(
+    await _force_conversation_value_update_async(
         memory=sqlite_instance,
         conversation_id=response_piece.conversation_id,
         converted_value=changed_value,
@@ -1172,7 +1171,7 @@ async def test_judgment_observation_rejects_modified_scored_evidence_async(
                 update_fields={"converted_value": "modified response"},
             )
         )
-    _force_conversation_value_update(
+    await _force_conversation_value_update_async(
         memory=sqlite_instance,
         conversation_id=input_piece.conversation_id,
         converted_value="modified response",

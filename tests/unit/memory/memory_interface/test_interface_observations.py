@@ -13,6 +13,7 @@ from sqlalchemy import event, inspect, text
 from sqlalchemy.dialects import mssql
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from unit.mocks import run_memory_session_async
 
 from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.memory.memory_models import ObservationEntry, ObservationMessagePieceEntry, ScoreEntry, ScoreObservationEntry
@@ -347,14 +348,12 @@ async def test_failed_score_write_preserves_duplicate_anchor(
     score.message_piece_id = duplicate.id
     score.scorable = MessageScorable(message_piece_ids=(duplicate.id,))
     before = score.model_dump()
-    with file_memory.get_session() as session:
-        if fail_commit:
-            failure = patch.object(session, "commit", side_effect=SQLAlchemyError("commit failed"))
-        else:
-            failure = patch.object(file_memory, "_validate_observation_evidence", side_effect=ValueError("invalid"))
-        with patch.object(file_memory, "_get_session", return_value=session), failure:
-            with pytest.raises((SQLAlchemyError, ValueError), match="commit failed|invalid"):
-                (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
+    if fail_commit:
+        failure = patch.object(MemorySession, "commit", side_effect=SQLAlchemyError("commit failed"))
+    else:
+        failure = patch.object(file_memory, "_validate_observation_evidence", side_effect=ValueError("invalid"))
+    with failure, pytest.raises((SQLAlchemyError, ValueError), match="commit failed|invalid"):
+        await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation])
     assert score.model_dump() == before
     assert file_memory._query_entries(ScoreEntry) == []
     assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []
@@ -369,7 +368,8 @@ async def test_orm_score_delete_cleans_last_observation_and_releases_prompt(
 ) -> None:
     score, observation, piece = await _score_and_observation_async(file_memory)
     (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
-    with file_memory.get_session() as session:
+
+    def delete_score(session: Session) -> None:
         if foreign_keys:
             session.connection().exec_driver_sql("PRAGMA foreign_keys=ON")
             assert session.connection().exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
@@ -379,6 +379,8 @@ async def test_orm_score_delete_cleans_last_observation_and_releases_prompt(
             entry.observation_links.clear()
         session.delete(entry)
         session.commit()
+
+    await run_memory_session_async(memory=file_memory, operation=delete_score)
     assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []
     assert file_memory._query_entries(ObservationMessagePieceEntry) == []
     assert file_memory._query_entries(ScoreObservationEntry) == []
@@ -396,7 +398,8 @@ async def test_orm_score_delete_rollback_restores_observation_protection(
 ) -> None:
     score, observation, piece = await _score_and_observation_async(file_memory)
     (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
-    with file_memory.get_session() as session:
+
+    def rollback_delete(session: Session) -> None:
         entry = session.get(ScoreEntry, score.id)
         assert entry is not None
         if clear_links:
@@ -405,6 +408,8 @@ async def test_orm_score_delete_rollback_restores_observation_protection(
         session.flush()
         assert session.get(ObservationEntry, observation.id) is None
         session.rollback()
+
+    await run_memory_session_async(memory=file_memory, operation=rollback_delete)
     assert (await file_memory.get_scores_async(score_ids=[score.id]))[0].observation_ids == [observation.id]
     assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == [observation]
     assert len(file_memory._query_entries(ObservationMessagePieceEntry)) == 1
@@ -424,7 +429,8 @@ async def test_orm_shared_observation_survives_until_final_score(
     score, observation, piece = await _score_and_observation_async(file_memory)
     replay = score.model_copy(update={"id": uuid.uuid4()})
     (await file_memory.add_scores_to_memory_async(scores=[score, replay], observations=[observation]))
-    with file_memory.get_session() as session:
+
+    def delete_score(session: Session) -> None:
         entry = session.get(ScoreEntry, score.id)
         assert entry is not None
         if clear_links:
@@ -433,6 +439,8 @@ async def test_orm_shared_observation_survives_until_final_score(
         if delete_together:
             session.delete(session.get(ScoreEntry, replay.id))
         session.commit()
+
+    await run_memory_session_async(memory=file_memory, operation=delete_score)
     if not delete_together:
         assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == [observation]
         with pytest.raises(SQLAlchemyError):
@@ -441,9 +449,12 @@ async def test_orm_shared_observation_survives_until_final_score(
                     conversation_id=piece.conversation_id, sequence=-1
                 )
             )
-        with file_memory.get_session() as session:
+
+        def delete_replay(session: Session) -> None:
             session.delete(session.get(ScoreEntry, replay.id))
             session.commit()
+
+        await run_memory_session_async(memory=file_memory, operation=delete_replay)
     assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []
     assert file_memory._query_entries(ObservationMessagePieceEntry) == []
 
@@ -454,7 +465,8 @@ async def test_orm_link_removal_cleans_observation_before_score_deletion(
 ) -> None:
     score, observation, piece = await _score_and_observation_async(file_memory)
     (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
-    with file_memory.get_session() as session:
+
+    def remove_links(session: Session) -> None:
         entry = session.get(ScoreEntry, score.id)
         assert entry is not None
         if remove_directly:
@@ -466,6 +478,8 @@ async def test_orm_link_removal_cleans_observation_before_score_deletion(
         session.expire(entry, ["observation_links"])
         session.delete(entry)
         session.commit()
+
+    await run_memory_session_async(memory=file_memory, operation=remove_links)
     assert file_memory._query_entries(ScoreObservationEntry) == []
     (
         await file_memory.delete_conversation_pieces_after_sequence_async(
@@ -488,24 +502,36 @@ async def test_orm_score_delete_finds_links_missing_from_cached_collection(
             scores=[score, other_score], observations=[observation, other_observation]
         )
     )
-    with file_memory.get_session() as session:
-        if foreign_keys:
-            session.connection().exec_driver_sql("PRAGMA foreign_keys=ON")
-        entry = session.get(ScoreEntry, score.id)
-        assert entry is not None
-        assert [link.observation_id for link in entry.observation_links] == [observation.id]
-        with file_memory.get_session() as writer:
+    async with await file_memory.get_session_async() as async_session:
+
+        def load_entry(session: Session) -> ScoreEntry:
+            if foreign_keys:
+                session.connection().exec_driver_sql("PRAGMA foreign_keys=ON")
+            entry = session.get(ScoreEntry, score.id)
+            assert entry is not None
+            assert [link.observation_id for link in entry.observation_links] == [observation.id]
+            return entry
+
+        entry = await async_session.run_sync(load_entry)
+
+        def add_stale_link(writer: Session) -> None:
             writer.add(ScoreObservationEntry(score_id=score.id, position=1, observation_id=other_observation.id))
             if not shared:
                 writer.delete(writer.get(ScoreEntry, other_score.id))
             writer.commit()
-        assert [link.observation_id for link in entry.observation_links] == [observation.id]
-        session.delete(entry)
-        session.flush()
-        if rollback:
-            session.rollback()
-        else:
-            session.commit()
+
+        await run_memory_session_async(memory=file_memory, operation=add_stale_link)
+
+        def finish_delete(session: Session) -> None:
+            assert [link.observation_id for link in entry.observation_links] == [observation.id]
+            session.delete(entry)
+            session.flush()
+            if rollback:
+                session.rollback()
+            else:
+                session.commit()
+
+        await async_session.run_sync(finish_delete)
     retained = shared or rollback
     assert (await file_memory.get_observations_async(observation_ids=[other_observation.id])) == (
         [other_observation] if retained else []
@@ -542,21 +568,33 @@ async def test_orm_clearing_stale_links_cleans_the_persisted_observation(file_me
             scores=[score, shared_score, other_score], observations=[observation, other_observation]
         )
     )
-    with file_memory.get_session() as session:
-        entry = session.get(ScoreEntry, score.id)
-        assert entry is not None
-        assert entry.observation_links[0].observation_id == observation.id
-        with file_memory.get_session() as writer:
+    async with await file_memory.get_session_async() as async_session:
+
+        def load_entry(session: Session) -> ScoreEntry:
+            entry = session.get(ScoreEntry, score.id)
+            assert entry is not None
+            assert entry.observation_links[0].observation_id == observation.id
+            return entry
+
+        entry = await async_session.run_sync(load_entry)
+
+        def replace_link(writer: Session) -> None:
             updated = writer.get(ScoreEntry, score.id)
             assert updated is not None
             updated.observation_links[0].observation_id = other_observation.id
             writer.delete(writer.get(ScoreEntry, other_score.id))
             writer.commit()
-        entry.observation_links.clear()
-        session.flush()
-        assert session.get(ObservationEntry, other_observation.id) is None
-        session.delete(entry)
-        session.commit()
+
+        await run_memory_session_async(memory=file_memory, operation=replace_link)
+
+        def finish_delete(session: Session) -> None:
+            entry.observation_links.clear()
+            session.flush()
+            assert session.get(ObservationEntry, other_observation.id) is None
+            session.delete(entry)
+            session.commit()
+
+        await async_session.run_sync(finish_delete)
     assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == [observation]
     (
         await file_memory.delete_conversation_pieces_after_sequence_async(
@@ -570,7 +608,8 @@ async def test_orm_moving_link_before_score_deletion_preserves_observation(file_
     score, observation, _ = await _score_and_observation_async(file_memory)
     other_score = score.model_copy(update={"id": uuid.uuid4(), "observation_ids": []})
     (await file_memory.add_scores_to_memory_async(scores=[score, other_score], observations=[observation]))
-    with file_memory.get_session() as session:
+
+    def move_link(session: Session) -> None:
         entry = session.get(ScoreEntry, score.id)
         other = session.get(ScoreEntry, other_score.id)
         assert entry is not None and other is not None
@@ -578,11 +617,16 @@ async def test_orm_moving_link_before_score_deletion_preserves_observation(file_
         other.observation_links.append(link)
         session.delete(entry)
         session.commit()
+
+    await run_memory_session_async(memory=file_memory, operation=move_link)
     assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == [observation]
     assert (await file_memory.get_scores_async(score_ids=[other_score.id]))[0].observation_ids == [observation.id]
-    with file_memory.get_session() as session:
+
+    def delete_other(session: Session) -> None:
         session.delete(session.get(ScoreEntry, other_score.id))
         session.commit()
+
+    await run_memory_session_async(memory=file_memory, operation=delete_other)
     assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []
 
 

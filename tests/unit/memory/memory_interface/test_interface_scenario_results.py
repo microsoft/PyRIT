@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from unit.mocks import get_mock_scorer_identifier, make_scenario_result
+from unit.mocks import get_mock_scorer_identifier, make_scenario_result, run_memory_session_async
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import (
@@ -868,8 +868,6 @@ async def test_delete_scenario_sets_attack_result_foreign_key_to_null(
     ON DELETE SET NULL clause works. Production deployments using SQL Server
     enforce foreign keys by default.
     """
-    from contextlib import closing
-
     from sqlalchemy import text as _sql_text
 
     from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
@@ -882,17 +880,21 @@ async def test_delete_scenario_sets_attack_result_foreign_key_to_null(
     (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar]))
 
     # Enable foreign keys for the delete and verify the SET NULL clause fires.
-    with closing(sqlite_instance.get_session()) as session:
+    def delete_scenario(session):
         session.execute(_sql_text("PRAGMA foreign_keys = ON"))
         session.query(ScenarioResultEntry).filter_by(id=sid).delete()
         session.commit()
 
+    await run_memory_session_async(memory=sqlite_instance, operation=delete_scenario)
+
     # The AttackResult survives, but its foreign key is now NULL.
     # attribution_data is retained as historical provenance.
-    with closing(sqlite_instance.get_session()) as session:
+    def check_attack(session):
         entry = session.query(AttackResultEntry).filter_by(conversation_id=ar.conversation_id).one()
         assert entry.attribution_parent_id is None
         assert entry.attribution_data == {"parent_collection": "a"}
+
+    await run_memory_session_async(memory=sqlite_instance, operation=check_attack)
 
 
 async def test_update_scenario_run_state_updates_state_and_error_fields(

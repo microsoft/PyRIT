@@ -13,6 +13,7 @@ from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import SeedEntry, SeedIdentifierEntry
 from pyrit.models import AnswerMatches, MatchesObjective, SeedGroup, SeedIdentifier, SeedObjective, SeedPrompt
 from pyrit.models.identifiers.seed_identifier import compute_seed_group_hash
+from unit.mocks import run_memory_session_async
 
 
 def _objective(*, answer: str = "Paris", dataset: str | None = "questions") -> SeedObjective:
@@ -86,13 +87,14 @@ class TestSeedConditions:
         objective = _objective()
         await sqlite_instance.add_seeds_to_memory_async(seeds=[objective], added_by="tester")
 
-        with sqlite_instance.get_session() as session:
+        def read_entry(session):
             entry = session.scalars(select(SeedEntry)).one()
             assert entry.conditions == [
                 {"condition_type": "answer_matches", "correct_answer": "Paris", "correct_answer_label": "A"}
             ]
-            restored = entry.get_seed()
+            return entry.get_seed()
 
+        restored = await run_memory_session_async(memory=sqlite_instance, operation=read_entry)
         assert isinstance(restored, SeedObjective)
         assert isinstance(restored.conditions[0], AnswerMatches)
         assert restored.conditions == objective.conditions
@@ -160,10 +162,13 @@ class TestSeedConditions:
     async def test_legacy_null_and_nonobjective_conditions_async(self, sqlite_instance: MemoryInterface) -> None:
         seeds = [SeedObjective(value="legacy"), SeedPrompt(value="prompt", data_type="text")]
         await sqlite_instance.add_seeds_to_memory_async(seeds=seeds, added_by="tester")
-        with sqlite_instance.get_session() as session:
+
+        def clear_conditions(session):
             session.execute(update(SeedEntry).values(conditions=None))
             session.commit()
             assert all(entry.conditions is None for entry in session.scalars(select(SeedEntry)))
+
+        await run_memory_session_async(memory=sqlite_instance, operation=clear_conditions)
         restored = await sqlite_instance.get_seeds_async()
         objective = next(seed for seed in restored if isinstance(seed, SeedObjective))
         assert objective.conditions == ()
@@ -190,9 +195,9 @@ class TestSeedConditions:
         self, *, sqlite_instance: MemoryInterface, payload: object
     ) -> None:
         await sqlite_instance.add_seeds_to_memory_async(seeds=[_objective()], added_by="tester")
-        with sqlite_instance.get_session() as session:
-            session.execute(update(SeedEntry).values(conditions=payload))
-            session.commit()
+        async with await sqlite_instance.get_session_async() as session:
+            await session.execute(update(SeedEntry).values(conditions=payload))
+            await session.commit()
         with pytest.raises(ValueError, match="condition|correct_answer_label|at least 1 character"):
             (await sqlite_instance.get_seeds_async())
 
@@ -299,9 +304,9 @@ class TestSeedConditions:
 
     async def test_identifier_json_roundtrip(self, sqlite_instance: MemoryInterface) -> None:
         identifier = SeedIdentifier.from_seed(_objective())
-        with sqlite_instance.get_session() as session:
+        async with await sqlite_instance.get_session_async() as session:
             session.add(SeedIdentifierEntry.from_domain_model(identifier))
-            session.commit()
+            await session.commit()
         restored = (await sqlite_instance.get_seed_identifiers_async())[0]
         assert restored.params["conditions"] == identifier.params["conditions"]
         assert restored.hash == identifier.hash

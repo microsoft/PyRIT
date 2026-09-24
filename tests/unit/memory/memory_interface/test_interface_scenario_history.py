@@ -5,14 +5,13 @@
 
 import json
 import uuid
-from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import and_, select, text
-from unit.mocks import get_mock_target_identifier, make_scenario_result
+from unit.mocks import get_mock_target_identifier, make_scenario_result, run_memory_session_async
 
 from pyrit.common.utils import to_sha256
 from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
@@ -588,8 +587,10 @@ async def test_legacy_label_hook_is_constructible_and_composes_multi_value_seman
         labels={"operator": ["alice", "bob"], "operation": "nightly"}
     )
 
-    with closing(sqlite_instance.get_session()) as session:
-        ids = session.execute(select(ScenarioResultEntry.id).where(condition)).scalars().all()
+    ids = await run_memory_session_async(
+        memory=sqlite_instance,
+        operation=lambda session: session.execute(select(ScenarioResultEntry.id).where(condition)).scalars().all(),
+    )
 
     assert "_get_scenario_result_label_condition" not in _LegacyScenarioLabelMemory.__abstractmethods__
     assert ids == [included.id]

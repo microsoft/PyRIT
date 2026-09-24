@@ -5,12 +5,13 @@ import os
 import shutil
 import tempfile
 import uuid
-from collections.abc import AsyncGenerator, MutableSequence, Sequence
+from collections.abc import AsyncGenerator, Callable, MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any
+from typing import Any, TypeVar
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import Session
 
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
@@ -23,6 +24,14 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
+
+T = TypeVar("T")
+
+
+async def run_memory_session_async(*, memory: MemoryInterface, operation: Callable[[Session], T]) -> T:
+    """Run a test's direct ORM operation on the async memory connection."""
+    async with await memory.get_session_async() as session:
+        return await session.run_sync(operation)
 
 
 def make_scenario_identifier(

@@ -337,7 +337,6 @@ The below talks about responsibilities of most modules in the PyRIT library
 - One important thing to remember about this architecture is its swappable nature. Seeds, targets, converters, attacks, and scorers should all be swappable. But sometimes one of these components needs additional information. If the target is an LLM, we need a way to look up previous messages sent to that session so we can properly construct the new message. If the target is a blob store, we need to know the URL to use for a future attack.
 - Components should access memory through `CentralMemory` rather than passing state directly between each other.
 - Memory backends are swappable too (e.g. SQLite or Azure SQL) without changing the components that use them.
-- Components await memory I/O through its `_async` APIs. Memory owns sessions and transactions; the application owns initialization and shutdown on the event loops that use those resources.
 - Memory loads and locks observation evidence for model-owned validation, and owns atomic writes and reference cleanup.
 - **Does not own**: business logic or decisions. Memory stores and retrieves state; it doesn't decide what to send, how to score, or when to branch — components do that and persist results here.
 

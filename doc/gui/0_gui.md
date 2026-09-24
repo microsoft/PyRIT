@@ -4,19 +4,6 @@ CoPyRIT is a web-based graphical interface for PyRIT built with React and Fluent
 
 ## Getting Started
 
-Backend database calls use the async memory API. The backend closes memory after
-scenario tasks and converter resources stop. Database queries still use
-pagination, batching, progress deltas, and caching; async I/O does not replace
-these controls.
-
-**Separate follow-up:** Review the scenario preparation executor, temporary event
-loop, abandoned-worker callbacks, and estimate-worker bookkeeping. This migration
-keeps their behavior and changes only memory calls, async cache locking, and
-resource cleanup. Removal of these mechanisms requires a separate review of
-blocking constructors, imports, file access, and third-party code. Any later
-simplification must preserve queue admission, cancellation, resume, scoped
-defaults, and shutdown behavior.
-
 There are several ways to run CoPyRIT:
 
 ### PyRIT Backend CLI

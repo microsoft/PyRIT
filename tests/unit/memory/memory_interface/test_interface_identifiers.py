@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from contextlib import closing
 from dataclasses import dataclass
 
 import pytest
+from unit.mocks import run_memory_session_async
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import TargetIdentifierEntry
@@ -37,7 +37,7 @@ class IdentifierGraph:
 
 
 @pytest.fixture
-def identifier_graph(sqlite_instance: MemoryInterface) -> IdentifierGraph:
+async def identifier_graph(sqlite_instance: MemoryInterface) -> IdentifierGraph:
     objective_target = TargetIdentifier(
         class_name="ObjectiveTarget",
         class_module="tests.unit.memory",
@@ -122,11 +122,12 @@ def identifier_graph(sqlite_instance: MemoryInterface) -> IdentifierGraph:
         objective_scorer=scorer,
     )
 
-    with closing(sqlite_instance.get_session()) as session:
+    def persist_identifiers(session):
         sqlite_instance._persist_identifier(session=session, identifier=atomic_attack)
         sqlite_instance._persist_identifier(session=session, identifier=scenario)
         session.commit()
 
+    await run_memory_session_async(memory=sqlite_instance, operation=persist_identifiers)
     return IdentifierGraph(
         objective_target=objective_target,
         adversarial_target=adversarial_target,
