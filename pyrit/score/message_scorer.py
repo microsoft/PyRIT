@@ -315,14 +315,10 @@ class MessageScorer(Scorer):
             ValueError: If ``MatchesObjective`` is present without an objective to match.
         """
         ScoringExpectation.validate_type(expectation)
-        if self.condition_type is MatchesObjective:
-            if expectation is None or not expectation.objective:
-                raise ValueError(
-                    "MatchesObjective requires the expectation to carry an objective. Set ScoringExpectation.objective."
-                )
-            if not expectation.conditions:
-                # Existing objective-based scorers accept bare objective text.
-                expectation = ScoringExpectation(objective=expectation.objective, conditions=(MatchesObjective(),))
+        if self.condition_type is MatchesObjective and (expectation is None or not expectation.objective):
+            raise ValueError(
+                "MatchesObjective requires the expectation to carry an objective. Set ScoringExpectation.objective."
+            )
         super()._validate_expectation(expectation=expectation)
 
     async def score_async(
@@ -367,7 +363,7 @@ class MessageScorer(Scorer):
             )
         )
         if not infer_objective:
-            self._validate_expectation(expectation=resolved_expectation)
+            resolved_expectation = self.prepare_expectation(expectation=resolved_expectation)
         return await self._score_message_root_async(
             message=message,
             scorable=scorable,
@@ -475,7 +471,7 @@ class MessageScorer(Scorer):
                 supported role, data type, or other required capability. A non-empty list
                 contains completed or undetermined verdicts.
         """
-        self._validate_expectation(expectation=expectation)
+        expectation = self.prepare_expectation(expectation=expectation)
         return await self._score_message_root_async(
             message=message,
             scorable=None,
@@ -572,30 +568,34 @@ class MessageScorer(Scorer):
         expectation: ScoringExpectation | None = None,
         objective: str | None = None,
         skip_on_error_result: bool | None = None,
+        auxiliary_expectations: Sequence[ScoringExpectation | None] | None = None,
     ) -> dict[str, list[Score]]:
         """
         Score a response using an objective scorer and optional auxiliary scorers.
 
         Every scorer receives the response as it arrived unless a deprecated compatibility
         filter skips it. Otherwise, which roles a scorer reads and what an unreadable message
-        produces are the scorer's own declarations.
+        produces are the scorer's own declarations. Each scorer must accept its input.
 
         Args:
             response (Message): Response containing pieces to score.
             objective_scorer (Scorer | None): The main scorer to determine success. Defaults to None.
             auxiliary_scorers (list[Scorer] | None): List of auxiliary scorers to apply. Defaults to None.
             role_filter (ChatMessageRole | None): Deprecated compatibility filter.
-            expectation (ScoringExpectation | None): Full scoring question sent unchanged to every scorer.
+            expectation (ScoringExpectation | None): The objective scorer's input. Each auxiliary
+                scorer also receives it unless ``auxiliary_expectations`` is supplied.
             objective (str | None): Deprecated scoring context, removed in 2.0. Use ``expectation``.
             skip_on_error_result (bool | None): Deprecated compatibility policy.
+            auxiliary_expectations (Sequence[ScoringExpectation | None] | None): One input for
+                each auxiliary scorer, in the same order. Defaults to None.
 
         Returns:
             dict[str, list[Score]]: Dictionary with keys `auxiliary_scores` and `objective_scores`
                 containing lists of scores from each type of scorer.
 
         Raises:
-            ValueError: If response is not provided, both expectation inputs are supplied, or
-                conditions cannot be routed to the configured scorers.
+            ValueError: If response is not provided, both expectation inputs are supplied, the
+                auxiliary inputs do not match the auxiliary scorers, or a scorer rejects its input.
         """
         _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         result: dict[str, list[Score]] = {"auxiliary_scores": [], "objective_scores": []}
@@ -604,31 +604,41 @@ class MessageScorer(Scorer):
         if not response:
             raise ValueError("Response must be provided for scoring.")
 
-        roots = [*([objective_scorer] if objective_scorer is not None else []), *(auxiliary_scorers or [])]
-        Scorer.validate_expectation_for_scorers(scorers=roots, expectation=expectation)
+        auxiliary_scorers = auxiliary_scorers or []
+        if auxiliary_expectations is None:
+            auxiliary_expectations = [expectation] * len(auxiliary_scorers)
+        elif len(auxiliary_expectations) != len(auxiliary_scorers):
+            raise ValueError("auxiliary_expectations must contain one input for each auxiliary scorer.")
+        if objective_scorer is None and not auxiliary_scorers:
+            Scorer.validate_expectation_for_scorers(scorers=[], expectation=expectation)
+        objective_expectation = (
+            objective_scorer.prepare_expectation(expectation=expectation) if objective_scorer is not None else None
+        )
+        auxiliaries = [
+            (scorer, scorer.prepare_expectation(expectation=selected))
+            for scorer, selected in zip(auxiliary_scorers, auxiliary_expectations, strict=True)
+        ]
         if objective_scorer is None:
-            if auxiliary_scorers:
-                result["auxiliary_scores"] = await MessageScorer._score_response_multiple_scorers_async(
+            if auxiliaries:
+                result["auxiliary_scores"] = await MessageScorer._score_response_roots_async(
                     response=response,
-                    scorers=auxiliary_scorers,
-                    expectation=expectation,
+                    roots=auxiliaries,
                     role_filter=role_filter,
                     skip_on_error_result=skip_on_error_result,
                 )
             return result
 
-        if auxiliary_scorers:
-            aux_task = MessageScorer._score_response_multiple_scorers_async(
+        if auxiliaries:
+            aux_task = MessageScorer._score_response_roots_async(
                 response=response,
-                scorers=auxiliary_scorers,
-                expectation=expectation,
+                roots=auxiliaries,
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
             )
             obj_task = MessageScorer._score_response_with_scorer_async(
                 scorer=objective_scorer,
                 response=response,
-                expectation=expectation,
+                expectation=objective_expectation,
                 component_role=ComponentRole.OBJECTIVE_SCORER,
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
@@ -640,12 +650,40 @@ class MessageScorer(Scorer):
             result["objective_scores"] = await MessageScorer._score_response_with_scorer_async(
                 scorer=objective_scorer,
                 response=response,
-                expectation=expectation,
+                expectation=objective_expectation,
                 component_role=ComponentRole.OBJECTIVE_SCORER,
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
             )
         return result
+
+    @staticmethod
+    async def _score_response_roots_async(
+        *,
+        response: Message,
+        roots: list[tuple[Scorer, ScoringExpectation | None]],
+        role_filter: ChatMessageRole | None,
+        skip_on_error_result: bool | None,
+    ) -> list[Score]:
+        """
+        Run scoring roots with prepared inputs and independent persistence.
+
+        Returns:
+            list[Score]: The roots' scores, in input order.
+        """
+        results = await asyncio.gather(
+            *(
+                MessageScorer._score_response_with_scorer_async(
+                    scorer=scorer,
+                    response=response,
+                    expectation=expectation,
+                    role_filter=role_filter,
+                    skip_on_error_result=skip_on_error_result,
+                )
+                for scorer, expectation in roots
+            )
+        )
+        return [score for scores in results for score in scores]
 
     @staticmethod
     async def score_response_multiple_scorers_async(
@@ -660,8 +698,7 @@ class MessageScorer(Scorer):
         """
         Score a response using multiple scorers in parallel.
 
-        This method applies each scorer to the response and returns all scores. This is
-        typically used for auxiliary scoring where all results are needed.
+        Each independent scorer must accept the complete expectation.
 
         Args:
             response (Message): The response containing pieces to score.
@@ -680,55 +717,19 @@ class MessageScorer(Scorer):
         _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         expectation = _normalize_scoring_expectation(expectation=expectation, objective=objective)
         Scorer.validate_expectation_for_scorers(scorers=scorers, expectation=expectation)
-        return await MessageScorer._score_response_multiple_scorers_async(
+        return await MessageScorer._score_response_roots_async(
             response=response,
-            scorers=scorers,
-            expectation=expectation,
+            roots=[(scorer, expectation) for scorer in scorers],
             role_filter=role_filter,
             skip_on_error_result=skip_on_error_result,
         )
-
-    @staticmethod
-    async def _score_response_multiple_scorers_async(
-        *,
-        response: Message,
-        scorers: list[Scorer],
-        expectation: ScoringExpectation,
-        role_filter: ChatMessageRole | None,
-        skip_on_error_result: bool | None,
-    ) -> list[Score]:
-        """
-        Score a response with each scorer after applying compatibility filters.
-
-        Returns:
-            list[Score]: All scores from applicable scorers.
-        """
-        if not scorers:
-            return []
-
-        tasks = [
-            MessageScorer._score_response_with_scorer_async(
-                scorer=scorer,
-                response=response,
-                expectation=expectation,
-                role_filter=role_filter,
-                skip_on_error_result=skip_on_error_result,
-            )
-            for scorer in scorers
-        ]
-
-        # Execute all tasks in parallel
-        score_lists = await asyncio.gather(*tasks)
-
-        # Flatten the list of lists into a single list
-        return [score for scores in score_lists for score in scores]
 
     @staticmethod
     async def _score_response_with_scorer_async(
         *,
         scorer: Scorer,
         response: Message,
-        expectation: ScoringExpectation,
+        expectation: ScoringExpectation | None,
         component_role: ComponentRole = ComponentRole.AUXILIARY_SCORER,
         role_filter: ChatMessageRole | None = None,
         skip_on_error_result: bool | None = None,
@@ -879,6 +880,21 @@ class MessageScorer(Scorer):
         """
         objective = expectation.objective if expectation else None
 
+        if infer_objective_from_request and (not objective):
+            objective = extract_objective_from_previous_turn(message=message, memory=self._memory)
+
+        effective_expectation = expectation
+        if expectation is None and objective is not None:
+            effective_expectation = ScoringExpectation(objective=objective)
+        elif expectation is not None and objective != expectation.objective:
+            effective_expectation = ScoringExpectation(
+                objective=objective,
+                conditions=expectation.conditions,
+            )
+
+        if infer_objective_from_request:
+            effective_expectation = self.prepare_expectation(expectation=effective_expectation)
+
         if not _legacy_policy_allows_message(
             message=message,
             role_filter=role_filter,
@@ -894,22 +910,6 @@ class MessageScorer(Scorer):
             return []
 
         scoring_message = self._build_scoring_message(message=message)
-
-        if infer_objective_from_request and (not objective):
-            objective = extract_objective_from_previous_turn(message=message, memory=self._memory)
-
-        effective_expectation = expectation
-        if expectation is None and objective is not None:
-            effective_expectation = ScoringExpectation(objective=objective)
-        elif expectation is not None and objective != expectation.objective:
-            effective_expectation = ScoringExpectation(
-                objective=objective,
-                conditions=expectation.conditions,
-            )
-
-        if infer_objective_from_request:
-            self._validate_expectation(expectation=effective_expectation)
-
         if scoring_message is None:
             scores = self._build_fallback_score(message=message, objective=objective)
             self._finalize_message_scores(

@@ -190,7 +190,7 @@ class AudioTranscriptHelper:
         with _suppress_observation_collection():
             transcript_scores = await self.text_scorer._score_nested_async(
                 scorable=MessageScorable.from_message(text_message),
-                expectation=expectation,
+                expectation=self.text_scorer._select_expectation(expectation=expectation),
             )
 
         # Add context to indicate this was scored from audio transcription

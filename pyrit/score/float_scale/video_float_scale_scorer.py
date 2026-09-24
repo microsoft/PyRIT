@@ -120,6 +120,17 @@ class VideoFloatScaleScorer(
         image_scorer = self._video_helper.image_scorer
         return (image_scorer, self.audio_scorer) if self.audio_scorer is not None else (image_scorer,)
 
+    def _get_child_expectations(
+        self, *, expectation: ScoringExpectation | None
+    ) -> tuple[tuple[Scorer, ScoringExpectation | None], ...]:
+        """
+        Prepare the same transformed contexts that frame and audio judges receive.
+
+        Returns:
+            tuple: Child scorers and their effective inputs.
+        """
+        return self._video_helper.get_child_expectations(expectation=expectation, audio_scorer=self.audio_scorer)
+
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:

@@ -244,7 +244,7 @@ class TestExecutionExpectationTransport:
         assert result.automated_score.scored_expectation == context.expectation
         assert scorer.calls[0][1] is context.expectation
 
-    async def test_objective_and_auxiliary_receive_full_sibling_criteria_async(self) -> None:
+    async def test_auxiliary_cannot_supply_missing_objective_coverage_async(self) -> None:
         supplied = ScoringExpectation(
             objective="scoring objective",
             conditions=(_OutcomeCondition(value="main criterion"), _AuxiliaryCondition(value="secondary criterion")),
@@ -256,11 +256,11 @@ class TestExecutionExpectationTransport:
             attack_scoring_config=AttackScoringConfig(objective_scorer=objective, auxiliary_scorers=[auxiliary]),
         )
 
-        await attack.execute_async(objective="attack objective", expectation=supplied)
-
-        assert objective.calls[0][1] is supplied
-        assert auxiliary.calls[0][1] is supplied
-        assert objective.calls[0][0] == auxiliary.calls[0][0]
+        with patch.object(attack._objective_target, "send_prompt_async", new_callable=AsyncMock) as send:
+            with pytest.raises(ValueError, match="does not support.*_AuxiliaryCondition"):
+                await attack.execute_async(objective="attack objective", expectation=supplied)
+        assert objective.calls == auxiliary.calls == []
+        send.assert_not_awaited()
 
     @pytest.mark.parametrize("from_seeds", [False, True], ids=["objectives", "seed_groups"])
     async def test_concurrent_rows_keep_effective_expectations_isolated_async(self, from_seeds: bool) -> None:
@@ -369,7 +369,7 @@ class TestExecutionExpectationTransport:
         with (
             patch.object(attack, "get_attack_scoring_config", return_value=None),
             patch.object(attack, "_setup_async", new_callable=AsyncMock) as setup,
-            pytest.raises(ValueError, match="does not match the condition"),
+            pytest.raises(ValueError, match="objective scorer is required"),
         ):
             await attack.execute_async(objective="attack objective", expectation=_expectation())
         setup.assert_not_awaited()
@@ -510,13 +510,18 @@ class TestExecutionExpectationTransport:
             total_length=4,
             attack_scoring_config=AttackScoringConfig(objective_scorer=objective, auxiliary_scorers=[auxiliary]),
         )
+        if objective_kind == "absent":
+            with pytest.raises(ValueError, match="objective scorer is required"):
+                await attack.execute_async(objective="attack objective", expectation=_expectation())
+            assert not auxiliary.calls
+            return
         with (
             patch.object(objective, "_score_scorable_async", new_callable=AsyncMock, return_value=[])
             if objective_kind == "empty"
             else nullcontext()
         ):
             result = await attack.execute_async(objective="attack objective", expectation=_expectation())
-        assert result.outcome == (AttackOutcome.UNDETERMINED if objective_kind == "absent" else AttackOutcome.FAILURE)
+        assert result.outcome == AttackOutcome.FAILURE
         if objective_kind != "negative":
             assert result.automated_score is None
         assert len(auxiliary.calls) == 1

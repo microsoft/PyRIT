@@ -3,6 +3,7 @@
 
 import os
 import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -138,9 +139,15 @@ def _make_score(*, score_type: str, score_value: str | None, message_piece_id: u
 
 
 @pytest.mark.parametrize("float_scale", [False, True])
-async def test_video_forwards_explicit_conditions_and_templates_async(
-    float_scale: bool, video_converter_sample_video: MessagePiece, tmp_path
-) -> None:
+async def test_video_forwards_explicit_conditions_and_templates_async(float_scale: bool, tmp_path: Path) -> None:
+    video_path = tmp_path / "typed-video.mp4"
+    video_path.touch()
+    video = MessagePiece(
+        role="user",
+        original_value=str(video_path),
+        original_value_data_type="video_path",
+        conversation_id=str(uuid.uuid4()),
+    )
     image_scorer = MockFloatScaleScorer() if float_scale else MockTrueFalseScorer()
     audio_scorer = MockFloatScaleScorer() if float_scale else MockAudioTrueFalseScorer()
     audio_scorer._validator = ScorerPromptValidator(supported_data_types=["audio_path"])
@@ -173,14 +180,14 @@ async def test_video_forwards_explicit_conditions_and_templates_async(
         patch.object(audio_scorer, "_score_batch_nested_async", return_value=[]) as audio_score,
         _scoring_expectation_context(unrelated),
     ):
-        scores = await scorer._score_async(video_converter_sample_video.to_message(), expectation=expectation)
+        scores = await scorer._score_async(video.to_message(), expectation=expectation)
 
     assert scores
     assert image_score.call_args.kwargs["expectations"] == [
         expectation.model_copy(update={"objective": "Frame: question"})
     ]
     assert audio_score.call_args.kwargs["expectations"] == [
-        expectation.model_copy(update={"objective": "Audio: question"})
+        expectation.model_copy(update={"objective": "Audio: question", "conditions": ()})
     ]
     assert not audio_path.exists()
 

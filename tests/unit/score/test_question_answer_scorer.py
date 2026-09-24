@@ -116,7 +116,7 @@ def test_question_answer_group_validates_before_scoring(
         "unrelated": ScoringExpectation(conditions=[MatchesObjective()]),
     }[criteria]
     assert AnswerMatches in scorer.get_condition_types()
-    with pytest.raises(ValueError, match="AnswerMatches|does not match"):
+    with pytest.raises(ValueError, match="AnswerMatches|does not support"):
         Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=supplied)
 
 
@@ -145,7 +145,7 @@ def test_question_answer_rejects_unknown_pattern_field(field: str) -> None:
         QuestionAnswerScorer(correct_answer_matching_patterns=["{" + field + "}"])
 
 
-async def test_question_answer_wrappers_forward_full_expectation_async(expectation: ScoringExpectation) -> None:
+async def test_question_answer_wrappers_route_conditions_async(expectation: ScoringExpectation) -> None:
     scorer = TrueFalseCompositeScorer(
         aggregator=TrueFalseScoreAggregator.AND,
         scorers=[
@@ -270,7 +270,7 @@ async def test_legacy_hooks_reject_their_own_typed_criteria_async(
 
 
 @pytest.mark.parametrize("scorer_type", [SubStringScorer, _LegacyMessageSubstringScorer])
-async def test_legacy_hooks_ignore_sibling_criteria_async(
+async def test_composite_filters_sibling_criteria_for_legacy_hooks_async(
     scorer_type: type[SubStringScorer], expectation: ScoringExpectation
 ) -> None:
     legacy = scorer_type(substring="Paris")
@@ -295,7 +295,7 @@ async def test_legacy_hooks_keep_objective_scoring_async(
     with patch.object(scorer_type, "CONDITION_TYPE", MatchesObjective):
         [score] = await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
     assert score.get_value() is True
-    assert score.scored_expectation == expectation
+    assert score.scored_expectation == expectation.model_copy(update={"conditions": (MatchesObjective(),)})
 
 
 async def test_question_answer_preserves_role_filter_async(expectation: ScoringExpectation) -> None:

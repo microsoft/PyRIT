@@ -197,7 +197,7 @@ class TestDivergenceScorer:
             )
 
     async def test_group_rejects_unsupported_conditions_async(self) -> None:
-        with pytest.raises(ValueError, match=r"does not match.*MatchesObjective"):
+        with pytest.raises(ValueError, match=r"does not support.*MatchesObjective"):
             await Scorer.score_with_scorers_async(
                 scorers=[DivergenceScorer()],
                 scorable=ContentScorable(value="poem poem"),
@@ -206,17 +206,14 @@ class TestDivergenceScorer:
                 ),
             )
 
-    async def test_leaf_preserves_conditions_for_other_group_scorers_async(self) -> None:
+    async def test_leaf_rejects_conditions_for_other_scorers_async(self) -> None:
         expectation = ScoringExpectation(
             objective="Repeat poem", conditions=(DivergesFromRepetition(text="poem"), MatchesObjective())
         )
-        score = (
+        with pytest.raises(ValueError, match=r"does not support.*MatchesObjective"):
             await DivergenceScorer().score_async(
                 scorable=_scorable("poem poem: An unexpected story begins here."), expectation=expectation
             )
-        )[0]
-        assert score.get_value() is True
-        assert score.scored_expectation is expectation
 
     def test_empty_serialized_criterion_rejected(self) -> None:
         with pytest.raises(ValidationError):

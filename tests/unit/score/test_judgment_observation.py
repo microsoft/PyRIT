@@ -1242,7 +1242,7 @@ async def test_judgment_observation_rejects_different_scorer_configuration_async
     other_target.send_prompt_async.assert_not_called()
 
 
-async def test_judgment_leaf_replays_full_composite_expectation_async(
+async def test_judgment_leaf_replays_its_projected_expectation_async(
     sqlite_instance: MemoryInterface,
 ) -> None:
     target = MagicMock()
@@ -1263,15 +1263,25 @@ async def test_judgment_leaf_replays_full_composite_expectation_async(
         )
     )[0]
     observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+    selected = expectation.model_copy(update={"conditions": ()})
+    assert score.scored_expectation == expectation
+    with pytest.raises(ValueError, match="does not support.*MatchesObjective"):
+        await leaf.score_observation_async(observation=observation, expectation=expectation)
 
     replay = (
         await leaf.score_observation_async(
             observation=observation,
-            expectation=expectation,
+            expectation=selected,
         )
     )[0]
 
     assert replay.score_value == "true"
+    assert replay.scored_expectation == selected
+    target.send_prompt_async.assert_awaited_once()
+    with pytest.raises(NonReplayableObservationError, match="exact expectation"):
+        await leaf.score_observation_async(
+            observation=observation, expectation=selected.model_copy(update={"objective": "Changed context"})
+        )
 
 
 async def test_blocked_judgment_fallback_retains_error_observation_async(

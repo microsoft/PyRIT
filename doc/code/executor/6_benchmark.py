@@ -36,7 +36,7 @@
 # Put the expected answer in `AnswerMatches` and use `objective`
 # only for question context. Use `SelfAskTrueFalseScorer` for objective evaluation.
 # To check both answer correctness and an independent objective, combine those two scorers;
-# the Q&A leaf ignores the sibling's `MatchesObjective` condition.
+# the composite sends `AnswerMatches` to Q&A and `MatchesObjective` to the objective judge.
 # Configure the objective scorer with `validator=ScorerPromptValidator(is_objective_required=True)`
 # so it declares that condition.
 

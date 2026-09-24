@@ -152,7 +152,7 @@ class ConversationScorer(MessageScorer, ABC):
         wrapped_scorer = self._get_wrapped_scorer()
         scores = await wrapped_scorer._score_nested_async(
             scorable=ContentScorable(value=conversation_text),
-            expectation=expectation,
+            expectation=wrapped_scorer._select_expectation(expectation=expectation),
         )
         trigger_piece = message.message_pieces[0]
         for score in scores:

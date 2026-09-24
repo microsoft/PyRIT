@@ -7,7 +7,7 @@ import abc
 import asyncio
 import logging
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
@@ -307,15 +307,11 @@ class Scorer(Identifiable, abc.ABC):
         """
         Reject criteria a legacy hook claims to match but cannot receive.
 
-        Conditions owned by sibling scorers do not require this hook to migrate.
-
         Raises:
             TypeError: If the hook cannot receive a matched non-objective condition.
         """
-        matched = tuple(self.get_condition_types())
         if expectation is not None and any(
-            isinstance(condition, matched) and not isinstance(condition, MatchesObjective)
-            for condition in expectation.conditions
+            not isinstance(condition, MatchesObjective) for condition in expectation.conditions
         ):
             raise TypeError(
                 f"{type(self).__name__} must accept and forward expectation for its matched typed conditions. "
@@ -429,8 +425,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         Score a scorable against an expectation, persist the results, and return them.
 
-        Only this scorer's criteria are checked. Use a group helper to also reject
-        condition types that no configured scorer consumes.
+        Every supplied condition must be supported by this scorer tree.
 
         Args:
             scorable (Scorable): What to look at.
@@ -443,10 +438,11 @@ class Scorer(Identifiable, abc.ABC):
 
         Raises:
             TypeError: If this scorer does not support this kind of scorable.
+            ValueError: If conditions are unsupported, missing, or duplicated.
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
-        self._validate_expectation(expectation=expectation)
+        expectation = self.prepare_expectation(expectation=expectation)
         with _observation_collection() as collector:
             try:
                 with _scoring_scorable_context(scorable), _scoring_expectation_context(expectation):
@@ -496,7 +492,7 @@ class Scorer(Identifiable, abc.ABC):
         Score evidence concurrently with independently persisted scoring roots.
 
         Each root receives the original scorable and complete expectation through its public
-        ``score_async`` method. The group checks condition coverage before any scorer runs.
+        ``score_async`` method. Each root is validated independently before any scorer runs.
         This does not apply message-specific evidence policies.
 
         Args:
@@ -562,14 +558,10 @@ class Scorer(Identifiable, abc.ABC):
         expectation: ScoringExpectation | None,
     ) -> None:
         """
-        Validate conditions against a forest of independently configured scoring roots.
-
-        Wrappers declare their leaves' matched and required conditions. Every condition must
-        reach a configured leaf, but a root may ignore conditions addressed to another root.
-        Nested scoring retains each leaf's own validation.
+        Validate the complete expectation independently against each scoring root.
 
         Args:
-            scorers (Sequence[Scorer]): The objective and auxiliary scoring roots.
+            scorers (Sequence[Scorer]): The independent scoring roots.
             expectation (ScoringExpectation | None): The complete scoring question.
 
         Raises:
@@ -577,14 +569,79 @@ class Scorer(Identifiable, abc.ABC):
             ValueError: If conditions are unmatched, ambiguous, or missing required criteria.
         """
         ScoringExpectation.validate_type(expectation)
-        if expectation is not None and expectation.conditions:
-            matched = tuple({condition_type for scorer in scorers for condition_type in scorer.get_condition_types()})
-            unmatched = [condition for condition in expectation.conditions if not isinstance(condition, matched)]
-            if unmatched:
-                names = ", ".join(sorted({type(condition).__name__ for condition in unmatched}))
-                raise ValueError(f"The scorer group does not match the condition(s) {names}.")
+        if not scorers and expectation is not None and expectation.conditions:
+            raise ValueError("No scorer is configured to evaluate the supplied conditions.")
         for scorer in scorers:
-            scorer._validate_expectation(expectation=expectation)
+            scorer.prepare_expectation(expectation=expectation)
+
+    def prepare_expectation(self, *, expectation: ScoringExpectation | None) -> ScoringExpectation | None:
+        """
+        Resolve objective-only input and validate the complete scorer tree.
+
+        Returns:
+            ScoringExpectation | None: The effective input used for judgment and attribution.
+        """
+        expectation = self._normalize_expectation(expectation=expectation)
+        self._validate_expectation(expectation=expectation)
+        return expectation
+
+    def _normalize_expectation(self, *, expectation: ScoringExpectation | None) -> ScoringExpectation | None:
+        """
+        Supply the objective criterion only for an original condition-free input.
+
+        Returns:
+            ScoringExpectation | None: The input with its objective default resolved.
+        """
+        ScoringExpectation.validate_type(expectation)
+        if expectation is not None and not expectation.conditions and MatchesObjective in self.get_condition_types():
+            return expectation.model_copy(update={"conditions": (MatchesObjective(),)})
+        return expectation
+
+    @overload
+    def _select_expectation(self, *, expectation: ScoringExpectation) -> ScoringExpectation: ...
+
+    @overload
+    def _select_expectation(self, *, expectation: None) -> None: ...
+
+    def _select_expectation(self, *, expectation: ScoringExpectation | None) -> ScoringExpectation | None:
+        """
+        Select this child's conditions without changing shared context or applying defaults.
+
+        Returns:
+            ScoringExpectation | None: The supported subset, preserving the input's context.
+        """
+        if expectation is None:
+            return None
+        supported = tuple(self.get_condition_types())
+        conditions = tuple(condition for condition in expectation.conditions if isinstance(condition, supported))
+        return (
+            expectation
+            if conditions == expectation.conditions
+            else expectation.model_copy(update={"conditions": conditions})
+        )
+
+    def _get_child_expectations(
+        self, *, expectation: ScoringExpectation | None
+    ) -> tuple[tuple[Scorer, ScoringExpectation | None], ...]:
+        """
+        Prepare child inputs for recursive validation, including wrapper-specific context.
+
+        Returns:
+            tuple: Each child and its effective expectation.
+        """
+        return tuple((child, child._select_expectation(expectation=expectation)) for child in self._get_child_scorers())
+
+    def select_expectation(self, *, expectation: ScoringExpectation | None) -> ScoringExpectation | None:
+        """
+        Select the part of an input that this scorer tree reads, without validation.
+
+        Callers that decide which scorers apply to an input use this subset. The result
+        can omit criteria that this tree requires.
+
+        Returns:
+            ScoringExpectation | None: The supported conditions and the shared context.
+        """
+        return self._select_expectation(expectation=self._normalize_expectation(expectation=expectation))
 
     def _validate_expectation(
         self,
@@ -592,22 +649,31 @@ class Scorer(Identifiable, abc.ABC):
         expectation: ScoringExpectation | None,
     ) -> None:
         """
-        Validate this scorer's criteria; condition coverage belongs to the scoring group.
+        Validate coverage and every required child against its supported subset.
 
         Args:
             expectation (ScoringExpectation | None): The expectation to validate.
 
         Raises:
             TypeError: If the expectation is not a ``ScoringExpectation``.
-            ValueError: If a required condition is absent, or if more than one condition of
-                the same matched type is present.
+            ValueError: If a condition is unsupported, a required condition is absent, or
+                more than one condition of the same supported type is present.
         """
         ScoringExpectation.validate_type(expectation)
-        for child in self._get_child_scorers():
-            child._validate_expectation(expectation=expectation)
         condition_type = self.condition_type
         if condition_type is not None:
             self._get_required_condition(expectation=expectation, condition_type=condition_type)
+        supported = tuple(self.get_condition_types())
+        unmatched = [
+            condition
+            for condition in (expectation.conditions if expectation is not None else ())
+            if not isinstance(condition, supported)
+        ]
+        if unmatched:
+            names = ", ".join(sorted({type(condition).__name__ for condition in unmatched}))
+            raise ValueError(f"{type(self).__name__} does not support condition(s): {names}.")
+        for child, selected in self._get_child_expectations(expectation=expectation):
+            child._validate_expectation(expectation=selected)
 
     async def _validate_and_persist_scores_async(
         self,
@@ -656,8 +722,8 @@ class Scorer(Identifiable, abc.ABC):
         """
         Score a scorable as a child in a scorer tree.
 
-        Conditions addressed to sibling leaves are ignored, as in direct scoring.
-        The root scorer owns persistence, so this path only validates child output.
+        The parent supplies only this child's supported conditions. The root scorer
+        owns persistence, so this path validates input and output without persisting.
 
         Args:
             scorable (Scorable): What to look at.
@@ -698,7 +764,7 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             NonReplayableObservationError: If this scorer or payload cannot replay.
         """
-        self._validate_expectation(expectation=expectation)
+        expectation = self.prepare_expectation(expectation=expectation)
         stored_observations = self._memory.get_observations(observation_ids=[observation.id])
         if not stored_observations:
             raise NonReplayableObservationError(f"Observation {observation.id} is not stored in memory.")

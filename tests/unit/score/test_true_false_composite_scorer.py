@@ -224,7 +224,7 @@ async def test_composite_scorer_ignores_non_applicable_child(mock_request, true_
     assert scores[0].get_value() is True
 
 
-async def test_composite_routes_full_expectation_to_matching_and_nonmatching_leaves(mock_request):
+async def test_composite_routes_supported_conditions_to_each_leaf(mock_request):
     objective_scorer = MockScorer(
         score_value=True,
         score_rationale="objective",
@@ -248,7 +248,7 @@ async def test_composite_routes_full_expectation_to_matching_and_nonmatching_lea
     assert scorer.condition_type is None
     assert scorer.get_condition_types() == frozenset({MatchesObjective})
     assert objective_scorer.received_expectations == [expectation]
-    assert fixed_criterion_scorer.received_expectations == [expectation]
+    assert fixed_criterion_scorer.received_expectations == [expectation.model_copy(update={"conditions": ()})]
 
 
 def test_composite_scorer_empty_scorers_list():

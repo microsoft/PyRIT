@@ -725,7 +725,7 @@ class TestConditionRouting:
 
         scorer = RecordingScorer()
 
-        with pytest.raises(ValueError, match="does not match the condition"):
+        with pytest.raises(ValueError, match="does not support"):
             await MessageScorer.score_response_multiple_scorers_async(
                 response=_assistant_message(),
                 scorers=[scorer],

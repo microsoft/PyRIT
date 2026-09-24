@@ -30,8 +30,9 @@ class ScoringExpectation(BaseModel):
     use it as criterion text through ``MatchesObjective``.
 
     ``conditions`` carry the criteria: typed objects routed by type to the scorers that
-    match them. Attacks forward them without inspecting them, and a scorer matches at
-    most one of them. Their tuple order is part of the persisted expectation and its
+    match them. Attacks forward them without inspecting them. A typed leaf accepts
+    exactly one of its declared type; wrappers validate coverage and route subsets
+    to their children. Their tuple order is part of the persisted expectation and its
     fingerprint. ``SerializeAsAny`` keeps each condition serialized as its own subtype,
     so subclass fields survive a round trip.
 

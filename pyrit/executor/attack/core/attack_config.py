@@ -149,13 +149,13 @@ class AttackScoringConfig:
     detect refusals, and perform auxiliary scoring operations.
     """
 
-    # Primary scorer for evaluating attack effectiveness
+    # Primary scorer; its tree must cover all supplied execution conditions.
     objective_scorer: TrueFalseScorer | None = None
 
     # Refusal scorer for detecting refusals or non-compliance
     refusal_scorer: TrueFalseScorer | None = None
 
-    # Additional scorers for auxiliary metrics or custom evaluations
+    # Optional diagnostics; typed scorers without their required criteria are skipped.
     auxiliary_scorers: list[Scorer] = field(default_factory=list)
 
     # Whether to use scoring results as feedback for iterative attacks

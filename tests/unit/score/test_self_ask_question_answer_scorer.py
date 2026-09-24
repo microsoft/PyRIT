@@ -163,7 +163,7 @@ def test_llm_question_answer_rejects_duplicate_answers(mock_chat_target: MagicMo
 
 @pytest.mark.parametrize("composite", [False, True])
 @pytest.mark.parametrize("objective_met", [False, True])
-async def test_llm_question_answer_ignores_sibling_objective_condition_async(
+async def test_llm_question_answer_requires_composition_for_objective_condition_async(
     mock_chat_target: MagicMock, composite: bool, objective_met: bool
 ) -> None:
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
@@ -179,7 +179,7 @@ async def test_llm_question_answer_ignores_sibling_objective_condition_async(
         objective="Answer in German.",
         conditions=(MatchesObjective(), AnswerMatches(correct_answer="Paris")),
     )
-    with pytest.raises(ValueError, match="does not match.*MatchesObjective"):
+    with pytest.raises(ValueError, match="does not support.*MatchesObjective"):
         Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=expectation)
 
     objective_target = MagicMock(spec=PromptTarget)
@@ -207,6 +207,12 @@ async def test_llm_question_answer_ignores_sibling_objective_condition_async(
     )
     if composite:
         Scorer.validate_expectation_for_scorers(scorers=[root], expectation=expectation)
+    else:
+        with pytest.raises(ValueError, match="does not support.*MatchesObjective"):
+            await root.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
+        mock_chat_target.send_prompt_async.assert_not_awaited()
+        objective_target.send_prompt_async.assert_not_awaited()
+        return
     [score] = await root.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
 
     assert score.get_value() is (objective_met if composite else True)

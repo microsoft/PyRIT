@@ -8,10 +8,19 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.models import ComponentIdentifier, Condition, MatchesObjective, MessagePiece, Score, ScoringExpectation
+from pyrit.models import (
+    ComponentIdentifier,
+    Condition,
+    ContentScorable,
+    MatchesObjective,
+    MessagePiece,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score import (
     AudioFloatScaleScorer,
     AudioTrueFalseScorer,
+    FloatScaleScorer,
     FloatScaleThresholdScorer,
     MessageFloatScaleScorer,
     MessageScorer,
@@ -144,16 +153,38 @@ def test_wrapper_preflight_calls_child_validation(wrapper_pair: tuple[Scorer, Me
     ):
         Scorer.validate_expectation_for_scorers(scorers=[wrapper], expectation=expectation)
     validate.assert_called_once()
-    assert validate.call_args.kwargs["expectation"] is expectation
+    expected = expectation
+    if isinstance(wrapper, (VideoTrueFalseScorer, VideoFloatScaleScorer)):
+        expected = expectation.model_copy(
+            update={
+                "objective": (
+                    "The objective is: valid objective\n\nThis request includes an image from the resultant video."
+                )
+            }
+        )
+    assert validate.call_args.kwargs["expectation"] == expected
 
 
-def test_wrapper_preflight_preserves_sibling_conditions(wrapper_pair: tuple[Scorer, MessageScorer]) -> None:
+def test_wrapper_preflight_selects_child_conditions(wrapper_pair: tuple[Scorer, MessageScorer]) -> None:
     wrapper, child = wrapper_pair
     expectation = ScoringExpectation(objective="valid objective", conditions=(MatchesObjective(), _SiblingCondition()))
+    child_expectation = expectation.model_copy(update={"conditions": (MatchesObjective(),)})
+    if isinstance(wrapper, (VideoTrueFalseScorer, VideoFloatScaleScorer)):
+        child_expectation = child_expectation.model_copy(
+            update={
+                "objective": (
+                    "The objective is: valid objective\n\nThis request includes an image from the resultant video."
+                )
+            }
+        )
+    if isinstance(wrapper, FloatScaleScorer):
+        wrapper = FloatScaleThresholdScorer(scorer=wrapper, threshold=0.5)
+    assert isinstance(wrapper, TrueFalseScorer)
+    root = TrueFalseCompositeScorer(scorers=[wrapper, _SiblingScorer()], aggregator=TrueFalseScoreAggregator.AND)
     with patch.object(child, "_validate_expectation", wraps=child._validate_expectation) as validate:
-        Scorer.validate_expectation_for_scorers(scorers=[wrapper, _SiblingScorer()], expectation=expectation)
+        root.prepare_expectation(expectation=expectation)
     validate.assert_called_once()
-    assert validate.call_args.kwargs["expectation"] is expectation
+    assert validate.call_args.kwargs["expectation"] == child_expectation
 
 
 @pytest.mark.parametrize("expectation", [None, ScoringExpectation(objective="")])
@@ -195,9 +226,11 @@ def test_wrapped_objective_validation_rejects_missing_context(
                 scorers=[_SiblingScorer(), wrapper], aggregator=TrueFalseScoreAggregator.AND
             )
         )
-    expectation = ScoringExpectation(objective=objective, conditions=(MatchesObjective(), _SiblingCondition()))
+    expectation = ScoringExpectation(
+        objective=objective, conditions=(MatchesObjective(), _SiblingCondition()) if nested else (MatchesObjective(),)
+    )
     with pytest.raises(ValueError, match="MatchesObjective requires the expectation to carry an objective"):
-        Scorer.validate_expectation_for_scorers(scorers=[wrapper, _SiblingScorer()], expectation=expectation)
+        Scorer.validate_expectation_for_scorers(scorers=[wrapper], expectation=expectation)
 
 
 @pytest.mark.parametrize("float_scale", [False, True], ids=["true-false", "float-scale"])
@@ -242,7 +275,9 @@ class TestWrapperAttackPreflight:
             objective_target=target,
             attack_scoring_config=AttackScoringConfig(objective_scorer=wrapper, auxiliary_scorers=[_SiblingScorer()]),
         )
-        expectation = ScoringExpectation(objective="", conditions=(MatchesObjective(), _SiblingCondition()))
+        expectation = ScoringExpectation(
+            objective="", conditions=(MatchesObjective(), _SiblingCondition()) if nested else (MatchesObjective(),)
+        )
         with (
             patch.object(target, "send_prompt_async", new_callable=AsyncMock) as send,
             patch.object(child, "_score_piece_async", new_callable=AsyncMock) as score,
@@ -276,6 +311,66 @@ class TestWrapperAttackPreflight:
         assert target.prompt_sent == ["attack objective"]
         assert result.automated_score is not None
         assert result.automated_score.scored_expectation == expectation
-        for validate in (child_validate, sibling_validate):
+        for validate, conditions in (
+            (child_validate, (MatchesObjective(),)),
+            (sibling_validate, (_SiblingCondition(),)),
+        ):
             assert validate.call_args_list
-            assert all(call.kwargs["expectation"] is expectation for call in validate.call_args_list)
+            assert all(
+                call.kwargs["expectation"] == expectation.model_copy(update={"conditions": conditions})
+                for call in validate.call_args_list
+            )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("nested", [False, True])
+async def test_objective_only_default_is_used_for_judgment_and_persistence_async(*, nested: bool) -> None:
+    leaf = _ObjectiveTrueFalseScorer()
+    scorer = (
+        TrueFalseInverterScorer(
+            scorer=TrueFalseCompositeScorer(scorers=[leaf], aggregator=TrueFalseScoreAggregator.AND)
+        )
+        if nested
+        else leaf
+    )
+    original = ScoringExpectation(objective="original objective")
+    normalized = original.model_copy(update={"conditions": (MatchesObjective(),)})
+    with patch.object(
+        leaf, "_score_piece_with_expectation_async", wraps=leaf._score_piece_with_expectation_async
+    ) as judge:
+        scores = await scorer.score_async(scorable=ContentScorable(value="response"), expectation=original)
+    assert judge.call_args.kwargs["expectation"] == normalized
+    assert scores[0].scored_expectation == normalized
+    assert original.conditions == ()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_explicit_conditions_do_not_default_missing_objective_after_projection_async() -> None:
+    objective, sibling = _ObjectiveTrueFalseScorer(), _SiblingScorer()
+    scorer = TrueFalseCompositeScorer(scorers=[objective, sibling], aggregator=TrueFalseScoreAggregator.AND)
+    with (
+        patch.object(objective, "_score_piece_async", new_callable=AsyncMock) as judge,
+        pytest.raises(ValueError, match="requires one MatchesObjective"),
+    ):
+        await scorer.score_async(
+            scorable=ContentScorable(value="response"),
+            expectation=ScoringExpectation(objective="context", conditions=(_SiblingCondition(),)),
+        )
+    judge.assert_not_awaited()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("float_scale", [False, True])
+def test_video_validates_transformed_audio_context_before_acquisition(*, float_scale: bool) -> None:
+    child = _ObjectiveTrueFalseScorer()
+    video = (
+        VideoFloatScaleScorer(image_capable_scorer=_ObjectiveFloatScaleScorer(), audio_scorer=child)
+        if float_scale
+        else VideoTrueFalseScorer(image_capable_scorer=_ObjectiveTrueFalseScorer(), audio_scorer=child)
+    )
+    with (
+        patch.object(video._video_helper, "_extract_frames") as extract,
+        pytest.raises(ValueError, match="MatchesObjective requires"),
+    ):
+        video.prepare_expectation(expectation=ScoringExpectation(objective="context"))
+    extract.assert_not_called()

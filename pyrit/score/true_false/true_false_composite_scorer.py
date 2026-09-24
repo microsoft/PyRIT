@@ -113,7 +113,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         expectation: ScoringExpectation | None,
     ) -> list[Score]:
         """
-        Score a scorable by forwarding it, unchanged, to every constituent scorer.
+        Score a scorable with each child's supported conditions.
 
         Each child acquires the named evidence itself, so a child that needs a wider or
         different view of it is free to derive one.
@@ -127,7 +127,12 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 containing one completed or undetermined aggregate score.
         """
         score_list_results = await asyncio.gather(
-            *(scorer._score_nested_async(scorable=scorable, expectation=expectation) for scorer in self._scorers)
+            *(
+                scorer._score_nested_async(
+                    scorable=scorable, expectation=scorer._select_expectation(expectation=expectation)
+                )
+                for scorer in self._scorers
+            )
         )
         applicable_results = [scores for scores in score_list_results if scores]
         skipped_count = len(score_list_results) - len(applicable_results)

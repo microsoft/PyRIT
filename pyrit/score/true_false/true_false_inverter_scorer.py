@@ -81,7 +81,9 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             list[Score]: ``[]`` when the wrapped scorer is non-applicable; otherwise, a list
                 containing its completed inverted score or unchanged undetermined score.
         """
-        scores = await self._scorer._score_nested_async(scorable=scorable, expectation=expectation)
+        scores = await self._scorer._score_nested_async(
+            scorable=scorable, expectation=self._scorer._select_expectation(expectation=expectation)
+        )
         if not scores:
             return []
         return self._invert(scores)

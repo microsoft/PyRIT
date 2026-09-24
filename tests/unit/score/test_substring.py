@@ -52,7 +52,7 @@ async def test_substring_scorer_does_not_match_objective(patch_central_database)
 
     assert scorer.condition_type is None
     assert scorer.get_condition_types() == frozenset()
-    with pytest.raises(ValueError, match="does not match the condition"):
+    with pytest.raises(ValueError, match="does not support"):
         await Scorer.score_with_scorers_async(
             scorable=ContentScorable(value="needle"),
             scorers=[scorer],
