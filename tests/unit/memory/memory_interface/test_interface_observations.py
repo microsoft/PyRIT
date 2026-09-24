@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import uuid
-from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import AsyncIterator
 from pathlib import Path
-from threading import Barrier, Event
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -38,15 +37,15 @@ def _identifier() -> ComponentIdentifier:
     return ComponentIdentifier(class_name="TestScorer", class_module="tests.unit.memory")
 
 
-def _observation(
+async def _observation_async(
     *,
     memory: MemoryInterface,
     scorable: MessageScorable,
     response_piece_id: uuid.UUID,
     expectation: ScoringExpectation,
 ) -> Observation:
-    scored_piece = memory.get_message_pieces(prompt_ids=[scorable.message_piece_ids[0]])[0]
-    response_piece = memory.get_message_pieces(prompt_ids=[response_piece_id])[0]
+    scored_piece = (await memory.get_message_pieces_async(prompt_ids=[scorable.message_piece_ids[0]]))[0]
+    response_piece = (await memory.get_message_pieces_async(prompt_ids=[response_piece_id]))[0]
     return Observation(
         source_identifier=_identifier(),
         acquisition=Acquisition.COMPLETE,
@@ -64,20 +63,22 @@ def _observation(
     )
 
 
-def test_observations_and_score_links_round_trip_in_order(sqlite_instance: MemoryInterface):
+async def test_observations_and_score_links_round_trip_in_order(sqlite_instance: MemoryInterface):
     pieces = [
         MessagePiece(role="assistant", original_value="first", conversation_id=str(uuid.uuid4())),
         MessagePiece(role="assistant", original_value="second", conversation_id=str(uuid.uuid4())),
     ]
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces))
     scorable = MessageScorable(message_piece_ids=(pieces[0].id,))
     expectation = ScoringExpectation(objective="Judge the response")
     observations = [
-        _observation(
-            memory=sqlite_instance,
-            scorable=scorable,
-            response_piece_id=piece.id,
-            expectation=expectation,
+        (
+            await _observation_async(
+                memory=sqlite_instance,
+                scorable=scorable,
+                response_piece_id=piece.id,
+                expectation=expectation,
+            )
         )
         for piece in pieces
     ]
@@ -89,10 +90,10 @@ def test_observations_and_score_links_round_trip_in_order(sqlite_instance: Memor
         observation_ids=[observations[1].id, observations[0].id],
     )
 
-    sqlite_instance.add_scores_to_memory(scores=[score], observations=observations)
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score], observations=observations))
 
-    stored_score = sqlite_instance.get_scores(score_ids=[score.id])[0]
-    stored_observations = sqlite_instance.get_observations(observation_ids=stored_score.observation_ids)
+    stored_score = (await sqlite_instance.get_scores_async(score_ids=[score.id]))[0]
+    stored_observations = await sqlite_instance.get_observations_async(observation_ids=stored_score.observation_ids)
     assert stored_score.observation_ids == [observations[1].id, observations[0].id]
     assert [observation.id for observation in stored_observations] == stored_score.observation_ids
     assert stored_score.scored_expectation == expectation
@@ -101,12 +102,12 @@ def test_observations_and_score_links_round_trip_in_order(sqlite_instance: Memor
     assert entry.get_observation().id in {observation.id for observation in observations}
 
 
-def test_existing_observation_can_support_another_score(sqlite_instance: MemoryInterface):
+async def test_existing_observation_can_support_another_score(sqlite_instance: MemoryInterface):
     piece = MessagePiece(role="assistant", original_value="response", conversation_id=str(uuid.uuid4()))
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece]))
     scorable = MessageScorable(message_piece_ids=(piece.id,))
     expectation = ScoringExpectation(objective="Judge the response")
-    observation = _observation(
+    observation = await _observation_async(
         memory=sqlite_instance,
         scorable=scorable,
         response_piece_id=piece.id,
@@ -119,7 +120,7 @@ def test_existing_observation_can_support_another_score(sqlite_instance: MemoryI
         scored_expectation=expectation,
         observation_ids=[observation.id],
     )
-    sqlite_instance.add_scores_to_memory(scores=[first_score], observations=[observation])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[first_score], observations=[observation]))
     replay_score = first_score.model_copy(
         update={
             "id": uuid.uuid4(),
@@ -127,17 +128,17 @@ def test_existing_observation_can_support_another_score(sqlite_instance: MemoryI
         }
     )
 
-    sqlite_instance.add_scores_to_memory(scores=[replay_score])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[replay_score]))
 
-    assert sqlite_instance.get_scores(score_ids=[replay_score.id])[0].observation_ids == [observation.id]
+    assert (await sqlite_instance.get_scores_async(score_ids=[replay_score.id]))[0].observation_ids == [observation.id]
 
 
-def test_unreferenced_observation_is_not_persisted(sqlite_instance: MemoryInterface):
+async def test_unreferenced_observation_is_not_persisted(sqlite_instance: MemoryInterface):
     piece = MessagePiece(role="assistant", original_value="response", conversation_id=str(uuid.uuid4()))
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece]))
     scorable = MessageScorable(message_piece_ids=(piece.id,))
     expectation = ScoringExpectation(objective="Judge the response")
-    observation = _observation(
+    observation = await _observation_async(
         memory=sqlite_instance,
         scorable=scorable,
         response_piece_id=piece.id,
@@ -151,15 +152,15 @@ def test_unreferenced_observation_is_not_persisted(sqlite_instance: MemoryInterf
     )
 
     with pytest.raises(ValueError, match="not referenced"):
-        sqlite_instance.add_scores_to_memory(scores=[score], observations=[observation])
+        (await sqlite_instance.add_scores_to_memory_async(scores=[score], observations=[observation]))
 
     assert sqlite_instance._query_entries(ObservationEntry) == []
     assert sqlite_instance._query_entries(ScoreEntry) == []
 
 
-def test_missing_observation_link_leaves_no_score(sqlite_instance: MemoryInterface):
+async def test_missing_observation_link_leaves_no_score(sqlite_instance: MemoryInterface):
     piece = MessagePiece(role="assistant", original_value="response", conversation_id=str(uuid.uuid4()))
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece]))
     scorable = MessageScorable(message_piece_ids=(piece.id,))
     score = Score(
         score_value="true",
@@ -169,12 +170,12 @@ def test_missing_observation_link_leaves_no_score(sqlite_instance: MemoryInterfa
     )
 
     with pytest.raises(ValueError, match="not found in memory"):
-        sqlite_instance.add_scores_to_memory(scores=[score])
+        (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
     assert sqlite_instance._query_entries(ScoreEntry) == []
 
 
-def test_duplicate_message_anchor_preserves_exact_observation_evidence(
+async def test_duplicate_message_anchor_preserves_exact_observation_evidence(
     sqlite_instance: MemoryInterface,
 ):
     original = MessagePiece(
@@ -183,18 +184,18 @@ def test_duplicate_message_anchor_preserves_exact_observation_evidence(
         conversation_id=str(uuid.uuid4()),
         sequence=0,
     )
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[original])
-    sqlite_instance.duplicate_conversation(conversation_id=original.conversation_id)
-    duplicate = next(piece for piece in sqlite_instance.get_message_pieces() if piece.id != original.id)
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[original]))
+    (await sqlite_instance.duplicate_conversation_async(conversation_id=original.conversation_id))
+    duplicate = next(piece for piece in (await sqlite_instance.get_message_pieces_async()) if piece.id != original.id)
     response = MessagePiece(
         role="assistant",
         original_value="judgment",
         conversation_id=str(uuid.uuid4()),
     )
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[response])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[response]))
     scorable = MessageScorable(message_piece_ids=(duplicate.id,))
     expectation = ScoringExpectation(objective="Judge the response")
-    observation = _observation(
+    observation = await _observation_async(
         memory=sqlite_instance,
         scorable=scorable,
         response_piece_id=response.id,
@@ -208,16 +209,16 @@ def test_duplicate_message_anchor_preserves_exact_observation_evidence(
         observation_ids=[observation.id],
     )
 
-    sqlite_instance.add_scores_to_memory(scores=[score], observations=[observation])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score], observations=[observation]))
 
-    stored_score = sqlite_instance.get_scores(score_ids=[score.id])[0]
-    stored_observation = sqlite_instance.get_observations(observation_ids=[observation.id])[0]
+    stored_score = (await sqlite_instance.get_scores_async(score_ids=[score.id]))[0]
+    stored_observation = (await sqlite_instance.get_observations_async(observation_ids=[observation.id]))[0]
     assert stored_score.scorable == MessageScorable(message_piece_ids=(original.id,))
     assert stored_observation.scorable == MessageScorable(message_piece_ids=(duplicate.id,))
     assert stored_observation.payload.scored_piece_id == duplicate.id
 
 
-def test_sqlite_protects_observation_message_references(
+async def test_sqlite_protects_observation_message_references(
     sqlite_instance: MemoryInterface,
 ):
     scored_piece = MessagePiece(
@@ -232,10 +233,10 @@ def test_sqlite_protects_observation_message_references(
         conversation_id=str(uuid.uuid4()),
         sequence=0,
     )
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[scored_piece, response_piece])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[scored_piece, response_piece]))
     scorable = MessageScorable(message_piece_ids=(scored_piece.id,))
     expectation = ScoringExpectation(objective="Judge the response")
-    observation = _observation(
+    observation = await _observation_async(
         memory=sqlite_instance,
         scorable=scorable,
         response_piece_id=response_piece.id,
@@ -247,41 +248,49 @@ def test_sqlite_protects_observation_message_references(
         scorable=scorable,
         observation_ids=[observation.id],
     )
-    sqlite_instance.add_scores_to_memory(
-        scores=[score],
-        observations=[observation],
+    (
+        await sqlite_instance.add_scores_to_memory_async(
+            scores=[score],
+            observations=[observation],
+        )
     )
 
     with pytest.raises(SQLAlchemyError):
-        sqlite_instance.delete_conversation_pieces_after_sequence(
-            conversation_id=response_piece.conversation_id,
-            sequence=-1,
+        (
+            await sqlite_instance.delete_conversation_pieces_after_sequence_async(
+                conversation_id=response_piece.conversation_id,
+                sequence=-1,
+            )
         )
     with pytest.raises(SQLAlchemyError):
-        sqlite_instance.delete_conversation_pieces_after_sequence(
-            conversation_id=scored_piece.conversation_id,
-            sequence=-1,
+        (
+            await sqlite_instance.delete_conversation_pieces_after_sequence_async(
+                conversation_id=scored_piece.conversation_id,
+                sequence=-1,
+            )
         )
 
-    assert sqlite_instance.get_message_pieces(prompt_ids=[response_piece.id])
+    assert await sqlite_instance.get_message_pieces_async(prompt_ids=[response_piece.id])
 
 
 @pytest.fixture
-def file_memory(tmp_path: Path) -> Iterator[SQLiteMemory]:
+async def file_memory(tmp_path: Path) -> AsyncIterator[SQLiteMemory]:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     memory.__init__(db_path=tmp_path / "observations.db", silent=True)
     try:
         yield memory
     finally:
-        memory.dispose_engine()
+        await memory.dispose_engine_async()
 
 
-def _score_and_observation(memory: MemoryInterface) -> tuple[Score, Observation, MessagePiece]:
+async def _score_and_observation_async(memory: MemoryInterface) -> tuple[Score, Observation, MessagePiece]:
     piece = MessagePiece(role="assistant", original_value="response", conversation_id=str(uuid.uuid4()), sequence=0)
-    memory.add_message_pieces_to_memory(message_pieces=[piece])
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[piece]))
     scorable = MessageScorable(message_piece_ids=(piece.id,))
     expectation = ScoringExpectation(objective="Judge the response")
-    observation = _observation(memory=memory, scorable=scorable, response_piece_id=piece.id, expectation=expectation)
+    observation = await _observation_async(
+        memory=memory, scorable=scorable, response_piece_id=piece.id, expectation=expectation
+    )
     return (
         Score(
             score_value="true",
@@ -297,10 +306,10 @@ def _score_and_observation(memory: MemoryInterface) -> tuple[Score, Observation,
 
 @pytest.mark.parametrize("operation", ["UPDATE", "DELETE"])
 @pytest.mark.parametrize("boundary", ["_resolve_score_message_anchors", "_persist_score_rows"])
-def test_file_sqlite_locks_evidence_before_reads_until_commit(
+async def test_file_sqlite_locks_evidence_before_reads_until_commit(
     *, file_memory: SQLiteMemory, operation: str, boundary: str
 ) -> None:
-    score, observation, piece = _score_and_observation(file_memory)
+    score, observation, piece = await _score_and_observation_async(file_memory)
     statement = (
         'UPDATE "PromptMemoryEntries" SET converted_value = :value WHERE id = :id'
         if operation == "UPDATE"
@@ -319,22 +328,22 @@ def test_file_sqlite_locks_evidence_before_reads_until_commit(
         return original(session=session, **kwargs)
 
     with patch.object(file_memory, boundary, side_effect=_attempt_concurrent_write):
-        file_memory.add_scores_to_memory(scores=[score], observations=[observation])
+        (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
 
     assert checked == [True]
     with file_memory.engine.connect() as writer:
         with pytest.raises(SQLAlchemyError, match="immutable observation evidence"):
             writer.execute(text(statement), {"id": str(piece.id), "value": "tampered"})
-    assert file_memory.get_observations(observation_ids=[observation.id]) == [observation]
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == [observation]
 
 
 @pytest.mark.parametrize("fail_commit", [False, True])
-def test_failed_score_write_preserves_duplicate_anchor(
+async def test_failed_score_write_preserves_duplicate_anchor(
     *, file_memory: SQLiteMemory, fail_commit: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
-    score, observation, piece = _score_and_observation(file_memory)
-    file_memory.duplicate_conversation(conversation_id=piece.conversation_id)
-    duplicate = next(value for value in file_memory.get_message_pieces() if value.id != piece.id)
+    score, observation, piece = await _score_and_observation_async(file_memory)
+    (await file_memory.duplicate_conversation_async(conversation_id=piece.conversation_id))
+    duplicate = next(value for value in (await file_memory.get_message_pieces_async()) if value.id != piece.id)
     score.message_piece_id = duplicate.id
     score.scorable = MessageScorable(message_piece_ids=(duplicate.id,))
     before = score.model_dump()
@@ -343,23 +352,23 @@ def test_failed_score_write_preserves_duplicate_anchor(
             failure = patch.object(session, "commit", side_effect=SQLAlchemyError("commit failed"))
         else:
             failure = patch.object(file_memory, "_validate_observation_evidence", side_effect=ValueError("invalid"))
-        with patch.object(file_memory, "get_session", return_value=session), failure:
+        with patch.object(file_memory, "_get_session", return_value=session), failure:
             with pytest.raises((SQLAlchemyError, ValueError), match="commit failed|invalid"):
-                file_memory.add_scores_to_memory(scores=[score], observations=[observation])
+                (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
     assert score.model_dump() == before
     assert file_memory._query_entries(ScoreEntry) == []
-    assert file_memory.get_observations(observation_ids=[observation.id]) == []
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []
     if fail_commit:
         assert any(record.message == "Error inserting scores" and record.exc_info for record in caplog.records)
 
 
 @pytest.mark.parametrize("foreign_keys", [False, True])
 @pytest.mark.parametrize("clear_links", [False, True])
-def test_orm_score_delete_cleans_last_observation_and_releases_prompt(
+async def test_orm_score_delete_cleans_last_observation_and_releases_prompt(
     *, file_memory: SQLiteMemory, foreign_keys: bool, clear_links: bool
 ) -> None:
-    score, observation, piece = _score_and_observation(file_memory)
-    file_memory.add_scores_to_memory(scores=[score], observations=[observation])
+    score, observation, piece = await _score_and_observation_async(file_memory)
+    (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
     with file_memory.get_session() as session:
         if foreign_keys:
             session.connection().exec_driver_sql("PRAGMA foreign_keys=ON")
@@ -370,19 +379,23 @@ def test_orm_score_delete_cleans_last_observation_and_releases_prompt(
             entry.observation_links.clear()
         session.delete(entry)
         session.commit()
-    assert file_memory.get_observations(observation_ids=[observation.id]) == []
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []
     assert file_memory._query_entries(ObservationMessagePieceEntry) == []
     assert file_memory._query_entries(ScoreObservationEntry) == []
-    file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
-    assert file_memory.get_message_pieces(prompt_ids=[piece.id]) == []
+    (
+        await file_memory.delete_conversation_pieces_after_sequence_async(
+            conversation_id=piece.conversation_id, sequence=-1
+        )
+    )
+    assert (await file_memory.get_message_pieces_async(prompt_ids=[piece.id])) == []
 
 
 @pytest.mark.parametrize("clear_links", [False, True])
-def test_orm_score_delete_rollback_restores_observation_protection(
+async def test_orm_score_delete_rollback_restores_observation_protection(
     *, file_memory: SQLiteMemory, clear_links: bool
 ) -> None:
-    score, observation, piece = _score_and_observation(file_memory)
-    file_memory.add_scores_to_memory(scores=[score], observations=[observation])
+    score, observation, piece = await _score_and_observation_async(file_memory)
+    (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
     with file_memory.get_session() as session:
         entry = session.get(ScoreEntry, score.id)
         assert entry is not None
@@ -392,21 +405,25 @@ def test_orm_score_delete_rollback_restores_observation_protection(
         session.flush()
         assert session.get(ObservationEntry, observation.id) is None
         session.rollback()
-    assert file_memory.get_scores(score_ids=[score.id])[0].observation_ids == [observation.id]
-    assert file_memory.get_observations(observation_ids=[observation.id]) == [observation]
+    assert (await file_memory.get_scores_async(score_ids=[score.id]))[0].observation_ids == [observation.id]
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == [observation]
     assert len(file_memory._query_entries(ObservationMessagePieceEntry)) == 1
     with pytest.raises(SQLAlchemyError, match="immutable observation evidence"):
-        file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
+        (
+            await file_memory.delete_conversation_pieces_after_sequence_async(
+                conversation_id=piece.conversation_id, sequence=-1
+            )
+        )
 
 
 @pytest.mark.parametrize("delete_together", [False, True])
 @pytest.mark.parametrize("clear_links", [False, True])
-def test_orm_shared_observation_survives_until_final_score(
+async def test_orm_shared_observation_survives_until_final_score(
     *, file_memory: SQLiteMemory, delete_together: bool, clear_links: bool
 ) -> None:
-    score, observation, piece = _score_and_observation(file_memory)
+    score, observation, piece = await _score_and_observation_async(file_memory)
     replay = score.model_copy(update={"id": uuid.uuid4()})
-    file_memory.add_scores_to_memory(scores=[score, replay], observations=[observation])
+    (await file_memory.add_scores_to_memory_async(scores=[score, replay], observations=[observation]))
     with file_memory.get_session() as session:
         entry = session.get(ScoreEntry, score.id)
         assert entry is not None
@@ -417,22 +434,26 @@ def test_orm_shared_observation_survives_until_final_score(
             session.delete(session.get(ScoreEntry, replay.id))
         session.commit()
     if not delete_together:
-        assert file_memory.get_observations(observation_ids=[observation.id]) == [observation]
+        assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == [observation]
         with pytest.raises(SQLAlchemyError):
-            file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
+            (
+                await file_memory.delete_conversation_pieces_after_sequence_async(
+                    conversation_id=piece.conversation_id, sequence=-1
+                )
+            )
         with file_memory.get_session() as session:
             session.delete(session.get(ScoreEntry, replay.id))
             session.commit()
-    assert file_memory.get_observations(observation_ids=[observation.id]) == []
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []
     assert file_memory._query_entries(ObservationMessagePieceEntry) == []
 
 
 @pytest.mark.parametrize("remove_directly", [False, True])
-def test_orm_link_removal_cleans_observation_before_score_deletion(
+async def test_orm_link_removal_cleans_observation_before_score_deletion(
     *, file_memory: SQLiteMemory, remove_directly: bool
 ) -> None:
-    score, observation, piece = _score_and_observation(file_memory)
-    file_memory.add_scores_to_memory(scores=[score], observations=[observation])
+    score, observation, piece = await _score_and_observation_async(file_memory)
+    (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
     with file_memory.get_session() as session:
         entry = session.get(ScoreEntry, score.id)
         assert entry is not None
@@ -446,19 +467,27 @@ def test_orm_link_removal_cleans_observation_before_score_deletion(
         session.delete(entry)
         session.commit()
     assert file_memory._query_entries(ScoreObservationEntry) == []
-    file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
-    assert file_memory.get_message_pieces(prompt_ids=[piece.id]) == []
+    (
+        await file_memory.delete_conversation_pieces_after_sequence_async(
+            conversation_id=piece.conversation_id, sequence=-1
+        )
+    )
+    assert (await file_memory.get_message_pieces_async(prompt_ids=[piece.id])) == []
 
 
 @pytest.mark.parametrize("shared", [False, True])
 @pytest.mark.parametrize("rollback", [False, True])
 @pytest.mark.parametrize("foreign_keys", [False, True])
-def test_orm_score_delete_finds_links_missing_from_cached_collection(
+async def test_orm_score_delete_finds_links_missing_from_cached_collection(
     *, file_memory: SQLiteMemory, shared: bool, rollback: bool, foreign_keys: bool
 ) -> None:
-    score, observation, _ = _score_and_observation(file_memory)
-    other_score, other_observation, piece = _score_and_observation(file_memory)
-    file_memory.add_scores_to_memory(scores=[score, other_score], observations=[observation, other_observation])
+    score, observation, _ = await _score_and_observation_async(file_memory)
+    other_score, other_observation, piece = await _score_and_observation_async(file_memory)
+    (
+        await file_memory.add_scores_to_memory_async(
+            scores=[score, other_score], observations=[observation, other_observation]
+        )
+    )
     with file_memory.get_session() as session:
         if foreign_keys:
             session.connection().exec_driver_sql("PRAGMA foreign_keys=ON")
@@ -478,27 +507,40 @@ def test_orm_score_delete_finds_links_missing_from_cached_collection(
         else:
             session.commit()
     retained = shared or rollback
-    assert file_memory.get_observations(observation_ids=[other_observation.id]) == (
+    assert (await file_memory.get_observations_async(observation_ids=[other_observation.id])) == (
         [other_observation] if retained else []
     )
     if rollback:
-        assert file_memory.get_scores(score_ids=[score.id])[0].observation_ids == [observation.id, other_observation.id]
+        assert (await file_memory.get_scores_async(score_ids=[score.id]))[0].observation_ids == [
+            observation.id,
+            other_observation.id,
+        ]
     else:
         assert all(link.score_id != score.id for link in file_memory._query_entries(ScoreObservationEntry))
     if retained:
         with pytest.raises(SQLAlchemyError, match="immutable observation evidence"):
-            file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
+            (
+                await file_memory.delete_conversation_pieces_after_sequence_async(
+                    conversation_id=piece.conversation_id, sequence=-1
+                )
+            )
     else:
-        file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
-        assert file_memory.get_message_pieces(prompt_ids=[piece.id]) == []
+        (
+            await file_memory.delete_conversation_pieces_after_sequence_async(
+                conversation_id=piece.conversation_id, sequence=-1
+            )
+        )
+        assert (await file_memory.get_message_pieces_async(prompt_ids=[piece.id])) == []
 
 
-def test_orm_clearing_stale_links_cleans_the_persisted_observation(file_memory: SQLiteMemory) -> None:
-    score, observation, _ = _score_and_observation(file_memory)
+async def test_orm_clearing_stale_links_cleans_the_persisted_observation(file_memory: SQLiteMemory) -> None:
+    score, observation, _ = await _score_and_observation_async(file_memory)
     shared_score = score.model_copy(update={"id": uuid.uuid4()})
-    other_score, other_observation, piece = _score_and_observation(file_memory)
-    file_memory.add_scores_to_memory(
-        scores=[score, shared_score, other_score], observations=[observation, other_observation]
+    other_score, other_observation, piece = await _score_and_observation_async(file_memory)
+    (
+        await file_memory.add_scores_to_memory_async(
+            scores=[score, shared_score, other_score], observations=[observation, other_observation]
+        )
     )
     with file_memory.get_session() as session:
         entry = session.get(ScoreEntry, score.id)
@@ -515,15 +557,19 @@ def test_orm_clearing_stale_links_cleans_the_persisted_observation(file_memory: 
         assert session.get(ObservationEntry, other_observation.id) is None
         session.delete(entry)
         session.commit()
-    assert file_memory.get_observations(observation_ids=[observation.id]) == [observation]
-    file_memory.delete_conversation_pieces_after_sequence(conversation_id=piece.conversation_id, sequence=-1)
-    assert file_memory.get_message_pieces(prompt_ids=[piece.id]) == []
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == [observation]
+    (
+        await file_memory.delete_conversation_pieces_after_sequence_async(
+            conversation_id=piece.conversation_id, sequence=-1
+        )
+    )
+    assert (await file_memory.get_message_pieces_async(prompt_ids=[piece.id])) == []
 
 
-def test_orm_moving_link_before_score_deletion_preserves_observation(file_memory: SQLiteMemory) -> None:
-    score, observation, _ = _score_and_observation(file_memory)
+async def test_orm_moving_link_before_score_deletion_preserves_observation(file_memory: SQLiteMemory) -> None:
+    score, observation, _ = await _score_and_observation_async(file_memory)
     other_score = score.model_copy(update={"id": uuid.uuid4(), "observation_ids": []})
-    file_memory.add_scores_to_memory(scores=[score, other_score], observations=[observation])
+    (await file_memory.add_scores_to_memory_async(scores=[score, other_score], observations=[observation]))
     with file_memory.get_session() as session:
         entry = session.get(ScoreEntry, score.id)
         other = session.get(ScoreEntry, other_score.id)
@@ -532,86 +578,87 @@ def test_orm_moving_link_before_score_deletion_preserves_observation(file_memory
         other.observation_links.append(link)
         session.delete(entry)
         session.commit()
-    assert file_memory.get_observations(observation_ids=[observation.id]) == [observation]
-    assert file_memory.get_scores(score_ids=[other_score.id])[0].observation_ids == [observation.id]
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == [observation]
+    assert (await file_memory.get_scores_async(score_ids=[other_score.id]))[0].observation_ids == [observation.id]
     with file_memory.get_session() as session:
         session.delete(session.get(ScoreEntry, other_score.id))
         session.commit()
-    assert file_memory.get_observations(observation_ids=[observation.id]) == []
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []
 
 
-def test_concurrent_orm_score_deletions_clean_final_observation(file_memory: SQLiteMemory) -> None:
-    score, observation, _ = _score_and_observation(file_memory)
+async def test_concurrent_orm_score_deletions_clean_final_observation(file_memory: SQLiteMemory) -> None:
+    score, observation, _ = await _score_and_observation_async(file_memory)
     replay = score.model_copy(update={"id": uuid.uuid4()})
-    file_memory.add_scores_to_memory(scores=[score, replay], observations=[observation])
-    ready = Barrier(2)
+    (await file_memory.add_scores_to_memory_async(scores=[score, replay], observations=[observation]))
+    ready = asyncio.Barrier(2)
 
-    def _delete(score_id: uuid.UUID) -> None:
-        with file_memory.get_session() as session:
-            entry = session.get(ScoreEntry, score_id)
-            ready.wait(timeout=5)
-            session.delete(entry)
-            session.commit()
+    async def delete_async(score_id: uuid.UUID) -> None:
+        async with await file_memory.get_session_async() as session:
+            entry = await session.get(ScoreEntry, score_id)
+            await asyncio.wait_for(ready.wait(), timeout=5)
+            await session.delete(entry)
+            await session.commit()
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(_delete, value.id) for value in (score, replay)]
-        for future in futures:
-            future.result(timeout=10)
+    await asyncio.wait_for(asyncio.gather(*(delete_async(value.id) for value in (score, replay))), timeout=10)
     assert file_memory._query_entries(ScoreEntry) == []
-    assert file_memory.get_observations(observation_ids=[observation.id]) == []
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []
     assert file_memory._query_entries(ObservationMessagePieceEntry) == []
 
 
 @pytest.mark.parametrize("insert_first", [False, True])
 @pytest.mark.parametrize("insert_via_orm", [False, True])
-def test_concurrent_insert_and_final_delete_do_not_orphan_score(
+async def test_concurrent_insert_and_final_delete_do_not_orphan_score(
     *, file_memory: SQLiteMemory, insert_first: bool, insert_via_orm: bool
 ) -> None:
-    score, observation, _ = _score_and_observation(file_memory)
+    score, observation, _ = await _score_and_observation_async(file_memory)
     replay = score.model_copy(update={"id": uuid.uuid4()})
-    file_memory.add_scores_to_memory(scores=[score], observations=[observation])
-    competing_write = Event()
+    (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
+    competing_write = asyncio.Event()
 
     def _before_write(*, statement: str, **kwargs: Any) -> None:
         if statement == "BEGIN IMMEDIATE":
             competing_write.set()
 
-    def _compete() -> None:
+    async def compete_async() -> None:
         if insert_first:
-            with file_memory.get_session() as session:
-                session.delete(session.get(ScoreEntry, score.id))
-                session.commit()
+            async with await file_memory.get_session_async() as session:
+                await session.delete(await session.get(ScoreEntry, score.id))
+                await session.commit()
         else:
             with pytest.raises(ValueError, match="not found in memory"):
                 if insert_via_orm:
-                    with file_memory.get_session() as session:
+                    async with await file_memory.get_session_async() as session:
                         session.add(ScoreEntry(entry=replay))
                         session.add(
                             ScoreObservationEntry(score_id=replay.id, position=0, observation_id=observation.id)
                         )
-                        session.commit()
+                        await session.commit()
                 else:
-                    file_memory.add_scores_to_memory(scores=[replay])
+                    (await file_memory.add_scores_to_memory_async(scores=[replay]))
 
-    with file_memory.get_session() as session, ThreadPoolExecutor(max_workers=1) as pool:
+    engine = file_memory._get_async_engine().sync_engine
+    async with await file_memory.get_session_async() as session:
         if insert_first:
             session.add(ScoreEntry(entry=replay))
             session.add(ScoreObservationEntry(score_id=replay.id, position=0, observation_id=observation.id))
         else:
-            session.delete(session.get(ScoreEntry, score.id))
-        session.flush()
-        event.listen(file_memory.engine, "before_cursor_execute", _before_write, named=True)
+            await session.delete(await session.get(ScoreEntry, score.id))
+        await session.flush()
+        event.listen(engine, "before_cursor_execute", _before_write, named=True)
+        task = asyncio.create_task(compete_async())
         try:
-            future = pool.submit(_compete)
-            assert competing_write.wait(timeout=5)
-            assert not future.done()
-            session.commit()
-            future.result(timeout=10)
+            await asyncio.wait_for(competing_write.wait(), timeout=5)
+            assert not task.done()
+            await session.commit()
+            await asyncio.wait_for(task, timeout=10)
         finally:
-            session.rollback()
-            event.remove(file_memory.engine, "before_cursor_execute", _before_write)
+            await session.rollback()
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            event.remove(engine, "before_cursor_execute", _before_write)
     expected = [observation] if insert_first else []
-    assert file_memory.get_observations(observation_ids=[observation.id]) == expected
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == expected
     assert len(file_memory._query_entries(ScoreEntry)) == int(insert_first)
 
 
@@ -664,7 +711,7 @@ def test_sqlite_write_requires_a_real_driver_connection() -> None:
     session.get_bind.return_value.dialect.name = "sqlite"
     session.connection.return_value.connection.driver_connection = None
 
-    with pytest.raises(TypeError, match="requires a sqlite3.Connection"):
+    with pytest.raises(TypeError, match="requires a sqlite3 or aiosqlite connection"):
         _begin_sqlite_write(session)
 
     session.connection.return_value.exec_driver_sql.assert_not_called()
@@ -678,15 +725,15 @@ def test_sqlite_write_requires_a_real_driver_connection() -> None:
         (TraceScorable(trace_ids=("1" * 32,)), "message or content evidence"),
     ],
 )
-def test_unchecked_observation_rejected(
+async def test_unchecked_observation_rejected(
     *, file_memory: SQLiteMemory, direct_orm: bool, scorable: object, error: str
 ) -> None:
-    score, observation, _ = _score_and_observation(file_memory)
+    score, observation, _ = await _score_and_observation_async(file_memory)
     observation = observation.model_copy(update={"scorable": scorable})
     with pytest.raises(ValueError, match=error):
         if direct_orm:
             ObservationEntry(entry=observation)
         else:
-            file_memory.add_scores_to_memory(scores=[score], observations=[observation])
-    assert file_memory.get_scores(score_ids=[score.id]) == []
-    assert file_memory.get_observations(observation_ids=[observation.id]) == []
+            (await file_memory.add_scores_to_memory_async(scores=[score], observations=[observation]))
+    assert (await file_memory.get_scores_async(score_ids=[score.id])) == []
+    assert (await file_memory.get_observations_async(observation_ids=[observation.id])) == []

@@ -10,15 +10,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.backend.services.dataset_service import DatasetService, get_dataset_service
+from pyrit.memory import MemoryInterface
 from pyrit.models import SeedDatasetSummary
 
 
 @pytest.fixture
 def mock_memory():
     """Create a mock memory instance."""
-    memory = MagicMock()
-    memory.get_seed_dataset_names.return_value = []
-    memory.get_seed_dataset_summaries.return_value = []
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_seed_dataset_names_async = AsyncMock(return_value=[])
+    memory.get_seed_dataset_summaries_async = AsyncMock(return_value=[])
     return memory
 
 
@@ -47,26 +48,28 @@ class TestListDatasets:
         assert all(item.provider_available for item in result.items)
 
     async def test_list_datasets_includes_memory_summaries(self, dataset_service, mock_memory):
-        mock_memory.get_seed_dataset_summaries.return_value = [
-            SeedDatasetSummary(
-                dataset_name="harmbench",
-                logical_examples=3,
-                seed_pieces=4,
-                objectives=1,
-                modalities=("image_path", "text"),
-                harm_categories=("hate", "violence"),
-                has_unlabeled_harm_categories=True,
-            ),
-            SeedDatasetSummary(
-                dataset_name=None,
-                logical_examples=1,
-                seed_pieces=2,
-                objectives=0,
-                modalities=("text",),
-                harm_categories=(),
-                has_unlabeled_harm_categories=True,
-            ),
-        ]
+        mock_memory.get_seed_dataset_summaries_async = AsyncMock(
+            return_value=[
+                SeedDatasetSummary(
+                    dataset_name="harmbench",
+                    logical_examples=3,
+                    seed_pieces=4,
+                    objectives=1,
+                    modalities=("image_path", "text"),
+                    harm_categories=("hate", "violence"),
+                    has_unlabeled_harm_categories=True,
+                ),
+                SeedDatasetSummary(
+                    dataset_name=None,
+                    logical_examples=1,
+                    seed_pieces=2,
+                    objectives=0,
+                    modalities=("text",),
+                    harm_categories=(),
+                    has_unlabeled_harm_categories=True,
+                ),
+            ]
+        )
         with patch(
             "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
             new_callable=AsyncMock,
@@ -98,26 +101,28 @@ class TestListDatasets:
 
     async def test_list_datasets_selection_keys_use_distinct_namespaces(self, dataset_service, mock_memory):
         """A stored dataset named __unnamed__ and the unnamed population share no key."""
-        mock_memory.get_seed_dataset_summaries.return_value = [
-            SeedDatasetSummary(
-                dataset_name="__unnamed__",
-                logical_examples=1,
-                seed_pieces=1,
-                objectives=0,
-                modalities=("text",),
-                harm_categories=(),
-                has_unlabeled_harm_categories=False,
-            ),
-            SeedDatasetSummary(
-                dataset_name=None,
-                logical_examples=2,
-                seed_pieces=2,
-                objectives=0,
-                modalities=("url",),
-                harm_categories=(),
-                has_unlabeled_harm_categories=True,
-            ),
-        ]
+        mock_memory.get_seed_dataset_summaries_async = AsyncMock(
+            return_value=[
+                SeedDatasetSummary(
+                    dataset_name="__unnamed__",
+                    logical_examples=1,
+                    seed_pieces=1,
+                    objectives=0,
+                    modalities=("text",),
+                    harm_categories=(),
+                    has_unlabeled_harm_categories=False,
+                ),
+                SeedDatasetSummary(
+                    dataset_name=None,
+                    logical_examples=2,
+                    seed_pieces=2,
+                    objectives=0,
+                    modalities=("url",),
+                    harm_categories=(),
+                    has_unlabeled_harm_categories=True,
+                ),
+            ]
+        )
         with patch(
             "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
             new_callable=AsyncMock,
@@ -139,26 +144,28 @@ class TestListDatasets:
 
     async def test_list_datasets_never_surfaces_an_empty_dataset_name(self, dataset_service, mock_memory):
         """Seeds with an empty name filter nothing, so they fold into the unnamed population."""
-        mock_memory.get_seed_dataset_summaries.return_value = [
-            SeedDatasetSummary(
-                dataset_name="",
-                logical_examples=2,
-                seed_pieces=3,
-                objectives=1,
-                modalities=("text",),
-                harm_categories=("hate",),
-                has_unlabeled_harm_categories=False,
-            ),
-            SeedDatasetSummary(
-                dataset_name=None,
-                logical_examples=1,
-                seed_pieces=2,
-                objectives=0,
-                modalities=("text",),
-                harm_categories=(),
-                has_unlabeled_harm_categories=True,
-            ),
-        ]
+        mock_memory.get_seed_dataset_summaries_async = AsyncMock(
+            return_value=[
+                SeedDatasetSummary(
+                    dataset_name="",
+                    logical_examples=2,
+                    seed_pieces=3,
+                    objectives=1,
+                    modalities=("text",),
+                    harm_categories=("hate",),
+                    has_unlabeled_harm_categories=False,
+                ),
+                SeedDatasetSummary(
+                    dataset_name=None,
+                    logical_examples=1,
+                    seed_pieces=2,
+                    objectives=0,
+                    modalities=("text",),
+                    harm_categories=(),
+                    has_unlabeled_harm_categories=True,
+                ),
+            ]
+        )
         with patch(
             "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
             new_callable=AsyncMock,
@@ -182,17 +189,19 @@ class TestListDatasets:
 
     async def test_list_datasets_keeps_unnamed_population_for_whitespace_collation(self, dataset_service, mock_memory):
         """A whitespace-only name normalized by the memory query remains the unnamed selection."""
-        mock_memory.get_seed_dataset_summaries.return_value = [
-            SeedDatasetSummary(
-                dataset_name=None,
-                logical_examples=1,
-                seed_pieces=2,
-                objectives=1,
-                modalities=("text",),
-                harm_categories=(),
-                has_unlabeled_harm_categories=True,
-            )
-        ]
+        mock_memory.get_seed_dataset_summaries_async = AsyncMock(
+            return_value=[
+                SeedDatasetSummary(
+                    dataset_name=None,
+                    logical_examples=1,
+                    seed_pieces=2,
+                    objectives=1,
+                    modalities=("text",),
+                    harm_categories=(),
+                    has_unlabeled_harm_categories=True,
+                )
+            ]
+        )
         with patch(
             "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
             new_callable=AsyncMock,
@@ -223,26 +232,28 @@ class TestListDatasets:
         assert loaded_only.items == []
 
     async def test_list_datasets_loaded_only_restricts_to_memory(self, dataset_service, mock_memory):
-        mock_memory.get_seed_dataset_summaries.return_value = [
-            SeedDatasetSummary(
-                dataset_name="harmbench",
-                logical_examples=3,
-                seed_pieces=4,
-                objectives=1,
-                modalities=("text",),
-                harm_categories=("hate",),
-                has_unlabeled_harm_categories=True,
-            ),
-            SeedDatasetSummary(
-                dataset_name=None,
-                logical_examples=1,
-                seed_pieces=2,
-                objectives=0,
-                modalities=("text",),
-                harm_categories=(),
-                has_unlabeled_harm_categories=True,
-            ),
-        ]
+        mock_memory.get_seed_dataset_summaries_async = AsyncMock(
+            return_value=[
+                SeedDatasetSummary(
+                    dataset_name="harmbench",
+                    logical_examples=3,
+                    seed_pieces=4,
+                    objectives=1,
+                    modalities=("text",),
+                    harm_categories=("hate",),
+                    has_unlabeled_harm_categories=True,
+                ),
+                SeedDatasetSummary(
+                    dataset_name=None,
+                    logical_examples=1,
+                    seed_pieces=2,
+                    objectives=0,
+                    modalities=("text",),
+                    harm_categories=(),
+                    has_unlabeled_harm_categories=True,
+                ),
+            ]
+        )
         with patch(
             "pyrit.backend.services.dataset_service.SeedDatasetProvider.get_all_dataset_names_async",
             new_callable=AsyncMock,

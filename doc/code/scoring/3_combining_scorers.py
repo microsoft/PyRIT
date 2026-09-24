@@ -193,7 +193,7 @@ turns = [
     MessagePiece(role="assistant", original_value="Okay, yes I am AI.", conversation_id=conversation_id).to_message(),
 ]
 for turn in turns:
-    memory.add_message_to_memory(request=turn)
+    (await memory.add_message_to_memory_async(request=turn))
 
 persona_breach_scorer = SubStringScorer(substring="I am AI", categories=["persona_breach"])
 conversation_scorer = create_conversation_scorer(scorer=persona_breach_scorer)

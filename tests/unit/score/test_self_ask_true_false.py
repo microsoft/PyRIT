@@ -11,6 +11,7 @@ from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     SelfAskTrueFalseScorer,
     TrueFalseQuestion,
@@ -43,7 +44,7 @@ def _grounded_scorer(chat_target: MagicMock) -> SelfAskTrueFalseScorer:
 
 
 async def test_true_false_scorer_score(patch_central_database, scorer_true_false_response: Message):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
@@ -65,7 +66,7 @@ async def test_true_false_scorer_parses_json_boolean(patch_central_database, boo
     json_response = '{"score_value": ' + ("true" if bool_value else "false") + ', "description": "d", "rationale": "r"}'
     response = Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[response])
     scorer = _grounded_scorer(chat_target)
@@ -78,7 +79,7 @@ async def test_true_false_scorer_parses_json_boolean(patch_central_database, boo
 
 
 async def test_true_false_scorer_set_system_prompt(patch_central_database, scorer_true_false_response: Message):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -86,7 +87,7 @@ async def test_true_false_scorer_set_system_prompt(patch_central_database, score
 
     await scorer.score_text_async("true false")
 
-    chat_target.set_system_prompt.assert_called_once()
+    chat_target.set_system_prompt_async.assert_called_once()
 
     # assert that the category content was loaded into system prompt
     assert "# Instructions" in scorer._system_prompt
@@ -95,7 +96,7 @@ async def test_true_false_scorer_set_system_prompt(patch_central_database, score
 
 async def test_true_false_scorer_adds_to_memory(scorer_true_false_response: Message):
     memory = MagicMock(MemoryInterface)
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
@@ -103,11 +104,11 @@ async def test_true_false_scorer_adds_to_memory(scorer_true_false_response: Mess
 
         await scorer.score_text_async(text="string")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()
 
 
 async def test_self_ask_scorer_bad_json_exception_retries(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value="this is not a json")])
@@ -122,7 +123,7 @@ async def test_self_ask_scorer_bad_json_exception_retries(patch_central_database
 
 
 async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
 
     json_response = (
         dedent(
@@ -149,7 +150,7 @@ async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_centra
 
 def test_self_ask_true_false_scorer_identifier_has_system_prompt_template(patch_central_database):
     """Test that identifier includes system_prompt_template."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = _grounded_scorer(chat_target)
@@ -164,7 +165,7 @@ def test_self_ask_true_false_scorer_identifier_has_system_prompt_template(patch_
 
 def test_self_ask_true_false_get_identifier_type(patch_central_database):
     """Test that get_identifier returns correct class_name."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = _grounded_scorer(chat_target)
@@ -178,7 +179,7 @@ def test_self_ask_true_false_get_identifier_type(patch_central_database):
 
 def test_self_ask_true_false_get_identifier_long_prompt_stored_in_full(patch_central_database):
     """Test that long system prompts are stored in full (no truncation) via to_dict()."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = _grounded_scorer(chat_target)
@@ -216,7 +217,7 @@ def test_true_false_question_from_yaml_raises_on_none():
 
 def test_init_static_str_system_prompt(patch_central_database):
     """A plain string system prompt is used verbatim with no JSON schema."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     question = TrueFalseQuestion(
@@ -237,7 +238,7 @@ def test_init_static_str_system_prompt(patch_central_database):
 
 def test_init_static_seed_prompt_preserves_schema(patch_central_database):
     """A static SeedPrompt is used verbatim and its response_json_schema is preserved."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     seed_prompt = SeedPrompt(value="static seed prompt", data_type="text", response_json_schema={"type": "object"})
@@ -258,7 +259,7 @@ def test_init_static_seed_prompt_preserves_schema(patch_central_database):
 
 def test_init_default_system_prompt_uses_task_achieved(patch_central_database):
     """With only a chat_target, the scorer falls back to the default TASK_ACHIEVED rubric."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskTrueFalseScorer(chat_target=chat_target)
@@ -270,7 +271,7 @@ def test_init_default_system_prompt_uses_task_achieved(patch_central_database):
 
 def test_init_templated_seed_prompt_from_separate_files(patch_central_database):
     """Template YAML and question YAML can be separate: render the question, pass the SeedPrompt."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     question = TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.GROUNDED.value)
@@ -290,7 +291,7 @@ def test_init_templated_seed_prompt_from_separate_files(patch_central_database):
 
 async def test_init_scores_end_to_end(patch_central_database, scorer_true_false_response: Message):
     """A composition-built scorer performs a full scoring round-trip with the default JSON handler."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -316,7 +317,7 @@ def test_init_raises_when_no_chat_target(patch_central_database):
 
 def test_from_question_sets_category(patch_central_database):
     """from_question renders a question into the system prompt and sets the score category."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskTrueFalseScorer.from_question(
@@ -330,7 +331,7 @@ def test_from_question_sets_category(patch_central_database):
 
 def test_from_question_with_custom_question_sets_category(patch_central_database):
     """from_question accepts an in-memory TrueFalseQuestion and uses its category."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     custom_question = TrueFalseQuestion(
@@ -355,7 +356,7 @@ def test_from_question_with_custom_question_sets_category(patch_central_database
     ],
 )
 def test_from_question_supports_custom_template(patch_central_database, template: SeedPrompt | str):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     question = TrueFalseQuestion(
         category="custom",
@@ -374,7 +375,7 @@ def test_from_question_supports_custom_template(patch_central_database, template
 
 
 def test_init_custom_prompt_requires_question(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     with pytest.raises(ValueError, match="system_prompt and question must be provided together"):
@@ -383,7 +384,7 @@ def test_init_custom_prompt_requires_question(patch_central_database):
 
 def test_from_question_renders_metadata(patch_central_database):
     """Metadata supplied via TrueFalseQuestion makes it into the rendered system prompt."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     question = TrueFalseQuestion(
@@ -401,7 +402,7 @@ def test_from_question_renders_metadata(patch_central_database):
 
 async def test_from_question_scores_end_to_end(patch_central_database, scorer_true_false_response: Message):
     """A scorer built via from_question performs a full scoring round-trip."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 

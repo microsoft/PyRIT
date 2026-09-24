@@ -11,6 +11,7 @@ from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
     VLSUCategory,
     _VLSUMultimodalDataset,
 )
+from pyrit.memory import MemoryInterface
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import SeedDataset
 
@@ -22,7 +23,8 @@ class TestVLSUMultimodalDataset:
     def test_dataset_uses_isolated_memory_and_results_path(self):
         """Prove per-test database and results-directory isolation."""
         memory = CentralMemory.get_memory_instance()
-        assert memory.engine.url.database == ":memory:"
+        assert memory.db_path == ":memory:"
+        assert memory.engine.url.query["mode"] == "memory"
         assert os.path.isabs(memory.results_path)
         assert "results" not in os.path.basename(memory.results_path)
 
@@ -438,7 +440,7 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
     from unittest.mock import MagicMock
 
     mock_serializer = MagicMock()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = None
     mock_memory.results_storage_io = None
     mock_serializer._memory = mock_memory
@@ -458,7 +460,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     from unittest.mock import AsyncMock, MagicMock
 
     mock_serializer = MagicMock()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = "/results"
     mock_storage_io = AsyncMock()
     mock_storage_io.path_exists_async = AsyncMock(return_value=True)

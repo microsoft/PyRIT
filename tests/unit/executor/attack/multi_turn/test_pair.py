@@ -49,7 +49,7 @@ def _make_mock_objective_target() -> PromptTarget:
 def _make_mock_adversarial_chat() -> PromptTarget:
     chat = MagicMock(spec=PromptTarget)
     chat.send_prompt_async = AsyncMock(return_value=None)
-    chat.set_system_prompt = MagicMock()
+    chat.set_system_prompt_async = AsyncMock()
     chat.get_identifier.return_value = ComponentIdentifier(
         class_name="MockChatTarget",
         class_module="test_module",

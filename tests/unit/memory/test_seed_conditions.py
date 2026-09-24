@@ -31,7 +31,7 @@ class TestSeedConditions:
     ) -> None:
         original = SeedGroup(seeds=[SeedPrompt(value="Choose an answer.")])
         await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[original], added_by="tester")
-        [prompt] = sqlite_instance.get_seeds()
+        [prompt] = await sqlite_instance.get_seeds_async()
         original_id = prompt.id
         original_group_id = prompt.prompt_group_id
         group_id = uuid.uuid4() if copy_to_new_group else original_group_id
@@ -43,7 +43,7 @@ class TestSeedConditions:
 
         await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[group], added_by="tester")
 
-        [restored] = sqlite_instance.get_seed_groups(prompt_group_ids=[group_id])
+        [restored] = await sqlite_instance.get_seed_groups_async(prompt_group_ids=[group_id])
         assert len(restored.seeds) == 3
         assert restored.scoring_expectation.conditions == objective.conditions
         companion = next(seed for seed in restored.seeds if seed.value == prompt.value)
@@ -51,18 +51,20 @@ class TestSeedConditions:
         assert prompt.id == companion.id
         assert {seed.id for seed in group.seeds} == {seed.id for seed in restored.seeds}
         [original_prompt] = [
-            seed for seed in sqlite_instance.get_seeds(prompt_group_ids=[original_group_id]) if seed.id == original_id
+            seed
+            for seed in (await sqlite_instance.get_seeds_async(prompt_group_ids=[original_group_id]))
+            if seed.id == original_id
         ]
         assert original_prompt.prompt_group_id == original_group_id
         await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[group], added_by="tester")
-        assert len(sqlite_instance.get_seeds()) == (4 if copy_to_new_group else 3)
+        assert len(await sqlite_instance.get_seeds_async()) == (4 if copy_to_new_group else 3)
 
     async def test_copied_seed_id_changes_only_after_successful_insert_async(
         self, sqlite_instance: MemoryInterface
     ) -> None:
         original = SeedGroup(seeds=[SeedPrompt(value="Choose an answer.")])
         await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[original], added_by="tester")
-        [prompt] = sqlite_instance.get_seeds()
+        [prompt] = await sqlite_instance.get_seeds_async()
         original_id = prompt.id
         prompt.prompt_group_id = uuid.uuid4()
         group = SeedGroup(seeds=[prompt, _objective()])
@@ -73,12 +75,12 @@ class TestSeedConditions:
             await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[group], added_by="tester")
 
         assert prompt.id == original_id
-        assert len(sqlite_instance.get_seeds()) == 1
+        assert len(await sqlite_instance.get_seeds_async()) == 1
         await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[group], added_by="tester")
-        [restored] = sqlite_instance.get_seed_groups(prompt_group_ids=[prompt.prompt_group_id])
+        [restored] = await sqlite_instance.get_seed_groups_async(prompt_group_ids=[prompt.prompt_group_id])
         assert prompt.id != original_id
         assert {seed.id for seed in group.seeds} == {seed.id for seed in restored.seeds}
-        assert len(sqlite_instance.get_seeds()) == 3
+        assert len(await sqlite_instance.get_seeds_async()) == 3
 
     async def test_seed_entry_roundtrip_async(self, sqlite_instance: MemoryInterface) -> None:
         objective = _objective()
@@ -103,7 +105,7 @@ class TestSeedConditions:
         ]
         await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=groups, added_by="tester")
 
-        reloaded = sqlite_instance.get_seed_groups()
+        reloaded = await sqlite_instance.get_seed_groups_async()
         assert len(reloaded) == 2
         assert all(len(group.seeds) == 2 for group in reloaded)
         assert {group.scoring_expectation.conditions[0].correct_answer for group in reloaded} == {"Paris", "Rome"}
@@ -143,7 +145,7 @@ class TestSeedConditions:
             else:
                 await sqlite_instance.add_seeds_to_memory_async(seeds=group.seeds, added_by="tester")
 
-        restored = sqlite_instance.get_seed_groups()
+        restored = await sqlite_instance.get_seed_groups_async()
         assert len(restored) == 2
         assert all(len(group.seeds) == 2 for group in restored)
         assert {
@@ -153,7 +155,7 @@ class TestSeedConditions:
             for group in original_groups
         }
         await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=original_groups, added_by="tester")
-        assert len(sqlite_instance.get_seeds()) == 4
+        assert len(await sqlite_instance.get_seeds_async()) == 4
 
     async def test_legacy_null_and_nonobjective_conditions_async(self, sqlite_instance: MemoryInterface) -> None:
         seeds = [SeedObjective(value="legacy"), SeedPrompt(value="prompt", data_type="text")]
@@ -162,7 +164,7 @@ class TestSeedConditions:
             session.execute(update(SeedEntry).values(conditions=None))
             session.commit()
             assert all(entry.conditions is None for entry in session.scalars(select(SeedEntry)))
-        restored = sqlite_instance.get_seeds()
+        restored = await sqlite_instance.get_seeds_async()
         objective = next(seed for seed in restored if isinstance(seed, SeedObjective))
         assert objective.conditions == ()
         prompt = next(seed for seed in restored if isinstance(seed, SeedPrompt))
@@ -192,7 +194,7 @@ class TestSeedConditions:
             session.execute(update(SeedEntry).values(conditions=payload))
             session.commit()
         with pytest.raises(ValueError, match="condition|correct_answer_label|at least 1 character"):
-            sqlite_instance.get_seeds()
+            (await sqlite_instance.get_seeds_async())
 
     def test_nonobjective_persisted_conditions_raise(self) -> None:
         entry = SeedEntry(entry=SeedPrompt(value="prompt", data_type="text"))
@@ -211,7 +213,7 @@ class TestSeedConditions:
         await sqlite_instance.add_seeds_to_memory_async(
             seeds=[_objective(answer="Rome", dataset=dataset)], added_by="tester"
         )
-        stored = sqlite_instance.get_seeds()
+        stored = await sqlite_instance.get_seeds_async()
         assert len(stored) == 2
         assert len({seed.value_sha256 for seed in stored}) == 1
         assert {seed.conditions[0].correct_answer for seed in stored} == {"Paris", "Rome"}
@@ -226,13 +228,13 @@ class TestSeedConditions:
         await sqlite_instance.add_seeds_to_memory_async(
             seeds=[SeedObjective(value=plain.value, dataset_name=plain.dataset_name)], added_by="tester"
         )
-        assert len(sqlite_instance.get_seeds()) == 2
+        assert len(await sqlite_instance.get_seeds_async()) == 2
 
     async def test_duplicates_within_input_are_not_collapsed_async(self, sqlite_instance: MemoryInterface) -> None:
         await sqlite_instance.add_seeds_to_memory_async(
             seeds=[_objective(), _objective(), _objective(answer="Rome")], added_by="tester"
         )
-        assert len(sqlite_instance.get_seeds()) == 3
+        assert len(await sqlite_instance.get_seeds_async()) == 3
 
     async def test_condition_order_is_identity_but_object_key_order_is_not_async(
         self, sqlite_instance: MemoryInterface
@@ -251,7 +253,7 @@ class TestSeedConditions:
         )
         await sqlite_instance.add_seeds_to_memory_async(seeds=[first], added_by="tester")
         await sqlite_instance.add_seeds_to_memory_async(seeds=[reordered, equivalent], added_by="tester")
-        assert len(sqlite_instance.get_seeds()) == 2
+        assert len(await sqlite_instance.get_seeds_async()) == 2
 
     @pytest.mark.parametrize(
         ("collation", "stored_dataset", "incoming_dataset"),
@@ -273,7 +275,7 @@ class TestSeedConditions:
                 seeds=[_objective(dataset=incoming_dataset), _objective(answer="Rome", dataset=incoming_dataset)],
                 added_by="tester",
             )
-            assert len(sqlite_instance.get_seeds()) == 2
+            assert len(await sqlite_instance.get_seeds_async()) == 2
         finally:
             table.c.dataset_name.type = original_type
 
@@ -289,17 +291,17 @@ class TestSeedConditions:
             ]
             with (
                 patch.object(type(sqlite_instance), "_MAX_BIND_VARS", 5),
-                patch.object(sqlite_instance, "get_seeds", wraps=sqlite_instance.get_seeds) as lookup,
+                patch.object(sqlite_instance, "_execute_get_seeds", wraps=sqlite_instance._execute_get_seeds) as lookup,
             ):
                 await sqlite_instance.add_seeds_to_memory_async(seeds=seeds, added_by="tester")
             assert [len(call.kwargs["value_sha256"]) for call in lookup.call_args_list] == [4, 4, 4]
-        assert len(sqlite_instance.get_seeds()) == 24
+        assert len(await sqlite_instance.get_seeds_async()) == 24
 
-    def test_identifier_json_roundtrip(self, sqlite_instance: MemoryInterface) -> None:
+    async def test_identifier_json_roundtrip(self, sqlite_instance: MemoryInterface) -> None:
         identifier = SeedIdentifier.from_seed(_objective())
         with sqlite_instance.get_session() as session:
             session.add(SeedIdentifierEntry.from_domain_model(identifier))
             session.commit()
-        restored = sqlite_instance.get_seed_identifiers()[0]
+        restored = (await sqlite_instance.get_seed_identifiers_async())[0]
         assert restored.params["conditions"] == identifier.params["conditions"]
         assert restored.hash == identifier.hash

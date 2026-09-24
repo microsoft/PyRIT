@@ -227,7 +227,7 @@ async def generate_simulated_conversation_async(
 
     # Extract the conversation from memory and filter for prepended_conversation use
     memory = CentralMemory.get_memory_instance()
-    raw_messages = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
+    raw_messages = list(await memory.get_conversation_messages_async(conversation_id=result.conversation_id))
 
     # Filter out system messages - keep the actual conversation
     # System prompts are set separately on each target during attack execution
@@ -326,7 +326,7 @@ async def _generate_next_message_async(
         attack_strategy_name="SimulatedConversation",
         memory_labels=memory_labels,
     )
-    manager.set_adversarial_system_prompt(conversation_context=conversation_context)
+    (await manager.set_adversarial_system_prompt_async(conversation_context=conversation_context))
     reply = await manager.generate_adversarial_reply_async(
         prompt_text="Generate the next user message based on the instructions above.",
     )

@@ -7,6 +7,7 @@
 import re
 
 from pyrit.analytics.text_matching import ApproximateTextMatching
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
@@ -105,6 +106,27 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
                 return message.get_value()
         return None
 
+    @legacy_sync_override(lambda: SystemPromptExtractionScorer._get_system_prompt)
+    async def _get_system_prompt_async(self, conversation_id: str | None) -> str | None:
+        """
+        Read the known system prompt from the scored conversation's prepended system message.
+
+        Args:
+            conversation_id (str | None): The conversation the response belongs to.
+
+        Returns:
+            str | None: The system prompt text, or None if the conversation has no system message.
+        """
+        if not conversation_id:
+            return None
+
+        memory = CentralMemory.get_memory_instance()
+        messages = await memory.get_conversation_messages_async(conversation_id=conversation_id)
+        for message in messages:
+            if message.api_role == "system":
+                return message.get_value()
+        return None
+
     @staticmethod
     def _mildly_sanitize(text: str) -> str:
         """
@@ -153,7 +175,7 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
             list[Score]: A single float_scale Score in [0, 1] measuring system-prompt leakage.
         """
         response = message_piece.converted_value
-        system_prompt = self._get_system_prompt(message_piece.conversation_id)
+        system_prompt = await self._get_system_prompt_async(message_piece.conversation_id)
 
         if not system_prompt:
             overlap = 0.0

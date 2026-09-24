@@ -8,6 +8,7 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import SelfAskGeneralTrueFalseScorer
 
 
@@ -29,7 +30,7 @@ def general_scorer_response() -> Message:
 
 
 async def test_general_scorer_score_async(patch_central_database, general_scorer_response: Message):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_scorer_response])
 
@@ -53,7 +54,7 @@ async def test_general_scorer_score_async(patch_central_database, general_scorer
 async def test_general_scorer_score_async_with_prompt_f_string(
     general_scorer_response: Message, patch_central_database
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_scorer_response])
 
@@ -78,7 +79,7 @@ async def test_general_scorer_score_async_with_prompt_f_string(
 
 
 async def test_general_scorer_score_async_handles_custom_keys(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     assert chat_target
 
@@ -121,7 +122,7 @@ def test_true_false_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch
         SelfAskTrueFalseScorer,
     )
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskTrueFalseScorer(chat_target=chat_target)
@@ -140,7 +141,7 @@ def test_true_false_get_scorer_metrics_returns_metrics_when_eval_hash_is_set(pat
         SelfAskTrueFalseScorer,
     )
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskTrueFalseScorer(chat_target=chat_target)

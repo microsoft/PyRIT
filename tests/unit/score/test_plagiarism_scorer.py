@@ -4,7 +4,7 @@
 from unittest.mock import patch
 
 import pytest
-from unit.mocks import mock_memory_resolving, store_message
+from unit.mocks import mock_memory_resolving, store_message_async
 
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece
@@ -52,7 +52,7 @@ class TestPlagiarismScorer:
 
         request = message_piece.to_message()
 
-        scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(request)))
 
         assert len(scores) == 1
         score = scores[0]
@@ -183,7 +183,7 @@ class TestPlagiarismScorer:
         memory = mock_memory_resolving(request)
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             await scorer.score_async(scorable=MessageScorable.from_message(request))
-            memory.add_scores_to_memory.assert_called_once()
+            memory.add_scores_to_memory_async.assert_called_once()
 
     async def test_score_async_unsupported_data_type_returns_empty(self, patch_central_database):
         reference_text = "Test reference text"
@@ -196,7 +196,7 @@ class TestPlagiarismScorer:
             converted_value_data_type="image_path",
         ).to_message()
 
-        scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(request)))
         assert scores == []
 
     async def test_score_text_async_integration(self):

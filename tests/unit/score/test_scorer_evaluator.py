@@ -32,8 +32,8 @@ from pyrit.score import (
 def mock_harm_scorer():
     scorer = MagicMock(spec=FloatScaleScorer)
     scorer._memory = MagicMock(spec=MemoryInterface)
-    scorer._memory.add_message_to_memory = MagicMock()
-    scorer._memory.get_message_pieces.return_value = []
+    scorer._memory.add_message_to_memory_async = AsyncMock()
+    scorer._memory.get_message_pieces_async = AsyncMock(return_value=[])
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_456"
@@ -47,8 +47,8 @@ def mock_harm_scorer():
 def mock_objective_scorer():
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer._memory = MagicMock(spec=MemoryInterface)
-    scorer._memory.add_message_to_memory = MagicMock()
-    scorer._memory.get_message_pieces.return_value = []
+    scorer._memory.add_message_to_memory_async = AsyncMock()
+    scorer._memory.get_message_pieces_async = AsyncMock(return_value=[])
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_123"
@@ -94,13 +94,13 @@ async def test_evaluate_dataset_async_harm(mock_harm_scorer):
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     evaluator._score_responses_grouped_async = AsyncMock(return_value=[[score] for score in entry_values])
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
-    assert mock_harm_scorer._memory.add_message_to_memory.call_count == 2
+    assert mock_harm_scorer._memory.add_message_to_memory_async.call_count == 2
     assert isinstance(metrics, HarmScorerMetrics)
     assert metrics.mean_absolute_error == 0.0
     assert metrics.mae_standard_error == 0.0
 
 
-def test_validate_and_extract_harm_data_scores_only_assistant_message(mock_harm_scorer):
+async def test_validate_and_extract_harm_data_scores_only_assistant_message(mock_harm_scorer):
     conversation_id = "conversation"
     user_message = Message(
         message_pieces=[
@@ -133,12 +133,14 @@ def test_validate_and_extract_harm_data_scores_only_assistant_message(mock_harm_
         harm_definition_version="1.0",
     )
 
-    responses, human_scores, objectives = HarmScorerEvaluator(mock_harm_scorer)._validate_and_extract_data(dataset)
+    responses, human_scores, objectives = await HarmScorerEvaluator(mock_harm_scorer)._validate_and_extract_data_async(
+        dataset
+    )
 
     assert responses == [assistant_message]
     assert human_scores == [[0.5]]
     assert objectives is None
-    assert mock_harm_scorer._memory.add_message_to_memory.call_count == 2
+    assert mock_harm_scorer._memory.add_message_to_memory_async.call_count == 2
 
 
 async def test_evaluate_dataset_async_objective(mock_objective_scorer):
@@ -153,7 +155,7 @@ async def test_evaluate_dataset_async_objective(mock_objective_scorer):
     evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
     evaluator._score_responses_grouped_async = AsyncMock(return_value=[[MagicMock(get_value=lambda: False)]])
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
-    assert mock_objective_scorer._memory.add_message_to_memory.call_count == 1
+    assert mock_objective_scorer._memory.add_message_to_memory_async.call_count == 1
     assert isinstance(metrics, ObjectiveScorerMetrics)
     assert metrics.accuracy == 0.0
     assert metrics.accuracy_standard_error == 0.0

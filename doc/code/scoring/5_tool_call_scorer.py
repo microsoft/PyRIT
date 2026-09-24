@@ -118,7 +118,7 @@ print(f"Missing tool after controlled completion: {negative.get_value()}")
 # have their stricter, original-expectation replay rules.
 
 # %%
-saved = memory.get_observations(observation_ids=negative.observation_ids)[0]
+saved = (await memory.get_observations_async(observation_ids=negative.observation_ids))[0]
 assert saved.scorable == scope
 before_replay = saved.model_dump_json()
 await asyncio.to_thread(provider.shutdown)  # type: ignore
@@ -127,9 +127,11 @@ client.close()
 replayed = (await scorer.score_observation_async(observation=saved, expectation=expects("lookup")))[0]  # type: ignore
 assert replayed.get_value() is True
 assert replayed.observation_ids == negative.observation_ids
-assert memory.get_observations(observation_ids=negative.observation_ids)[0].model_dump_json() == before_replay
+assert (await memory.get_observations_async(observation_ids=negative.observation_ids))[
+    0
+].model_dump_json() == before_replay
 print(f"Lookup in saved evidence after capture is closed: {replayed.get_value()}")
-memory.dispose_engine()
+(await memory.dispose_engine_async())
 
 # %% [markdown]
 # ## Use another trace source

@@ -99,12 +99,13 @@ class GandalfScorer(MessageTrueFalseScorer):
         )
 
         scoring_conversation_id = str(uuid.uuid4())
-        self._prompt_target.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=scoring_conversation_id,
+        (
+            await self._prompt_target.set_system_prompt_async(
+                system_prompt=system_prompt, conversation_id=scoring_conversation_id
+            )
         )
 
-        conversation = self._memory.get_conversation_messages(conversation_id=conversation_id)
+        conversation = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
         if not conversation:
             raise ValueError(f"Conversation with ID {conversation_id} not found in memory.")
 

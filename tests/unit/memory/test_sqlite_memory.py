@@ -505,15 +505,15 @@ def test_query_entries(sqlite_instance, sample_conversation_entries):
     assert specific_entry[0].original_value == "Message 1"
 
 
-def test_get_all_memory(sqlite_instance, sample_conversation_entries):
+async def test_get_all_memory(sqlite_instance, sample_conversation_entries):
     sqlite_instance._insert_entries(entries=sample_conversation_entries)
 
     # Fetch all entries
-    all_entries = sqlite_instance.get_message_pieces()
+    all_entries = await sqlite_instance.get_message_pieces_async()
     assert len(all_entries) == 3
 
 
-def test_get_memories_with_json_properties(sqlite_instance):
+async def test_get_memories_with_json_properties(sqlite_instance):
     # Define a specific conversation_id
     specific_conversation_id = "test_conversation_id"
 
@@ -530,13 +530,17 @@ def test_get_memories_with_json_properties(sqlite_instance):
         converter_identifiers=converter_identifiers,
     )
 
-    sqlite_instance.add_conversation_to_memory(
-        conversation=Conversation(conversation_id=specific_conversation_id, target_identifier=target.get_identifier())
+    (
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(
+                conversation_id=specific_conversation_id, target_identifier=target.get_identifier()
+            )
+        )
     )
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece]))
 
     # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
-    retrieved_entries = sqlite_instance.get_conversation_messages(conversation_id=specific_conversation_id)
+    retrieved_entries = await sqlite_instance.get_conversation_messages_async(conversation_id=specific_conversation_id)
 
     # Verify that the retrieved entry matches the inserted entry
     assert len(retrieved_entries) == 1
@@ -559,7 +563,7 @@ def test_get_memories_with_json_properties(sqlite_instance):
     assert retrieved_entry.prompt_metadata["normalizer_id"] == "id1"
 
 
-def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
+async def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
     # A conversation is held with a single target. Registering it records the
     # target; a later registration for the same conversation with no target (e.g.
     # a branched copy whose source had no metadata) must NOT overwrite it with None.
@@ -572,10 +576,12 @@ def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
         sequence=1,
         original_value="hello",
     )
-    sqlite_instance.add_conversation_to_memory(
-        conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+    (
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+        )
     )
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[request_piece])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[request_piece]))
 
     response_piece = MessagePiece(
         conversation_id=conversation_id,
@@ -583,10 +589,12 @@ def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
         sequence=2,
         original_value="world",
     )
-    sqlite_instance.add_conversation_to_memory(
-        conversation=Conversation(conversation_id=conversation_id, target_identifier=None)
+    (
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=None)
+        )
     )
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[response_piece])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[response_piece]))
 
     metadata = sqlite_instance._get_conversation(conversation_id=conversation_id)
     assert metadata is not None
@@ -650,7 +658,7 @@ def test_update_entries_nonexistent_fields(sqlite_instance):
     assert entries_to_update[0].original_value == "Hello"
 
 
-def test_update_entries_by_conversation_id(sqlite_instance, sample_conversation_entries):
+async def test_update_entries_by_conversation_id(sqlite_instance, sample_conversation_entries):
     # Define a specific conversation_id to update
     specific_conversation_id = "update_test_id"
 
@@ -669,7 +677,7 @@ def test_update_entries_by_conversation_id(sqlite_instance, sample_conversation_
         update_fields = {"original_value": "Updated content", "role": "assistant"}
 
         # Use the update_prompt_entries_by_conversation_id method to update the entries
-        update_result = sqlite_instance.update_prompt_entries_by_conversation_id(
+        update_result = await sqlite_instance.update_prompt_entries_by_conversation_id_async(
             conversation_id=specific_conversation_id, update_fields=update_fields
         )
 
@@ -688,7 +696,7 @@ def test_update_entries_by_conversation_id(sqlite_instance, sample_conversation_
         assert other_entry.original_value == original_content  # Content should remain unchanged
 
 
-def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample_conversation_entries):
+async def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample_conversation_entries):
     # Define a specific conversation_id to update
     specific_conversation_id = "update_test_id"
 
@@ -706,7 +714,7 @@ def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample_conve
         # Define the fields to update for entries with the specific conversation_id
         update_fields = {"prompt_metadata": "updated_metadata"}
         # Use the update_prompt_entries_by_conversation_id method to update the entries
-        update_result = sqlite_instance.update_prompt_entries_by_conversation_id(
+        update_result = await sqlite_instance.update_prompt_entries_by_conversation_id_async(
             conversation_id=specific_conversation_id, update_fields=update_fields
         )
 
@@ -724,23 +732,24 @@ def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample_conve
         assert other_entry.prompt_metadata == original_metadata  # Metadata should remain unchanged
 
 
-def test_get_conversation_stats_returns_empty_for_no_ids(sqlite_instance):
+async def test_get_conversation_stats_returns_empty_for_no_ids(sqlite_instance):
     """Test that get_conversation_stats returns empty dict for empty input."""
-    result = sqlite_instance.get_conversation_stats(conversation_ids=[])
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[])
     assert result == {}
 
 
-def test_get_conversation_stats_uses_indexed_latest_message_lookup(sqlite_instance):
+async def test_get_conversation_stats_uses_indexed_latest_message_lookup(sqlite_instance):
     statements: list[str] = []
 
     def capture_statement(conn, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
-    event.listen(sqlite_instance.engine, "before_cursor_execute", capture_statement)
+    engine = sqlite_instance._get_async_engine().sync_engine
+    event.listen(engine, "before_cursor_execute", capture_statement)
     try:
-        sqlite_instance.get_conversation_stats(conversation_ids=["conversation"])
+        (await sqlite_instance.get_conversation_stats_async(conversation_ids=["conversation"]))
     finally:
-        event.remove(sqlite_instance.engine, "before_cursor_execute", capture_statement)
+        event.remove(engine, "before_cursor_execute", capture_statement)
 
     sql = "\n".join(statements).upper()
     assert 'LEFT JOIN "PROMPTMEMORYENTRIES" LATEST' in sql
@@ -748,13 +757,13 @@ def test_get_conversation_stats_uses_indexed_latest_message_lookup(sqlite_instan
     assert "ROW_NUMBER" not in sql
 
 
-def test_get_conversation_stats_returns_empty_for_unknown_ids(sqlite_instance):
+async def test_get_conversation_stats_returns_empty_for_unknown_ids(sqlite_instance):
     """Test that get_conversation_stats omits unknown conversation IDs."""
-    result = sqlite_instance.get_conversation_stats(conversation_ids=["nonexistent"])
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=["nonexistent"])
     assert result == {}
 
 
-def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sample_conversation_entries):
+async def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sample_conversation_entries):
     """Test that message_count reflects distinct sequence numbers, not raw rows."""
     # Extract conversation IDs and sequences before inserting (entries get detached after commit)
     from unit.mocks import get_sample_conversations
@@ -768,7 +777,7 @@ def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sampl
     sqlite_instance._insert_entries(entries=sample_conversation_entries)
 
     conv_ids = list(expected.keys())
-    result = sqlite_instance.get_conversation_stats(conversation_ids=conv_ids)
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=conv_ids)
 
     for conv_id in conv_ids:
         if conv_id in result:
@@ -777,7 +786,7 @@ def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sampl
             )
 
 
-def test_get_conversation_stats_does_not_read_labels_from_prompt_entries(sqlite_instance):
+async def test_get_conversation_stats_does_not_read_labels_from_prompt_entries(sqlite_instance):
     """Test that conversation stats leave AttackResult-owned labels empty."""
     import uuid
 
@@ -796,12 +805,12 @@ def test_get_conversation_stats_does_not_read_labels_from_prompt_entries(sqlite_
     entry = PromptMemoryEntry(entry=piece)
     sqlite_instance._insert_entry(entry)
 
-    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
     assert conv_id in result
     assert result[conv_id].labels == {}
 
 
-def test_get_conversation_stats_preview_caps_raw_value_at_fetch_limit(sqlite_instance):
+async def test_get_conversation_stats_preview_caps_raw_value_at_fetch_limit(sqlite_instance):
     """Memory caps the raw last_message_preview at PREVIEW_FETCH_MAX_LEN.
 
     Display-level truncation to PREVIEW_MAX_LEN happens later in the backend
@@ -826,7 +835,7 @@ def test_get_conversation_stats_preview_caps_raw_value_at_fetch_limit(sqlite_ins
     entry = PromptMemoryEntry(entry=piece)
     sqlite_instance._insert_entry(entry)
 
-    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
     assert conv_id in result
     preview = result[conv_id].last_message_preview
     assert preview is not None
@@ -835,7 +844,7 @@ def test_get_conversation_stats_preview_caps_raw_value_at_fetch_limit(sqlite_ins
     assert result[conv_id].last_message_data_type == "text"
 
 
-def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
+async def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
     """Test that a single call returns stats for multiple conversations."""
     import uuid
 
@@ -858,7 +867,7 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
 
     sqlite_instance._insert_entries(entries=entries)
 
-    result = sqlite_instance.get_conversation_stats(conversation_ids=conv_ids)
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=conv_ids)
 
     assert len(result) == 3
     assert result[conv_ids[0]].message_count == 1
@@ -870,7 +879,7 @@ def test_get_conversation_stats_batches_multiple_conversations(sqlite_instance):
     "data_type",
     ["image_path", "audio_path", "video_path", "binary_path"],
 )
-def test_get_conversation_stats_returns_media_data_type(sqlite_instance, data_type):
+async def test_get_conversation_stats_returns_media_data_type(sqlite_instance, data_type):
     """Memory exposes the raw value + data type for the last piece — the
     backend mapper handles display formatting. Verifies the data type is
     propagated so downstream consumers can render media previews safely."""
@@ -891,7 +900,7 @@ def test_get_conversation_stats_returns_media_data_type(sqlite_instance, data_ty
     )
     sqlite_instance._insert_entry(PromptMemoryEntry(entry=piece))
 
-    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
     stats = result[conv_id]
 
     assert stats.last_message_data_type == data_type
@@ -900,7 +909,7 @@ def test_get_conversation_stats_returns_media_data_type(sqlite_instance, data_ty
     assert stats.last_message_preview == path
 
 
-def test_get_conversation_stats_uses_last_piece_data_type(sqlite_instance):
+async def test_get_conversation_stats_uses_last_piece_data_type(sqlite_instance):
     """Stats reflect the data type of the most recent message, not the
     first one, so the backend mapper picks the right rendering."""
     import uuid
@@ -929,7 +938,7 @@ def test_get_conversation_stats_uses_last_piece_data_type(sqlite_instance):
     )
     sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=text_piece), PromptMemoryEntry(entry=media_piece)])
 
-    result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
     stats = result[conv_id]
 
     assert stats.last_message_data_type == "audio_path"

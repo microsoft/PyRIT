@@ -263,8 +263,10 @@ async def test_scenario_counts_refusal_as_completed_when_another_objective_error
     assert len(scorer.scored_pieces) == 1
     assert scorer.scored_pieces[0].converted_value == _REFUSAL
 
-    stored_result = CentralMemory.get_memory_instance().get_scenario_results(
-        scenario_result_ids=[scenario._scenario_result_id]
+    stored_result = (
+        await CentralMemory.get_memory_instance().get_scenario_results_async(
+            scenario_result_ids=[scenario._scenario_result_id]
+        )
     )[0]
     stored_attack_results = stored_result.attack_results[_ATOMIC_ATTACK_NAME]
     refusal_results = [

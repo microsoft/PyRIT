@@ -13,7 +13,6 @@ Route structure:
 """
 
 from fastapi import APIRouter, HTTPException, Query, status
-from starlette.concurrency import run_in_threadpool
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scenarios import (
@@ -240,8 +239,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         ScenarioRunListResponse: Runs, most recent first.
     """
     service = get_scenario_run_service()
-    return await run_in_threadpool(
-        service.list_runs,
+    return await service.list_runs_async(
         scenario_names=scenario_names,
         statuses=run_statuses,
         labels=parse_label_query_params(label),
@@ -283,8 +281,7 @@ async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  # py
     """
     service = get_scenario_run_service()
     active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
-    run = await run_in_threadpool(
-        service.get_run_from_storage,
+    run = await service.get_run_from_storage_async(
         scenario_result_id=scenario_result_id,
         active_error=active_snapshot.error,
         queue_position=active_snapshot.queue_position,
@@ -321,8 +318,7 @@ async def get_scenario_run_progress(  # pyrit-async-suffix-exempt
     service = get_scenario_run_service()
     active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
     try:
-        progress = await run_in_threadpool(
-            service.get_run_progress_from_storage,
+        progress = await service.get_run_progress_from_storage_async(
             scenario_result_id=scenario_result_id,
             since=since,
             limit=limit,
@@ -392,7 +388,7 @@ async def get_scenario_run_results(scenario_result_id: str) -> ScenarioResult:  
     """
     service = get_scenario_run_service()
     try:
-        result = service.get_run_results(scenario_result_id=scenario_result_id)
+        result = await service.get_run_results_async(scenario_result_id=scenario_result_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
 

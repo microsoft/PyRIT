@@ -42,8 +42,8 @@ async def test_get_seed_dataset_summaries_avoids_metadata_row_multiplication(
     session.execute.side_effect = execute
 
     try:
-        with patch.object(sqlite_instance, "get_session", return_value=session):
-            summaries = sqlite_instance.get_seed_dataset_summaries()
+        with patch.object(sqlite_instance, "_get_session", return_value=session):
+            summaries = await sqlite_instance.get_seed_dataset_summaries_async()
     finally:
         real_session.close()
 

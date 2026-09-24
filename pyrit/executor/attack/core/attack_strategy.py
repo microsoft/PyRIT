@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
     get_retry_collector,
@@ -413,6 +414,16 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         self._memory.add_attack_results_to_memory(attack_results=[result])
 
+    @legacy_sync_override(lambda: _DefaultAttackStrategyEventHandler._persist_result)
+    async def _persist_result_async(self, *, result: AttackStrategyResultT) -> None:
+        """
+        Persist a completed attack result.
+
+        Args:
+            result (AttackStrategyResultT): The completed result to persist.
+        """
+        (await self._memory.add_attack_results_to_memory_async(attack_results=[result]))
+
     @staticmethod
     def _apply_attribution(
         *,
@@ -545,7 +556,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._apply_targeted_harm_categories(context=context, result=error_result)
 
         try:
-            self._memory.add_attack_results_to_memory(attack_results=[error_result])
+            (await self._memory.add_attack_results_to_memory_async(attack_results=[error_result]))
         except Exception as persistence_error:
             context._error_result_persistence_error = persistence_error
 
@@ -856,7 +867,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             context._objective_target_conversation_lifecycle = None
 
         if context._persist_attack_result:
-            self._default_event_handler._persist_result(result=result)
+            (await self._default_event_handler._persist_result_async(result=result))
         return result
 
     def _validate_scoring_expectation(self, *, context: AttackStrategyContextT) -> None:

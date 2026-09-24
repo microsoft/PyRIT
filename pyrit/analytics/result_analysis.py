@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -140,6 +141,11 @@ def get_cached_results_for_technique(
         list[AttackResult]: Matching attack results sorted newest-first.
             Empty list if no cache hit.
     """
+    print_deprecation_message(
+        old_item="get_cached_results_for_technique",
+        new_item="get_cached_results_for_technique_async",
+        removed_in="1.4.0",
+    )
     filters: list[IdentifierFilter] = [
         IdentifierFilter(
             identifier_type=IdentifierType.ATTACK,
@@ -151,6 +157,63 @@ def get_cached_results_for_technique(
         filters.extend(additional_filters)
 
     candidates = memory_interface.get_attack_results(identifier_filters=filters)
+
+    matches = [result for result in candidates if _objective_target_eval_hash_for(result) == objective_target_eval_hash]
+
+    matches.sort(key=lambda r: r.timestamp, reverse=True)
+    return matches
+
+
+async def get_cached_results_for_technique_async(
+    memory_interface: "MemoryInterface",
+    *,
+    technique_eval_hash: str,
+    objective_target_eval_hash: str,
+    additional_filters: Sequence[IdentifierFilter] | None = None,
+) -> list[AttackResult]:
+    """
+    Return cached AttackResults matching a (technique × objective target) pair.
+
+    Memory is queried for AttackResults whose stamped
+    ``atomic_attack_identifier.eval_hash`` equals ``technique_eval_hash``,
+    then results are filtered in Python to those whose nested objective
+    target produces the requested ``objective_target_eval_hash`` (computed
+    via ``ObjectiveTargetEvaluationIdentifier``). Returned results are sorted
+    newest-first by ``timestamp`` so the most recent is at index 0.
+
+    No scenario scoping is applied; this is a behavioral cache spanning every
+    run that produced the same (technique × target) combination. Callers that
+    need scenario-level scoping should pass additional ``IdentifierFilter``s
+    or filter the returned list themselves.
+
+    Args:
+        memory_interface (MemoryInterface): The memory interface to query.
+            Analytics is stateless, so callers (e.g. scenarios) must pass
+            their own ``CentralMemory.get_memory_instance()``.
+        technique_eval_hash (str): Behavioral eval hash of the atomic-attack
+            technique, as produced by ``AtomicAttackEvaluationIdentifier.eval_hash``
+            (also exposed as ``AtomicAttack.technique_eval_hash``).
+        objective_target_eval_hash (str): Behavioral eval hash of the objective
+            target, as produced by ``ObjectiveTargetEvaluationIdentifier.eval_hash``.
+        additional_filters (Sequence[IdentifierFilter] | None): Extra
+            ``IdentifierFilter`` predicates appended to the SQL pre-filter.
+            Defaults to None.
+
+    Returns:
+        list[AttackResult]: Matching attack results sorted newest-first.
+            Empty list if no cache hit.
+    """
+    filters: list[IdentifierFilter] = [
+        IdentifierFilter(
+            identifier_type=IdentifierType.ATTACK,
+            property_path="$.eval_hash",
+            value=technique_eval_hash,
+        ),
+    ]
+    if additional_filters:
+        filters.extend(additional_filters)
+
+    candidates = await memory_interface.get_attack_results_async(identifier_filters=filters)
 
     matches = [result for result in candidates if _objective_target_eval_hash_for(result) == objective_target_eval_hash]
 

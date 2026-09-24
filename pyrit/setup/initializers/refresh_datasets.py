@@ -14,6 +14,7 @@ import logging
 import textwrap
 from datetime import UTC, datetime, timedelta
 
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import SeedDataset
@@ -86,7 +87,7 @@ class RefreshDatasets(PyRITInitializer):
         days = self._parse_days()
         memory = CentralMemory.get_memory_instance()
 
-        names_in_memory = set(memory.get_seed_dataset_names())
+        names_in_memory = set(await memory.get_seed_dataset_names_async())
         if not names_in_memory:
             logger.warning("No datasets in memory to refresh")
             return
@@ -100,7 +101,7 @@ class RefreshDatasets(PyRITInitializer):
         up_to_date: list[str] = []
         failed: list[str] = []
         for name in candidates:
-            if not self._is_stale(memory=memory, dataset_name=name, days=days):
+            if not (await self._is_stale_async(memory=memory, dataset_name=name, days=days)):
                 up_to_date.append(name)
                 continue
             try:
@@ -164,6 +165,30 @@ class RefreshDatasets(PyRITInitializer):
             return True
 
         seeds = memory.get_seeds(dataset_name=dataset_name)
+        newest = max((seed.date_added for seed in seeds if seed.date_added is not None), default=None)
+        if newest is None:
+            return True
+
+        cutoff = datetime.now(tz=UTC) - timedelta(days=days)
+        return newest <= cutoff
+
+    @legacy_sync_override(lambda: RefreshDatasets._is_stale)
+    async def _is_stale_async(self, *, memory: MemoryInterface, dataset_name: str, days: int) -> bool:
+        """
+        Determine whether a dataset is stale enough to refresh.
+
+        Args:
+            memory (MemoryInterface): The memory instance to read existing seeds from.
+            dataset_name (str): The dataset to evaluate.
+            days (int): The staleness threshold in days; 0 always refreshes.
+
+        Returns:
+            bool: True if the dataset should be refreshed, otherwise False.
+        """
+        if days == 0:
+            return True
+
+        seeds = await memory.get_seeds_async(dataset_name=dataset_name)
         newest = max((seed.date_added for seed in seeds if seed.date_added is not None), default=None)
         if newest is None:
             return True

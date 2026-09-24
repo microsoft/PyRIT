@@ -52,7 +52,7 @@ class DatasetService:
             DatasetListResponse: Available datasets.
         """
         provider_names = {name for name in await SeedDatasetProvider.get_all_dataset_names_async() if name}
-        summaries = self._memory.get_seed_dataset_summaries()
+        summaries = await self._memory.get_seed_dataset_summaries_async()
         named_summaries = {summary.dataset_name: summary for summary in summaries if summary.dataset_name}
 
         dataset_names = set(named_summaries) if loaded_only else provider_names | set(named_summaries)

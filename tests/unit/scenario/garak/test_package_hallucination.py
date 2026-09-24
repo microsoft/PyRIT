@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.memory import MemoryInterface
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
@@ -58,8 +59,8 @@ def fake_registry_memory():
     def _get_seeds(*, dataset_name):
         return [MagicMock(value=value) for value in packages_by_dataset.get(dataset_name, [])]
 
-    memory = MagicMock()
-    memory.get_seeds.side_effect = _get_seeds
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_seeds_async = AsyncMock(side_effect=_get_seeds)
     memory.packages_by_dataset = packages_by_dataset
     return memory
 
@@ -269,8 +270,8 @@ class TestPackageHallucinationAtomicAttacks:
         assert len(scenario._atomic_attacks[0].seed_groups) == 3
 
     async def test_missing_corpus_raises(self, mock_objective_target):
-        empty_memory = MagicMock()
-        empty_memory.get_seeds.return_value = []
+        empty_memory = MagicMock(spec=MemoryInterface)
+        empty_memory.get_seeds_async = AsyncMock(return_value=[])
         scenario = PackageHallucination()
         with (
             patch(
@@ -301,7 +302,7 @@ class TestPackageHallucinationAtomicAttacks:
             }
             return [MagicMock(value=v) for v in corpus.get(dataset_name, [])]
 
-        corpus_only.get_seeds.side_effect = _get_seeds
+        corpus_only.get_seeds_async = AsyncMock(side_effect=_get_seeds)
         scenario = PackageHallucination()
         with (
             patch(

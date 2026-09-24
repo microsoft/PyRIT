@@ -19,6 +19,7 @@ from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.routes.scenarios import get_scenario_run_progress, list_scenario_runs
 from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
@@ -221,7 +222,7 @@ class TestResumeScenarioRunRoute:
     def test_older_run_returns_409_without_initialization(self, client: TestClient) -> None:
         stored = make_scenario_result(scenario_run_state=ScenarioRunState.FAILED, attack_results={})
         with patch.object(_svc_mod.CentralMemory, "get_memory_instance") as get_memory:
-            get_memory.return_value.get_scenario_result_header.return_value = stored
+            get_memory.return_value.get_scenario_result_header_async = AsyncMock(return_value=stored)
             service = _svc_mod.ScenarioRunService()
         with (
             patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=service),
@@ -242,11 +243,13 @@ class TestListScenarioRunsRoute:
         route_thread: list[int] = []
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.list_runs.side_effect = lambda **_: (
-                route_thread.append(get_ident())
-                or ScenarioRunListResponse(
-                    items=[],
-                    pagination=PaginationInfo(limit=100, has_more=False),
+            mock_service.list_runs_async = AsyncMock(
+                side_effect=lambda **_: (
+                    route_thread.append(get_ident())
+                    or ScenarioRunListResponse(
+                        items=[],
+                        pagination=PaginationInfo(limit=100, has_more=False),
+                    )
                 )
             )
             mock_get.return_value = mock_service
@@ -279,9 +282,11 @@ class TestListScenarioRunsRoute:
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.list_runs.return_value = ScenarioRunListResponse(
-                items=runs,
-                pagination=PaginationInfo(limit=100, has_more=False),
+            mock_service.list_runs_async = AsyncMock(
+                return_value=ScenarioRunListResponse(
+                    items=runs,
+                    pagination=PaginationInfo(limit=100, has_more=False),
+                )
             )
             mock_get.return_value = mock_service
 
@@ -294,9 +299,11 @@ class TestListScenarioRunsRoute:
         """Test that history query parameters preserve repeated values."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.list_runs.return_value = ScenarioRunListResponse(
-                items=[],
-                pagination=PaginationInfo(limit=10, has_more=False),
+            mock_service.list_runs_async = AsyncMock(
+                return_value=ScenarioRunListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=10, has_more=False),
+                )
             )
             mock_get.return_value = mock_service
 
@@ -309,7 +316,7 @@ class TestListScenarioRunsRoute:
             )
 
         assert response.status_code == status.HTTP_200_OK
-        mock_service.list_runs.assert_called_once_with(
+        mock_service.list_runs_async.assert_called_once_with(
             scenario_names=["first", "second"],
             statuses=[ScenarioRunState.IN_PROGRESS, ScenarioRunState.FAILED],
             labels={"operator": ["alice", "bob"], "team": ["safety"]},
@@ -367,7 +374,7 @@ class TestGetScenarioRunRoute:
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
             mock_service.snapshot_active_run.return_value = MagicMock(error=None)
-            mock_service.get_run_from_storage.return_value = mock_response
+            mock_service.get_run_from_storage_async = AsyncMock(return_value=mock_response)
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs/test-run-id")
@@ -380,7 +387,7 @@ class TestGetScenarioRunRoute:
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
             mock_service.snapshot_active_run.return_value = MagicMock(error=None)
-            mock_service.get_run_from_storage.return_value = None
+            mock_service.get_run_from_storage_async = AsyncMock(return_value=None)
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs/nonexistent")
@@ -406,9 +413,9 @@ class TestGetScenarioRunRoute:
                 }
             },
         )
-        memory = MagicMock()
-        memory.get_scenario_results.return_value = [db_result]
-        memory.get_attack_results.return_value = []
+        memory = MagicMock(spec=MemoryInterface)
+        memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
+        memory.get_attack_results_async = AsyncMock(return_value=[])
         with patch.object(_svc_mod.CentralMemory, "get_memory_instance", return_value=memory):
             service = _svc_mod.ScenarioRunService()
 
@@ -425,7 +432,9 @@ class TestGetScenarioRunRoute:
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
             mock_service.snapshot_active_run.return_value = MagicMock(active_group_ids=())
-            mock_service.get_run_progress_from_storage.side_effect = ValueError("Malformed scenario progress cursor.")
+            mock_service.get_run_progress_from_storage_async = AsyncMock(
+                side_effect=ValueError("Malformed scenario progress cursor.")
+            )
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs/test-run-id/progress?since=bad")
@@ -471,8 +480,8 @@ class TestGetScenarioRunRoute:
                     active_scenario_result_id="test-run-id",
                 )
             )
-            mock_service.get_run_progress_from_storage.side_effect = lambda **_: (
-                storage_thread.append(get_ident()) or progress
+            mock_service.get_run_progress_from_storage_async = AsyncMock(
+                side_effect=lambda **_: storage_thread.append(get_ident()) or progress
             )
             mock_get.return_value = mock_service
 
@@ -480,7 +489,7 @@ class TestGetScenarioRunRoute:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["plan"]["scenario_registry_name"] == "test.scenario"
-        mock_service.get_run_progress_from_storage.assert_called_once_with(
+        mock_service.get_run_progress_from_storage_async.assert_called_once_with(
             scenario_result_id="test-run-id",
             since=None,
             limit=25,
@@ -488,7 +497,7 @@ class TestGetScenarioRunRoute:
             queue_position=None,
             active_scenario_result_id="test-run-id",
         )
-        assert snapshot_thread[0] != storage_thread[0]
+        assert snapshot_thread[0] == storage_thread[0]
 
     async def test_progress_supports_direct_keyword_call(self) -> None:
         progress = ScenarioRunProgress(
@@ -523,7 +532,7 @@ class TestGetScenarioRunRoute:
                 queue_position=None,
                 active_scenario_result_id="test-run-id",
             )
-            mock_service.get_run_progress_from_storage.return_value = progress
+            mock_service.get_run_progress_from_storage_async = AsyncMock(return_value=progress)
             mock_get.return_value = mock_service
 
             result = await get_scenario_run_progress(
@@ -533,7 +542,7 @@ class TestGetScenarioRunRoute:
             )
 
         assert result == progress
-        mock_service.get_run_progress_from_storage.assert_called_once_with(
+        mock_service.get_run_progress_from_storage_async.assert_called_once_with(
             scenario_result_id="test-run-id",
             since=None,
             limit=25,
@@ -612,7 +621,7 @@ class TestGetScenarioRunResultsRoute:
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.get_run_results.return_value = scenario_result
+            mock_service.get_run_results_async = AsyncMock(return_value=scenario_result)
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs/test-run-id/results")
@@ -626,7 +635,7 @@ class TestGetScenarioRunResultsRoute:
         """Test that getting results of a non-existent run returns 404."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.get_run_results.return_value = None
+            mock_service.get_run_results_async = AsyncMock(return_value=None)
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs/nonexistent/results")
@@ -637,8 +646,8 @@ class TestGetScenarioRunResultsRoute:
         """Test that getting results of a non-completed run returns 409."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.get_run_results.side_effect = ValueError(
-                "Results are only available for completed runs. Current status: 'running'."
+            mock_service.get_run_results_async = AsyncMock(
+                side_effect=ValueError("Results are only available for completed runs. Current status: 'running'.")
             )
             mock_get.return_value = mock_service
 

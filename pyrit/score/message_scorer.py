@@ -10,6 +10,7 @@ from abc import abstractmethod
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, cast
 
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     ComponentRole,
@@ -103,6 +104,11 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
     Returns:
         str: The previous turn's text, or an empty string when there is none.
     """
+    print_deprecation_message(
+        old_item="extract_objective_from_previous_turn",
+        new_item="extract_objective_from_previous_turn_async",
+        removed_in="1.4.0",
+    )
     if not message.message_pieces:
         return ""
 
@@ -118,6 +124,49 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
         return ""
 
     conversation = memory.get_message_pieces(conversation_id=scored_piece.conversation_id)
+
+    return "\n".join(
+        [
+            piece.original_value
+            for piece in conversation
+            if piece.sequence == previous_sequence and piece.original_value_data_type == "text"
+        ]
+    )
+
+
+async def extract_objective_from_previous_turn_async(*, message: Message, memory: MemoryInterface) -> str:
+    """
+    Read the text of the turn before an assistant message and use it as the objective.
+
+    .. deprecated::
+        This conflates scoring with building an expectation. What to look for belongs to
+        the caller that builds the ``ScoringExpectation``, not to the scorer. It exists only
+        to support the deprecated ``infer_objective_from_request`` parameter, and both are
+        removed in the next major release. Resolve the objective at the call site and pass
+        it on the expectation instead.
+
+    Args:
+        message (Message): The assistant message whose previous turn supplies the objective.
+        memory (MemoryInterface): Memory holding the conversation.
+
+    Returns:
+        str: The previous turn's text, or an empty string when there is none.
+    """
+    if not message.message_pieces:
+        return ""
+
+    scored_piece = message.get_piece()
+
+    if scored_piece.api_role != "assistant":
+        return ""
+
+    # The request is the turn before the response being scored, not before whatever the
+    # conversation has grown to since. Scoring an earlier response must not read the latest turn.
+    previous_sequence = scored_piece.sequence - 1
+    if previous_sequence < 0:
+        return ""
+
+    conversation = await memory.get_message_pieces_async(conversation_id=scored_piece.conversation_id)
 
     return "\n".join(
         [
@@ -416,7 +465,9 @@ class MessageScorer(Scorer):
             ValueError: If neither a message nor a scorable is available.
         """
         context_scorable = (
-            self._context_scorable_from_message(message=message) if message is not None else cast("Scorable", scorable)
+            (await self._context_scorable_from_message_async(message=message))
+            if message is not None
+            else cast("Scorable", scorable)
         )
         with _observation_collection() as collector:
             with _scoring_scorable_context(context_scorable):
@@ -429,7 +480,7 @@ class MessageScorer(Scorer):
                         infer_objective_from_request=infer_objective_from_request,
                         anchor=self._scorable_from_message(
                             message,
-                            persisted_piece_ids=self._get_persisted_piece_ids(message=message),
+                            persisted_piece_ids=(await self._get_persisted_piece_ids_async(message=message)),
                         ),
                         role_filter=role_filter,
                         skip_on_error_result=skip_on_error_result,
@@ -458,6 +509,29 @@ class MessageScorer(Scorer):
         """
         pieces = message.message_pieces
         persisted = self._memory.get_message_pieces(prompt_ids=[piece.id for piece in pieces])
+        persisted_by_id = {str(piece.id): piece for piece in persisted}
+        matches_storage = all(
+            str(piece.id) in persisted_by_id
+            and _message_piece_digest(piece, include_id=False)
+            == _message_piece_digest(persisted_by_id[str(piece.id)], include_id=False)
+            for piece in pieces
+        )
+        if pieces and matches_storage:
+            return MessageScorable.from_message(message)
+        if len(pieces) == 1:
+            return ContentScorable.from_message(message)
+        return None
+
+    @legacy_sync_override(lambda: MessageScorer._context_scorable_from_message)
+    async def _context_scorable_from_message_async(self, *, message: Message) -> Scorable | None:
+        """
+        Build a durable observation anchor for the in-hand message API.
+
+        Returns:
+            Scorable | None: The durable message or content anchor, if one can be represented.
+        """
+        pieces = message.message_pieces
+        persisted = await self._memory.get_message_pieces_async(prompt_ids=[piece.id for piece in pieces])
         persisted_by_id = {str(piece.id): piece for piece in persisted}
         matches_storage = all(
             str(piece.id) in persisted_by_id
@@ -558,7 +632,7 @@ class MessageScorer(Scorer):
 
         if infer_objective_from_request:
             resolved_objectives = [
-                objective or extract_objective_from_previous_turn(message=message, memory=self._memory)
+                objective or (await extract_objective_from_previous_turn_async(message=message, memory=self._memory))
                 for message, objective in zip(messages, resolved_objectives, strict=True)
             ]
 
@@ -858,7 +932,7 @@ class MessageScorer(Scorer):
         Raises:
             TypeError: If the scorable is not message-shaped.
         """
-        message = self._message_resolver.resolve(scorable=scorable, memory=self._memory)
+        message = await self._message_resolver.resolve_async(scorable=scorable, memory=self._memory)
         return await self._score_resolved_message_async(
             message=message,
             expectation=expectation,
@@ -904,7 +978,7 @@ class MessageScorer(Scorer):
         objective = expectation.objective if expectation else None
 
         if infer_objective_from_request and (not objective):
-            objective = extract_objective_from_previous_turn(message=message, memory=self._memory)
+            objective = await extract_objective_from_previous_turn_async(message=message, memory=self._memory)
 
         effective_expectation = expectation
         if expectation is None and objective is not None:
@@ -935,11 +1009,10 @@ class MessageScorer(Scorer):
         scoring_message = self._build_scoring_message(message=message)
         if scoring_message is None:
             scores = self._build_fallback_score(message=message, objective=objective)
-            self._finalize_message_scores(
-                message=message,
-                scores=scores,
-                anchor=anchor,
-                expectation=effective_expectation,
+            (
+                await self._finalize_message_scores_async(
+                    message=message, scores=scores, anchor=anchor, expectation=effective_expectation
+                )
             )
             return scores
 
@@ -1002,11 +1075,13 @@ class MessageScorer(Scorer):
         if not scores and scoring_message.message_pieces and not self._get_supported_pieces(scoring_message):
             scores = self._build_fallback_score(message=message, objective=objective)
 
-        self._finalize_message_scores(
-            message=scoring_message,
-            scores=scores,
-            anchor=anchor if scoring_view_matches_acquired_message else None,
-            expectation=effective_expectation,
+        (
+            await self._finalize_message_scores_async(
+                message=scoring_message,
+                scores=scores,
+                anchor=anchor if scoring_view_matches_acquired_message else None,
+                expectation=effective_expectation,
+            )
         )
 
         return scores
@@ -1031,6 +1106,30 @@ class MessageScorer(Scorer):
     ) -> None:
         """Apply legacy and canonical evidence anchors to completed message scores."""
         persisted_piece_ids = self._get_persisted_piece_ids(message=message)
+        self._drop_ephemeral_score_links(
+            message=message,
+            scores=scores,
+            persisted_piece_ids=persisted_piece_ids,
+        )
+        self._stamp_scorable(
+            message=message,
+            scores=scores,
+            anchor=anchor,
+            persisted_piece_ids=persisted_piece_ids,
+        )
+        self._stamp_scored_expectation(scores=scores, expectation=expectation)
+
+    @legacy_sync_override(lambda: MessageScorer._finalize_message_scores)
+    async def _finalize_message_scores_async(
+        self,
+        *,
+        message: Message,
+        scores: list[Score],
+        anchor: Scorable | None,
+        expectation: ScoringExpectation | None,
+    ) -> None:
+        """Apply legacy and canonical evidence anchors to completed message scores."""
+        persisted_piece_ids = await self._get_persisted_piece_ids_async(message=message)
         self._drop_ephemeral_score_links(
             message=message,
             scores=scores,
@@ -1337,6 +1436,28 @@ class MessageScorer(Scorer):
 
         stored_pieces = self._memory.get_message_pieces(
             prompt_ids=[str(piece_id) for piece_id in candidate_ids],
+        )
+        supplied_by_id = {piece.id: piece for piece in message.message_pieces}
+        return {
+            piece.id
+            for piece in stored_pieces
+            if piece.id in supplied_by_id
+            and _message_piece_digest(piece, include_id=False)
+            == _message_piece_digest(
+                supplied_by_id[piece.id].model_copy(update={"timestamp": piece.timestamp}),
+                include_id=False,
+            )
+        }
+
+    @legacy_sync_override(lambda: MessageScorer._get_persisted_piece_ids)
+    async def _get_persisted_piece_ids_async(self, *, message: Message) -> set[uuid.UUID]:
+        """Return matching message IDs, allowing storage to change timestamp precision."""
+        candidate_ids = [piece.id for piece in message.message_pieces if not piece.not_in_memory]
+        if not candidate_ids:
+            return set()
+
+        stored_pieces = await self._memory.get_message_pieces_async(
+            prompt_ids=[str(piece_id) for piece_id in candidate_ids]
         )
         supplied_by_id = {piece.id: piece for piece in message.message_pieces}
         return {

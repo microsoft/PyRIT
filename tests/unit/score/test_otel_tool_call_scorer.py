@@ -92,7 +92,7 @@ async def test_replay_preserves_source_identity_from_before_package_move_async(s
     with patch.object(source, "get_identifier", return_value=old_identifier):
         scorer = OtelToolCallScorer(source=source)
         score = (await scorer.score_async(scorable=scope, expectation=_expectation("lookup")))[0]
-    observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert observation.source_identifier == old_identifier
     assert source.get_identifier().class_module == "pyrit.score.observation.otel_trace_source"
     client.close()
@@ -104,7 +104,7 @@ async def test_replay_preserves_source_identity_from_before_package_move_async(s
 
     assert replay.get_value() is True
     assert replay.observation_ids == score.observation_ids
-    assert sqlite_instance.get_observations(observation_ids=score.observation_ids)[0] == observation
+    assert (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0] == observation
 
 
 @pytest.mark.parametrize("complete", [False, True])
@@ -124,7 +124,7 @@ async def test_tool_verdict_and_offline_replay_async(sqlite_instance, complete: 
     else:
         with pytest.raises(UndeterminedScoreError):
             score.get_value()
-    observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert observation.payload.scope == scope
     assert observation.acquisition is (Acquisition.COMPLETE if complete else Acquisition.PARTIAL)
     client.close()
@@ -155,7 +155,7 @@ async def test_failed_execution_counts_but_sensitive_attributes_are_not_retained
     score = (
         await scorer.score_async(scorable=TraceScorable(trace_ids=(span.trace_id,)), expectation=_expectation("lookup"))
     )[0]
-    observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert score.get_value() is True
     assert observation.payload.events[0].status is TraceSpanStatus.ERROR
     assert "private-" not in observation.model_dump_json()
@@ -176,7 +176,7 @@ async def test_optional_call_id_does_not_block_name_matching_async(
     score = (
         await scorer.score_async(scorable=TraceScorable(trace_ids=(span.trace_id,)), expectation=_expectation("lookup"))
     )[0]
-    observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert score.get_value() is True
     assert observation.acquisition is Acquisition.COMPLETE
     assert observation.payload.events[0].call_id == (call_id if isinstance(call_id, str) and call_id else None)
@@ -222,7 +222,7 @@ async def test_acquisition_error_is_not_false_async(sqlite_instance) -> None:
     )[0]
     with pytest.raises(UndeterminedScoreError):
         failed.get_value()
-    observation = sqlite_instance.get_observations(observation_ids=failed.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=failed.observation_ids))[0]
     assert observation.acquisition is Acquisition.ERROR
 
 
@@ -239,7 +239,7 @@ async def test_empty_trace_result_preserves_availability_in_storage_and_replay_a
         score = (await scorer.score_async(scorable=scope, expectation=_expectation("lookup")))[0]
         query.assert_called_once()
         assert query.call_args.kwargs["query"].scope == scope
-        observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+        observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
         assert observation.acquisition is (Acquisition.PARTIAL if available else Acquisition.UNAVAILABLE)
         assert observation.scorable == scope
         assert observation.payload.events == ()
@@ -306,7 +306,9 @@ async def test_real_sdk_export_and_existing_global_provider_are_preserved_async(
         score = (
             await scorer.score_async(scorable=TraceScorable(trace_ids=(trace_id,)), expectation=_expectation("lookup"))
         )[0]
-        event = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0].payload.events[0]
+        event = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0].payload.events[
+            0
+        ]
         assert score.get_value() is True
         assert (event.trace_id, event.span_id, event.parent_span_id) == (trace_id, tool_id, parent_id)
         assert event.end_time is not None
@@ -359,7 +361,7 @@ async def test_sdk_dropped_execution_marker_prevents_false_negative_async(sqlite
         scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
         score = (await scorer.score_async(scorable=scope, expectation=_expectation("lookup")))[0]
         assert score.is_undetermined
-        observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+        observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
         assert observation.acquisition is Acquisition.PARTIAL
         client.close()
         replay = (await scorer.score_observation_async(observation=observation, expectation=_expectation("lookup")))[0]
@@ -412,7 +414,7 @@ async def test_sdk_truncation_cannot_prove_tool_calls_async(
         for name in ("lookup_customer", shortened_name):
             score = (await scorer.score_async(scorable=scope, expectation=_expectation(name)))[0]
             assert score.is_undetermined
-            observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+            observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
             assert observation.payload.events == ()
             observations.append((name, observation))
         client.close()
@@ -494,7 +496,7 @@ async def test_tool_replay_rejects_modified_snapshot_async(sqlite_instance) -> N
     score = (
         await scorer.score_async(scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=_expectation("lookup"))
     )[0]
-    observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     modified = observation.model_copy(update={"payload": observation.payload.model_copy(update={"events": ()})})
     with pytest.raises(NonReplayableObservationError, match="canonical"):
         await scorer.score_observation_async(observation=modified, expectation=_expectation("lookup"))
@@ -506,13 +508,13 @@ async def test_tool_observation_and_score_roll_back_together_async(sqlite_instan
     scope = TraceScorable(trace_ids=("1" * 32,))
     observation = await OtelTraceSource(trace_client=client).acquire_async(scorable=scope)
     score = Score(scorable=scope, score_type="true_false", score_value="true", observation_ids=[observation.id])
-    with sqlite_instance.get_session() as session:
+    async with await sqlite_instance.get_session_async() as session:
         with (
-            patch.object(sqlite_instance, "get_session", return_value=session),
-            patch.object(session, "commit", side_effect=SQLAlchemyError("commit failed")),
+            patch.object(sqlite_instance, "get_session_async", return_value=session),
+            patch.object(session.sync_session, "commit", side_effect=SQLAlchemyError("commit failed")),
             pytest.raises(SQLAlchemyError, match="commit failed"),
         ):
-            sqlite_instance.add_scores_to_memory(scores=[score], observations=[observation])
+            (await sqlite_instance.add_scores_to_memory_async(scores=[score], observations=[observation]))
 
     assert sqlite_instance._query_entries(ScoreEntry) == []
-    assert sqlite_instance.get_observations(observation_ids=[observation.id]) == []
+    assert (await sqlite_instance.get_observations_async(observation_ids=[observation.id])) == []

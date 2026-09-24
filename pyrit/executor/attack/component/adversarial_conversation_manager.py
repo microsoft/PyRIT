@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from pyrit.common.async_compatibility import legacy_sync_override
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     BadRequestException,
     ComponentRole,
@@ -628,6 +630,11 @@ class _AdversarialConversationManager:
         Raises:
             ValueError: If the rendered system prompt is empty.
         """
+        print_deprecation_message(
+            old_item="_AdversarialConversationManager.set_adversarial_system_prompt",
+            new_item="_AdversarialConversationManager.set_adversarial_system_prompt_async",
+            removed_in="1.4.0",
+        )
         rendered = self._adversarial_system_prompt.render_template_value(
             objective=self._objective,
             max_turns=self._max_turns,
@@ -638,6 +645,38 @@ class _AdversarialConversationManager:
         self._adversarial_target.set_system_prompt(
             system_prompt=rendered,
             conversation_id=self._conversation_id,
+        )
+
+    @legacy_sync_override(lambda: _AdversarialConversationManager.set_adversarial_system_prompt)
+    async def set_adversarial_system_prompt_async(self, **extra_render_values: object) -> None:
+        """
+        Render and set the adversarial system prompt on this manager's conversation.
+
+        Renders ``adversarial_system_prompt`` with the manager's ``objective`` and ``max_turns`` and
+        sets it on the adversarial target for this manager's ``conversation_id``. Must be called from
+        the attack's ``_setup_async`` *before* any prepended adversarial turns are hydrated, because
+        ``set_system_prompt`` rejects a conversation that already has messages.
+
+        Args:
+            **extra_render_values: Additional attack-specific template variables to render into the
+                system prompt (e.g. Crescendo's ``conversation_context``). Attacks that need bespoke
+                system-prompt inputs supply them here rather than rendering and setting the prompt
+                themselves, keeping the setup mechanics owned by the manager.
+
+        Raises:
+            ValueError: If the rendered system prompt is empty.
+        """
+        rendered = self._adversarial_system_prompt.render_template_value(
+            objective=self._objective,
+            max_turns=self._max_turns,
+            **extra_render_values,
+        )
+        if not rendered:
+            raise ValueError("Adversarial chat system prompt must be defined")
+        (
+            await self._adversarial_target.set_system_prompt_async(
+                system_prompt=rendered, conversation_id=self._conversation_id
+            )
         )
 
     def _render_first_message(self) -> str:

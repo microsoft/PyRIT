@@ -12,9 +12,30 @@ import pytest
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.common.random_context import get_configured_random_seed
 from pyrit.common.singleton import Singleton
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.registry import InitializerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
+
+
+@pytest.mark.parametrize("existing_memory", [False, True])
+async def test_initializer_failure_closes_only_newly_installed_memory(existing_memory: bool) -> None:
+    memory = mock.MagicMock(spec=MemoryInterface)
+    previous = memory if existing_memory else mock.MagicMock(spec=MemoryInterface)
+    initializer = mock.MagicMock(spec=PyRITInitializer)
+    initializer.validate.side_effect = ValueError("invalid initializer")
+    with (
+        mock.patch.object(CentralMemory, "_memory_instance", previous),
+        mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock),
+        mock.patch("pyrit.setup.initialization.SQLiteMemory", return_value=memory),
+    ):
+        with pytest.raises(ValueError, match="invalid initializer"):
+            await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[initializer])
+        assert CentralMemory.get_memory_instance() is previous
+    if existing_memory:
+        memory.dispose_engine_async.assert_not_awaited()
+    else:
+        memory.dispose_engine_async.assert_awaited_once()
 
 
 class TestLoadInitializersFromScripts:

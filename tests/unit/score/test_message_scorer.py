@@ -5,7 +5,7 @@ import inspect
 import uuid
 from pathlib import Path
 from typing import Literal
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -33,7 +33,7 @@ from pyrit.score import (
     ScorerPromptValidator,
 )
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
-from pyrit.score.message_scorer import extract_objective_from_previous_turn
+from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
 
 
 class UnsupportedScorable(Scorable):
@@ -98,18 +98,18 @@ class RecordingScorer(MessageTrueFalseScorer):
         )
 
 
-def _assistant_message(value: str = "response", conversation_id: str | None = None) -> Message:
+async def _assistant_message_async(value: str = "response", conversation_id: str | None = None) -> Message:
     """Return an assistant message that is already in memory, since a scorable names ids."""
     message = MessagePiece(
         role="assistant",
         original_value=value,
         conversation_id=conversation_id or str(uuid.uuid4()),
     ).to_message()
-    CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+    (await CentralMemory.get_memory_instance().add_message_to_memory_async(request=message))
     return message
 
 
-def _error_message() -> Message:
+async def _error_message_async() -> Message:
     """Return a stored assistant message that carries a blocked error result."""
     message = MessagePiece(
         role="assistant",
@@ -118,7 +118,7 @@ def _error_message() -> Message:
         response_error="blocked",
         conversation_id=str(uuid.uuid4()),
     ).to_message()
-    CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+    (await CentralMemory.get_memory_instance().add_message_to_memory_async(request=message))
     return message
 
 
@@ -127,7 +127,7 @@ class TestScorableResolution:
     """MessageScorer reduces every message-shaped scorable to a single Message."""
 
     async def test_message_scorable_resolves_from_memory(self, sqlite_instance: MemoryInterface):
-        message = _assistant_message("stored response")
+        message = await _assistant_message_async("stored response")
         scorer = RecordingScorer()
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
@@ -136,7 +136,7 @@ class TestScorableResolution:
         assert scorer.scored_messages[0].get_value() == "stored response"
 
     async def test_message_scorable_resolves_by_piece_id(self, sqlite_instance: MemoryInterface):
-        message = _assistant_message("stored response")
+        message = await _assistant_message_async("stored response")
         piece_id = message.get_piece().id
         scorer = RecordingScorer()
 
@@ -154,7 +154,7 @@ class TestScorableResolution:
 
     async def test_message_scorable_partially_in_memory_raises(self, sqlite_instance: MemoryInterface):
         """A partial resolution is a caller error, so it must not be scored silently."""
-        stored = _assistant_message("stored response")
+        stored = await _assistant_message_async("stored response")
         stored_id = stored.get_piece().id
         missing_id = uuid.uuid4()
         scorer = RecordingScorer()
@@ -172,8 +172,8 @@ class TestScorableResolution:
         second = MessagePiece(
             role="assistant", original_value="answer", conversation_id=conversation_id, sequence=1
         ).to_message()
-        sqlite_instance.add_message_to_memory(request=first)
-        sqlite_instance.add_message_to_memory(request=second)
+        (await sqlite_instance.add_message_to_memory_async(request=first))
+        (await sqlite_instance.add_message_to_memory_async(request=second))
         scorer = RecordingScorer()
 
         with pytest.raises(ValueError, match="exactly one message"):
@@ -208,7 +208,7 @@ class TestScorableResolution:
         score = (await scorer.score_image_async(str(source)))[0]
 
         assert isinstance(score.scorable, ContentEntryScorable)
-        stored_content = sqlite_instance.get_scorable_content(content_ids=[score.scorable.content_id])[
+        stored_content = (await sqlite_instance.get_scorable_content_async(content_ids=[score.scorable.content_id]))[
             score.scorable.content_id
         ]
         assert stored_content.value != str(source)
@@ -231,14 +231,14 @@ class TestScorableResolution:
         assert len(sqlite_instance._query_entries(ScorableContentEntry)) == 1
 
     async def test_message_scorer_uses_injected_resolver(self):
-        message = _assistant_message()
+        message = await _assistant_message_async()
         resolver = MagicMock(spec=MessageScorableResolver)
-        resolver.resolve.return_value = message
+        resolver.resolve_async = AsyncMock(return_value=message)
         scorer = RecordingScorer(message_resolver=resolver)
 
         await scorer.score_async(scorable=ContentScorable(value="ignored"))
 
-        resolver.resolve.assert_called_once()
+        resolver.resolve_async.assert_called_once()
 
     async def test_unsupported_scorable_raises_type_error(self):
         scorer = RecordingScorer()
@@ -246,13 +246,13 @@ class TestScorableResolution:
         with pytest.raises(TypeError, match="cannot score UnsupportedScorable"):
             await scorer.score_async(scorable=UnsupportedScorable(uri="/tmp/out.txt"))  # type: ignore[arg-type]
 
-    def test_stamping_an_unknown_anchor_raises_type_error(self):
+    async def test_stamping_an_unknown_anchor_raises_type_error(self):
         score = MagicMock(spec=Score)
         score.scorable = None
 
         with pytest.raises(TypeError, match="cannot anchor a score"):
             MessageScorer._stamp_scorable(
-                message=_assistant_message(),
+                message=(await _assistant_message_async()),
                 scores=[score],
                 anchor=UnsupportedScorable(uri="/tmp/out.txt"),
                 persisted_piece_ids=None,
@@ -301,7 +301,7 @@ class TestScorableFilters:
 
     async def test_unread_role_produces_no_score(self):
         scorer = RecordingScorer(supported_roles=["user"])
-        message = _assistant_message()
+        message = await _assistant_message_async()
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
@@ -310,7 +310,7 @@ class TestScorableFilters:
 
     async def test_read_role_scores(self):
         scorer = RecordingScorer(supported_roles=["assistant"])
-        message = _assistant_message()
+        message = await _assistant_message_async()
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
@@ -324,7 +324,7 @@ class TestScorableFilters:
             original_value="prepended text",
             conversation_id=str(uuid.uuid4()),
         ).to_message()
-        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+        (await CentralMemory.get_memory_instance().add_message_to_memory_async(request=message))
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
@@ -341,7 +341,7 @@ class TestScorableFilters:
             response_error="processing",
             conversation_id=str(uuid.uuid4()),
         ).to_message()
-        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+        (await CentralMemory.get_memory_instance().add_message_to_memory_async(request=message))
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
@@ -352,7 +352,7 @@ class TestScorableFilters:
     async def test_blocked_message_stays_false_safe(self):
         """A fully blocked response reaches the scorer's family and keeps its neutral verdict."""
         scorer = RecordingScorer()
-        message = _error_message()
+        message = await _error_message_async()
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
@@ -376,7 +376,7 @@ class TestScorableFilters:
                 MessagePiece(role="assistant", original_value="usable text", conversation_id=conversation_id),
             ]
         )
-        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+        (await CentralMemory.get_memory_instance().add_message_to_memory_async(request=message))
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
@@ -386,7 +386,7 @@ class TestScorableFilters:
 
     async def test_explicit_legacy_role_filter_still_applies(self):
         scorer = RecordingScorer()
-        message = _assistant_message()
+        message = await _assistant_message_async()
 
         with pytest.warns(DeprecationWarning, match="deprecated"):
             scores = await scorer.score_async(
@@ -401,7 +401,7 @@ class TestScorableFilters:
 
         with pytest.warns(DeprecationWarning, match="deprecated"):
             scores = await scorer.score_async(
-                scorable=MessageScorable.from_message(_error_message()),
+                scorable=MessageScorable.from_message(await _error_message_async()),
                 skip_on_error_result=True,
             )
 
@@ -416,7 +416,7 @@ class TestExpectation:
         scorer = RecordingScorer()
 
         await scorer.score_async(
-            scorable=MessageScorable.from_message(_assistant_message()),
+            scorable=MessageScorable.from_message(await _assistant_message_async()),
             expectation=ScoringExpectation(objective="find the objective"),
         )
 
@@ -425,7 +425,7 @@ class TestExpectation:
     async def test_no_expectation_means_no_objective(self):
         scorer = RecordingScorer()
 
-        await scorer.score_async(scorable=MessageScorable.from_message(_assistant_message()))
+        await scorer.score_async(scorable=MessageScorable.from_message(await _assistant_message_async()))
 
         assert scorer.scored_objectives == [None]
 
@@ -436,7 +436,7 @@ class TestDeprecatedParameters:
 
     async def test_positional_message_maps_to_message_scorable(self):
         scorer = RecordingScorer()
-        message = _assistant_message()
+        message = await _assistant_message_async()
 
         with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
             scores = await scorer.score_async(message)
@@ -446,7 +446,7 @@ class TestDeprecatedParameters:
 
     async def test_keyword_message_maps_to_message_scorable(self):
         scorer = RecordingScorer()
-        message = _assistant_message()
+        message = await _assistant_message_async()
 
         with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
             await scorer.score_async(message=message)
@@ -474,15 +474,17 @@ class TestDeprecatedParameters:
     async def test_message_does_not_widen_to_the_stored_conversation(self, sqlite_instance: MemoryInterface):
         """The shim scores the supplied message, never the whole conversation behind it."""
         conversation_id = str(uuid.uuid4())
-        sqlite_instance.add_message_to_memory(
-            request=MessagePiece(
-                role="user",
-                original_value="an earlier turn that must not be scored",
-                conversation_id=conversation_id,
-                sequence=0,
-            ).to_message()
+        (
+            await sqlite_instance.add_message_to_memory_async(
+                request=MessagePiece(
+                    role="user",
+                    original_value="an earlier turn that must not be scored",
+                    conversation_id=conversation_id,
+                    sequence=0,
+                ).to_message()
+            )
         )
-        message = _assistant_message("only this turn", conversation_id=conversation_id)
+        message = await _assistant_message_async("only this turn", conversation_id=conversation_id)
         scorer = RecordingScorer()
 
         with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
@@ -494,7 +496,7 @@ class TestDeprecatedParameters:
         scorer = RecordingScorer()
 
         with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
-            await scorer.score_async(_assistant_message(), objective="legacy objective")
+            await scorer.score_async((await _assistant_message_async()), objective="legacy objective")
 
         assert scorer.scored_objectives == ["legacy objective"]
 
@@ -503,7 +505,7 @@ class TestDeprecatedParameters:
 
         with pytest.warns(DeprecationWarning, match="deprecated"):
             scores = await scorer.score_async(
-                scorable=MessageScorable.from_message(_assistant_message()),
+                scorable=MessageScorable.from_message(await _assistant_message_async()),
                 role_filter="user",
             )
 
@@ -514,7 +516,7 @@ class TestDeprecatedParameters:
 
         with pytest.warns(DeprecationWarning, match="deprecated"):
             scores = await scorer.score_async(
-                scorable=MessageScorable.from_message(_error_message()),
+                scorable=MessageScorable.from_message(await _error_message_async()),
                 skip_on_error_result=True,
             )
 
@@ -525,21 +527,23 @@ class TestDeprecatedParameters:
 
         with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
             await scorer.score_async(
-                scorable=MessageScorable.from_message(_assistant_message()),
+                scorable=MessageScorable.from_message(await _assistant_message_async()),
                 infer_objective_from_request=False,
             )
 
     async def test_infer_objective_from_request_reads_the_previous_turn(self, sqlite_instance: MemoryInterface):
         conversation_id = str(uuid.uuid4())
-        sqlite_instance.add_message_to_memory(
-            request=MessagePiece(
-                role="user",
-                original_value="the inferred objective",
-                conversation_id=conversation_id,
-                sequence=0,
-            ).to_message()
+        (
+            await sqlite_instance.add_message_to_memory_async(
+                request=MessagePiece(
+                    role="user",
+                    original_value="the inferred objective",
+                    conversation_id=conversation_id,
+                    sequence=0,
+                ).to_message()
+            )
         )
-        message = _assistant_message("response", conversation_id=conversation_id)
+        message = await _assistant_message_async("response", conversation_id=conversation_id)
         scorer = RecordingScorer()
 
         with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
@@ -551,7 +555,7 @@ class TestDeprecatedParameters:
         scorer = RecordingScorer()
 
         await scorer.score_async(
-            scorable=MessageScorable.from_message(_assistant_message()),
+            scorable=MessageScorable.from_message(await _assistant_message_async()),
             expectation=ScoringExpectation(objective="objective"),
         )
 
@@ -564,7 +568,7 @@ class TestConflictingInputs:
 
     async def test_message_and_scorable_together_raises(self):
         scorer = RecordingScorer()
-        message = _assistant_message()
+        message = await _assistant_message_async()
 
         with pytest.raises(ValueError, match="not both"):
             await scorer.score_async(message, scorable=MessageScorable.from_message(message))
@@ -580,7 +584,7 @@ class TestConflictingInputs:
 
         with pytest.raises(ValueError, match="not both"):
             await scorer.score_async(
-                scorable=MessageScorable.from_message(_assistant_message()),
+                scorable=MessageScorable.from_message(await _assistant_message_async()),
                 objective="one",
                 expectation=ScoringExpectation(objective="two"),
             )
@@ -590,32 +594,34 @@ class TestConflictingInputs:
 class TestExtractObjectiveFromPreviousTurn:
     """The objective lookup belongs to whoever builds the expectation."""
 
-    def test_reads_the_turn_before_the_response(self, sqlite_instance: MemoryInterface):
+    async def test_reads_the_turn_before_the_response(self, sqlite_instance: MemoryInterface):
         conversation_id = str(uuid.uuid4())
-        sqlite_instance.add_message_to_memory(
-            request=MessagePiece(
-                role="user", original_value="the request", conversation_id=conversation_id, sequence=0
-            ).to_message()
+        (
+            await sqlite_instance.add_message_to_memory_async(
+                request=MessagePiece(
+                    role="user", original_value="the request", conversation_id=conversation_id, sequence=0
+                ).to_message()
+            )
         )
-        message = _assistant_message("the response", conversation_id=conversation_id)
+        message = await _assistant_message_async("the response", conversation_id=conversation_id)
 
-        objective = extract_objective_from_previous_turn(message=message, memory=sqlite_instance)
+        objective = await extract_objective_from_previous_turn_async(message=message, memory=sqlite_instance)
 
         assert objective == "the request"
 
-    def test_returns_empty_for_a_user_message(self, sqlite_instance: MemoryInterface):
+    async def test_returns_empty_for_a_user_message(self, sqlite_instance: MemoryInterface):
         message = MessagePiece(role="user", original_value="a request").to_message()
 
-        assert extract_objective_from_previous_turn(message=message, memory=sqlite_instance) == ""
+        assert (await extract_objective_from_previous_turn_async(message=message, memory=sqlite_instance)) == ""
 
-    def test_returns_empty_when_the_conversation_is_not_stored(self, sqlite_instance: MemoryInterface):
+    async def test_returns_empty_when_the_conversation_is_not_stored(self, sqlite_instance: MemoryInterface):
         message = MessagePiece(
             role="assistant", original_value="a response", conversation_id=str(uuid.uuid4())
         ).to_message()
 
-        assert extract_objective_from_previous_turn(message=message, memory=sqlite_instance) == ""
+        assert (await extract_objective_from_previous_turn_async(message=message, memory=sqlite_instance)) == ""
 
-    def test_reads_the_request_for_the_scored_turn_not_the_latest_one(self, sqlite_instance: MemoryInterface):
+    async def test_reads_the_request_for_the_scored_turn_not_the_latest_one(self, sqlite_instance: MemoryInterface):
         """Scoring an earlier response must not pick up a request from later in the conversation."""
         conversation_id = str(uuid.uuid4())
         turns: list[tuple[str, ChatMessageRole]] = [
@@ -625,12 +631,16 @@ class TestExtractObjectiveFromPreviousTurn:
             ("a later response", "assistant"),
         ]
         for value, role in turns:
-            sqlite_instance.add_message_to_memory(
-                request=MessagePiece(role=role, original_value=value, conversation_id=conversation_id).to_message()
+            (
+                await sqlite_instance.add_message_to_memory_async(
+                    request=MessagePiece(role=role, original_value=value, conversation_id=conversation_id).to_message()
+                )
             )
-        first_response = sqlite_instance.get_message_pieces(conversation_id=conversation_id)[1].to_message()
+        first_response = (await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id))[
+            1
+        ].to_message()
 
-        objective = extract_objective_from_previous_turn(message=first_response, memory=sqlite_instance)
+        objective = await extract_objective_from_previous_turn_async(message=first_response, memory=sqlite_instance)
 
         assert objective == "the first request"
 
@@ -642,11 +652,11 @@ class TestInHandMessages:
     async def test_score_message_async_does_not_read_memory(self):
         resolver = MagicMock(spec=MessageScorableResolver)
         scorer = RecordingScorer(message_resolver=resolver)
-        message = _assistant_message("in hand")
+        message = await _assistant_message_async("in hand")
 
         await scorer.score_message_async(message=message)
 
-        resolver.resolve.assert_not_called()
+        resolver.resolve_async.assert_not_called()
         assert scorer.scored_messages == [message]
 
     async def test_score_message_async_does_not_dispatch_ephemeral_unreadable_error(self):
@@ -691,7 +701,7 @@ class TestInHandMessages:
     async def test_score_message_async_applies_declared_roles(self):
         scorer = RecordingScorer(supported_roles=["user"])
 
-        scores = await scorer.score_message_async(message=_assistant_message())
+        scores = await scorer.score_message_async(message=(await _assistant_message_async()))
 
         assert scores == []
 
@@ -704,7 +714,7 @@ class TestConditionRouting:
         scorer = RecordingScorer(is_objective_required=True)
 
         scores = await scorer.score_async(
-            scorable=MessageScorable.from_message(_assistant_message()),
+            scorable=MessageScorable.from_message(await _assistant_message_async()),
             expectation=ScoringExpectation(objective="an objective", conditions=(MatchesObjective(),)),
         )
 
@@ -715,7 +725,7 @@ class TestConditionRouting:
 
         with pytest.raises(ValueError, match="MatchesObjective requires"):
             await scorer.score_async(
-                scorable=MessageScorable.from_message(_assistant_message()),
+                scorable=MessageScorable.from_message(await _assistant_message_async()),
                 expectation=ScoringExpectation(conditions=(MatchesObjective(),)),
             )
 
@@ -727,7 +737,7 @@ class TestConditionRouting:
 
         with pytest.raises(ValueError, match="does not support"):
             await MessageScorer.score_response_multiple_scorers_async(
-                response=_assistant_message(),
+                response=(await _assistant_message_async()),
                 scorers=[scorer],
                 expectation=ScoringExpectation(conditions=(UnroutedCondition(),)),
             )
@@ -737,7 +747,7 @@ class TestConditionRouting:
 
         with pytest.raises(ValueError, match="exactly one condition"):
             await scorer.score_async(
-                scorable=MessageScorable.from_message(_assistant_message()),
+                scorable=MessageScorable.from_message(await _assistant_message_async()),
                 expectation=ScoringExpectation(
                     objective="an objective",
                     conditions=(MatchesObjective(), MatchesObjective()),

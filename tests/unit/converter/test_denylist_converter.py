@@ -7,6 +7,7 @@ from unit.mocks import MockPromptTarget, get_mock_target_identifier
 
 from pyrit.converter import DenylistConverter
 from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.prompt_target import PromptTarget
 
 
 @pytest.fixture
@@ -18,7 +19,7 @@ def mock_template():
 
 @pytest.fixture
 def mock_target() -> MockPromptTarget:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     response = Message(
         message_pieces=[
             MessagePiece(

@@ -45,7 +45,7 @@ from pyrit.setup import AZURE_SQL, initialize_pyrit_async
 await initialize_pyrit_async(memory_db_type=AZURE_SQL)  # type: ignore
 
 memory = CentralMemory.get_memory_instance()
-memory.print_schema()  # type: ignore
+(await memory.print_schema_async())  # type: ignore
 
 # %% [markdown]
 # ## Basic Azure SQL Memory Programming Usage
@@ -73,11 +73,11 @@ message_list = [
     ),
 ]
 
-memory.add_message_to_memory(request=Message(message_pieces=[message_list[0]]))
-memory.add_message_to_memory(request=Message(message_pieces=[message_list[1]]))
-memory.add_message_to_memory(request=Message(message_pieces=[message_list[2]]))
+(await memory.add_message_to_memory_async(request=Message(message_pieces=[message_list[0]])))
+(await memory.add_message_to_memory_async(request=Message(message_pieces=[message_list[1]])))
+(await memory.add_message_to_memory_async(request=Message(message_pieces=[message_list[2]])))
 
-entries = memory.get_conversation_messages(conversation_id=conversation_id)
+entries = await memory.get_conversation_messages_async(conversation_id=conversation_id)
 
 for entry in entries:
     print(entry)

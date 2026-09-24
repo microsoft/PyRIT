@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, TypeAlias
 
+from pyrit.common.async_compatibility import legacy_sync_override
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import (
     ContentEntryScorable,
     ContentScorable,
@@ -70,6 +72,38 @@ def _scored_evidence_digest(
         raise NonReplayableObservationError(str(error)) from error
 
 
+async def _scored_evidence_digest_async(
+    *,
+    scorable: ScorableUnion,
+    scored_piece_id: uuid.UUID,
+    memory: MemoryInterface,
+    scored_message_piece: MessagePiece | None = None,
+) -> str | None:
+    """
+    Resolve and hash the canonical input evidence used for one judgment.
+
+    Returns:
+        str | None: The digest, or None when media replay is deferred.
+
+    Raises:
+        NonReplayableObservationError: If the scored evidence cannot be resolved.
+    """
+    if isinstance(scorable, MessageScorable) and scored_message_piece is None:
+        pieces = await memory.get_message_pieces_async(prompt_ids=[scored_piece_id])
+        scored_message_piece = next((piece for piece in pieces if piece.id == scored_piece_id), None)
+    content_id = scorable.content_id if isinstance(scorable, ContentEntryScorable) else None
+    stored_content = await _load_content_evidence_async(memory=memory, content_id=content_id)
+    try:
+        return _resolved_scored_evidence_digest(
+            scorable=scorable,
+            scored_piece_id=scored_piece_id,
+            scored_piece=scored_message_piece,
+            stored_content=stored_content,
+        )
+    except ValueError as error:
+        raise NonReplayableObservationError(str(error)) from error
+
+
 def _load_content_evidence(
     *, memory: MemoryInterface, content_id: uuid.UUID | None
 ) -> tuple[ContentScorable, str] | None:
@@ -83,6 +117,22 @@ def _load_content_evidence(
         return None
     content = memory.get_scorable_content(content_ids=[content_id]).get(content_id)
     digest = memory.get_scorable_content_hashes(content_ids=[content_id]).get(content_id)
+    return (content, digest) if content is not None and digest is not None else None
+
+
+async def _load_content_evidence_async(
+    *, memory: MemoryInterface, content_id: uuid.UUID | None
+) -> tuple[ContentScorable, str] | None:
+    """
+    Load stored content and its hash.
+
+    Returns:
+        tuple[ContentScorable, str] | None: The evidence, or None if unreferenced or missing.
+    """
+    if content_id is None:
+        return None
+    content = (await memory.get_scorable_content_async(content_ids=[content_id])).get(content_id)
+    digest = (await memory.get_scorable_content_hashes_async(content_ids=[content_id])).get(content_id)
     return (content, digest) if content is not None and digest is not None else None
 
 
@@ -280,12 +330,45 @@ class _ObservationEvidenceResolver:
         Raises:
             NonReplayableObservationError: If referenced evidence is missing, modified, or unsupported.
         """
+        print_deprecation_message(
+            old_item="_ObservationEvidenceResolver.resolve",
+            new_item="_ObservationEvidenceResolver.resolve_async",
+            removed_in="1.4.0",
+        )
         payload = observation.payload
         if isinstance(payload, ToolEventsObservationPayload):
             return payload
         pieces = self._memory.get_message_pieces(prompt_ids=list(observation.evidence_message_piece_ids))
         pieces_by_id = {piece.id: piece for piece in pieces}
         stored_content = _load_content_evidence(memory=self._memory, content_id=observation.scorable_content_id)
+        try:
+            observation.validate_evidence(
+                message_pieces=pieces_by_id,
+                stored_content=stored_content,
+            )
+        except ValueError as error:
+            raise NonReplayableObservationError(str(error)) from error
+        return Message(message_pieces=[pieces_by_id[piece_id] for piece_id in observation.response_message_piece_ids])
+
+    @legacy_sync_override(lambda: _ObservationEvidenceResolver.resolve)
+    async def resolve_async(self, *, observation: Observation) -> _ObservationEvidence:
+        """
+        Resolve an observation's managed response references.
+
+        Returns:
+            _ObservationEvidence: The reconstructed LLM response.
+
+        Raises:
+            NonReplayableObservationError: If referenced evidence is missing, modified, or unsupported.
+        """
+        payload = observation.payload
+        if isinstance(payload, ToolEventsObservationPayload):
+            return payload
+        pieces = await self._memory.get_message_pieces_async(prompt_ids=list(observation.evidence_message_piece_ids))
+        pieces_by_id = {piece.id: piece for piece in pieces}
+        stored_content = await _load_content_evidence_async(
+            memory=self._memory, content_id=observation.scorable_content_id
+        )
         try:
             observation.validate_evidence(
                 message_pieces=pieces_by_id,

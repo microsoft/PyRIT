@@ -185,7 +185,7 @@ class AudioTranscriptHelper:
 
         # Add to memory so score references are valid
         memory = CentralMemory.get_memory_instance()
-        memory.add_message_to_memory(request=text_message)
+        (await memory.add_message_to_memory_async(request=text_message))
 
         with _suppress_observation_collection():
             transcript_scores = await self.text_scorer._score_nested_async(

@@ -4,7 +4,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import store_message
+from unit.mocks import store_message_async
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, SeedPrompt, UnvalidatedScore
@@ -40,7 +40,7 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
 
     run_llm_scoring = AsyncMock(return_value=unvalidated_score)
     # Patch _memory.add_scores_to_memory to prevent sqlite errors and check for call
-    with patch.object(scorer._memory, "add_scores_to_memory", new=MagicMock()) as mock_add_scores:
+    with patch.object(scorer._memory, "add_scores_to_memory_async", new=AsyncMock()) as mock_add_scores:
         with patch(
             "pyrit.score.float_scale.insecure_code_scorer._run_llm_scoring_async",
             new=run_llm_scoring,
@@ -53,7 +53,7 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
             ).to_message()
 
             # Call the score_async method
-            scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
+            scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(message)))
 
             # Assertions
             assert len(scores) == 1
@@ -68,7 +68,7 @@ async def test_insecure_code_scorer_invalid_json(mock_chat_target):
     scorer = InsecureCodeScorer.from_harm_categories(chat_target=mock_chat_target)
 
     # Patch scorer._memory.add_scores_to_memory to make it a mock
-    with patch.object(scorer._memory, "add_scores_to_memory", new=MagicMock()) as mock_add_scores:
+    with patch.object(scorer._memory, "add_scores_to_memory_async", new=AsyncMock()) as mock_add_scores:
         # Mock _run_llm_scoring_async to raise InvalidJsonException
         with patch(
             "pyrit.score.float_scale.insecure_code_scorer._run_llm_scoring_async",
@@ -77,7 +77,7 @@ async def test_insecure_code_scorer_invalid_json(mock_chat_target):
             message = MessagePiece(role="user", original_value="sample code").to_message()
 
             with pytest.raises(InvalidJsonException, match="Error in scorer InsecureCodeScorer.*Invalid JSON"):
-                await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
+                await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(message)))
 
             # Ensure memory functions were not called
             mock_add_scores.assert_not_called()
@@ -114,7 +114,7 @@ async def test_score_async_unsupported_data_type_returns_empty(mock_chat_target,
         converted_value_data_type="image_path",
     ).to_message()
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(request)))
     assert scores == []
 
 

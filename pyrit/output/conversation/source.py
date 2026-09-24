@@ -48,7 +48,7 @@ class MemoryConversationSource:
         Returns:
             list[Message]: The conversation's messages in order.
         """
-        return list(self._memory.get_conversation_messages(conversation_id=conversation_id))
+        return list(await self._memory.get_conversation_messages_async(conversation_id=conversation_id))
 
     async def get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
         """
@@ -60,4 +60,4 @@ class MemoryConversationSource:
         Returns:
             list[Score]: The scores for those pieces (empty if none).
         """
-        return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))
+        return list(await self._memory.get_prompt_scores_async(prompt_ids=prompt_ids))

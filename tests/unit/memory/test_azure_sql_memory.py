@@ -3,7 +3,7 @@
 
 import os
 import uuid
-from collections.abc import Generator, MutableSequence, Sequence
+from collections.abc import AsyncGenerator, MutableSequence, Sequence
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -18,15 +18,16 @@ from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import Conversation, MessagePiece
 from pyrit.prompt_target.text_target import TextTarget
-from unit.mocks import get_azure_sql_memory, get_sample_conversation_entries
+from unit.mocks import get_azure_sql_memory_async, get_sample_conversation_entries
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_models import Base
 
 
 @pytest.fixture
-def memory_interface() -> Generator[AzureSQLMemory, None, None]:
-    yield from get_azure_sql_memory()
+async def memory_interface() -> AsyncGenerator[AzureSQLMemory, None]:
+    async for memory in get_azure_sql_memory_async():
+        yield memory
 
 
 @pytest.fixture
@@ -188,17 +189,17 @@ def test_query_entries(
     assert filtered_entries[0].conversation_id == "1"
 
 
-def test_get_all_memory(
+async def test_get_all_memory(
     memory_interface: AzureSQLMemory, sample_conversation_entries: MutableSequence[PromptMemoryEntry]
 ):
     memory_interface._insert_entries(entries=sample_conversation_entries)
 
     # Fetch all entries
-    all_entries = memory_interface.get_message_pieces()
+    all_entries = await memory_interface.get_message_pieces_async()
     assert len(all_entries) == 3
 
 
-def test_get_memories_with_json_properties(memory_interface: AzureSQLMemory):
+async def test_get_memories_with_json_properties(memory_interface: AzureSQLMemory):
     # Define a specific conversation_id
     specific_conversation_id = "test_conversation_id"
 
@@ -215,13 +216,17 @@ def test_get_memories_with_json_properties(memory_interface: AzureSQLMemory):
         converter_identifiers=converter_identifiers,
     )
 
-    memory_interface.add_conversation_to_memory(
-        conversation=Conversation(conversation_id=specific_conversation_id, target_identifier=target.get_identifier())
+    (
+        await memory_interface.add_conversation_to_memory_async(
+            conversation=Conversation(
+                conversation_id=specific_conversation_id, target_identifier=target.get_identifier()
+            )
+        )
     )
-    memory_interface.add_message_pieces_to_memory(message_pieces=[piece])
+    (await memory_interface.add_message_pieces_to_memory_async(message_pieces=[piece]))
 
     # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
-    retrieved_entries = memory_interface.get_conversation_messages(conversation_id=specific_conversation_id)
+    retrieved_entries = await memory_interface.get_conversation_messages_async(conversation_id=specific_conversation_id)
 
     # Verify that the retrieved entry matches the inserted entry
     assert len(retrieved_entries) == 1
@@ -355,7 +360,7 @@ def test_update_entries_nonexistent_fields(memory_interface):
         )
 
 
-def test_update_prompt_entries_by_conversation_id(memory_interface: AzureSQLMemory, sample_conversation_entries):
+async def test_update_prompt_entries_by_conversation_id(memory_interface: AzureSQLMemory, sample_conversation_entries):
     specific_conversation_id = "update_test_id"
 
     for entry in sample_conversation_entries:
@@ -364,7 +369,7 @@ def test_update_prompt_entries_by_conversation_id(memory_interface: AzureSQLMemo
     memory_interface._insert_entries(entries=sample_conversation_entries)
 
     # Update the entry using the update_prompt_entries_by_conversation_id method
-    update_result = memory_interface.update_prompt_entries_by_conversation_id(
+    update_result = await memory_interface.update_prompt_entries_by_conversation_id_async(
         conversation_id=specific_conversation_id, update_fields={"original_value": "Updated Hello", "role": "assistant"}
     )
 
@@ -446,8 +451,8 @@ def test_get_conversation_stats_uses_one_latest_row_apply(
     session = MagicMock()
     session.execute.return_value.fetchall.return_value = []
 
-    with patch.object(uninitialized_memory_interface, "get_session", return_value=session):
-        result = uninitialized_memory_interface.get_conversation_stats(conversation_ids=["conversation"])
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        result = uninitialized_memory_interface._execute_get_conversation_stats(conversation_ids=["conversation"])
 
     sql = str(session.execute.call_args.args[0])
     assert result == {}
@@ -642,7 +647,7 @@ def test_get_condition_json_array_match_any_mode_preserves_empty_absence_overloa
     assert "EXISTS" not in _normalize(condition_any)
 
 
-def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMemory):
+async def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMemory):
     # Insert a test entry
     entry = PromptMemoryEntry(
         entry=MessagePiece(
@@ -657,8 +662,10 @@ def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMem
     memory_interface._insert_entry(entry)
 
     # Update the metadata using the update_prompt_metadata_by_conversation_id method
-    memory_interface.update_prompt_metadata_by_conversation_id(
-        conversation_id="123", prompt_metadata={"updated": "updated"}
+    (
+        await memory_interface.update_prompt_metadata_by_conversation_id_async(
+            conversation_id="123", prompt_metadata={"updated": "updated"}
+        )
     )
 
     # Verify the metadata was updated
@@ -667,11 +674,12 @@ def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMem
         assert updated_entry.prompt_metadata == {"updated": "updated"}
 
 
-def test_refresh_token_if_needed_raises_when_expiry_none():
+def test_refresh_token_if_needed_initializes_deferred_token():
     obj = AzureSQLMemory.__new__(AzureSQLMemory)
     obj._auth_token_expiry = None
-    with pytest.raises(RuntimeError, match="Auth token expiry not initialized"):
+    with patch.object(obj, "_create_auth_token") as create_token:
         obj._refresh_token_if_needed()
+    create_token.assert_called_once()
 
 
 def test_provide_token_raises_when_auth_token_none():

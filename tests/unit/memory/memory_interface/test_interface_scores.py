@@ -29,14 +29,14 @@ def _test_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
     )
 
 
-def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conversations: Sequence[MessagePiece]):
+async def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conversations: Sequence[MessagePiece]):
     # create list of scores that are associated with sample conversation entries
     # assert that that list of scores is the same as expected :-)
 
     prompt_id = sample_conversations[0].id
     assert prompt_id is not None, "Prompt ID should not be None"
 
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=sample_conversations)
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=sample_conversations))
 
     score = Score(
         score_value=str(0.8),
@@ -49,16 +49,18 @@ def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conversati
         message_piece_id=prompt_id,
     )
 
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
     # Fetch the score we just added by label
     labels = {"sample": "label"}
     conversation_id = sample_conversations[0].conversation_id
     assert conversation_id is not None
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[AttackResult(conversation_id=conversation_id, objective="Test objective", labels=labels)]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[AttackResult(conversation_id=conversation_id, objective="Test objective", labels=labels)]
+        )
     )
-    db_score = sqlite_instance.get_prompt_scores(labels=labels)
+    db_score = await sqlite_instance.get_prompt_scores_async(labels=labels)
 
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
@@ -70,19 +72,19 @@ def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conversati
     assert db_score[0].scorer_class_identifier == score.scorer_class_identifier
     assert db_score[0].message_piece_id == score.message_piece_id
 
-    db_score = sqlite_instance.get_scores(score_ids=[str(score.id)])
+    db_score = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
 
-    db_score = sqlite_instance.get_prompt_scores(labels={"x": "y"})
+    db_score = await sqlite_instance.get_prompt_scores_async(labels={"x": "y"})
     assert len(db_score) == 0
 
-    db_score = sqlite_instance.get_scores()
+    db_score = await sqlite_instance.get_scores_async()
     assert len(db_score) == 0
 
 
 @pytest.mark.parametrize("score_type", ["float_scale", "true_false"])
-def test_add_score_get_score(
+async def test_add_score_get_score(
     sqlite_instance: MemoryInterface,
     sample_conversation_entries: Sequence[PromptMemoryEntry],
     score_type: Literal["float_scale"] | Literal["true_false"],
@@ -105,10 +107,10 @@ def test_add_score_get_score(
         message_piece_id=prompt_id,
     )
 
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
     # Fetch the score we just added
-    db_score = sqlite_instance.get_prompt_scores(prompt_ids=[prompt_id])
+    db_score = await sqlite_instance.get_prompt_scores_async(prompt_ids=[prompt_id])
     assert db_score
     assert len(db_score) == 1
     assert db_score[0].score_value == score_value
@@ -122,7 +124,7 @@ def test_add_score_get_score(
     assert db_score[0].message_piece_id == prompt_id
 
 
-def test_scorer_identifier_persists_graph_and_dedupes(
+async def test_scorer_identifier_persists_graph_and_dedupes(
     sqlite_instance: MemoryInterface,
     sample_conversation_entries: Sequence[PromptMemoryEntry],
 ):
@@ -167,7 +169,7 @@ def test_scorer_identifier_persists_graph_and_dedupes(
         ),
     ]
 
-    sqlite_instance.add_scores_to_memory(scores=scores)
+    (await sqlite_instance.add_scores_to_memory_async(scores=scores))
 
     scorer_rows = sqlite_instance._query_entries(ScorerIdentifierEntry)
     scorers_by_hash = {row.hash: row for row in scorer_rows}
@@ -189,7 +191,7 @@ def test_scorer_identifier_persists_graph_and_dedupes(
     ]
 
 
-def test_get_prompt_scores_empty_prompt_ids_returns_empty(sqlite_instance: MemoryInterface):
+async def test_get_prompt_scores_empty_prompt_ids_returns_empty(sqlite_instance: MemoryInterface):
     prompt_id = uuid4()
     piece = MessagePiece(
         id=prompt_id,
@@ -198,7 +200,7 @@ def test_get_prompt_scores_empty_prompt_ids_returns_empty(sqlite_instance: Memor
         converted_value="Hello, how are you?",
         conversation_id=str(uuid4()),
     )
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece]))
 
     score = Score(
         score_value=str(0.8),
@@ -210,12 +212,12 @@ def test_get_prompt_scores_empty_prompt_ids_returns_empty(sqlite_instance: Memor
         scorer_class_identifier=_test_scorer_id("TestScorer"),
         message_piece_id=prompt_id,
     )
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
-    assert sqlite_instance.get_prompt_scores(prompt_ids=[]) == []
+    assert (await sqlite_instance.get_prompt_scores_async(prompt_ids=[])) == []
 
 
-def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
+async def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
     # Ensure that scores of duplicate prompts are linked back to the original
     original_id = uuid4()
     conversation_id = str(uuid4())
@@ -229,10 +231,10 @@ def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
             sequence=0,
         )
     ]
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
-    sqlite_instance.duplicate_conversation(conversation_id=conversation_id)
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces))
+    (await sqlite_instance.duplicate_conversation_async(conversation_id=conversation_id))
     # Get the duplicated piece (it will have a different conversation_id)
-    all_pieces = sqlite_instance.get_message_pieces()
+    all_pieces = await sqlite_instance.get_message_pieces_async()
     dupe_piece = [p for p in all_pieces if p.id != original_id][0]
     dupe_id = dupe_piece.id
     assert dupe_id is not None, "Dupe ID should not be None"
@@ -251,36 +253,38 @@ def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
         message_piece_id=dupe_id,
         scorable=MessageScorable(message_piece_ids=(dupe_id,)),
     )
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
     assert score.message_piece_id == original_id
     assert score.scorable == MessageScorable(message_piece_ids=(original_id,))
-    assert sqlite_instance.get_scores(score_ids=[str(score_id)])[0].scorable == score.scorable
-    assert sqlite_instance.get_prompt_scores(prompt_ids=[str(dupe_id)])[0].id == score_id
-    assert sqlite_instance.get_prompt_scores(prompt_ids=[str(original_id)])[0].id == score_id
+    assert (await sqlite_instance.get_scores_async(score_ids=[str(score_id)]))[0].scorable == score.scorable
+    assert (await sqlite_instance.get_prompt_scores_async(prompt_ids=[str(dupe_id)]))[0].id == score_id
+    assert (await sqlite_instance.get_prompt_scores_async(prompt_ids=[str(original_id)]))[0].id == score_id
 
 
-def test_get_prompt_scores_finds_secondary_message_anchor(sqlite_instance: MemoryInterface):
+async def test_get_prompt_scores_finds_secondary_message_anchor(sqlite_instance: MemoryInterface):
     first_id = uuid4()
     second_id = uuid4()
     conversation_id = str(uuid4())
-    sqlite_instance.add_message_pieces_to_memory(
-        message_pieces=[
-            MessagePiece(
-                id=first_id,
-                role="assistant",
-                original_value="first piece",
-                conversation_id=conversation_id,
-                sequence=0,
-            ),
-            MessagePiece(
-                id=second_id,
-                role="assistant",
-                original_value="second piece",
-                conversation_id=conversation_id,
-                sequence=0,
-            ),
-        ]
+    (
+        await sqlite_instance.add_message_pieces_to_memory_async(
+            message_pieces=[
+                MessagePiece(
+                    id=first_id,
+                    role="assistant",
+                    original_value="first piece",
+                    conversation_id=conversation_id,
+                    sequence=0,
+                ),
+                MessagePiece(
+                    id=second_id,
+                    role="assistant",
+                    original_value="second piece",
+                    conversation_id=conversation_id,
+                    sequence=0,
+                ),
+            ]
+        )
     )
     score = Score(
         score_value="True",
@@ -289,14 +293,14 @@ def test_get_prompt_scores_finds_secondary_message_anchor(sqlite_instance: Memor
         message_piece_id=first_id,
         scorable=MessageScorable(message_piece_ids=(first_id, second_id)),
     )
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
-    scores = sqlite_instance.get_prompt_scores(prompt_ids=[second_id])
+    scores = await sqlite_instance.get_prompt_scores_async(prompt_ids=[second_id])
 
     assert [stored_score.id for stored_score in scores] == [score.id]
 
 
-def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
+async def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
     prompt_id = uuid4()
     conversation_id = str(uuid4())
     pieces = [
@@ -309,7 +313,7 @@ def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
             conversation_id=conversation_id,
         )
     ]
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=pieces)
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces))
 
     score = Score(
         score_value=str(0.8),
@@ -321,15 +325,17 @@ def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
         scorer_class_identifier=_test_scorer_id("TestScorer"),
         message_piece_id=prompt_id,
     )
-    sqlite_instance.add_scores_to_memory(scores=[score])
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            AttackResult(conversation_id=conversation_id, objective="Test objective", labels={"sample": "label"})
-        ]
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(conversation_id=conversation_id, objective="Test objective", labels={"sample": "label"})
+            ]
+        )
     )
 
     # Fetch the score we just added
-    db_score = sqlite_instance.get_prompt_scores(labels={"sample": "label"})
+    db_score = await sqlite_instance.get_prompt_scores_async(labels={"sample": "label"})
 
     assert len(db_score) == 1
     assert db_score[0].score_value == score.score_value
@@ -349,13 +355,13 @@ async def test_get_seeds_no_filters(sqlite_instance: MemoryInterface):
     ]
     await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts, added_by="test")
 
-    result = sqlite_instance.get_seeds()
+    result = await sqlite_instance.get_seeds_async()
     assert len(result) == 2
     assert result[0].value == "prompt1"
     assert result[1].value == "prompt2"
 
 
-def test_get_scores_by_scorer_identifier_filter(
+async def test_get_scores_by_scorer_identifier_filter(
     sqlite_instance: MemoryInterface,
     sample_conversation_entries: Sequence[PromptMemoryEntry],
 ):
@@ -383,10 +389,10 @@ def test_get_scores_by_scorer_identifier_filter(
         message_piece_id=prompt_id,
     )
 
-    sqlite_instance.add_scores_to_memory(scores=[score_a, score_b])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score_a, score_b]))
 
     # Filter by exact class_name match
-    results = sqlite_instance.get_scores(
+    results = await sqlite_instance.get_scores_async(
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.SCORER,
@@ -400,7 +406,7 @@ def test_get_scores_by_scorer_identifier_filter(
     assert results[0].score_value == "0.9"
 
     # Filter by partial class_name match
-    results = sqlite_instance.get_scores(
+    results = await sqlite_instance.get_scores_async(
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.SCORER,
@@ -414,7 +420,7 @@ def test_get_scores_by_scorer_identifier_filter(
 
     # Filter by hash
     scorer_hash = score_a.scorer_class_identifier.hash
-    results = sqlite_instance.get_scores(
+    results = await sqlite_instance.get_scores_async(
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.SCORER,
@@ -428,7 +434,7 @@ def test_get_scores_by_scorer_identifier_filter(
     assert results[0].score_value == "0.9"
 
     # No match
-    results = sqlite_instance.get_scores(
+    results = await sqlite_instance.get_scores_async(
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.SCORER,

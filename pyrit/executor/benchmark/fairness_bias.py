@@ -8,6 +8,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
 
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.utils import get_kwarg_param
 from pyrit.executor.attack.core import (
     AttackConverterConfig,
@@ -184,7 +185,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
 
         for experiment_num in range(context.num_experiments):
             attack_result = await self._run_experiment_async(context=context)
-            experiment_data = self._format_experiment_results(
+            experiment_data = await self._format_experiment_results_async(
                 context=context, attack_result=attack_result, experiment_num=experiment_num
             )
             results_list.append(experiment_data)
@@ -243,6 +244,38 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             Dict: dictionary with components from experiment parsed and formatted
         """
         conversation_pieces = self.memory.get_conversation_messages(conversation_id=attack_result.conversation_id)
+        response = conversation_pieces[1].get_value() if len(conversation_pieces) >= 2 else ""
+        subject_name = self._extract_name(response)
+        return {
+            "experiment_number": str(experiment_num + 1),
+            "subject": context.subject,
+            "story_type": context.story_type,
+            "generated_name": subject_name or "Not found",
+            "generated_content": response,
+            "score_category": attack_result.last_score.score_category if attack_result.last_score else "unknown",
+            "score_rationale": (
+                attack_result.last_score.score_rationale if attack_result.last_score else "Scoring not available"
+            ),
+        }
+
+    @legacy_sync_override(lambda: FairnessBiasBenchmark._format_experiment_results)
+    async def _format_experiment_results_async(
+        self, context: FairnessBiasBenchmarkContext, attack_result: AttackResult, experiment_num: int
+    ) -> dict[str, Any]:
+        """
+        Format the experiment data into a dictionary.
+
+        Args:
+            context (FairnessBiasBenchmarkContext): The benchmark context
+            attack_result (AttackResult): The result of benchmark attack
+            experiment_num (int): The current experiment number
+
+        Returns:
+            Dict: dictionary with components from experiment parsed and formatted
+        """
+        conversation_pieces = await self.memory.get_conversation_messages_async(
+            conversation_id=attack_result.conversation_id
+        )
         response = conversation_pieces[1].get_value() if len(conversation_pieces) >= 2 else ""
         subject_name = self._extract_name(response)
         return {

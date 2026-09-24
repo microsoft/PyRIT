@@ -9,14 +9,15 @@ from collections.abc import Mapping, Sequence
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import and_, case, create_engine, exists, func, or_, select, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
 from sqlalchemy.orm.session import Session
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import AsyncAdaptedQueuePool, StaticPool
 from sqlalchemy.sql.expression import TextClause
 
 from pyrit.common.path import DB_DATA_PATH
@@ -31,6 +32,9 @@ from pyrit.memory.memory_models import (
 from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import DiskStorageIO
 from pyrit.models import ConversationStats
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Connection
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +58,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         verbose: bool = False,
         skip_schema_migration: bool = False,
         silent: bool = False,
+        _defer_initialization: bool = False,
     ) -> None:
         """
         Initialize the SQLiteMemory instance.
@@ -75,16 +80,41 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         else:
             self.db_path = Path(db_path or Path(DB_DATA_PATH, self.DEFAULT_DB_FILE_NAME)).resolve()
         self.results_path = str(DB_DATA_PATH)
+        self._memory_uri = f"file:pyrit-{uuid.uuid4().hex}?mode=memory&cache=shared&uri=true"
+        self._skip_schema_migration = skip_schema_migration
+        self._silent = silent
+        self._keepalive: Connection | None = None
+        self._verbose = verbose
 
-        # An in-memory database shares a single DBAPI connection across every thread (see
-        # ``_create_engine``), so concurrent sessions would interleave on it. Serialize session
-        # lifetimes for that backend only; file-backed databases get a connection per checkout.
+        # Legacy sync sessions share a connection. Async sessions use a separate bounded
+        # pool on the same named database and must not acquire this thread-owned lock.
         self._connection_lock: threading.RLock | None = threading.RLock() if self.db_path == ":memory:" else None
 
         self.engine = self._create_engine(has_echo=verbose)
         self.SessionFactory = sessionmaker(bind=self.engine, class_=MemorySession)
-        if not skip_schema_migration:
-            self._run_schema_migration(silent=silent)
+        if not _defer_initialization:
+            self._initialize_schema()
+
+    def _initialize_schema(self) -> None:
+        if self.engine is None:
+            raise RuntimeError("Engine is not initialized.")
+        if self.db_path == ":memory:" and self._keepalive is None:
+            self._keepalive = self.engine.connect()
+        if not self._skip_schema_migration:
+            self._run_schema_migration(silent=self._silent)
+
+    def _create_async_engine(self) -> AsyncEngine:
+        database = self._memory_uri if self.db_path == ":memory:" else str(self.db_path)
+        kwargs: dict[str, Any] = {}
+        if self.db_path == ":memory:":
+            kwargs.update(poolclass=AsyncAdaptedQueuePool, pool_size=1, max_overflow=0)
+        return create_async_engine(f"sqlite+aiosqlite:///{database}", echo=self._verbose, **kwargs)
+
+    def _dispose_sync_engine(self) -> None:
+        if self._keepalive is not None:
+            self._keepalive.close()
+            self._keepalive = None
+        super()._dispose_sync_engine()
 
     def _init_storage_io(self) -> None:
         # Handles disk-based storage for SQLite local memory.
@@ -97,13 +127,9 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Creates an engine bound to the specified database file. The `has_echo` parameter
         controls the verbosity of SQL execution logging.
 
-        For in-memory databases (``db_path=":memory:"``), a ``StaticPool`` is used so
-        that a single shared connection backs all threads.  SQLAlchemy's default pool
-        for ``:memory:`` is ``SingletonThreadPool``, which gives each thread its own
-        connection — and therefore its own *separate* in-memory database.  That causes
-        tables created on one thread (e.g. a background initialisation thread) to be
-        invisible from another thread (e.g. the main thread), resulting in
-        "no such table" errors.
+        For in-memory databases, the sync pool and each async pool connect to an
+        instance-specific named database. A keepalive connection preserves its
+        contents while async pools are closed between event loops.
 
         Args:
             has_echo (bool): Flag to enable detailed SQL execution logging.
@@ -125,7 +151,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
                 extra_kwargs["poolclass"] = StaticPool
                 extra_kwargs["connect_args"] = {"check_same_thread": False}
 
-            engine = create_engine(f"sqlite:///{self.db_path}", echo=has_echo, **extra_kwargs)
+            database = self._memory_uri if self.db_path == ":memory:" else str(self.db_path)
+            engine = create_engine(f"sqlite:///{database}", echo=has_echo, **extra_kwargs)
             logger.info(f"Engine created successfully for database: {self.db_path}")
             return engine
         except SQLAlchemyError as e:
@@ -290,7 +317,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         # The '__subclasses__()' method returns a list of all subclasses of Base, which includes table models
         return Base.__subclasses__()
 
-    def get_session(self) -> Session:
+    def _get_sync_session(self) -> Session:
         """
         Provide a SQLAlchemy session for transactional operations.
 
@@ -332,7 +359,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         weakref.finalize(session, release_once)
         return session
 
-    def print_schema(self) -> None:
+    def _print_schema(self) -> None:
         """
         Print the schema of all tables in the SQLite database.
         """
@@ -373,7 +400,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             *per_key_are_conditions,
         )
 
-    def get_unique_attack_class_names(self) -> list[str]:
+    def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
         SQLite implementation: extract unique class_name values from
         the atomic_attack_identifier JSON column.
@@ -381,7 +408,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Sorted list of unique attack class name strings.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             class_name_expr = func.json_extract(
                 AttackResultEntry.atomic_attack_identifier,
                 "$.children.attack_technique.children.attack.class_name",
@@ -389,7 +416,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             rows = session.query(class_name_expr).filter(class_name_expr.isnot(None)).distinct().all()
         return sorted(row[0] for row in rows)
 
-    def get_unique_converter_class_names(self) -> list[str]:
+    def _execute_get_unique_converter_class_names(self) -> list[str]:
         """
         SQLite implementation: extract unique converter class_name values
         from the children.attack_technique.children.attack.children.request_converters
@@ -398,7 +425,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Sorted list of unique converter class name strings.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             rows = session.execute(
                 text(
                     """SELECT DISTINCT json_extract(j.value, '$.class_name') AS cls
@@ -412,7 +439,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             ).fetchall()
         return sorted(row[0] for row in rows)
 
-    def get_conversation_stats(self, *, conversation_ids: Sequence[str]) -> dict[str, ConversationStats]:
+    def _execute_get_conversation_stats(self, *, conversation_ids: Sequence[str]) -> dict[str, ConversationStats]:
         """
         SQLite implementation: lightweight aggregate stats per conversation.
 
@@ -461,7 +488,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             """
         )
 
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             rows = session.execute(sql, params).fetchall()
 
         result: dict[str, ConversationStats] = {}

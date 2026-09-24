@@ -13,6 +13,7 @@ from pyrit.exceptions.exception_classes import (
     EmptyResponseException,
     RateLimitException,
 )
+from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIImageTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -299,9 +300,9 @@ async def test_send_prompt_async_empty_response_adds_memory(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],
 ) -> None:
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     request = sample_conversations[0]
     request.conversation_id = str(uuid.uuid4())
@@ -325,9 +326,9 @@ async def test_send_prompt_async_rate_limit_adds_memory(
     image_target: OpenAIImageTarget,
     sample_conversations: MutableSequence[MessagePiece],
 ) -> None:
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     request = sample_conversations[0]
     request.conversation_id = str(uuid.uuid4())
@@ -493,9 +494,9 @@ async def test_validate_previous_conversations(
 
     prior_message = Message(message_pieces=[message_piece])
 
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = [prior_message]
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prior_message])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     image_target._memory = mock_memory
 

@@ -339,9 +339,9 @@ async def test_construct_request_body_serializes_complex_message(
 async def test_send_prompt_async_empty_response_adds_to_memory(
     openai_response_json: dict, target: OpenAIResponseTarget
 ):
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     target._memory = mock_memory
 
@@ -378,7 +378,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
     ):
         target._async_client.responses.create = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
         target._memory = MagicMock(MemoryInterface)
-        target._memory.get_conversation_messages.return_value = []
+        target._memory.get_conversation_messages_async = AsyncMock(return_value=[])
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -390,9 +390,9 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
 async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
     target: OpenAIResponseTarget,
 ):
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     target._memory = mock_memory
 
@@ -405,14 +405,14 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
 
     with pytest.raises(RateLimitException):
         await target.send_prompt_async(message=message)
-        target._memory.get_conversation_messages.assert_called_once_with(conversation_id="123")
-        target._memory.add_message_to_memory.assert_called_once_with(request=message)
+        target._memory.get_conversation_messages_async.assert_called_once_with(conversation_id="123")
+        target._memory.add_message_to_memory_async.assert_called_once_with(request=message)
 
 
 async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAIResponseTarget):
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     target._memory = mock_memory
 
@@ -427,8 +427,8 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAI
 
     with pytest.raises(BadRequestError):
         await target.send_prompt_async(message=message)
-        target._memory.get_conversation_messages.assert_called_once_with(conversation_id="123")
-        target._memory.add_message_to_memory.assert_called_once_with(request=message)
+        target._memory.get_conversation_messages_async.assert_called_once_with(conversation_id="123")
+        target._memory.add_message_to_memory_async.assert_called_once_with(request=message)
 
 
 async def test_send_prompt_async(openai_response_json: dict, target: OpenAIResponseTarget):
@@ -505,7 +505,7 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
     ):
         target._async_client.responses.create = AsyncMock(return_value=mock_response)  # type: ignore[method-assign]
         target._memory = MagicMock(MemoryInterface)
-        target._memory.get_conversation_messages.return_value = []
+        target._memory.get_conversation_messages_async = AsyncMock(return_value=[])
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -1247,7 +1247,7 @@ async def test_send_prompt_async_agentic_loop_executes_function_and_returns_fina
 
         # Verify intermediate messages were NOT persisted to memory by the target
         # (The normalizer will handle persistence when messages are returned)
-        all_messages = target._memory.get_conversation_messages(conversation_id=shared_conversation_id)
+        all_messages = await target._memory.get_conversation_messages_async(conversation_id=shared_conversation_id)
         assert len(all_messages) == 0, (
             f"Expected 0 messages in memory (target doesn't persist), got {len(all_messages)}"
         )
@@ -1940,7 +1940,9 @@ async def test_structured_refusal_is_persisted_scored_and_completes_attack(targe
     assert attack_result.last_score.get_value() is False
     assert attack_result.outcome == AttackOutcome.FAILURE
 
-    persisted_messages = target._memory.get_conversation_messages(conversation_id=attack_result.conversation_id)
+    persisted_messages = await target._memory.get_conversation_messages_async(
+        conversation_id=attack_result.conversation_id
+    )
     persisted_piece = persisted_messages[-1].get_piece()
     assert persisted_piece.id == refusal_piece.id
     assert json.loads(persisted_piece.original_value)["message"] == refusal

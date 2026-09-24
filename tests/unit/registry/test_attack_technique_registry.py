@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
@@ -476,7 +477,7 @@ class TestScorerOverrideTypeInference:
         generic_config = self._make_generic_scoring_config()
         target = MagicMock(spec=PromptTarget)
 
-        mock_memory = MagicMock()
+        mock_memory = MagicMock(spec=MemoryInterface)
         CentralMemory.set_memory_instance(mock_memory)
         try:
             # Should NOT raise — PromptSendingAttack accepts base AttackScoringConfig
@@ -506,7 +507,7 @@ class TestScorerOverrideTypeInference:
         tap_config = TAPAttackScoringConfig(objective_scorer=mock_scorer)
         target = MagicMock(spec=PromptTarget)
 
-        mock_memory = MagicMock()
+        mock_memory = MagicMock(spec=MemoryInterface)
         CentralMemory.set_memory_instance(mock_memory)
         try:
             # TAPAttackScoringConfig is-a AttackScoringConfig, so it passes isinstance check

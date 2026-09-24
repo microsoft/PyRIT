@@ -116,7 +116,9 @@ class ConversationScorer(MessageScorer, ABC):
 
         # Retrieve the full conversation from memory using the conversation_id
         conversation = (
-            self._memory.get_conversation_messages(conversation_id=conversation_id) if conversation_id else []
+            (await self._memory.get_conversation_messages_async(conversation_id=conversation_id))
+            if conversation_id
+            else []
         )
 
         if not conversation:

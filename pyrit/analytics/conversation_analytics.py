@@ -3,6 +3,8 @@
 
 import numpy as np
 
+from pyrit.common.async_compatibility import legacy_sync_override
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     ConversationMessageWithSimilarity,
@@ -38,7 +40,38 @@ class ConversationAnalytics:
             list[ConversationMessageWithSimilarity]: A list of ConversationMessageWithSimilarity objects representing
             the similar chat messages based on content.
         """
+        print_deprecation_message(
+            old_item="ConversationAnalytics.get_prompt_entries_with_same_converted_content",
+            new_item="ConversationAnalytics.get_prompt_entries_with_same_converted_content_async",
+            removed_in="1.4.0",
+        )
         all_memories = self.memory_interface.get_message_pieces()
+        return [
+            ConversationMessageWithSimilarity(
+                score=1.0,
+                role=memory.api_role,
+                content=memory.converted_value,
+                metric="exact_match",  # Exact match
+            )
+            for memory in all_memories
+            if memory.converted_value == chat_message_content
+        ]
+
+    @legacy_sync_override(lambda: ConversationAnalytics.get_prompt_entries_with_same_converted_content)
+    async def get_prompt_entries_with_same_converted_content_async(
+        self, *, chat_message_content: str
+    ) -> list[ConversationMessageWithSimilarity]:
+        """
+        Retrieve chat messages that have the same converted content.
+
+        Args:
+            chat_message_content (str): The content of the chat message to find similar messages for.
+
+        Returns:
+            list[ConversationMessageWithSimilarity]: A list of ConversationMessageWithSimilarity objects representing
+            the similar chat messages based on content.
+        """
+        all_memories = await self.memory_interface.get_message_pieces_async()
         return [
             ConversationMessageWithSimilarity(
                 score=1.0,
@@ -64,7 +97,48 @@ class ConversationAnalytics:
             list[ConversationMessageWithSimilarity]: A list of ConversationMessageWithSimilarity objects representing
             the similar chat messages based on embedding similarity.
         """
+        print_deprecation_message(
+            old_item="ConversationAnalytics.get_similar_chat_messages_by_embedding",
+            new_item="ConversationAnalytics.get_similar_chat_messages_by_embedding_async",
+            removed_in="1.4.0",
+        )
         all_embdedding_memory = self.memory_interface.get_all_embeddings()
+        similar_messages = []
+
+        target_embedding = np.array(chat_message_embedding).reshape(-1)
+
+        for memory in all_embdedding_memory:
+            if not hasattr(memory, "embedding") or memory.embedding is None:
+                continue
+
+            memory_embedding = np.array(memory.embedding).reshape(-1)
+            similarity_score = cosine_similarity(target_embedding, memory_embedding)
+
+            if similarity_score >= threshold:
+                similar_messages.append(
+                    EmbeddingMessageWithSimilarity(
+                        score=float(similarity_score), uuid=memory.id, metric="cosine_similarity"
+                    )
+                )
+
+        return similar_messages
+
+    @legacy_sync_override(lambda: ConversationAnalytics.get_similar_chat_messages_by_embedding)
+    async def get_similar_chat_messages_by_embedding_async(
+        self, *, chat_message_embedding: list[float], threshold: float = 0.8
+    ) -> list[EmbeddingMessageWithSimilarity]:
+        """
+        Retrieve chat messages that are similar to the given embedding based on cosine similarity.
+
+        Args:
+            chat_message_embedding (list[float]): The embedding of the chat message to find similar messages for.
+            threshold (float): The similarity threshold for considering messages as similar. Defaults to 0.8.
+
+        Returns:
+            list[ConversationMessageWithSimilarity]: A list of ConversationMessageWithSimilarity objects representing
+            the similar chat messages based on embedding similarity.
+        """
+        all_embdedding_memory = await self.memory_interface.get_all_embeddings_async()
         similar_messages = []
 
         target_embedding = np.array(chat_message_embedding).reshape(-1)

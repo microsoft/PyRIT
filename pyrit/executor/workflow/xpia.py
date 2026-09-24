@@ -368,16 +368,18 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
         processing_response = await context.processing_callback()
         if self._memory is None:
             raise RuntimeError("Memory not initialized")
-        self._memory.add_message_to_memory(
-            request=Message(
-                message_pieces=[
-                    MessagePiece(
-                        conversation_id=context.processing_conversation_id,
-                        original_value=processing_response,
-                        original_value_data_type="text",
-                        role="assistant",
-                    )
-                ],
+        (
+            await self._memory.add_message_to_memory_async(
+                request=Message(
+                    message_pieces=[
+                        MessagePiece(
+                            conversation_id=context.processing_conversation_id,
+                            original_value=processing_response,
+                            original_value_data_type="text",
+                            role="assistant",
+                        )
+                    ],
+                )
             )
         )
         self._logger.info(f'Received the following response from the processing target "{processing_response}"')

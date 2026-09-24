@@ -105,7 +105,9 @@ class TestCodeAttackFramedTechnique:
         assert OBJECTIVE not in sent
 
         conversation_id = result.completed_results[0].conversation_id
-        messages = CentralMemory.get_memory_instance().get_conversation_messages(conversation_id=conversation_id)
+        messages = await CentralMemory.get_memory_instance().get_conversation_messages_async(
+            conversation_id=conversation_id
+        )
         system_messages = [message for message in messages if message.get_piece().role == "system"]
         assert len(system_messages) == 1
         assert "code completion assistant" in system_messages[0].get_value()

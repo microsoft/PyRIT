@@ -5,7 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from unit.mocks import get_mock_target_identifier, store_message
+from unit.mocks import get_mock_target_identifier, store_message_async
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.memory.memory_interface import MemoryInterface
@@ -126,24 +126,26 @@ async def test_response_scoring_uses_only_the_response(patch_central_database: N
 async def test_response_scoring_excludes_a_stored_user_turn(sqlite_instance: MemoryInterface) -> None:
     """Conversation context must not bias the verdict or require a sequence-based lookup."""
     conversation_id = str(uuid.uuid4())
-    sqlite_instance.add_message_to_memory(
-        request=MessagePiece(
-            role="user",
-            original_value="harmful query that must not reach the classifier",
-            conversation_id=conversation_id,
-        ).to_message()
+    (
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(
+                role="user",
+                original_value="harmful query that must not reach the classifier",
+                conversation_id=conversation_id,
+            ).to_message()
+        )
     )
     response = MessagePiece(
         role="assistant",
         original_value="A response judged on its own.",
         conversation_id=conversation_id,
     ).to_message()
-    sqlite_instance.add_message_to_memory(request=response)
+    (await sqlite_instance.add_message_to_memory_async(request=response))
 
     target = _mock_target("No")
     scorer = ShieldGemmaScorer(chat_target=target, guideline=CUSTOM_GUIDELINE)
 
-    await scorer.score_async(scorable=MessageScorable.from_message(store_message(response)))
+    await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(response)))
 
     sent = _sent_request(target)
     assert "Chatbot Response: A response judged on its own." in sent
@@ -232,7 +234,7 @@ async def test_multiple_pieces_keep_every_verdict_and_report_the_aggregate(
     )
     message.set_response_not_in_memory()
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(message)))
 
     assert target.send_prompt_async.call_count == 2
     assert scores[0].get_value() is True
@@ -309,7 +311,7 @@ async def test_scorer_sends_request_without_system_prompt_or_json_format(patch_c
 
     await scorer.score_text_async("hello")
 
-    target.set_system_prompt.assert_not_called()
+    target.set_system_prompt_async.assert_not_called()
 
     # CallableResponseHandler imposes no wire format, so ShieldGemma stays free to reply in plain text.
     _, send_kwargs = target.send_prompt_async.call_args

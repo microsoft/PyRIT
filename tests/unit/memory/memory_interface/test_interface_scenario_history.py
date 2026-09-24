@@ -107,7 +107,7 @@ def _make_scenario(
     )
 
 
-def test_history_pages_descending_equal_timestamps_by_id(sqlite_instance: MemoryInterface) -> None:
+async def test_history_pages_descending_equal_timestamps_by_id(sqlite_instance: MemoryInterface) -> None:
     timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     scenarios = [
         _make_scenario(
@@ -119,14 +119,14 @@ def test_history_pages_descending_equal_timestamps_by_id(sqlite_instance: Memory
         )
         for value in (1, 2, 3)
     ]
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=scenarios)
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=scenarios))
     entries = sqlite_instance._query_entries(ScenarioResultEntry)
     for entry in entries:
         entry.timestamp = timestamp
         sqlite_instance._update_entry(entry)
 
-    first_page, _, has_more = sqlite_instance.get_scenario_run_history_page(limit=2)
-    second_page, _, second_has_more = sqlite_instance.get_scenario_run_history_page(
+    first_page, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(limit=2)
+    second_page, _, second_has_more = await sqlite_instance.get_scenario_run_history_page_async(
         cursor=ScenarioHistoryKeysetCursor(
             timestamp=first_page[-1].created_at,
             scenario_result_id=first_page[-1].scenario_result_id,
@@ -140,7 +140,7 @@ def test_history_pages_descending_equal_timestamps_by_id(sqlite_instance: Memory
     assert second_has_more is False
 
 
-def test_history_creation_order_is_stable_when_scenario_entry_is_rebuilt(
+async def test_history_creation_order_is_stable_when_scenario_entry_is_rebuilt(
     sqlite_instance: MemoryInterface,
 ) -> None:
     first_created_at = datetime(2026, 8, 7, tzinfo=UTC)
@@ -158,14 +158,14 @@ def test_history_creation_order_is_stable_when_scenario_entry_is_rebuilt(
         state=ScenarioRunState.COMPLETED,
         labels={},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[first, second])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[first, second]))
 
-    rebuilt_first = sqlite_instance.get_scenario_results(scenario_result_ids=[str(first.id)])[0]
+    rebuilt_first = (await sqlite_instance.get_scenario_results_async(scenario_result_ids=[str(first.id)]))[0]
     rebuilt_first.number_tries += 1
     sqlite_instance._update_entry(ScenarioResultEntry(entry=rebuilt_first))
 
-    first_page, _, has_more = sqlite_instance.get_scenario_run_history_page(limit=1)
-    second_page, _, second_has_more = sqlite_instance.get_scenario_run_history_page(
+    first_page, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(limit=1)
+    second_page, _, second_has_more = await sqlite_instance.get_scenario_run_history_page_async(
         cursor=ScenarioHistoryKeysetCursor(
             timestamp=first_page[-1].created_at,
             scenario_result_id=first_page[-1].scenario_result_id,
@@ -181,7 +181,7 @@ def test_history_creation_order_is_stable_when_scenario_entry_is_rebuilt(
     assert second_has_more is False
 
 
-def test_history_filters_names_statuses_and_labels_without_hydration(
+async def test_history_filters_names_statuses_and_labels_without_hydration(
     sqlite_instance: MemoryInterface,
     monkeypatch,
 ) -> None:
@@ -201,11 +201,13 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
         state=ScenarioRunState.COMPLETED,
         labels={"operator": "bob", "operation": "nightly", "team.name": "safety"},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[included, excluded])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[included, excluded]))
     started_at = timestamp + timedelta(seconds=30)
-    sqlite_instance.update_scenario_metadata_fields(
-        scenario_result_id=str(included.id),
-        fields={"started_at": started_at.isoformat()},
+    (
+        await sqlite_instance.update_scenario_metadata_fields_async(
+            scenario_result_id=str(included.id),
+            fields={"started_at": started_at.isoformat()},
+        )
     )
     attacks = [
         AttackResult(
@@ -241,13 +243,13 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
             },
         ),
     ]
-    sqlite_instance.add_attack_results_to_memory(attack_results=attacks)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attacks))
     monkeypatch.setattr(
         "pyrit.memory.memory_models.AttackResultEntry.get_attack_result",
         MagicMock(side_effect=AssertionError("history hydrated an AttackResult")),
     )
 
-    rows, aggregates, has_more = sqlite_instance.get_scenario_run_history_page(
+    rows, aggregates, has_more = await sqlite_instance.get_scenario_run_history_page_async(
         scenario_names=["registered.scenario"],
         statuses=[ScenarioRunState.IN_PROGRESS.value],
         labels={
@@ -292,7 +294,7 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
     assert has_more is False
 
 
-def test_history_aggregate_uses_latest_attempt_outcome(sqlite_instance: MemoryInterface) -> None:
+async def test_history_aggregate_uses_latest_attempt_outcome(sqlite_instance: MemoryInterface) -> None:
     """History uses the same latest-attempt semantics as scenario run details."""
     timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     scenario = _make_scenario(
@@ -303,41 +305,43 @@ def test_history_aggregate_uses_latest_attempt_outcome(sqlite_instance: MemoryIn
         state=ScenarioRunState.COMPLETED,
         labels={},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            AttackResult(
-                attack_result_id=str(uuid.UUID(int=19)),
-                conversation_id="conversation-19",
-                objective="objective",
-                outcome=AttackOutcome.SUCCESS,
-                execution_time_ms=1,
-                timestamp=timestamp,
-                attribution_parent_id=str(scenario.id),
-                attribution_data={
-                    "parent_collection": "attack",
-                    "parent_eval_hash": "eval-1",
-                    "seed_group_id": "seed-1",
-                },
-            ),
-            AttackResult(
-                attack_result_id=str(uuid.UUID(int=20)),
-                conversation_id="conversation-20",
-                objective="objective",
-                outcome=AttackOutcome.ERROR,
-                execution_time_ms=1,
-                timestamp=timestamp + timedelta(seconds=1),
-                attribution_parent_id=str(scenario.id),
-                attribution_data={
-                    "parent_collection": "attack",
-                    "parent_eval_hash": "eval-1",
-                    "seed_group_id": "seed-1",
-                },
-            ),
-        ]
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario]))
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    attack_result_id=str(uuid.UUID(int=19)),
+                    conversation_id="conversation-19",
+                    objective="objective",
+                    outcome=AttackOutcome.SUCCESS,
+                    execution_time_ms=1,
+                    timestamp=timestamp,
+                    attribution_parent_id=str(scenario.id),
+                    attribution_data={
+                        "parent_collection": "attack",
+                        "parent_eval_hash": "eval-1",
+                        "seed_group_id": "seed-1",
+                    },
+                ),
+                AttackResult(
+                    attack_result_id=str(uuid.UUID(int=20)),
+                    conversation_id="conversation-20",
+                    objective="objective",
+                    outcome=AttackOutcome.ERROR,
+                    execution_time_ms=1,
+                    timestamp=timestamp + timedelta(seconds=1),
+                    attribution_parent_id=str(scenario.id),
+                    attribution_data={
+                        "parent_collection": "attack",
+                        "parent_eval_hash": "eval-1",
+                        "seed_group_id": "seed-1",
+                    },
+                ),
+            ]
+        )
     )
 
-    _, aggregates, _ = sqlite_instance.get_scenario_run_history_page(limit=25)
+    _, aggregates, _ = await sqlite_instance.get_scenario_run_history_page_async(limit=25)
 
     aggregate = aggregates[str(scenario.id)]
     assert aggregate.unit_count == 1
@@ -347,7 +351,7 @@ def test_history_aggregate_uses_latest_attempt_outcome(sqlite_instance: MemoryIn
     assert aggregate.latest_attempt_timestamp == timestamp + timedelta(seconds=1)
 
 
-def test_history_aggregates_ignore_unplanned_units_and_remap_hash_seeds(
+async def test_history_aggregates_ignore_unplanned_units_and_remap_hash_seeds(
     sqlite_instance: MemoryInterface,
 ) -> None:
     """Plan-aware aggregation folds hash-attributed attempts into their planned unit."""
@@ -390,43 +394,45 @@ def test_history_aggregates_ignore_unplanned_units_and_remap_hash_seeds(
         state=ScenarioRunState.COMPLETED,
         labels={},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[planned, unplanned])
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            AttackResult(
-                attack_result_id=str(uuid.UUID(int=22)),
-                conversation_id="conversation-22",
-                objective="objective",
-                outcome=AttackOutcome.FAILURE,
-                execution_time_ms=1,
-                timestamp=timestamp,
-                attribution_parent_id=str(planned.id),
-                attribution_data={"parent_collection": "attack", "parent_eval_hash": "eval-1"},
-            ),
-            AttackResult(
-                attack_result_id=str(uuid.UUID(int=23)),
-                conversation_id="conversation-23",
-                objective="unplanned",
-                outcome=AttackOutcome.SUCCESS,
-                execution_time_ms=1,
-                timestamp=timestamp + timedelta(seconds=1),
-                attribution_parent_id=str(planned.id),
-                attribution_data={"parent_collection": "other-attack", "seed_group_id": "seed-9"},
-            ),
-            AttackResult(
-                attack_result_id=str(uuid.UUID(int=24)),
-                conversation_id="conversation-24",
-                objective="objective",
-                outcome=AttackOutcome.SUCCESS,
-                execution_time_ms=1,
-                timestamp=timestamp,
-                attribution_parent_id=str(unplanned.id),
-                attribution_data={"parent_collection": "legacy-attack", "seed_group_id": "seed-legacy"},
-            ),
-        ]
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[planned, unplanned]))
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    attack_result_id=str(uuid.UUID(int=22)),
+                    conversation_id="conversation-22",
+                    objective="objective",
+                    outcome=AttackOutcome.FAILURE,
+                    execution_time_ms=1,
+                    timestamp=timestamp,
+                    attribution_parent_id=str(planned.id),
+                    attribution_data={"parent_collection": "attack", "parent_eval_hash": "eval-1"},
+                ),
+                AttackResult(
+                    attack_result_id=str(uuid.UUID(int=23)),
+                    conversation_id="conversation-23",
+                    objective="unplanned",
+                    outcome=AttackOutcome.SUCCESS,
+                    execution_time_ms=1,
+                    timestamp=timestamp + timedelta(seconds=1),
+                    attribution_parent_id=str(planned.id),
+                    attribution_data={"parent_collection": "other-attack", "seed_group_id": "seed-9"},
+                ),
+                AttackResult(
+                    attack_result_id=str(uuid.UUID(int=24)),
+                    conversation_id="conversation-24",
+                    objective="objective",
+                    outcome=AttackOutcome.SUCCESS,
+                    execution_time_ms=1,
+                    timestamp=timestamp,
+                    attribution_parent_id=str(unplanned.id),
+                    attribution_data={"parent_collection": "legacy-attack", "seed_group_id": "seed-legacy"},
+                ),
+            ]
+        )
     )
 
-    _, aggregates, _ = sqlite_instance.get_scenario_run_history_page(limit=25)
+    _, aggregates, _ = await sqlite_instance.get_scenario_run_history_page_async(limit=25)
 
     planned_aggregate = aggregates[str(planned.id)]
     assert planned_aggregate.unit_count == 1
@@ -438,7 +444,7 @@ def test_history_aggregates_ignore_unplanned_units_and_remap_hash_seeds(
     assert legacy_aggregate.successful_units == 1
 
 
-def test_history_aggregates_keep_explicitly_attributed_seed_groups_separate(
+async def test_history_aggregates_keep_explicitly_attributed_seed_groups_separate(
     sqlite_instance: MemoryInterface,
 ) -> None:
     """An attempt carrying an unplanned seed group ID is never remapped onto a planned unit."""
@@ -474,32 +480,34 @@ def test_history_aggregates_keep_explicitly_attributed_seed_groups_separate(
         attack_results={},
         objective_target_identifier=get_mock_target_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            AttackResult(
-                attack_result_id=str(uuid.UUID(int=41)),
-                conversation_id="conversation-41",
-                objective="objective",
-                outcome=AttackOutcome.SUCCESS,
-                execution_time_ms=1,
-                timestamp=timestamp,
-                attribution_parent_id=str(scenario.id),
-                attribution_data={
-                    "parent_collection": "attack",
-                    "parent_eval_hash": "eval-1",
-                    "seed_group_id": "persisted-seed",
-                },
-            )
-        ]
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario]))
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    attack_result_id=str(uuid.UUID(int=41)),
+                    conversation_id="conversation-41",
+                    objective="objective",
+                    outcome=AttackOutcome.SUCCESS,
+                    execution_time_ms=1,
+                    timestamp=timestamp,
+                    attribution_parent_id=str(scenario.id),
+                    attribution_data={
+                        "parent_collection": "attack",
+                        "parent_eval_hash": "eval-1",
+                        "seed_group_id": "persisted-seed",
+                    },
+                )
+            ]
+        )
     )
 
-    _, aggregates, _ = sqlite_instance.get_scenario_run_history_page(limit=25)
+    _, aggregates, _ = await sqlite_instance.get_scenario_run_history_page_async(limit=25)
 
     assert aggregates[str(scenario.id)].unit_count == 0
 
 
-def test_history_aggregates_tolerate_malformed_plan_shapes(sqlite_instance: MemoryInterface) -> None:
+async def test_history_aggregates_tolerate_malformed_plan_shapes(sqlite_instance: MemoryInterface) -> None:
     """Malformed plan collections fall back to legacy aggregation instead of breaking history."""
     timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     scenario = make_scenario_result(
@@ -519,40 +527,44 @@ def test_history_aggregates_tolerate_malformed_plan_shapes(sqlite_instance: Memo
         attack_results={},
         objective_target_identifier=get_mock_target_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            AttackResult(
-                attack_result_id=str(uuid.UUID(int=51)),
-                conversation_id="conversation-51",
-                objective="objective",
-                outcome=AttackOutcome.SUCCESS,
-                execution_time_ms=1,
-                timestamp=timestamp,
-                attribution_parent_id=str(scenario.id),
-                attribution_data={"parent_collection": "attack", "seed_group_id": "seed"},
-            )
-        ]
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario]))
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    attack_result_id=str(uuid.UUID(int=51)),
+                    conversation_id="conversation-51",
+                    objective="objective",
+                    outcome=AttackOutcome.SUCCESS,
+                    execution_time_ms=1,
+                    timestamp=timestamp,
+                    attribution_parent_id=str(scenario.id),
+                    attribution_data={"parent_collection": "attack", "seed_group_id": "seed"},
+                )
+            ]
+        )
     )
 
-    _, aggregates, _ = sqlite_instance.get_scenario_run_history_page(limit=25)
+    _, aggregates, _ = await sqlite_instance.get_scenario_run_history_page_async(limit=25)
 
     assert aggregates[str(scenario.id)].unit_count == 0
-    legacy_aggregates = sqlite_instance.get_scenario_history_aggregates(scenario_result_ids=[str(scenario.id)])
+    legacy_aggregates = await sqlite_instance.get_scenario_history_aggregates_async(
+        scenario_result_ids=[str(scenario.id)]
+    )
     assert legacy_aggregates[str(scenario.id)].unit_count == 1
 
 
-def test_history_aggregates_fill_zero_for_runs_without_attempts(sqlite_instance: MemoryInterface) -> None:
+async def test_history_aggregates_fill_zero_for_runs_without_attempts(sqlite_instance: MemoryInterface) -> None:
     """Runs without persisted attempts still receive an aggregate entry."""
     scenario_result_id = str(uuid.UUID(int=30))
 
-    aggregates = sqlite_instance.get_scenario_history_aggregates(scenario_result_ids=[scenario_result_id])
+    aggregates = await sqlite_instance.get_scenario_history_aggregates_async(scenario_result_ids=[scenario_result_id])
 
     assert aggregates[scenario_result_id].unit_count == 0
     assert aggregates[scenario_result_id].latest_attempt_timestamp is None
 
 
-def test_legacy_label_hook_is_constructible_and_composes_multi_value_semantics(
+async def test_legacy_label_hook_is_constructible_and_composes_multi_value_semantics(
     sqlite_instance: MemoryInterface,
 ) -> None:
     timestamp = datetime(2026, 8, 7, tzinfo=UTC)
@@ -570,7 +582,7 @@ def test_legacy_label_hook_is_constructible_and_composes_multi_value_semantics(
         state=ScenarioRunState.COMPLETED,
         labels={"operator": "carol", "operation": "nightly"},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[included, excluded])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[included, excluded]))
     legacy = object.__new__(_LegacyScenarioLabelMemory)
     condition = legacy._get_scenario_result_labels_condition(
         labels={"operator": ["alice", "bob"], "operation": "nightly"}
@@ -583,7 +595,7 @@ def test_legacy_label_hook_is_constructible_and_composes_multi_value_semantics(
     assert ids == [included.id]
 
 
-def test_nonterminal_state_projection_is_bounded_and_never_hydrates_results(
+async def test_nonterminal_state_projection_is_bounded_and_never_hydrates_results(
     sqlite_instance: MemoryInterface,
 ) -> None:
     timestamp = datetime(2026, 8, 7, tzinfo=UTC)
@@ -608,17 +620,17 @@ def test_nonterminal_state_projection_is_bounded_and_never_hydrates_results(
         state=ScenarioRunState.COMPLETED,
         labels={},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[queued, running, completed])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[queued, running, completed]))
 
     with (
         patch.object(ScenarioResultEntry, "get_scenario_result", side_effect=AssertionError("hydrated ScenarioResult")),
         patch.object(AttackResultEntry, "get_attack_result", side_effect=AssertionError("hydrated AttackResult")),
     ):
-        first, has_more = sqlite_instance.get_scenario_run_state_page(
+        first, has_more = await sqlite_instance.get_scenario_run_state_page_async(
             states=[ScenarioRunState.QUEUED, ScenarioRunState.IN_PROGRESS],
             limit=1,
         )
-        second, second_has_more = sqlite_instance.get_scenario_run_state_page(
+        second, second_has_more = await sqlite_instance.get_scenario_run_state_page_async(
             states=[ScenarioRunState.QUEUED, ScenarioRunState.IN_PROGRESS],
             after_id=first[-1].scenario_result_id,
             limit=1,
@@ -633,18 +645,20 @@ def test_nonterminal_state_projection_is_bounded_and_never_hydrates_results(
 
 
 @pytest.mark.parametrize("limit", [0, 501])
-def test_nonterminal_state_projection_rejects_out_of_range_limit(
+async def test_nonterminal_state_projection_rejects_out_of_range_limit(
     sqlite_instance: MemoryInterface,
     limit: int,
 ) -> None:
     with pytest.raises(ValueError, match="between 1 and 500"):
-        sqlite_instance.get_scenario_run_state_page(
-            states=[ScenarioRunState.QUEUED],
-            limit=limit,
+        (
+            await sqlite_instance.get_scenario_run_state_page_async(
+                states=[ScenarioRunState.QUEUED],
+                limit=limit,
+            )
         )
 
 
-def test_state_and_metadata_update_persists_scheduler_start_atomically(
+async def test_state_and_metadata_update_persists_scheduler_start_atomically(
     sqlite_instance: MemoryInterface,
 ) -> None:
     timestamp = datetime(2026, 8, 7, tzinfo=UTC)
@@ -656,26 +670,30 @@ def test_state_and_metadata_update_persists_scheduler_start_atomically(
         labels={},
         registry_name="registered.scenario",
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario]))
 
-    sqlite_instance.update_scenario_run_state_and_metadata_fields(
-        scenario_result_id=str(scenario.id),
-        scenario_run_state=ScenarioRunState.IN_PROGRESS,
-        metadata_fields={"started_at": timestamp.isoformat()},
+    (
+        await sqlite_instance.update_scenario_run_state_and_metadata_fields_async(
+            scenario_result_id=str(scenario.id),
+            scenario_run_state=ScenarioRunState.IN_PROGRESS,
+            metadata_fields={"started_at": timestamp.isoformat()},
+        )
     )
 
-    stored = sqlite_instance.get_scenario_result_header(scenario_result_id=str(scenario.id))
+    stored = await sqlite_instance.get_scenario_result_header_async(scenario_result_id=str(scenario.id))
     assert stored is not None
     assert stored.scenario_run_state is ScenarioRunState.IN_PROGRESS
     assert stored.metadata["started_at"] == timestamp.isoformat()
     assert SCENARIO_RUN_PLAN_METADATA_KEY in stored.metadata
 
 
-def test_metadata_field_update_rejects_unknown_run(sqlite_instance: MemoryInterface) -> None:
+async def test_metadata_field_update_rejects_unknown_run(sqlite_instance: MemoryInterface) -> None:
     with pytest.raises(ValueError, match="not found in memory"):
-        sqlite_instance.update_scenario_metadata_fields(
-            scenario_result_id=str(uuid.UUID(int=44)),
-            fields={"started_at": datetime(2026, 8, 7, tzinfo=UTC).isoformat()},
+        (
+            await sqlite_instance.update_scenario_metadata_fields_async(
+                scenario_result_id=str(uuid.UUID(int=44)),
+                fields={"started_at": datetime(2026, 8, 7, tzinfo=UTC).isoformat()},
+            )
         )
 
 
@@ -689,7 +707,7 @@ def test_default_started_at_projection_is_null() -> None:
     assert expression.compile().params == {"param_1": None}
 
 
-def test_unique_scenario_labels_are_grouped_for_filter_options(sqlite_instance: MemoryInterface) -> None:
+async def test_unique_scenario_labels_are_grouped_for_filter_options(sqlite_instance: MemoryInterface) -> None:
     timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     scenarios = [
         _make_scenario(
@@ -701,9 +719,9 @@ def test_unique_scenario_labels_are_grouped_for_filter_options(sqlite_instance: 
         )
         for index, operator in ((20, "alice"), (21, "bob"), (22, "alice"))
     ]
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=scenarios)
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=scenarios))
 
-    assert sqlite_instance.get_unique_scenario_labels() == {
+    assert (await sqlite_instance.get_unique_scenario_labels_async()) == {
         "operation": ["nightly"],
         "operator": ["alice", "bob"],
     }

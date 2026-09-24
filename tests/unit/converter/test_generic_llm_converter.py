@@ -20,7 +20,7 @@ from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 @pytest.fixture
 def mock_target() -> PromptTarget:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     response = Message(
         message_pieces=[
             MessagePiece(
@@ -38,9 +38,9 @@ async def test_noise_converter_sets_system_prompt_default(mock_target) -> None:
     converter = NoiseConverter(converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt.assert_called_once()
+    mock_target.set_system_prompt_async.assert_called_once()
 
-    system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
+    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
     assert isinstance(system_arg, str)
     assert "Grammar error, Delete random letter" in system_arg
 
@@ -49,9 +49,9 @@ async def test_noise_converter_sets_system_prompt(mock_target) -> None:
     converter = NoiseConverter(converter_target=mock_target, noise="extra random periods")
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt.assert_called_once()
+    mock_target.set_system_prompt_async.assert_called_once()
 
-    system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
+    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
     assert isinstance(system_arg, str)
     assert "extra random periods" in system_arg
 
@@ -60,9 +60,9 @@ async def test_tone_converter_sets_system_prompt(mock_target) -> None:
     converter = ToneConverter(tone="formal", converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt.assert_called_once()
+    mock_target.set_system_prompt_async.assert_called_once()
 
-    system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
+    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
     assert isinstance(system_arg, str)
     assert "formal" in system_arg
 
@@ -71,9 +71,9 @@ async def test_tense_converter_sets_system_prompt(mock_target) -> None:
     converter = TenseConverter(tense="past", converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt.assert_called_once()
+    mock_target.set_system_prompt_async.assert_called_once()
 
-    system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
+    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
     assert isinstance(system_arg, str)
     assert "past" in system_arg
 
@@ -82,36 +82,36 @@ async def test_malicious_question_converter_sets_system_prompt(mock_target) -> N
     converter = MaliciousQuestionGeneratorConverter(converter_target=mock_target)
     await converter.convert_async(prompt="being awesome")
 
-    mock_target.set_system_prompt.assert_called_once()
+    mock_target.set_system_prompt_async.assert_called_once()
 
-    system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
+    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
     assert isinstance(system_arg, str)
     assert "Please act as an expert in this domain: being awesome" in system_arg
 
 
 def test_generic_llm_converter_input_supported() -> None:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     converter = LLMGenericTextConverter(converter_target=target)
     assert converter.input_supported("text") is True
     assert converter.input_supported("audio_path") is False
 
 
 def test_generic_llm_converter_user_prompt_without_objective_raises() -> None:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     user_template = MagicMock()
     with pytest.raises(ValueError):
         LLMGenericTextConverter(converter_target=target, user_prompt_template_with_objective=user_template)
 
 
 def test_generic_llm_converter_init_default_templates_empty() -> None:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     converter = LLMGenericTextConverter(converter_target=target)
     assert converter._system_prompt_template is None
     assert converter._user_prompt_template_with_objective is None
 
 
 def test_generic_llm_converter_default_no_retry_exceptions() -> None:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     converter = LLMGenericTextConverter(converter_target=target)
     assert converter._retry_exceptions == ()
 
@@ -120,7 +120,7 @@ def test_generic_llm_converter_class_attr_retry_exceptions() -> None:
     class _RetryingConverter(LLMGenericTextConverter):
         RETRY_EXCEPTIONS = (ValueError,)
 
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     converter = _RetryingConverter(converter_target=target)
     assert converter._retry_exceptions == (ValueError,)
 
@@ -129,7 +129,7 @@ def test_generic_llm_converter_instance_retry_exceptions_overrides_class_attr() 
     class _RetryingConverter(LLMGenericTextConverter):
         RETRY_EXCEPTIONS = (ValueError,)
 
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     converter = _RetryingConverter(converter_target=target, retry_exceptions=(KeyError,))
     assert converter._retry_exceptions == (KeyError,)
 
@@ -181,7 +181,7 @@ async def test_convert_async_input_validation_raises_before_set_system_prompt(mo
     converter = LLMGenericTextConverter(converter_target=mock_target, system_prompt_template=system_template)
     with pytest.raises(ValueError, match="Input type not supported"):
         await converter.convert_async(prompt="hello", input_type="image_path")
-    mock_target.set_system_prompt.assert_not_called()
+    mock_target.set_system_prompt_async.assert_not_called()
     mock_target.send_prompt_async.assert_not_called()
 
 

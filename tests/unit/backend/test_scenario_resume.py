@@ -162,8 +162,10 @@ async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) ->
         with pytest.raises(ScenarioPartialFailureException):
             await scenario.run_async()
     assert scenario._scenario_result_id is not None
-    result = CentralMemory.get_memory_instance().get_scenario_results(
-        scenario_result_ids=[scenario._scenario_result_id]
+    result = (
+        await CentralMemory.get_memory_instance().get_scenario_results_async(
+            scenario_result_ids=[scenario._scenario_result_id]
+        )
     )[0]
     assert result.scenario_run_state == ScenarioRunState.FAILED
     return result
@@ -175,7 +177,7 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
     service, target = resume_environment
     stored = await _create_failed_run_async(target=target, legacy=False)
     run_id = str(stored.id)
-    before = CentralMemory.get_memory_instance().get_attack_results(scenario_result_id=run_id)
+    before = await CentralMemory.get_memory_instance().get_attack_results_async(scenario_result_id=run_id)
     completed_ids = {result.attack_result_id for result in before if result.outcome != AttackOutcome.ERROR}
     assert len(completed_ids) == 1
     failed_result = next(result for result in before if result.outcome == AttackOutcome.ERROR)
@@ -201,8 +203,8 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
     assert request.labels == _LABELS
     assert response.scenario_result_id == run_id
     assert target.prompt_sent == [_SECOND_OBJECTIVE]
-    after = CentralMemory.get_memory_instance().get_scenario_results(scenario_result_ids=[run_id])[0]
-    results = CentralMemory.get_memory_instance().get_attack_results(scenario_result_id=run_id)
+    after = (await CentralMemory.get_memory_instance().get_scenario_results_async(scenario_result_ids=[run_id]))[0]
+    results = await CentralMemory.get_memory_instance().get_attack_results_async(scenario_result_id=run_id)
     assert after.scenario_run_state == ScenarioRunState.COMPLETED
     assert after.labels == _LABELS
     assert after.scenario_identifier.params["marker"] == "original"
@@ -213,9 +215,9 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
         result.operator == _LABELS["operator"] and result.operation == _LABELS["operation"] for result in results
     )
     assert sum(result.objective == _FIRST_OBJECTIVE for result in results) == 1
-    assert len(CentralMemory.get_memory_instance().get_scenario_results()) == 1
-    detail = await asyncio.to_thread(service.get_run, scenario_result_id=run_id)
-    history = await asyncio.to_thread(service.list_runs)
+    assert len(await CentralMemory.get_memory_instance().get_scenario_results_async()) == 1
+    detail = await service.get_run_async(scenario_result_id=run_id)
+    history = await service.list_runs_async()
     assert detail is not None
     assert detail.status == ScenarioRunState.COMPLETED
     assert detail.error is None
@@ -244,9 +246,7 @@ async def test_resume_without_launch_metadata_is_rejected_without_initialization
         with pytest.raises(ScenarioRunConflictError, match="older run.*cannot be resumed through the GUI"):
             await service.resume_run_async(scenario_result_id=run_id)
         prepare.assert_not_called()
-    after = await asyncio.to_thread(
-        CentralMemory.get_memory_instance().get_scenario_results, scenario_result_ids=[run_id]
-    )
+    after = await CentralMemory.get_memory_instance().get_scenario_results_async(scenario_result_ids=[run_id])
     assert after[0].model_dump() == stored.model_dump()
     assert service.get_queue_snapshot().active is None
     assert service.get_queue_snapshot().queued == []
@@ -260,7 +260,7 @@ async def test_resume_failure_preserves_saved_results_async(
     service, target = resume_environment
     stored = await _create_failed_run_async(target=target, legacy=False)
     run_id = str(stored.id)
-    before = CentralMemory.get_memory_instance().get_attack_results(scenario_result_id=run_id)
+    before = await CentralMemory.get_memory_instance().get_attack_results_async(scenario_result_id=run_id)
     target.prompt_sent.clear()
     if failure == "initialization":
         with patch.object(_OfflineResumeScenario, "VERSION", 2):
@@ -270,8 +270,8 @@ async def test_resume_failure_preserves_saved_results_async(
         with patch.object(target, "_send_prompt_to_target_async", side_effect=RuntimeError("Still unavailable")):
             await service.resume_run_async(scenario_result_id=run_id)
             await _wait_for_idle_async(service)
-    after = CentralMemory.get_memory_instance().get_scenario_results(scenario_result_ids=[run_id])[0]
-    results = CentralMemory.get_memory_instance().get_attack_results(scenario_result_id=run_id)
+    after = (await CentralMemory.get_memory_instance().get_scenario_results_async(scenario_result_ids=[run_id]))[0]
+    results = await CentralMemory.get_memory_instance().get_attack_results_async(scenario_result_id=run_id)
     assert after.scenario_run_state == ScenarioRunState.FAILED
     assert {result.attack_result_id for result in results}.issuperset(result.attack_result_id for result in before)
     assert target.prompt_sent == []
@@ -299,8 +299,10 @@ async def test_resume_rejects_ineligible_state_before_initializing_async(
 ) -> None:
     service, target = resume_environment
     stored = await _create_failed_run_async(target=target, legacy=False)
-    CentralMemory.get_memory_instance().update_scenario_run_state(
-        scenario_result_id=str(stored.id), scenario_run_state=state
+    (
+        await CentralMemory.get_memory_instance().update_scenario_run_state_async(
+            scenario_result_id=str(stored.id), scenario_run_state=state
+        )
     )
     with patch.object(service, "_prepare_run_blocking") as prepare:
         with pytest.raises(ScenarioRunConflictError, match="cannot resume"):
@@ -335,9 +337,7 @@ async def test_resume_rejects_target_drift_without_changing_saved_results_async(
     with patch.object(target, "get_identifier", return_value=changed_identifier):
         with pytest.raises(ValueError, match="does not match the current"):
             await service.resume_run_async(scenario_result_id=run_id)
-    after = await asyncio.to_thread(
-        CentralMemory.get_memory_instance().get_scenario_results, scenario_result_ids=[run_id]
-    )
+    after = await CentralMemory.get_memory_instance().get_scenario_results_async(scenario_result_ids=[run_id])
     assert after[0].model_dump() == stored.model_dump()
     assert target.prompt_sent == []
 
@@ -391,7 +391,7 @@ async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
             )
         )
         await _wait_for_idle_async(service)
-    stored = CentralMemory.get_memory_instance().get_scenario_result_header(
+    stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
         scenario_result_id=response.scenario_result_id
     )
     assert stored is not None
@@ -455,8 +455,10 @@ async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
     service, target = resume_environment
     stored = await _create_failed_run_async(target=target, legacy=False)
     del stored.metadata[_LAUNCH_REQUEST_METADATA_KEY][missing]
-    CentralMemory.get_memory_instance().update_scenario_metadata(
-        scenario_result_id=str(stored.id), metadata=stored.metadata
+    (
+        await CentralMemory.get_memory_instance().update_scenario_metadata_async(
+            scenario_result_id=str(stored.id), metadata=stored.metadata
+        )
     )
     with patch.object(service, "_prepare_run_blocking") as prepare:
         with pytest.raises(ScenarioRunConflictError, match="incomplete"):
@@ -482,8 +484,10 @@ async def test_resume_restores_selected_adversarial_target_async(
     adversarial = MockPromptTarget()
     TargetRegistry.get_registry_singleton().instances.register(adversarial, name="saved-adversarial")
     stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["adversarial_target_name"] = "saved-adversarial"
-    CentralMemory.get_memory_instance().update_scenario_metadata(
-        scenario_result_id=str(stored.id), metadata=stored.metadata
+    (
+        await CentralMemory.get_memory_instance().update_scenario_metadata_async(
+            scenario_result_id=str(stored.id), metadata=stored.metadata
+        )
     )
     with patch.object(service, "_enqueue_run_async", wraps=service._enqueue_run_async) as enqueue:
         await service.resume_run_async(scenario_result_id=str(stored.id))
@@ -517,7 +521,7 @@ async def test_resume_invalid_saved_configuration_is_rejected_before_initializat
     stored = await _create_failed_run_async(target=target, legacy=False)
     stored.metadata[_LAUNCH_REQUEST_METADATA_KEY][field] = value
     with (
-        patch.object(service._memory, "get_scenario_result_header", return_value=stored),
+        patch.object(service._memory, "get_scenario_result_header_async", return_value=stored),
         patch.object(service, "_prepare_run_blocking") as prepare,
     ):
         with pytest.raises(ScenarioRunConflictError, match="incomplete|invalid|empty"):
@@ -533,7 +537,7 @@ async def test_resume_missing_canonical_selection_never_uses_current_defaults_as
     stored = await _create_failed_run_async(target=target, legacy=False)
     stored.scenario_identifier = stored.scenario_identifier.model_copy(update={missing: None})
     with (
-        patch.object(service._memory, "get_scenario_result_header", return_value=stored),
+        patch.object(service._memory, "get_scenario_result_header_async", return_value=stored),
         patch.object(service, "_prepare_run_blocking") as prepare,
     ):
         with pytest.raises(ScenarioRunConflictError, match="missing techniques or datasets"):
@@ -595,7 +599,7 @@ async def test_explicit_start_still_resumes_older_runs_async(
     await _wait_for_idle_async(service)
     assert response.scenario_result_id == str(stored.id)
     assert target.prompt_sent == [_SECOND_OBJECTIVE]
-    detail = await asyncio.to_thread(service.get_run, scenario_result_id=str(stored.id))
+    detail = await service.get_run_async(scenario_result_id=str(stored.id))
     assert detail is not None
     assert detail.status == ScenarioRunState.COMPLETED
     assert detail.error is None
@@ -608,8 +612,10 @@ async def test_original_start_route_also_guards_resume_admission_async(
 ) -> None:
     service, target = resume_environment
     stored = await _create_failed_run_async(target=target, legacy=False)
-    CentralMemory.get_memory_instance().update_scenario_run_state(
-        scenario_result_id=str(stored.id), scenario_run_state=state
+    (
+        await CentralMemory.get_memory_instance().update_scenario_run_state_async(
+            scenario_result_id=str(stored.id), scenario_run_state=state
+        )
     )
     with patch.object(service, "_prepare_run_blocking") as prepare:
         with pytest.raises(ScenarioRunConflictError):
@@ -639,7 +645,7 @@ async def test_launch_saves_declared_baseline_default_async(
             request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, max_concurrency=1)
         )
         await _wait_for_idle_async(service)
-    stored = CentralMemory.get_memory_instance().get_scenario_result_header(
+    stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
         scenario_result_id=response.scenario_result_id
     )
     assert stored is not None

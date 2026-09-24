@@ -14,6 +14,8 @@ import numpy as np
 from colorama import Fore, Style
 from pydantic import Field
 
+from pyrit.common.async_compatibility import legacy_sync_override
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.text_helper import escape_control_characters
 from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.exceptions import MissingPromptPlaceholderException, pyrit_placeholder_retry
@@ -280,8 +282,25 @@ class FuzzerResult(PromptGeneratorStrategyResult):
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
             width (int): Maximum width for text wrapping. Defaults to 100.
         """
+        print_deprecation_message(
+            old_item="FuzzerResult.print_formatted",
+            new_item="FuzzerResult.print_formatted_async",
+            removed_in="1.4.0",
+        )
         printer = FuzzerResultPrinter(enable_colors=enable_colors, width=width)
         printer.print_result(self)
+
+    @legacy_sync_override(lambda: FuzzerResult.print_formatted)
+    async def print_formatted_async(self, *, enable_colors: bool = True, width: int = 100) -> None:
+        """
+        Print the result using FuzzerResultPrinter with custom formatting options.
+
+        Args:
+            enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
+            width (int): Maximum width for text wrapping. Defaults to 100.
+        """
+        printer = FuzzerResultPrinter(enable_colors=enable_colors, width=width)
+        (await printer.print_result_async(self))
 
     def print_templates(self) -> None:
         """
@@ -370,10 +389,29 @@ class FuzzerResultPrinter:
         Args:
             result (FuzzerResult): The fuzzer result to print.
         """
+        print_deprecation_message(
+            old_item="FuzzerResultPrinter.print_result",
+            new_item="FuzzerResultPrinter.print_result_async",
+            removed_in="1.4.0",
+        )
         self._print_header(result)
         self._print_summary(result)
         self._print_templates(result)
         self._print_conversations(result)
+        self._print_footer()
+
+    @legacy_sync_override(lambda: FuzzerResultPrinter.print_result)
+    async def print_result_async(self, result: FuzzerResult) -> None:
+        """
+        Print the complete fuzzer result to console.
+
+        Args:
+            result (FuzzerResult): The fuzzer result to print.
+        """
+        self._print_header(result)
+        self._print_summary(result)
+        self._print_templates(result)
+        (await self._print_conversations_async(result))
         self._print_footer()
 
     def _print_header(self, result: FuzzerResult) -> None:
@@ -472,6 +510,56 @@ class FuzzerResultPrinter:
 
                 # Print scores if available
                 scores = self._memory.get_prompt_scores(prompt_ids=[str(message.id)])
+                if scores:
+                    score = scores[0]
+                    try:
+                        score_value = str(score.get_value())
+                    except UndeterminedScoreError:
+                        score_value = "undetermined"
+                    self._print_colored(f"{self._indent * 3} Score: {score_value} | {score.score_rationale}", Fore.CYAN)
+                print()
+
+    @legacy_sync_override(lambda: FuzzerResultPrinter._print_conversations)
+    async def _print_conversations_async(self, result: FuzzerResult) -> None:
+        """
+        Print the conversations from successful jailbreaks.
+
+        Args:
+            result (FuzzerResult): The fuzzer result containing conversation IDs.
+        """
+        self._print_section_header("Jailbreak Conversations")
+
+        if not result.jailbreak_conversation_ids:
+            self._print_colored(f"{self._indent}❌ No jailbreak conversations found.", Fore.RED)
+            return
+
+        self._print_colored(
+            f"{self._indent} Found {len(result.jailbreak_conversation_ids)} jailbreak conversation(s):",
+            Style.BRIGHT,
+            Fore.GREEN,
+        )
+
+        for i, conversation_id in enumerate(result.jailbreak_conversation_ids, 1):
+            print()
+            self._print_colored(f"{self._indent}Conversation {i} (ID: {conversation_id}):", Style.BRIGHT, Fore.MAGENTA)
+            self._print_colored("─" * (self._width - len(self._indent)), Fore.MAGENTA)
+
+            target_messages = await self._memory.get_message_pieces_async(conversation_id=str(conversation_id))
+
+            if not target_messages:
+                self._print_colored(f"{self._indent * 2}No conversation data found", Fore.YELLOW)
+                continue
+
+            for message in target_messages:
+                if message.api_role == "user":
+                    self._print_colored(f"{self._indent * 2} USER:", Style.BRIGHT, Fore.BLUE)
+                    self._print_wrapped_text(message.converted_value, Fore.BLUE)
+                else:
+                    self._print_colored(f"{self._indent * 2} {message.api_role.upper()}:", Style.BRIGHT, Fore.YELLOW)
+                    self._print_wrapped_text(message.converted_value, Fore.YELLOW)
+
+                # Print scores if available
+                scores = await self._memory.get_prompt_scores_async(prompt_ids=[str(message.id)])
                 if scores:
                     score = scores[0]
                     try:

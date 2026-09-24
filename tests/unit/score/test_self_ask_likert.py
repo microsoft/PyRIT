@@ -13,6 +13,7 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import LikertScale, LikertScaleEntry, LikertScalePaths, SelfAskLikertScorer
 
 
@@ -44,7 +45,7 @@ def scorer_likert_response() -> Message:
 
 
 def _mock_target(*, response: Message | None = None) -> MagicMock:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     if response is not None:
         target.send_prompt_async = AsyncMock(return_value=[response])
@@ -94,7 +95,7 @@ async def test_likert_scorer_sets_system_prompt_and_scores(
 
     scores = await scorer.score_text_async("No harm")
 
-    target.set_system_prompt.assert_called_once()
+    target.set_system_prompt_async.assert_called_once()
     assert likert_scale.category in scorer._system_prompt
     assert "No harm" in scorer._system_prompt
     assert scores[0].score_value == "0.0"
@@ -166,7 +167,7 @@ async def test_likert_scorer_adds_to_memory(scorer_likert_response: Message, lik
         scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=likert_scale)
         await scorer.score_text_async(text="string")
 
-    memory.add_scores_to_memory.assert_called_once()
+    memory.add_scores_to_memory_async.assert_called_once()
 
 
 async def test_likert_scorer_bad_json_retries(patch_central_database, likert_scale: LikertScale):

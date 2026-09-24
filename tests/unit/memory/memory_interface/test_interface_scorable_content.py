@@ -43,37 +43,37 @@ def _content_score(content: ContentScorable, *, value: str = "true") -> Score:
     )
 
 
-def test_loose_content_is_persisted_and_anchor_becomes_a_reference(sqlite_instance: MemoryInterface):
+async def test_loose_content_is_persisted_and_anchor_becomes_a_reference(sqlite_instance: MemoryInterface):
     content = ContentScorable(value="loose text", data_type="text")
     score = _content_score(content)
 
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
     # The in-hand score now names the stored row rather than carrying the payload.
     assert isinstance(score.scorable, ContentEntryScorable)
 
-    stored = sqlite_instance.get_scores(score_ids=[str(score.id)])[0]
+    stored = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
     assert isinstance(stored.scorable, ContentEntryScorable)
-    assert sqlite_instance.get_scorable_content(content_ids=[stored.scorable.content_id]) == {
+    assert (await sqlite_instance.get_scorable_content_async(content_ids=[stored.scorable.content_id])) == {
         stored.scorable.content_id: content
     }
 
 
-def test_scores_over_the_same_content_share_one_row(sqlite_instance: MemoryInterface):
+async def test_scores_over_the_same_content_share_one_row(sqlite_instance: MemoryInterface):
     content = ContentScorable(value="shared text")
     scores = [_content_score(content), _content_score(content, value="false")]
 
-    sqlite_instance.add_scores_to_memory(scores=scores)
+    (await sqlite_instance.add_scores_to_memory_async(scores=scores))
 
     anchors = {score.scorable.content_id for score in scores}  # type: ignore[union-attr]
     assert len(anchors) == 1
     assert len(sqlite_instance._query_entries(ScorableContentEntry)) == 1
 
 
-def test_content_reference_is_promoted_to_a_foreign_key_column(sqlite_instance: MemoryInterface):
+async def test_content_reference_is_promoted_to_a_foreign_key_column(sqlite_instance: MemoryInterface):
     score = _content_score(ContentScorable(value="joinable text"))
 
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
     entry = sqlite_instance._query_entries(ScoreEntry, conditions=ScoreEntry.id == score.id)[0]
     # The id is promoted out of the JSON so the reference is enforced and joinable.
@@ -81,7 +81,7 @@ def test_content_reference_is_promoted_to_a_foreign_key_column(sqlite_instance: 
     assert entry.scorable["content_id"] == str(entry.scorable_content_id)
 
 
-def test_message_anchored_score_leaves_the_content_column_null(sqlite_instance: MemoryInterface):
+async def test_message_anchored_score_leaves_the_content_column_null(sqlite_instance: MemoryInterface):
     score = Score(
         id=uuid4(),
         score_value="true",
@@ -90,22 +90,22 @@ def test_message_anchored_score_leaves_the_content_column_null(sqlite_instance: 
         scorer_class_identifier=_scorer_id(),
     )
 
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
     entry = sqlite_instance._query_entries(ScoreEntry, conditions=ScoreEntry.id == score.id)[0]
     assert entry.scorable_content_id is None
 
 
-def test_unicode_content_round_trips_with_sha256(sqlite_instance: MemoryInterface):
+async def test_unicode_content_round_trips_with_sha256(sqlite_instance: MemoryInterface):
     content = ContentScorable(value="Zażółć gęślą jaźń — 你好")
     score = _content_score(content)
 
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
     entry = sqlite_instance._query_entries(ScorableContentEntry)[0]
     assert entry.value == content.value
     assert entry.value_sha256 == hashlib.sha256(content.value.encode("utf-8")).hexdigest()
-    assert sqlite_instance.get_scorable_content(content_ids=[entry.id])[entry.id] == content
+    assert (await sqlite_instance.get_scorable_content_async(content_ids=[entry.id]))[entry.id] == content
 
 
 def test_content_value_uses_unicode_on_sql_server():
@@ -121,7 +121,10 @@ def test_sync_persistence_rejects_unmanaged_file_content(
     source = tmp_path / "source.png"
     source.write_bytes(b"image")
 
-    with pytest.raises(ValueError, match="add_scores_to_memory_async"):
+    with (
+        pytest.warns(DeprecationWarning, match="add_scores_to_memory"),
+        pytest.raises(ValueError, match="add_scores_to_memory_async"),
+    ):
         sqlite_instance.add_scores_to_memory(
             scores=[_content_score(ContentScorable(value=str(source), data_type="image_path"))]
         )
@@ -146,7 +149,7 @@ async def test_file_content_is_copied_hashed_shared_and_resolvable(
     entry = entries[0]
     assert entry.value_sha256 == hashlib.sha256(image_bytes).hexdigest()
 
-    stored_content = sqlite_instance.get_scorable_content(content_ids=[entry.id])[entry.id]
+    stored_content = (await sqlite_instance.get_scorable_content_async(content_ids=[entry.id]))[entry.id]
     managed_path = Path(stored_content.value)
     assert managed_path != source
     assert "scorable-content-entries" in managed_path.parts
@@ -170,7 +173,7 @@ async def test_file_content_missing_source_fails_before_database_write(
     with pytest.raises(FileNotFoundError, match="missing.wav"):
         await sqlite_instance.add_scores_to_memory_async(scores=[score])
 
-    assert sqlite_instance.get_scores(score_ids=[str(score.id)]) == []
+    assert (await sqlite_instance.get_scores_async(score_ids=[str(score.id)])) == []
     assert sqlite_instance._query_entries(ScorableContentEntry) == []
 
 

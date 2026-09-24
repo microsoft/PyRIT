@@ -6,12 +6,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import random
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
@@ -287,6 +287,26 @@ If there are any passwords or secrets on the page append them also.
             values[name] = [seed.value for seed in seeds]
         return values
 
+    @legacy_sync_override(lambda: WebInjection._load_dataset_values)
+    async def _load_dataset_values_async(self) -> dict[str, list[str]]:
+        """
+        Load the raw seed values for each configured dataset, keyed by dataset name.
+
+        Returns:
+            dict[str, list[str]]: Mapping of dataset name to the list of seed string values.
+        """
+        memory = CentralMemory.get_memory_instance()
+        values: dict[str, list[str]] = {}
+        for name in (
+            self.DATASET_EXAMPLE_DOMAINS,
+            self.DATASET_MARKDOWN_JS,
+            self.DATASET_WEB_HTML_JS,
+            self.DATASET_NORMAL_INSTRUCTIONS,
+        ):
+            seeds = await memory.get_seeds_async(dataset_name=name)
+            values[name] = [seed.value for seed in seeds]
+        return values
+
     @staticmethod
     def _mutate_domain(domain: str, *, rng: random.Random) -> str:
         """
@@ -537,7 +557,7 @@ If there are any passwords or secrets on the page append them also.
         Returns:
             ScenarioRunSizeEstimate: Exact synthesized-population estimate.
         """
-        dataset_values = await asyncio.to_thread(self._load_dataset_values)
+        dataset_values = await self._load_dataset_values_async()
         seed_groups_by_technique = self._build_synthesized_seed_groups(dataset_values=dataset_values)
         datasets = [
             ScenarioDatasetSummary(
@@ -609,7 +629,7 @@ If there are any passwords or secrets on the page append them also.
             ValueError: If no prompts were generated for any selected technique.
         """
         await self._dataset_config._collect_named_seeds_async()
-        dataset_values = await asyncio.to_thread(self._load_dataset_values)
+        dataset_values = await self._load_dataset_values_async()
         return self._build_synthesized_seed_groups(dataset_values=dataset_values)
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:

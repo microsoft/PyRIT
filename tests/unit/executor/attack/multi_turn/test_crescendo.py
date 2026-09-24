@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
@@ -21,6 +22,7 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     CrescendoAttackResult,
 )
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
     AttackOutcome,
@@ -33,7 +35,6 @@ from pyrit.models import (
     ScoreType,
     SeedPrompt,
 )
-from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, SelfAskRefusalScorer, TrueFalseScorer
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
@@ -63,7 +64,7 @@ def create_mock_chat_target(*, name: str = "MockChatTarget") -> MagicMock:
     """
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
-    target.set_system_prompt = MagicMock()
+    target.set_system_prompt_async = AsyncMock()
     target.get_identifier.return_value = _mock_target_id(name)
     # Sensible default for the _ModalityFeedbackRouter: text-only target. Tests
     # that need multimodal behavior override input_modalities on their own copy.
@@ -181,7 +182,7 @@ def mock_refusal_scorer() -> MagicMock:
 
 @pytest.fixture
 def mock_prompt_normalizer() -> MagicMock:
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.send_prompt_async = AsyncMock()
     return normalizer
 
@@ -307,7 +308,7 @@ class CrescendoTestHelper:
 
     @staticmethod
     def mock_memory_for_attack(attack: CrescendoAttack) -> MagicMock:
-        mock_memory = MagicMock()
+        mock_memory = MagicMock(spec=MemoryInterface)
         attack._memory = mock_memory
         return mock_memory
 
@@ -705,8 +706,8 @@ class TestSetupPhase:
             await attack._setup_async(context=basic_context)
 
         # Verify system prompt was set
-        mock_adversarial_chat.set_system_prompt.assert_called_once()
-        call_args = mock_adversarial_chat.set_system_prompt.call_args
+        mock_adversarial_chat.set_system_prompt_async.assert_called_once()
+        call_args = mock_adversarial_chat.set_system_prompt_async.call_args
         assert "Test objective" in call_args.kwargs["system_prompt"]
         assert "15" in call_args.kwargs["system_prompt"]  # Check for the max_turns value
         assert call_args.kwargs["conversation_id"] == basic_context.session.adversarial_chat_conversation_id
@@ -2278,7 +2279,7 @@ class TestAttackLifecycle:
             attack_adversarial_config=adversarial_config,
         )
 
-        mock_memory = MagicMock()
+        mock_memory = MagicMock(spec=MemoryInterface)
         attack._memory = mock_memory
 
         # Mock all lifecycle methods
@@ -2725,7 +2726,7 @@ class TestEdgeCases:
         # Verify contexts remain independent
         # Each should maintain its own state without interference
         assert setup_started == {"Objective 1", "Objective 2"}
-        calls = mock_adversarial_chat.set_system_prompt.call_args_list
+        calls = mock_adversarial_chat.set_system_prompt_async.call_args_list
         assert len(calls) == 2
         actual = {(call.kwargs["conversation_id"], call.kwargs["system_prompt"]) for call in calls}
         assert any(

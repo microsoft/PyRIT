@@ -10,8 +10,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import MappedColumn, Session
+from sqlalchemy import select
+from sqlalchemy.orm import MappedColumn
 
 from pyrit.memory import SQLiteMemory
 from pyrit.memory.memory_models import (
@@ -300,7 +300,7 @@ def test_identifier_entry_rejects_missing_promoted_scalar_column() -> None:
             Base.metadata.remove(table)
 
 
-def test_atomic_attack_identifier_graph_persists_with_result_link() -> None:
+async def test_atomic_attack_identifier_graph_persists_with_result_link(sqlite_instance: SQLiteMemory) -> None:
     target = TargetIdentifier(class_name="Target", class_module="pyrit.prompt_target", model_name="model")
     scorer = ScorerIdentifier(class_name="Scorer", class_module="pyrit.score", scorer_type="true_false")
     converter = ConverterIdentifier(
@@ -343,35 +343,28 @@ def test_atomic_attack_identifier_graph_persists_with_result_link() -> None:
     )
     result = AttackResult(conversation_id="conversation", objective="objective", atomic_attack_identifier=atomic)
 
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    from pyrit.memory import MemoryInterface
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[result])
 
-    memory = MagicMock(spec=MemoryInterface)
-    memory.get_session.side_effect = lambda: Session(engine)
-    memory._persist_identifier.side_effect = lambda *, session, identifier: MemoryInterface._persist_identifier(
-        session=session, identifier=identifier
-    )
-    MemoryInterface.add_attack_results_to_memory(memory, attack_results=[result])
+    async with await sqlite_instance.get_session_async() as session:
+        assert await session.scalar(select(AttackResultEntry.atomic_attack_identifier_hash)) == atomic.hash
+        assert await session.scalar(select(AtomicAttackIdentifierEntry.hash)) == atomic.hash
+        assert await session.scalar(select(AttackTechniqueIdentifierEntry.hash)) == technique.hash
+        assert await session.scalar(select(AttackIdentifierEntry.hash)) == attack.hash
+        assert len((await session.scalars(select(SeedIdentifierEntry))).all()) == 2
 
-    with Session(engine) as session:
-        assert session.scalar(select(AttackResultEntry.atomic_attack_identifier_hash)) == atomic.hash
-        assert session.scalar(select(AtomicAttackIdentifierEntry.hash)) == atomic.hash
-        assert session.scalar(select(AttackTechniqueIdentifierEntry.hash)) == technique.hash
-        assert session.scalar(select(AttackIdentifierEntry.hash)) == attack.hash
-        assert len(session.scalars(select(SeedIdentifierEntry)).all()) == 2
-
-        technique_edge = session.scalar(select(AttackTechniqueSeedIdentifierEntry))
+        technique_edge = await session.scalar(select(AttackTechniqueSeedIdentifierEntry))
         assert technique_edge is not None
         assert (technique_edge.position, technique_edge.seed_identifier_hash) == (0, technique_seed.hash)
-        atomic_edges = session.scalars(
-            select(AtomicAttackSeedIdentifierEntry).order_by(AtomicAttackSeedIdentifierEntry.position)
+        atomic_edges = (
+            await session.scalars(
+                select(AtomicAttackSeedIdentifierEntry).order_by(AtomicAttackSeedIdentifierEntry.position)
+            )
         ).all()
         assert [edge.seed_identifier_hash for edge in atomic_edges] == [technique_seed.hash, dataset_seed.hash]
-        request_edge = session.scalar(select(AttackRequestConverterIdentifierEntry))
+        request_edge = await session.scalar(select(AttackRequestConverterIdentifierEntry))
         assert request_edge is not None
         assert (request_edge.position, request_edge.converter_identifier_hash) == (0, converter.hash)
-        response_edge = session.scalar(select(AttackResponseConverterIdentifierEntry))
+        response_edge = await session.scalar(select(AttackResponseConverterIdentifierEntry))
         assert response_edge is not None
         assert (response_edge.position, response_edge.converter_identifier_hash) == (0, converter.hash)
 
@@ -416,11 +409,11 @@ def test_embedding_message_with_similarity_forbids_extra():
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPromptMemoryEntry:
-    def test_empty_converted_value_survives_persistence_reload(self, sqlite_instance: SQLiteMemory) -> None:
+    async def test_empty_converted_value_survives_persistence_reload(self, sqlite_instance: SQLiteMemory) -> None:
         piece = _make_message_piece(original_value="Original nonempty source", converted_value="")
-        sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+        (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece]))
 
-        recovered = sqlite_instance.get_message_pieces(prompt_ids=[str(piece.id)])
+        recovered = await sqlite_instance.get_message_pieces_async(prompt_ids=[str(piece.id)])
 
         assert len(recovered) == 1
         assert recovered[0] is not piece
