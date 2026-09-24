@@ -196,7 +196,7 @@ class HTTPXAPITarget(HTTPTarget):
                 logger.error(f"File not found: {self.file_path}. Exception: {e}")
                 raise
 
-        response_content = response.content
+        response_content = response.text
 
         # If a callback function was set, let them parse the response
         if self.callback_function:

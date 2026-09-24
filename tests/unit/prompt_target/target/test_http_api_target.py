@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from pyrit.models import Message, MessagePiece
@@ -24,8 +25,7 @@ async def test_send_prompt_async_file_upload(mock_request, patch_central_databas
     message = Message(message_pieces=[message_piece])
 
     # Mock a response simulating a file upload.
-    mock_response = MagicMock()
-    mock_response.content = b'{"message": "File uploaded successfully", "filename": "mock.pdf"}'
+    mock_response = httpx.Response(200, content=b'{"message": "File uploaded successfully", "filename": "mock.pdf"}')
     mock_request.return_value = mock_response
 
     # Create HTTPXAPITarget without passing a transport.
@@ -87,8 +87,7 @@ async def test_send_prompt_async_no_file(mock_request, patch_central_database):
     message = Message(message_pieces=[message_piece])
 
     # Mock a response simulating a standard API (non-file).
-    mock_response = MagicMock()
-    mock_response.content = b'{"status": "ok", "data": "Sample JSON response"}'
+    mock_response = httpx.Response(200, content=b'{"status": "ok", "data": "Sample JSON response"}')
     mock_request.return_value = mock_response
 
     target = HTTPXAPITarget(http_url="http://example.com/data/", method="POST", timeout=180)
@@ -102,6 +101,18 @@ async def test_send_prompt_async_no_file(mock_request, patch_central_database):
         else str(response[0])
     )
     assert "Sample JSON response" in response_text
+
+
+@patch("httpx.AsyncClient.request")
+async def test_send_prompt_async_stores_decoded_text(mock_request, patch_central_database):
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="mock", converted_value="hello")])
+    body = "R\u00e9ponse \u2014 \U0001f600"
+    mock_request.return_value = httpx.Response(200, content=body.encode("utf-8"))
+
+    target = HTTPXAPITarget(http_url="http://example.com/data/", method="POST", timeout=180)
+    response = await target.send_prompt_async(message=message)
+
+    assert response[0].get_value() == body
 
 
 @patch("httpx.AsyncClient.request")

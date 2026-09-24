@@ -67,13 +67,16 @@ def get_http_target_regex_matching_callback_function(
         Returns:
             str: parsed output from response given a regex pattern to follow
         """
+        # Search the decoded text; str(response.content) would search the bytes repr (b'...'),
+        # where non-ASCII characters and newlines appear as escape sequences.
+        response_text = response.text
         re_pattern = re.compile(key)
-        match = re.search(re_pattern, str(response.content))
+        match = re.search(re_pattern, response_text)
         if match:
             if url:
                 return url + match.group()
             return match.group()
-        return str(response.content)
+        return response_text
 
     return parse_using_regex
 
@@ -93,7 +96,9 @@ def _fetch_key(data: dict[str, Any], key: str) -> Any:
         ValueError: If any path segment is missing, so a misconfigured key
             surfaces immediately instead of silently degrading to "".
     """
-    pattern = re.compile(r"([a-zA-Z_]+)|\[(-?\d+)\]")
+    # A key segment is any run of characters other than ".", "[" and "]", so keys such as
+    # "output2" or "generated-text" are kept whole.
+    pattern = re.compile(r"([^.\[\]]+)|\[(-?\d+)\]")
     keys = pattern.findall(key)
     result: Any = data
     for key_part, index_part in keys:
