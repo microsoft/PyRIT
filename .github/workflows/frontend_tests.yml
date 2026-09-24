@@ -154,5 +154,8 @@ jobs:
       - name: Run TypeScript type check
         run: npx tsc --noEmit
 
+      - name: Check E2E discovery before generating provenance
+        run: npx playwright test --list --reporter=list
+
       - name: Build production frontend
         run: npm run build
