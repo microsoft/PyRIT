@@ -3,6 +3,8 @@
 
 """PEP 517 hooks enforcing coordinated wheel/sdist provenance."""
 
+from collections.abc import Mapping
+
 from setuptools import build_meta
 
 from build_scripts.stamp_compatibility import ROOT, stamp_source, verify_distribution
@@ -24,19 +26,30 @@ def _prepare() -> None:
         verify_distribution()
 
 
-def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
+def build_wheel(
+    wheel_directory: str,
+    config_settings: Mapping[str, str | list[str] | None] | None = None,
+    metadata_directory: str | None = None,
+) -> str:
     """Build a wheel only after validating its coordinated assets."""
     _prepare()
     return build_meta.build_wheel(wheel_directory, config_settings, metadata_directory)
 
 
-def build_sdist(sdist_directory, config_settings=None):
+def build_sdist(
+    sdist_directory: str,
+    config_settings: Mapping[str, str | list[str] | None] | None = None,
+) -> str:
     """Build an sdist containing sealed assets usable without Git or Node."""
     _prepare()
     return build_meta.build_sdist(sdist_directory, config_settings)
 
 
-def build_editable(wheel_directory, config_settings=None, metadata_directory=None):
+def build_editable(
+    wheel_directory: str,
+    config_settings: Mapping[str, str | list[str] | None] | None = None,
+    metadata_directory: str | None = None,
+) -> str:
     """Stamp developer installs without requiring a frontend build."""
     stamp_source(development=True)
     return build_meta.build_editable(wheel_directory, config_settings, metadata_directory)
