@@ -131,7 +131,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
                 # "Goal" holds the full harmful request; "Behavior" is only a short label (e.g. "Defamation").
                 goal = (item.get("Goal") or "").strip()
                 behavior = (item.get("Behavior") or "").strip()
-                category = item.get("Category", "")
+                category = item.get("Category") or ""
 
                 if not goal:
                     logger.warning("[JBB-Behaviors] Skipping item with empty goal field")
