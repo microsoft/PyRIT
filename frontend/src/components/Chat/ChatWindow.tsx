@@ -517,12 +517,14 @@ export default function ChatWindow({
   // Reload messages when activeConversationId changes
   useEffect(() => {
     if (!attackResultId || !activeConversationId) { return }
-    // Allow user-initiated switches (forceLoadRef), but skip re-loading when
-    // handleSend internally updated activeConversationId during an in-flight
-    // send — the optimistic messages are already displayed.
+    // A created-attack route can commit after its first send completes.
+    // Preserve that local result unless the user explicitly requests a refresh.
     const force = forceLoadRef.current
     forceLoadRef.current = false
-    if (!force && sendingConvIdsRef.current.has(activeConversationId)) { return }
+    if (!force && (
+      sendingConvIdsRef.current.has(activeConversationId)
+      || loadedConversationIdRef.current === activeConversationId
+    )) { return }
     loadConversation(attackResultId, activeConversationId)
   }, [activeConversationId, attackResultId, loadConversation])
 

@@ -1483,6 +1483,46 @@ describe("ChatWindow Integration", () => {
     });
   });
 
+  it("should preserve a first-send error when the created attack route commits later", async () => {
+    const user = userEvent.setup();
+    mockedMapper.buildMessagePieces.mockResolvedValue([
+      { data_type: "text", original_value: "Keep failed draft" },
+    ]);
+    mockedAttacksApi.createAttack.mockResolvedValue({
+      attack_result_id: "ar-created",
+      conversation_id: "conv-created",
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    mockedAttacksApi.addMessage.mockRejectedValue(new Error("First send failed"));
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+
+    const { rerender } = render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+    await user.type(screen.getByRole("textbox"), "Keep failed draft");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+    expect(await screen.findByText(/First send failed/)).toBeInTheDocument();
+
+    rerender(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-created"
+          conversationId="conv-created"
+          activeConversationId="conv-created"
+        />
+      </TestWrapper>
+    );
+
+    expect(mockedAttacksApi.getMessages).not.toHaveBeenCalled();
+    expect(screen.getByText(/First send failed/)).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toHaveValue("Keep failed draft");
+    expect(screen.getByRole("button", { name: /send/i })).toBeEnabled();
+  });
+
   it("should extract plain string from axios-style error response", async () => {
     const user = userEvent.setup();
 
