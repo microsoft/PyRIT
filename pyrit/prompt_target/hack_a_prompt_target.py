@@ -279,8 +279,13 @@ class HackAPromptTarget(PromptTarget):
     session_id_environment_variable: str = "HACK_A_PROMPT_SESSION_ID"
     cookie_environment_variable: str = "HACK_A_PROMPT_COOKIE"
 
-    # Prefix of the data-stream parts that carry model text, see _parse_stream.
+    # Prefixes of the data-stream parts this target reads, see _parse_stream.
+    # ``0:`` carries model text and ``3:`` carries an error the server chose to
+    # report inside a 200 response; ``d:`` and ``e:`` close a message or a step and
+    # carry the finish reason.
     _TEXT_PART_PREFIX: str = "0:"
+    _ERROR_PART_PREFIX: str = "3:"
+    _FINISH_PART_PREFIXES: tuple[str, ...] = ("d:", "e:")
 
     # The platform holds the transcript of a challenge session, so a challenge is a
     # conversation unless it is flagged one-shot. Challenges given as a raw slug carry
@@ -435,12 +440,13 @@ class HackAPromptTarget(PromptTarget):
         Args:
             conversation_id (str): The conversation id to release state for.
         """
+        # The session id is a credential, and this runs on every teardown, so it is
+        # named but never printed.
         logger.warning(
-            "Conversation %s is over, but HackAPrompt session %s is not: the platform keeps its "
-            "transcript and grades all of it together. Assign a fresh id to session_id, or build a "
-            "new target, before the next run that should be graded on its own.",
+            "Conversation %s is over, but its HackAPrompt session is not: the platform keeps the "
+            "session's transcript and grades all of it together. Assign a fresh id to session_id, "
+            "or build a new target, before the next run that should be graded on its own.",
             conversation_id,
-            self._session_id,
         )
 
     @limit_requests_per_minute
@@ -539,8 +545,14 @@ class HackAPromptTarget(PromptTarget):
         Reassemble the answer from a streamed HackAPrompt response.
 
         The platform streams one part per line. Parts prefixed with ``0:`` hold a
-        JSON-encoded piece of the answer; the remaining parts carry metadata such as
-        the finish reason and are dropped.
+        JSON-encoded piece of the answer; ``3:`` holds an error, and ``d:``/``e:``
+        close a message or a step and carry the finish reason. The remaining parts
+        carry metadata and are dropped.
+
+        The split is on the wire's ``\n`` delimiter rather than ``str.splitlines()``,
+        which also breaks at U+0085, U+2028 and U+2029. Those three are ordinary
+        characters inside a JSON string, so splitting on them would cut a valid text
+        part into fragments that no longer parse, and silently lose what it said.
 
         Args:
             response_text (str): The body of the chat response.
@@ -549,22 +561,33 @@ class HackAPromptTarget(PromptTarget):
             str: The concatenated answer.
 
         Raises:
-            ValueError: If the response carries no text part at all. A body that is not
-                empty but holds nothing to say is a turn the platform refused to answer
-                or a change of protocol, not an answer.
+            ValueError: If the stream reports an error, or finishes for the reason
+                ``"error"``, or carries no text part at all. The platform reports these
+                inside an HTTP 200, so ``raise_for_status()`` never sees them; returning
+                the text that arrived before the failure would present a truncated
+                answer as a complete one.
         """
         pieces: list[str] = []
 
-        for line in response_text.splitlines():
+        for line in response_text.split("\n"):
+            # The wire may use CRLF; the CR is not part of the JSON payload.
+            line = line.removesuffix("\r")
+
+            if line.startswith(cls._ERROR_PART_PREFIX):
+                raise ValueError(
+                    f"The chat response reported an error: {cls._decode_part(line, cls._ERROR_PART_PREFIX)!r}"
+                )
+
+            if line.startswith(cls._FINISH_PART_PREFIXES):
+                finish = cls._decode_part(line, line[:2])
+                if isinstance(finish, dict) and finish.get("finishReason") == "error":
+                    raise ValueError(f"The chat response finished with an error: {finish!r}")
+                continue
+
             if not line.startswith(cls._TEXT_PART_PREFIX):
                 continue
 
-            try:
-                piece = json.loads(line[len(cls._TEXT_PART_PREFIX) :])
-            except json.JSONDecodeError:
-                logger.warning(f"Dropping a malformed text part of the response: {line}")
-                continue
-
+            piece = cls._decode_part(line, cls._TEXT_PART_PREFIX)
             if isinstance(piece, str):
                 pieces.append(piece)
 
@@ -575,3 +598,21 @@ class HackAPromptTarget(PromptTarget):
             )
 
         return "".join(pieces)
+
+    @classmethod
+    def _decode_part(cls, line: str, prefix: str) -> Any:
+        """
+        Decode the JSON payload of one data-stream part, or return ``None``.
+
+        Args:
+            line (str): The whole line, prefix included.
+            prefix (str): The part prefix to strip.
+
+        Returns:
+            Any: The decoded payload, or ``None`` if it does not parse.
+        """
+        try:
+            return json.loads(line[len(prefix) :])
+        except json.JSONDecodeError:
+            logger.warning(f"Dropping a malformed '{prefix}' part of the response: {line}")
+            return None

@@ -68,7 +68,15 @@ for challenge in HackAPromptChallenge:
 # copied from a freshly opened challenge page — for every attack run that should be graded on its own.
 #
 # A challenge the platform does not flag as one-shot is a conversation, so multi-turn attacks such as
-# `CrescendoAttack` work against it; a one-shot challenge rejects a second turn.
+# `MultiPromptSendingAttack` and `ChunkedRequestAttack` work against it; a one-shot challenge rejects a
+# second turn.
+#
+# Attacks that rewrite the history as they go — `CrescendoAttack` among them — do not work here, and the
+# target does not pretend otherwise. Their `TARGET_REQUIREMENTS` ask for native `EDITABLE_HISTORY`, which
+# this target does not declare, so `AttackStrategy.__init__()` raises `ValueError` before anything is sent.
+# The transcript belongs to the platform: it is keyed by the session id, it is what the judges grade, and
+# nothing sent from here can edit or truncate it. Declaring the capability to get past the check would only
+# move the failure somewhere harder to read.
 
 # %%
 from pyrit.executor.attack import PromptSendingAttack

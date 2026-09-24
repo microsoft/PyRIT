@@ -214,8 +214,11 @@ async def test_hack_a_prompt_reset_conversation_warns_about_the_session(
         await hack_a_prompt_target.reset_conversation_async(conversation_id="123")
 
     assert len(caplog.records) == 2
-    assert SESSION_ID in caplog.text
     assert "session_id" in caplog.text
+    # The session id is a credential and this runs on every teardown, so the warning
+    # names the setting without printing its value.
+    assert SESSION_ID not in caplog.text
+    assert "123" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -229,6 +232,14 @@ async def test_hack_a_prompt_reset_conversation_warns_about_the_session(
         ('0:123\n0:" kept"\n', " kept"),
         ('0:{"text":"object"}\n0:" kept"\n', " kept"),
         ('0:""\n', ""),
+        # str.splitlines() also breaks at these three; the wire delimiter does not,
+        # and they are ordinary characters inside a JSON string.
+        ('0:"alpha\u2028beta"\n0:" tail"\n', "alpha\u2028beta tail"),
+        ('0:"alpha\u2029beta"\n0:" tail"\n', "alpha\u2029beta tail"),
+        ('0:"alpha\u0085beta"\n0:" tail"\n', "alpha\u0085beta tail"),
+        # An escaped newline is payload too, and CRLF framing is not.
+        ('0:"first\\nsecond"\n', "first\nsecond"),
+        ('0:"a"\r\n0:"b"\r\n', "ab"),
     ],
 )
 def test_hack_a_prompt_parses_streamed_parts(response_text: str, expected: str):
@@ -246,6 +257,23 @@ def test_hack_a_prompt_parses_streamed_parts(response_text: str, expected: str):
 )
 def test_hack_a_prompt_without_a_text_part_raises(response_text: str):
     with pytest.raises(ValueError, match="carried no '0:' text part"):
+        HackAPromptTarget._parse_stream(response_text)
+
+
+@pytest.mark.parametrize(
+    ("response_text", "match"),
+    [
+        ('0:"Hello"\n3:"Service unavailable"\n', "reported an error"),
+        ('3:"nothing arrived"\n', "reported an error"),
+        ('0:"Hi"\nd:{"finishReason":"error"}\n', "finished with an error"),
+        ('0:"Hi"\ne:{"finishReason":"error"}\n', "finished with an error"),
+    ],
+)
+def test_hack_a_prompt_stream_errors_raise(response_text: str, match: str):
+    # The platform reports these inside an HTTP 200, so raise_for_status() never sees
+    # them; returning the text that arrived first would pass a truncated answer off as
+    # a complete one.
+    with pytest.raises(ValueError, match=match):
         HackAPromptTarget._parse_stream(response_text)
 
 
