@@ -153,6 +153,7 @@ def mock_true_false_scorer():
     """Create a mock true/false scorer for testing"""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_text_async = AsyncMock()
+    scorer.prepare_expectation.side_effect = lambda *, expectation: expectation
     scorer.get_identifier.return_value = get_mock_scorer_identifier()
     return scorer
 
@@ -660,6 +661,7 @@ class TestResponseEvaluation:
                 auxiliary_scorers=attack._auxiliary_scorers,
                 objective_scorer=mock_true_false_scorer,
                 expectation=ScoringExpectation(objective="Test objective"),
+                auxiliary_expectations=[],
             )
 
     async def test_evaluate_response_without_objective_scorer_returns_none(self, mock_target, sample_response):
@@ -684,12 +686,16 @@ class TestResponseEvaluation:
                 auxiliary_scorers=attack._auxiliary_scorers,
                 objective_scorer=None,
                 expectation=ScoringExpectation(objective="Test objective"),
+                auxiliary_expectations=[],
             )
 
     async def test_evaluate_response_with_auxiliary_scorers(
         self, mock_target, mock_true_false_scorer, sample_response, success_score
     ):
         auxiliary_scorer = MagicMock(spec=Scorer)
+        auxiliary_scorer.get_condition_types.return_value = frozenset()
+        auxiliary_scorer.select_expectation.side_effect = lambda *, expectation: expectation
+        auxiliary_scorer.prepare_expectation.side_effect = lambda *, expectation: expectation
         auxiliary_score = Score(
             score_type="float_scale",
             score_value="0.8",
@@ -728,6 +734,7 @@ class TestResponseEvaluation:
                 auxiliary_scorers=[auxiliary_scorer],
                 objective_scorer=mock_true_false_scorer,
                 expectation=ScoringExpectation(objective="Test objective"),
+                auxiliary_expectations=[ScoringExpectation(objective="Test objective")],
             )
 
 

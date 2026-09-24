@@ -16,9 +16,11 @@ from pyrit.executor.attack.single_turn import (
 )
 from pyrit.executor.core import Strategy, StrategyContext
 from pyrit.models import (
+    AnswerMatches,
     AttackResult,
     Message,
     QuestionAnsweringEntry,
+    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -46,6 +48,7 @@ class QuestionAnsweringBenchmarkContext(StrategyContext):
     generated_question_prompt: str = field(default_factory=str)
     # The generated message for the benchmark
     generated_message: Message | None = None
+    generated_expectation: ScoringExpectation | None = None
 
 
 class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, AttackResult]):
@@ -84,8 +87,8 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         self,
         *,
         objective_target: PromptTarget,
+        attack_scoring_config: AttackScoringConfig,
         attack_converter_config: AttackConverterConfig | None = None,
-        attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         objective_format_string: str = _DEFAULT_OBJECTIVE_FORMAT,
         question_asking_format_string: str = _DEFAULT_QUESTION_FORMAT,
@@ -98,13 +101,22 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         Args:
             objective_target (PromptTarget): The target system to evaluate.
             attack_converter_config (AttackConverterConfig | None): Configuration for converters.
-            attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
+            attack_scoring_config (AttackScoringConfig): Required scoring configuration. Its
+                objective scorer must consume the generated ``AnswerMatches`` condition.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             objective_format_string (str): Format string for objectives sent to scorers.
             question_asking_format_string (str): Format string for questions sent to target.
             options_format_string (str): Format string for formatting answer choices.
             max_attempts_on_failure (int): Maximum number of attempts on failure.
+
+        Raises:
+            ValueError: If no objective scorer consumes ``AnswerMatches``.
         """
+        if attack_scoring_config is None or attack_scoring_config.objective_scorer is None:
+            raise ValueError("QuestionAnsweringBenchmark requires an objective scorer.")
+        if AnswerMatches not in attack_scoring_config.objective_scorer.get_condition_types():
+            raise ValueError("QuestionAnsweringBenchmark requires an objective scorer that consumes AnswerMatches.")
+
         super().__init__(
             context_type=QuestionAnsweringBenchmarkContext,
             logger=logger,
@@ -167,8 +179,16 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
         # Format the question prompt for the target
         context.generated_question_prompt = self._format_question_prompt(entry)
 
-        # Create the message with metadata
-        context.generated_message = self._create_message(entry=entry, question_prompt=context.generated_question_prompt)
+        context.generated_expectation = ScoringExpectation(
+            objective=context.generated_objective,
+            conditions=[
+                AnswerMatches(
+                    correct_answer=str(entry.get_correct_answer_text()),
+                    correct_answer_label=str(entry.correct_answer),
+                )
+            ],
+        )
+        context.generated_message = self._create_message(question_prompt=context.generated_question_prompt)
 
     async def _perform_async(self, *, context: QuestionAnsweringBenchmarkContext) -> AttackResult:
         """
@@ -189,6 +209,7 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
 
         return await self._prompt_sending_attack.execute_async(
             objective=context.generated_objective,
+            expectation=context.generated_expectation,
             next_message=context.generated_message,
             prepended_conversation=context.prepended_conversation,
             memory_labels=context.memory_labels,
@@ -226,24 +247,19 @@ class QuestionAnsweringBenchmark(Strategy[QuestionAnsweringBenchmarkContext, Att
 
         return options_text.rstrip()  # Remove trailing newline
 
-    def _create_message(self, *, entry: QuestionAnsweringEntry, question_prompt: str) -> Message:
+    def _create_message(self, *, question_prompt: str) -> Message:
         """
-        Create a message with the formatted question and metadata.
+        Create a target-facing message containing only the formatted question.
 
         Args:
-            entry (QuestionAnsweringEntry): The question answering entry.
             question_prompt (str): The formatted question prompt.
 
         Returns:
-            Message: The message for execution with metadata for scoring.
+            Message: The message for execution, without scoring criteria.
         """
         return Message.from_prompt(
             prompt=question_prompt,
             role="user",
-            prompt_metadata={
-                "correct_answer_index": str(entry.correct_answer),
-                "correct_answer": str(entry.get_correct_answer_text()),
-            },
         )
 
     async def _teardown_async(self, *, context: QuestionAnsweringBenchmarkContext) -> None:

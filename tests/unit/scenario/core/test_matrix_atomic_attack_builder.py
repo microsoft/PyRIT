@@ -171,8 +171,7 @@ class TestMatrixAdversarialForwarding:
             technique_factories={"tech": factory},
             dataset_groups={"ds": [_seed_group(objective="o1")]},
         )
-        # No adversarial_chat is forwarded into create() when the axis is collapsed.
-        assert "adversarial_chat" not in factory.create.call_args.kwargs
+        assert factory.create.call_args.kwargs["adversarial_chat"] is None
         assert result[0]._adversarial_chat is baked
 
     def test_no_target_axis_stamps_factory_resolved_adversarial_chat(self):
@@ -187,7 +186,7 @@ class TestMatrixAdversarialForwarding:
             technique_factories={"tech": factory},
             dataset_groups={"ds": [_seed_group(objective="o1")]},
         )
-        assert "adversarial_chat" not in factory.create.call_args.kwargs
+        assert factory.create.call_args.kwargs["adversarial_chat"] is None
         assert result[0]._adversarial_chat is resolved
 
 
