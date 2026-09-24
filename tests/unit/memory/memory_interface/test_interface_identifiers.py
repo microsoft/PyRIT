@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from contextlib import closing
 from dataclasses import dataclass
 
 import pytest
+from unit.mocks import run_memory_session_async
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import TargetIdentifierEntry
@@ -37,7 +37,7 @@ class IdentifierGraph:
 
 
 @pytest.fixture
-def identifier_graph(sqlite_instance: MemoryInterface) -> IdentifierGraph:
+async def identifier_graph(sqlite_instance: MemoryInterface) -> IdentifierGraph:
     objective_target = TargetIdentifier(
         class_name="ObjectiveTarget",
         class_module="tests.unit.memory",
@@ -122,11 +122,12 @@ def identifier_graph(sqlite_instance: MemoryInterface) -> IdentifierGraph:
         objective_scorer=scorer,
     )
 
-    with closing(sqlite_instance.get_session()) as session:
+    def persist_identifiers(session):
         sqlite_instance._persist_identifier(session=session, identifier=atomic_attack)
         sqlite_instance._persist_identifier(session=session, identifier=scenario)
         session.commit()
 
+    await run_memory_session_async(memory=sqlite_instance, operation=persist_identifiers)
     return IdentifierGraph(
         objective_target=objective_target,
         adversarial_target=adversarial_target,
@@ -142,7 +143,7 @@ def identifier_graph(sqlite_instance: MemoryInterface) -> IdentifierGraph:
     )
 
 
-def test_get_target_identifiers_by_hash_and_promoted_field(sqlite_instance: MemoryInterface) -> None:
+async def test_get_target_identifiers_by_hash_and_promoted_field(sqlite_instance: MemoryInterface) -> None:
     target = TargetIdentifier(
         class_name="TestTarget",
         class_module="tests.unit.memory",
@@ -150,11 +151,13 @@ def test_get_target_identifiers_by_hash_and_promoted_field(sqlite_instance: Memo
         model_name="test-model",
         supported_auth_modes=["api_key", "identity"],
     )
-    sqlite_instance.add_conversation_to_memory(
-        conversation=Conversation(conversation_id="identifier-query", target_identifier=target)
+    (
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(conversation_id="identifier-query", target_identifier=target)
+        )
     )
 
-    identifiers = sqlite_instance.get_target_identifiers(
+    identifiers = await sqlite_instance.get_target_identifiers_async(
         identifier_hashes=[target.hash],
         model_name="test-model",
         supported_auth_modes=["identity", "api_key"],
@@ -162,76 +165,92 @@ def test_get_target_identifiers_by_hash_and_promoted_field(sqlite_instance: Memo
 
     assert identifiers == [target]
     assert isinstance(identifiers[0], TargetIdentifier)
-    assert sqlite_instance.get_target_identifiers(supported_auth_modes=["api_key"]) == []
-    assert sqlite_instance.get_target_identifiers(supported_auth_modes=["API_KEY", "identity"]) == []
+    assert (await sqlite_instance.get_target_identifiers_async(supported_auth_modes=["api_key"])) == []
+    assert (await sqlite_instance.get_target_identifiers_async(supported_auth_modes=["API_KEY", "identity"])) == []
 
 
-def test_get_identifiers_reconstructs_each_typed_graph(
+async def test_get_identifiers_reconstructs_each_typed_graph(
     sqlite_instance: MemoryInterface, identifier_graph: IdentifierGraph
 ) -> None:
     queries = [
         (
-            sqlite_instance.get_target_identifiers(
-                identifier_hashes=[identifier_graph.objective_target.hash],
-                endpoint="https://objective.test",
-                temperature=0.5,
+            (
+                await sqlite_instance.get_target_identifiers_async(
+                    identifier_hashes=[identifier_graph.objective_target.hash],
+                    endpoint="https://objective.test",
+                    temperature=0.5,
+                )
             ),
             identifier_graph.objective_target,
         ),
         (
-            sqlite_instance.get_converter_identifiers(
-                supported_input_types=["image_path", "text"],
-                supported_output_types=["audio_path", "text"],
-                sub_converter_hash=identifier_graph.nested_converter.hash,
+            (
+                await sqlite_instance.get_converter_identifiers_async(
+                    supported_input_types=["image_path", "text"],
+                    supported_output_types=["audio_path", "text"],
+                    sub_converter_hash=identifier_graph.nested_converter.hash,
+                )
             ),
             identifier_graph.converter,
         ),
         (
-            sqlite_instance.get_scorer_identifiers(
-                scorer_type="true_false",
-                score_aggregator="AND_",
-                prompt_target_hash=identifier_graph.adversarial_target.hash,
+            (
+                await sqlite_instance.get_scorer_identifiers_async(
+                    scorer_type="true_false",
+                    score_aggregator="AND_",
+                    prompt_target_hash=identifier_graph.adversarial_target.hash,
+                )
             ),
             identifier_graph.scorer,
         ),
         (
-            sqlite_instance.get_scenario_identifiers(
-                version=2,
-                techniques=["OtherTechnique", "TestTechnique"],
-                datasets=["dataset-b", "dataset-a"],
-                objective_target_hash=identifier_graph.objective_target.hash,
-                objective_scorer_hash=identifier_graph.scorer.hash,
+            (
+                await sqlite_instance.get_scenario_identifiers_async(
+                    version=2,
+                    techniques=["OtherTechnique", "TestTechnique"],
+                    datasets=["dataset-b", "dataset-a"],
+                    objective_target_hash=identifier_graph.objective_target.hash,
+                    objective_scorer_hash=identifier_graph.scorer.hash,
+                )
             ),
             identifier_graph.scenario,
         ),
         (
-            sqlite_instance.get_seed_identifiers(
-                value_sha256="dataset-sha",
-                data_type="text",
-                dataset_name="dataset-a",
-                is_general_technique=False,
+            (
+                await sqlite_instance.get_seed_identifiers_async(
+                    value_sha256="dataset-sha",
+                    data_type="text",
+                    dataset_name="dataset-a",
+                    is_general_technique=False,
+                )
             ),
             identifier_graph.dataset_seed,
         ),
         (
-            sqlite_instance.get_attack_identifiers(
-                adversarial_system_prompt="system prompt",
-                adversarial_seed_prompt="seed prompt",
-                objective_target_hash=identifier_graph.objective_target.hash,
-                adversarial_chat_hash=identifier_graph.adversarial_target.hash,
-                objective_scorer_hash=identifier_graph.scorer.hash,
+            (
+                await sqlite_instance.get_attack_identifiers_async(
+                    adversarial_system_prompt="system prompt",
+                    adversarial_seed_prompt="seed prompt",
+                    objective_target_hash=identifier_graph.objective_target.hash,
+                    adversarial_chat_hash=identifier_graph.adversarial_target.hash,
+                    objective_scorer_hash=identifier_graph.scorer.hash,
+                )
             ),
             identifier_graph.attack,
         ),
         (
-            sqlite_instance.get_attack_technique_identifiers(
-                attack_identifier_hash=identifier_graph.attack.hash,
+            (
+                await sqlite_instance.get_attack_technique_identifiers_async(
+                    attack_identifier_hash=identifier_graph.attack.hash,
+                )
             ),
             identifier_graph.technique,
         ),
         (
-            sqlite_instance.get_atomic_attack_identifiers(
-                attack_technique_identifier_hash=identifier_graph.technique.hash,
+            (
+                await sqlite_instance.get_atomic_attack_identifiers_async(
+                    attack_technique_identifier_hash=identifier_graph.technique.hash,
+                )
             ),
             identifier_graph.atomic_attack,
         ),
@@ -242,34 +261,34 @@ def test_get_identifiers_reconstructs_each_typed_graph(
         assert type(identifiers[0]) is type(expected)
 
 
-def test_get_identifiers_common_filters_and_result_semantics(
+async def test_get_identifiers_common_filters_and_result_semantics(
     sqlite_instance: MemoryInterface, identifier_graph: IdentifierGraph
 ) -> None:
-    targets = sqlite_instance.get_target_identifiers()
+    targets = await sqlite_instance.get_target_identifiers_async()
     assert [identifier.hash for identifier in targets] == sorted(
         [identifier_graph.objective_target.hash, identifier_graph.adversarial_target.hash]
     )
 
     duplicate_hashes = [identifier_graph.objective_target.hash, identifier_graph.objective_target.hash]
-    assert sqlite_instance.get_target_identifiers(identifier_hashes=duplicate_hashes) == [
+    assert (await sqlite_instance.get_target_identifiers_async(identifier_hashes=duplicate_hashes)) == [
         identifier_graph.objective_target
     ]
-    assert sqlite_instance.get_target_identifiers(identifier_hashes=[]) == []
-    assert sqlite_instance.get_target_identifiers(class_name="missing") == []
+    assert (await sqlite_instance.get_target_identifiers_async(identifier_hashes=[])) == []
+    assert (await sqlite_instance.get_target_identifiers_async(class_name="missing")) == []
 
 
-def test_get_identifiers_rejects_missing_identifier_json(sqlite_instance: MemoryInterface) -> None:
+async def test_get_identifiers_rejects_missing_identifier_json(sqlite_instance: MemoryInterface) -> None:
     identifier_hash = "0" * 64
     sqlite_instance._insert_entry(TargetIdentifierEntry(hash=identifier_hash, identifier_json=None))
 
     with pytest.raises(ValueError, match="has no identifier JSON"):
-        sqlite_instance.get_target_identifiers(identifier_hashes=[identifier_hash])
+        (await sqlite_instance.get_target_identifiers_async(identifier_hashes=[identifier_hash]))
 
 
-def test_get_identifiers_rejects_hash_mismatch(sqlite_instance: MemoryInterface) -> None:
+async def test_get_identifiers_rejects_hash_mismatch(sqlite_instance: MemoryInterface) -> None:
     target = TargetIdentifier(class_name="Target", class_module="tests.unit.memory")
     identifier_hash = "f" * 64
     sqlite_instance._insert_entry(TargetIdentifierEntry(hash=identifier_hash, identifier_json=target.model_dump()))
 
     with pytest.raises(ValueError, match="does not match its stored JSON hash"):
-        sqlite_instance.get_target_identifiers(identifier_hashes=[identifier_hash])
+        (await sqlite_instance.get_target_identifiers_async(identifier_hashes=[identifier_hash]))

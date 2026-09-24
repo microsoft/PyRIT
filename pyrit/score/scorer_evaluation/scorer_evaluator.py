@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import abc
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -12,11 +13,12 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 from scipy.stats import ttest_1samp
 
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.models import MessageScorable, Score, ScoringExpectation, UndeterminedScoreError
 from pyrit.models.harm_category import HarmCategory, normalize_harm_category_key
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.score.message_scorer import extract_objective_from_previous_turn
+from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
     HarmHumanLabeledEntry,
     HumanLabeledDataset,
@@ -375,11 +377,13 @@ class ScorerEvaluator(abc.ABC):
             ValueError: If the labeled_dataset is invalid.
         """
         # Validate dataset and extract data
-        assistant_responses, human_scores_list, objectives = self._validate_and_extract_data(labeled_dataset)
+        assistant_responses, human_scores_list, objectives = await self._validate_and_extract_data_async(
+            labeled_dataset
+        )
 
         # Harm datasets carry no objective, so the previous turn stands in for one.
         resolved_objectives = objectives or [
-            extract_objective_from_previous_turn(message=response, memory=self.scorer._memory)
+            (await extract_objective_from_previous_turn_async(message=response, memory=self.scorer._memory))
             for response in assistant_responses
         ]
 
@@ -562,6 +566,26 @@ class ScorerEvaluator(abc.ABC):
             ValueError: If the dataset is invalid for this evaluator.
         """
 
+    @legacy_sync_override(lambda: ScorerEvaluator._validate_and_extract_data)
+    async def _validate_and_extract_data_async(
+        self,
+        labeled_dataset: HumanLabeledDataset,
+    ) -> tuple[list[Message], list[list[float]], list[str] | None]:
+        """
+        Validate the dataset and extract data for evaluation.
+
+        Args:
+            labeled_dataset: The dataset to validate and extract from.
+
+        Returns:
+            Tuple of (assistant_responses, human_scores_list, objectives).
+            objectives may be None for harm scoring.
+
+        Raises:
+            ValueError: If the dataset is invalid for this evaluator.
+        """
+        return await asyncio.to_thread(self._validate_and_extract_data, labeled_dataset)
+
     @abc.abstractmethod
     def _compute_metrics(
         self,
@@ -658,6 +682,50 @@ class HarmScorerEvaluator(ScorerEvaluator):
             assistant_messages: list[Message] = []
             for message in harm_entry.conversation:
                 self.scorer._memory.add_message_to_memory(request=message)
+                if message.api_role == "assistant":
+                    assistant_messages.append(message)
+            if len(assistant_messages) != 1:
+                raise ValueError(
+                    "Each HarmHumanLabeledEntry must contain exactly one assistant message, "
+                    f"but found {len(assistant_messages)}."
+                )
+            assistant_responses.append(assistant_messages[0])
+            human_scores_list.append(harm_entry.human_scores)
+
+        return assistant_responses, human_scores_list, None
+
+    @legacy_sync_override(lambda: HarmScorerEvaluator._validate_and_extract_data)
+    async def _validate_and_extract_data_async(
+        self,
+        labeled_dataset: HumanLabeledDataset,
+    ) -> tuple[list[Message], list[list[float]], list[str] | None]:
+        """
+        Validate harm dataset and extract evaluation data.
+
+        Args:
+            labeled_dataset: The dataset to validate and extract from.
+
+        Returns:
+            Tuple of (assistant_responses, human_scores_list, None).
+            objectives is None for harm scoring; the caller reads each objective from the
+            previous turn instead.
+
+        Raises:
+            ValueError: If dataset is not HARM type or has multiple harm categories.
+        """
+        if labeled_dataset.metrics_type != MetricsType.HARM:
+            raise ValueError("The HumanLabeledDataset must be of type HARM to evaluate a harm scorer.")
+
+        labeled_dataset.validate()
+
+        assistant_responses: list[Message] = []
+        human_scores_list: list[list[float]] = []
+
+        for entry in labeled_dataset.entries:
+            harm_entry = cast("HarmHumanLabeledEntry", entry)
+            assistant_messages: list[Message] = []
+            for message in harm_entry.conversation:
+                (await self.scorer._memory.add_message_to_memory_async(request=message))
                 if message.api_role == "assistant":
                     assistant_messages.append(message)
             if len(assistant_messages) != 1:
@@ -784,6 +852,42 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
             objective_entry = cast("ObjectiveHumanLabeledEntry", entry)
             for message in objective_entry.conversation:
                 self.scorer._memory.add_message_to_memory(request=message)
+                assistant_responses.append(message)
+            human_scores_list.append([float(score) for score in objective_entry.human_scores])
+            objectives.append(objective_entry.objective)
+
+        return assistant_responses, human_scores_list, objectives
+
+    @legacy_sync_override(lambda: ObjectiveScorerEvaluator._validate_and_extract_data)
+    async def _validate_and_extract_data_async(
+        self,
+        labeled_dataset: HumanLabeledDataset,
+    ) -> tuple[list[Message], list[list[float]], list[str] | None]:
+        """
+        Validate objective dataset and extract evaluation data.
+
+        Args:
+            labeled_dataset: The dataset to validate and extract from.
+
+        Returns:
+            Tuple of (assistant_responses, human_scores_list, objectives).
+
+        Raises:
+            ValueError: If dataset is not OBJECTIVE type or contains invalid entries.
+        """
+        if labeled_dataset.metrics_type != MetricsType.OBJECTIVE:
+            raise ValueError("The HumanLabeledDataset must be of type OBJECTIVE to evaluate an objective scorer.")
+
+        labeled_dataset.validate()
+
+        assistant_responses: list[Message] = []
+        human_scores_list: list[list[float]] = []
+        objectives: list[str] = []
+
+        for entry in labeled_dataset.entries:
+            objective_entry = cast("ObjectiveHumanLabeledEntry", entry)
+            for message in objective_entry.conversation:
+                (await self.scorer._memory.add_message_to_memory_async(request=message))
                 assistant_responses.append(message)
             human_scores_list.append([float(score) for score in objective_entry.human_scores])
             objectives.append(objective_entry.objective)

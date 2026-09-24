@@ -4,6 +4,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import select
 
 from pyrit.executor.attack.compound.sequential_attack import (
     SequenceCompletionPolicy,
@@ -277,8 +278,8 @@ class TestEvalHashRoundTrip:
         sequential = await dispatcher.build_attack_async(seed_group=sg)
         await sequential.execute_async(objective="say hello")
 
-        with sqlite_instance.get_session() as session:
-            rows = session.query(AttackResultEntry).all()
+        async with await sqlite_instance.get_session_async() as session:
+            rows = (await session.scalars(select(AttackResultEntry))).all()
 
         # Drill into the persisted envelope to find rows whose inner attack is PromptSendingAttack,
         # then assert the eval_hash on those rows matches what the selector predicted.

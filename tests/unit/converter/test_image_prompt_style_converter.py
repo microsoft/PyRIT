@@ -14,7 +14,7 @@ from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 @pytest.fixture
 def mock_target() -> PromptTarget:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     response = Message(
         message_pieces=[
             MessagePiece(
@@ -175,8 +175,8 @@ async def test_convert_async_with_specific_variation(mock_target) -> None:
     )
     result = await converter.convert_async(prompt="person walking through a dark alley")
 
-    mock_target.set_system_prompt.assert_called_once()
-    system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
+    mock_target.set_system_prompt_async.assert_called_once()
+    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
     assert "bodycam_footage" in system_arg
     assert "style_instructions" not in system_arg or "CRITICAL INSTRUCTION" in system_arg
 
@@ -192,8 +192,8 @@ async def test_convert_async_with_random_variation(mock_target) -> None:
     )
     result = await converter.convert_async(prompt="person in a park")
 
-    mock_target.set_system_prompt.assert_called_once()
-    system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
+    mock_target.set_system_prompt_async.assert_called_once()
+    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
     # Should contain one of the variation names
     assert any(name in system_arg for name in converter._variations)
 

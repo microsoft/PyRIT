@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -43,6 +43,7 @@ from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
+from pyrit.memory import CentralMemory
 from pyrit.registry import InitializerRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
@@ -107,25 +108,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if config.allow_custom_initializers:
         logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
 
-    scenario_run_service = get_scenario_run_service()
-    await scenario_run_service.reconcile_interrupted_runs_async()
+    memory = CentralMemory.get_memory_instance()
+    async with AsyncExitStack() as resource_cleanup, AsyncExitStack() as scenario_cleanup:
+        resource_cleanup.push_async_callback(memory.dispose_engine_async)
+        resource_cleanup.callback(get_converter_service.cache_clear)
+        scenario_run_service = get_scenario_run_service()
+        scenario_cleanup.push_async_callback(scenario_run_service.shutdown_async)
+        await scenario_run_service.reconcile_interrupted_runs_async()
 
-    # Mount the bundled frontend (or print a dev/missing-frontend notice).
-    # Done here rather than at module load so test imports of `pyrit.backend.main`
-    # don't emit noise and don't perform filesystem side effects.
-    setup_frontend()
+        # Delay frontend setup so importing the application has no filesystem side effects.
+        setup_frontend()
 
-    converter_service = await asyncio.to_thread(get_converter_service)
-    try:
+        converter_service = await asyncio.to_thread(get_converter_service)
+        resource_cleanup.push_async_callback(converter_service.close_async)
         yield
-    finally:
-        try:
-            await scenario_run_service.shutdown_async()
-        finally:
-            try:
-                await converter_service.close_async()
-            finally:
-                get_converter_service.cache_clear()
 
 
 app = FastAPI(

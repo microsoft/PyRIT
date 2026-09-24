@@ -760,7 +760,7 @@ class TestSendAndCheckTimeout:
             await asyncio.Event().wait()
             return _ok_response()
 
-        target._send_prompt_to_target_async = AsyncMock(side_effect=_hang)  # type: ignore[method-assign]
+        target.send_prompt_async = AsyncMock(side_effect=_hang)  # type: ignore[method-assign]
 
         result = await _discover_capability_flags_async(
             target=target,
@@ -770,7 +770,7 @@ class TestSendAndCheckTimeout:
 
         assert result == set()
         # One initial attempt plus one retry.
-        assert target._send_prompt_to_target_async.await_count == 2
+        assert target.send_prompt_async.await_count == 2
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -785,7 +785,7 @@ class TestSystemPromptProbeMemoryFailure:
         send_mock = AsyncMock(return_value=_ok_response())
         target._send_prompt_to_target_async = send_mock  # type: ignore[method-assign]
 
-        with patch.object(target._memory, "add_message_to_memory", side_effect=RuntimeError("memory offline")):
+        with patch.object(target._memory, "add_message_to_memory_async", side_effect=RuntimeError("memory offline")):
             result = await _discover_capability_flags_async(
                 target=target,
                 capabilities={CapabilityName.SYSTEM_PROMPT},
@@ -1064,7 +1064,7 @@ class TestMultiTurnProbeMemoryFailure:
         send_mock = AsyncMock(return_value=_ok_response())
         target._send_prompt_to_target_async = send_mock  # type: ignore[method-assign]
 
-        with patch.object(target._memory, "add_message_to_memory", side_effect=RuntimeError("memory offline")):
+        with patch.object(target._memory, "add_message_to_memory_async", side_effect=RuntimeError("memory offline")):
             result = await _discover_capability_flags_async(
                 target=target,
                 capabilities={CapabilityName.MULTI_TURN},

@@ -29,10 +29,10 @@ def _attack_id(name: str = "TestAttack") -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="test_module")
 
 
-def _seed_messages(memory: MemoryInterface, conversation_id: str, pieces: list[MessagePiece]) -> None:
+async def _seed_messages_async(memory: MemoryInterface, conversation_id: str, pieces: list[MessagePiece]) -> None:
     for piece in pieces:
         piece.conversation_id = conversation_id
-        memory.add_message_to_memory(request=Message(message_pieces=[piece]))
+        (await memory.add_message_to_memory_async(request=Message(message_pieces=[piece])))
 
 
 def _make_score(*, piece_id: str, value: str = "true", score_type: str = "true_false") -> Score:
@@ -143,7 +143,7 @@ async def test_write_async_no_messages(printer, attack_result, capsys):
 async def test_write_async_renders_user_and_assistant_messages(printer, attack_result, sqlite_instance, capsys):
     user_piece = MessagePiece(role="user", original_value="Hello", converted_value="Hello")
     assistant_piece = MessagePiece(role="assistant", original_value="Hi back", converted_value="Hi back")
-    _seed_messages(sqlite_instance, "conv-main", [user_piece, assistant_piece])
+    (await _seed_messages_async(sqlite_instance, "conv-main", [user_piece, assistant_piece]))
 
     await printer.write_async(attack_result)
     out = capsys.readouterr().out
@@ -156,7 +156,7 @@ async def test_write_async_renders_user_and_assistant_messages(printer, attack_r
 
 async def test_write_async_renders_system_message(printer, attack_result, sqlite_instance, capsys):
     piece = MessagePiece(role="system", original_value="sys", converted_value="sys")
-    _seed_messages(sqlite_instance, "conv-main", [piece])
+    (await _seed_messages_async(sqlite_instance, "conv-main", [piece]))
     await printer.write_async(attack_result)
     out = capsys.readouterr().out
     assert "### System Message" in out
@@ -167,7 +167,7 @@ async def test_write_async_renders_original_and_converted_when_different(
     printer, attack_result, sqlite_instance, capsys
 ):
     piece = MessagePiece(role="user", original_value="Original text", converted_value="Converted text")
-    _seed_messages(sqlite_instance, "conv-main", [piece])
+    (await _seed_messages_async(sqlite_instance, "conv-main", [piece]))
     await printer.write_async(attack_result)
     out = capsys.readouterr().out
     assert "**Original:**" in out
@@ -185,7 +185,7 @@ async def test_write_async_renders_image_message(printer, attack_result, sqlite_
         original_value_data_type="image_path",
         converted_value_data_type="image_path",
     )
-    _seed_messages(sqlite_instance, "conv-main", [piece])
+    (await _seed_messages_async(sqlite_instance, "conv-main", [piece]))
     await printer.write_async(attack_result)
     out = capsys.readouterr().out
     assert "![Image]" in out
@@ -211,7 +211,7 @@ async def test_write_async_renders_audio_message_with_mime_type(
         original_value_data_type="audio_path",
         converted_value_data_type="audio_path",
     )
-    _seed_messages(sqlite_instance, "conv-main", [piece])
+    (await _seed_messages_async(sqlite_instance, "conv-main", [piece]))
     await printer.write_async(attack_result)
     out = capsys.readouterr().out
     assert "<audio controls>" in out
@@ -227,7 +227,7 @@ async def test_write_async_renders_error_message(printer, attack_result, sqlite_
         converted_value_data_type="error",
         response_error="processing",
     )
-    _seed_messages(sqlite_instance, "conv-main", [piece])
+    (await _seed_messages_async(sqlite_instance, "conv-main", [piece]))
     await printer.write_async(attack_result)
     out = capsys.readouterr().out
     assert "**Error Response:**" in out
@@ -240,9 +240,11 @@ async def test_write_async_renders_error_message(printer, attack_result, sqlite_
 
 async def test_write_async_with_auxiliary_scores(printer, attack_result, sqlite_instance, capsys):
     piece = MessagePiece(role="assistant", original_value="response", converted_value="response")
-    _seed_messages(sqlite_instance, "conv-main", [piece])
-    sqlite_instance.add_scores_to_memory(
-        scores=[_make_score(piece_id=str(piece.id), value="0.42", score_type="float_scale")]
+    (await _seed_messages_async(sqlite_instance, "conv-main", [piece]))
+    (
+        await sqlite_instance.add_scores_to_memory_async(
+            scores=[_make_score(piece_id=str(piece.id), value="0.42", score_type="float_scale")]
+        )
     )
 
     await printer.write_async(attack_result, include_auxiliary_scores=True)
@@ -259,8 +261,8 @@ async def test_write_async_pruned_with_messages_and_scores(printer, attack_resul
     pruned_piece = MessagePiece(
         role="assistant", original_value="short pruned line", converted_value="short pruned line"
     )
-    _seed_messages(sqlite_instance, "pruned-conv", [pruned_piece])
-    sqlite_instance.add_scores_to_memory(scores=[_make_score(piece_id=str(pruned_piece.id))])
+    (await _seed_messages_async(sqlite_instance, "pruned-conv", [pruned_piece]))
+    (await sqlite_instance.add_scores_to_memory_async(scores=[_make_score(piece_id=str(pruned_piece.id))]))
 
     attack_result.related_conversations.add(
         ConversationReference(
@@ -281,7 +283,7 @@ async def test_write_async_pruned_with_multiline_content_uses_code_block(
 ):
     multiline = "line one\nline two"
     pruned_piece = MessagePiece(role="assistant", original_value=multiline, converted_value=multiline)
-    _seed_messages(sqlite_instance, "pruned-conv", [pruned_piece])
+    (await _seed_messages_async(sqlite_instance, "pruned-conv", [pruned_piece]))
     attack_result.related_conversations.add(
         ConversationReference(conversation_id="pruned-conv", conversation_type=ConversationType.PRUNED)
     )
@@ -312,7 +314,7 @@ async def test_write_async_include_pruned_with_no_pruned_refs(printer, attack_re
 async def test_write_async_adversarial_with_messages_and_description(printer, attack_result, sqlite_instance, capsys):
     adv_user = MessagePiece(role="user", original_value="adv prompt", converted_value="adv prompt")
     adv_assist = MessagePiece(role="assistant", original_value="adv reply", converted_value="adv reply")
-    _seed_messages(sqlite_instance, "adv-conv", [adv_user, adv_assist])
+    (await _seed_messages_async(sqlite_instance, "adv-conv", [adv_user, adv_assist]))
     attack_result.related_conversations.add(
         ConversationReference(
             conversation_id="adv-conv", conversation_type=ConversationType.ADVERSARIAL, description="red team chain"
@@ -331,11 +333,13 @@ async def test_write_async_adversarial_filters_to_best_branch(patch_central_data
     short = MessagePiece(role="user", original_value="best short", converted_value="best short")
     long_text = "x" * 250  # > 200 chars triggers code block branch in adversarial rendering
     long_piece = MessagePiece(role="user", original_value=long_text, converted_value=long_text)
-    _seed_messages(sqlite_instance, "adv-best", [short, long_piece])
-    _seed_messages(
-        sqlite_instance,
-        "adv-other",
-        [MessagePiece(role="user", original_value="other", converted_value="other")],
+    (await _seed_messages_async(sqlite_instance, "adv-best", [short, long_piece]))
+    (
+        await _seed_messages_async(
+            sqlite_instance,
+            "adv-other",
+            [MessagePiece(role="user", original_value="other", converted_value="other")],
+        )
     )
 
     result = AttackResult(
@@ -389,7 +393,7 @@ async def test_write_async_main_reasoning_uses_heading(
         original_value_data_type="reasoning",
         converted_value_data_type="reasoning",
     )
-    _seed_messages(sqlite_instance, "conv-main", [piece])
+    (await _seed_messages_async(sqlite_instance, "conv-main", [piece]))
 
     rendered = await printer.render_async(attack_result, include_reasoning_summaries=True)
 
@@ -411,7 +415,7 @@ async def test_write_async_pruned_reasoning_uses_heading(
         converted_value_data_type="reasoning",
         conversation_id="pruned-reasoning",
     )
-    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    (await sqlite_instance.add_message_to_memory_async(request=Message(message_pieces=[piece])))
     attack_result.related_conversations.add(
         ConversationReference(
             conversation_id="pruned-reasoning",
@@ -443,7 +447,7 @@ async def test_write_async_adversarial_reasoning_uses_heading(
         converted_value_data_type="reasoning",
         conversation_id="adversarial-reasoning",
     )
-    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    (await sqlite_instance.add_message_to_memory_async(request=Message(message_pieces=[piece])))
     attack_result.related_conversations.add(
         ConversationReference(
             conversation_id="adversarial-reasoning",
@@ -469,7 +473,7 @@ async def test_write_async_pruned_renders_only_last_message_with_role_label(
 ):
     earlier = MessagePiece(role="user", original_value="older pruned msg", converted_value="older pruned msg")
     latest = MessagePiece(role="assistant", original_value="newest pruned msg", converted_value="newest pruned msg")
-    _seed_messages(sqlite_instance, "pruned-multi", [earlier, latest])
+    (await _seed_messages_async(sqlite_instance, "pruned-multi", [earlier, latest]))
     attack_result.related_conversations.add(
         ConversationReference(conversation_id="pruned-multi", conversation_type=ConversationType.PRUNED)
     )
@@ -485,7 +489,7 @@ async def test_write_async_pruned_single_line_uses_blockquote_without_score(
     printer, attack_result, sqlite_instance, capsys
 ):
     piece = MessagePiece(role="assistant", original_value="solo pruned line", converted_value="solo pruned line")
-    _seed_messages(sqlite_instance, "pruned-solo", [piece])
+    (await _seed_messages_async(sqlite_instance, "pruned-solo", [piece]))
     attack_result.related_conversations.add(
         ConversationReference(conversation_id="pruned-solo", conversation_type=ConversationType.PRUNED)
     )
@@ -507,7 +511,7 @@ async def test_write_async_pruned_skips_last_message_with_no_renderable_pieces(
         converted_value_data_type="reasoning",
         conversation_id="pruned-reasoning-only",
     )
-    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    (await sqlite_instance.add_message_to_memory_async(request=Message(message_pieces=[piece])))
     attack_result.related_conversations.add(
         ConversationReference(conversation_id="pruned-reasoning-only", conversation_type=ConversationType.PRUNED)
     )
@@ -528,7 +532,7 @@ async def test_write_async_pruned_skips_last_message_with_no_renderable_pieces(
 
 async def test_write_async_adversarial_renders_system_header(printer, attack_result, sqlite_instance, capsys):
     piece = MessagePiece(role="system", original_value="adv system directive", converted_value="adv system directive")
-    _seed_messages(sqlite_instance, "adv-system", [piece])
+    (await _seed_messages_async(sqlite_instance, "adv-system", [piece]))
     attack_result.related_conversations.add(
         ConversationReference(conversation_id="adv-system", conversation_type=ConversationType.ADVERSARIAL)
     )
@@ -543,7 +547,7 @@ async def test_write_async_adversarial_turn_numbering_and_role_headers(printer, 
     first_user = MessagePiece(role="user", original_value="first adv prompt", converted_value="first adv prompt")
     assistant = MessagePiece(role="assistant", original_value="adv answer", converted_value="adv answer")
     second_user = MessagePiece(role="user", original_value="second adv prompt", converted_value="second adv prompt")
-    _seed_messages(sqlite_instance, "adv-turns", [first_user, assistant, second_user])
+    (await _seed_messages_async(sqlite_instance, "adv-turns", [first_user, assistant, second_user]))
     attack_result.related_conversations.add(
         ConversationReference(conversation_id="adv-turns", conversation_type=ConversationType.ADVERSARIAL)
     )
@@ -566,7 +570,7 @@ async def test_write_async_adversarial_skips_message_with_no_renderable_pieces(
         converted_value_data_type="reasoning",
         conversation_id="adv-reasoning-only",
     )
-    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    (await sqlite_instance.add_message_to_memory_async(request=Message(message_pieces=[piece])))
     attack_result.related_conversations.add(
         ConversationReference(conversation_id="adv-reasoning-only", conversation_type=ConversationType.ADVERSARIAL)
     )
@@ -584,7 +588,7 @@ async def test_write_async_adversarial_skips_message_with_no_renderable_pieces(
 
 async def test_write_async_adversarial_best_id_with_no_matching_ref(patch_central_database, sqlite_instance, capsys):
     piece = MessagePiece(role="user", original_value="unmatched adv content", converted_value="unmatched adv content")
-    _seed_messages(sqlite_instance, "adv-present", [piece])
+    (await _seed_messages_async(sqlite_instance, "adv-present", [piece]))
 
     result = AttackResult(
         objective="o",

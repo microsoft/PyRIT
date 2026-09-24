@@ -9,6 +9,7 @@ import logging
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
 
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -85,7 +86,7 @@ async def _legacy_score_scorable_async(
         expectation=expectation, replacement="a MessageScorer expectation-aware hook"
     )
     resolver = getattr(self, "_message_resolver", None) or MessageScorableResolver()
-    message = resolver.resolve(scorable=scorable, memory=self._memory)
+    message = await resolver.resolve_async(scorable=scorable, memory=self._memory)
     legacy_score_async = self._score_async  # type: ignore[ty:unresolved-attribute]
     with _scoring_message_context(message):
         scores: list[Score] = await legacy_score_async(
@@ -705,12 +706,14 @@ class Scorer(Identifiable, abc.ABC):
                 await self._memory.add_scores_to_memory_async(scores=scores)
         else:
             if observations:
-                self._memory.add_scores_to_memory(
-                    scores=scores,
-                    observations=observations,
+                (
+                    await self._memory.add_scores_to_memory_async(
+                        scores=scores,
+                        observations=observations,
+                    )
                 )
             else:
-                self._memory.add_scores_to_memory(scores=scores)
+                (await self._memory.add_scores_to_memory_async(scores=scores))
         return scores
 
     async def _score_nested_async(
@@ -765,7 +768,7 @@ class Scorer(Identifiable, abc.ABC):
             NonReplayableObservationError: If this scorer or payload cannot replay.
         """
         expectation = self.prepare_expectation(expectation=expectation)
-        stored_observations = self._memory.get_observations(observation_ids=[observation.id])
+        stored_observations = await self._memory.get_observations_async(observation_ids=[observation.id])
         if not stored_observations:
             raise NonReplayableObservationError(f"Observation {observation.id} is not stored in memory.")
         stored_observation = stored_observations[0]
@@ -773,7 +776,7 @@ class Scorer(Identifiable, abc.ABC):
             raise NonReplayableObservationError(
                 f"Observation {observation.id} does not match its canonical stored evidence."
             )
-        evidence = _ObservationEvidenceResolver(memory=self._memory).resolve(observation=observation)
+        evidence = await _ObservationEvidenceResolver(memory=self._memory).resolve_async(observation=observation)
         scores = self._score_observation(
             observation=observation,
             evidence=evidence,
@@ -1241,3 +1244,25 @@ class Scorer(Identifiable, abc.ABC):
             removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
         return extract_objective_from_previous_turn(message=response, memory=self._memory)
+
+    @legacy_sync_override(lambda: Scorer._extract_objective_from_response)
+    async def _extract_objective_from_response_async(self, response: Message) -> str:
+        """
+        Read the objective from the turn before an assistant response.
+
+        Deprecated: use ``pyrit.score.message_scorer.extract_objective_from_previous_turn``.
+
+        Args:
+            response (Message): The response to extract the objective from.
+
+        Returns:
+            str: The objective extracted from the response, or empty string if not found.
+        """
+        from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
+
+        print_deprecation_message(
+            old_item="Scorer._extract_objective_from_response",
+            new_item="pyrit.score.message_scorer.extract_objective_from_previous_turn",
+            removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
+        )
+        return await extract_objective_from_previous_turn_async(message=response, memory=self._memory)

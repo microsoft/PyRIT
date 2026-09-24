@@ -354,7 +354,7 @@ async def test_group_seed_groups_from_yaml(sqlite_instance):
         seeds=[s for s in prompts.seeds if isinstance(s, SeedPrompt)], added_by="rlundeen"
     )
 
-    groups = sqlite_instance.get_seed_groups()
+    groups = await sqlite_instance.get_seed_groups_async()
     # there are 6 SeedPrompts, but only 5 unique SeedGroups (two prompts share a group)
     assert len(groups) == 5
 
@@ -367,7 +367,7 @@ async def test_group_seed_prompt_alias_sets_group_id(sqlite_instance):
         seeds=[s for s in prompts.seeds if isinstance(s, SeedPrompt)], added_by="rlundeen"
     )
 
-    groups = sqlite_instance.get_seed_groups()
+    groups = await sqlite_instance.get_seed_groups_async()
     # there are 6 SeedPrompts, but only 5 unique SeedGroups (two prompts share a group)
     assert len(groups) == 5
 
@@ -593,7 +593,7 @@ async def test_memory_encoding_metadata_image(tmp_path, sqlite_instance):
         data_type="image_path",
     )
     await sqlite_instance.add_seeds_to_memory_async(seeds=[sp], added_by="test")
-    entry = sqlite_instance.get_seeds()[0]
+    entry = (await sqlite_instance.get_seeds_async())[0]
     assert len(entry.metadata) == 1
     assert entry.metadata["format"] == "png"
 
@@ -621,7 +621,7 @@ async def test_memory_encoding_metadata_audio(mock_tinytag, sqlite_instance):
     mock_tinytag.get.return_value = mock_tag
 
     await sqlite_instance.add_seeds_to_memory_async(seeds=[sp], added_by="test")
-    entry = sqlite_instance.get_seeds()[0]
+    entry = (await sqlite_instance.get_seeds_async())[0]
     assert entry.metadata["format"] == "wav"
     assert entry.metadata["bitrate"] == 128
     assert entry.metadata["samplerate"] == 44100

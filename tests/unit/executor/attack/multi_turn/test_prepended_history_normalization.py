@@ -106,7 +106,7 @@ def _make_context() -> MultiTurnAttackContext[AttackParameters]:
     return MultiTurnAttackContext(params=AttackParameters(objective="test objective"))
 
 
-def _rotate(
+async def _rotate_async(
     *,
     target: PromptTarget,
     context: MultiTurnAttackContext[AttackParameters],
@@ -114,27 +114,29 @@ def _rotate(
     strategy = MagicMock()
     strategy._objective_target = target
     strategy._logger = MagicMock()
-    MultiTurnAttackStrategy._rotate_conversation_for_single_turn_target(strategy, context=context)
+    (await MultiTurnAttackStrategy._rotate_conversation_for_single_turn_target_async(strategy, context=context))
     return strategy
 
 
-def _seed_conversation(
+async def _seed_conversation_async(
     *,
     conversation_id: str,
     target: PromptTarget,
     messages: list[Message],
 ) -> None:
     memory = CentralMemory.get_memory_instance()
-    memory.add_conversation_to_memory(
-        conversation=Conversation(
-            conversation_id=conversation_id,
-            target_identifier=target.get_identifier(),
+    (
+        await memory.add_conversation_to_memory_async(
+            conversation=Conversation(
+                conversation_id=conversation_id,
+                target_identifier=target.get_identifier(),
+            )
         )
     )
     for message in messages:
         for piece in message.message_pieces:
             piece.conversation_id = conversation_id
-        memory.add_message_to_memory(request=message)
+        (await memory.add_message_to_memory_async(request=message))
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -152,7 +154,7 @@ async def test_single_turn_target_replays_seed_without_rotation():
         prepended_conversation_config=config,
         target=target,
     )
-    persisted = manager.get_conversation(conversation_id)
+    persisted = await manager.get_conversation_async(conversation_id)
     target_context = manager.create_prepended_history_send_context(
         target=target,
         conversation_id=conversation_id,
@@ -179,20 +181,20 @@ async def test_single_turn_target_replays_seed_without_rotation():
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_rotation_is_noop_for_multi_turn_target():
+async def test_rotation_is_noop_for_multi_turn_target():
     target = _RecordingTarget(supports_multi_turn=True)
     context = _make_context()
     context.executed_turns = 1
     original_id = context.session.conversation_id
 
-    _rotate(target=target, context=context)
+    (await _rotate_async(target=target, context=context))
 
     assert context.session.conversation_id == original_id
     assert not context.related_conversations
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_rotation_is_noop_for_seeded_single_turn_target():
+async def test_rotation_is_noop_for_seeded_single_turn_target():
     target = _RecordingTarget()
     context = _make_context()
     context.executed_turns = 2
@@ -204,20 +206,20 @@ def test_rotation_is_noop_for_seeded_single_turn_target():
         prepended_messages=[seed],
     )
 
-    _rotate(target=target, context=context)
+    (await _rotate_async(target=target, context=context))
 
     assert context.session.conversation_id == original_id
     assert not context.related_conversations
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_rotation_moves_unseeded_single_turn_target_to_fresh_conversation():
+async def test_rotation_moves_unseeded_single_turn_target_to_fresh_conversation():
     target = _RecordingTarget()
     context = _make_context()
     context.executed_turns = 1
     original_id = context.session.conversation_id
 
-    _rotate(target=target, context=context)
+    (await _rotate_async(target=target, context=context))
 
     assert context.session.conversation_id != original_id
     assert (
@@ -236,16 +238,18 @@ async def test_rotation_preserves_system_payload_for_later_single_turn_send():
     context = _make_context()
     context.executed_turns = 1
     old_id = context.session.conversation_id
-    _seed_conversation(
-        conversation_id=old_id,
-        target=target,
-        messages=[
-            Message.from_system_prompt("system"),
-            Message.from_prompt(prompt="old request", role="user"),
-        ],
+    (
+        await _seed_conversation_async(
+            conversation_id=old_id,
+            target=target,
+            messages=[
+                Message.from_system_prompt("system"),
+                Message.from_prompt(prompt="old request", role="user"),
+            ],
+        )
     )
 
-    _rotate(target=target, context=context)
+    (await _rotate_async(target=target, context=context))
 
     assert context.prepended_history_send_context is not None
     config = PrependedConversationConfig()
@@ -302,16 +306,18 @@ def _make_tap_node(*, target: PromptTarget) -> _TreeOfAttacksNode:
     )
 
 
-def _set_tap_seed_boundary(
+async def _set_tap_seed_boundary_async(
     *,
     node: _TreeOfAttacksNode,
     target: PromptTarget,
     seed_messages: list[Message],
 ) -> None:
-    _seed_conversation(
-        conversation_id=node.objective_target_conversation_id,
-        target=target,
-        messages=seed_messages,
+    (
+        await _seed_conversation_async(
+            conversation_id=node.objective_target_conversation_id,
+            target=target,
+            messages=seed_messages,
+        )
     )
     node._prepended_history_send_context = ConversationManager.create_prepended_history_send_context(
         target=target,
@@ -321,7 +327,7 @@ def _set_tap_seed_boundary(
     assert node._prepended_history_send_context is not None
 
 
-def _branch_tap_node(
+async def _branch_tap_node_async(
     *,
     node: _TreeOfAttacksNode,
     branching_factor: int,
@@ -331,7 +337,7 @@ def _branch_tap_node(
     context.related_conversations = set()
     attack = MagicMock()
     attack._configuration.branching_factor = branching_factor
-    TreeOfAttacksWithPruningAttack._branch_existing_nodes(attack, context)
+    (await TreeOfAttacksWithPruningAttack._branch_existing_nodes_async(attack, context))
     return context.nodes
 
 
@@ -347,18 +353,18 @@ async def test_tap_seeded_stateless_retained_and_cloned_branches_replay_only_ori
     node = _make_tap_node(target=target)
     node._prepended_conversation_config = PrependedConversationConfig(message_normalizer=formatter)
     seed = Message.from_prompt(prompt="original seed", role="user")
-    _set_tap_seed_boundary(node=node, target=target, seed_messages=[seed])
+    (await _set_tap_seed_boundary_async(node=node, target=target, seed_messages=[seed]))
     node._objective = "objective"
     await node._send_prompt_to_target_async("depth one")
     original_context = node._prepended_history_send_context
     assert original_context is not None
 
-    retained, cloned = _branch_tap_node(node=node, branching_factor=2)
+    retained, cloned = await _branch_tap_node_async(node=node, branching_factor=2)
     assert retained is node
     assert retained._prepended_history_send_context is original_context
     assert cloned._prepended_history_send_context is not None
     assert cloned._prepended_history_send_context.seed_message_count == 1
-    cloned_messages = CentralMemory.get_memory_instance().get_conversation_messages(
+    cloned_messages = await CentralMemory.get_memory_instance().get_conversation_messages_async(
         conversation_id=cloned.objective_target_conversation_id
     )
     assert cloned._prepended_history_send_context.seed_message_ids == (cloned_messages[0].get_piece().id,)
@@ -400,10 +406,12 @@ async def test_tap_stateful_clone_bootstraps_duplicated_branch_once():
     formatter.normalize_string_async = AsyncMock(side_effect=format_messages)
     node = _make_tap_node(target=target)
     node._prepended_conversation_config = PrependedConversationConfig(message_normalizer=formatter)
-    _set_tap_seed_boundary(
-        node=node,
-        target=target,
-        seed_messages=[Message.from_prompt(prompt="original seed", role="user")],
+    (
+        await _set_tap_seed_boundary_async(
+            node=node,
+            target=target,
+            seed_messages=[Message.from_prompt(prompt="original seed", role="user")],
+        )
     )
     node._objective = "objective"
     parent_conversation_id = node.objective_target_conversation_id
@@ -494,10 +502,12 @@ async def test_tap_unseeded_stateless_send_retains_current_only_payload():
     node = _make_tap_node(target=target)
     node._objective = "objective"
     previous_conversation_id = node.objective_target_conversation_id
-    _seed_conversation(
-        conversation_id=previous_conversation_id,
-        target=target,
-        messages=[Message.from_prompt(prompt="prior request", role="user")],
+    (
+        await _seed_conversation_async(
+            conversation_id=previous_conversation_id,
+            target=target,
+            messages=[Message.from_prompt(prompt="prior request", role="user")],
+        )
     )
 
     await node._send_prompt_to_target_async("current request")
@@ -513,7 +523,7 @@ async def test_tap_unseeded_stateless_retained_and_cloned_branches_send_current_
     node._objective = "objective"
     await node._send_prompt_to_target_async("depth one")
 
-    retained, cloned = _branch_tap_node(node=node, branching_factor=2)
+    retained, cloned = await _branch_tap_node_async(node=node, branching_factor=2)
     assert retained._prepended_history_send_context is None
     assert cloned._prepended_history_send_context is None
     for branch, prompt in [(retained, "depth two retained"), (cloned, "depth two cloned")]:
@@ -543,17 +553,19 @@ async def test_tap_branching_factor_one_preserves_retained_seed_boundary():
     formatter.normalize_string_async = AsyncMock(side_effect=format_messages)
     node = _make_tap_node(target=target)
     node._prepended_conversation_config = PrependedConversationConfig(message_normalizer=formatter)
-    _set_tap_seed_boundary(
-        node=node,
-        target=target,
-        seed_messages=[Message.from_prompt(prompt="original seed", role="user")],
+    (
+        await _set_tap_seed_boundary_async(
+            node=node,
+            target=target,
+            seed_messages=[Message.from_prompt(prompt="original seed", role="user")],
+        )
     )
     node._objective = "objective"
     await node._send_prompt_to_target_async("depth one")
     original_context = node._prepended_history_send_context
     original_boundary = original_context.seed_message_ids if original_context else ()
 
-    branches = _branch_tap_node(node=node, branching_factor=1)
+    branches = await _branch_tap_node_async(node=node, branching_factor=1)
 
     assert branches == [node]
     assert node._prepended_history_send_context is original_context
@@ -594,10 +606,12 @@ async def test_tap_clone_does_not_replay_non_text_live_converter_output(tmp_path
         converters=[_ImageOutputConverter(output_path=str(image_path))]
     )
     node._prepended_conversation_config = PrependedConversationConfig(message_normalizer=formatter)
-    _set_tap_seed_boundary(
-        node=node,
-        target=target,
-        seed_messages=[Message.from_prompt(prompt="original seed", role="user")],
+    (
+        await _set_tap_seed_boundary_async(
+            node=node,
+            target=target,
+            seed_messages=[Message.from_prompt(prompt="original seed", role="user")],
+        )
     )
     node._objective = "objective"
 

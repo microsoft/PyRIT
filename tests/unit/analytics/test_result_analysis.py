@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -10,7 +10,7 @@ from pyrit.analytics.result_analysis import (
     AttackStats,
     _objective_target_eval_hash_for,
     analyze_results,
-    get_cached_results_for_technique,
+    get_cached_results_for_technique_async,
 )
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
@@ -212,15 +212,15 @@ def _make_attack_with_target(
     )
 
 
-def test_get_cached_results_for_technique_returns_matching():
+async def test_get_cached_results_for_technique_returns_matching():
     target = _make_target_component()
     expected_hash = ObjectiveTargetEvaluationIdentifier(target).eval_hash
     matching = _make_attack_with_target(target)
 
     memory = MagicMock(spec=MemoryInterface)
-    memory.get_attack_results.return_value = [matching]
+    memory.get_attack_results_async = AsyncMock(return_value=[matching])
 
-    results = get_cached_results_for_technique(
+    results = await get_cached_results_for_technique_async(
         memory,
         technique_eval_hash="tech-hash",
         objective_target_eval_hash=expected_hash,
@@ -229,19 +229,21 @@ def test_get_cached_results_for_technique_returns_matching():
     assert results == [matching]
 
 
-def test_get_cached_results_for_technique_filters_out_target_mismatches():
+async def test_get_cached_results_for_technique_filters_out_target_mismatches():
     target_match = _make_target_component(model_name="gpt-4o")
     target_other = _make_target_component(model_name="gpt-4o-mini")
     expected_hash = ObjectiveTargetEvaluationIdentifier(target_match).eval_hash
 
     memory = MagicMock(spec=MemoryInterface)
-    memory.get_attack_results.return_value = [
-        _make_attack_with_target(target_other),
-        _make_attack_with_target(target_match),
-        _make_attack_with_target(target_other),
-    ]
+    memory.get_attack_results_async = AsyncMock(
+        return_value=[
+            _make_attack_with_target(target_other),
+            _make_attack_with_target(target_match),
+            _make_attack_with_target(target_other),
+        ]
+    )
 
-    results = get_cached_results_for_technique(
+    results = await get_cached_results_for_technique_async(
         memory,
         technique_eval_hash="tech-hash",
         objective_target_eval_hash=expected_hash,
@@ -251,11 +253,11 @@ def test_get_cached_results_for_technique_filters_out_target_mismatches():
     assert results[0].atomic_attack_identifier == _make_attack_with_target(target_match).atomic_attack_identifier
 
 
-def test_get_cached_results_for_technique_returns_empty_when_no_candidates():
+async def test_get_cached_results_for_technique_returns_empty_when_no_candidates():
     memory = MagicMock(spec=MemoryInterface)
-    memory.get_attack_results.return_value = []
+    memory.get_attack_results_async = AsyncMock(return_value=[])
 
-    results = get_cached_results_for_technique(
+    results = await get_cached_results_for_technique_async(
         memory,
         technique_eval_hash="tech-hash",
         objective_target_eval_hash="target-hash",
@@ -264,7 +266,7 @@ def test_get_cached_results_for_technique_returns_empty_when_no_candidates():
     assert results == []
 
 
-def test_get_cached_results_for_technique_sorts_newest_first():
+async def test_get_cached_results_for_technique_sorts_newest_first():
     target = _make_target_component()
     expected_hash = ObjectiveTargetEvaluationIdentifier(target).eval_hash
     now = datetime.now(UTC)
@@ -273,9 +275,9 @@ def test_get_cached_results_for_technique_sorts_newest_first():
     newest = _make_attack_with_target(target, timestamp=now)
 
     memory = MagicMock(spec=MemoryInterface)
-    memory.get_attack_results.return_value = [older, newest, middle]
+    memory.get_attack_results_async = AsyncMock(return_value=[older, newest, middle])
 
-    results = get_cached_results_for_technique(
+    results = await get_cached_results_for_technique_async(
         memory,
         technique_eval_hash="tech-hash",
         objective_target_eval_hash=expected_hash,
@@ -284,18 +286,20 @@ def test_get_cached_results_for_technique_sorts_newest_first():
     assert [r.timestamp for r in results] == [newest.timestamp, middle.timestamp, older.timestamp]
 
 
-def test_get_cached_results_for_technique_builds_default_sql_filter():
+async def test_get_cached_results_for_technique_builds_default_sql_filter():
     memory = MagicMock(spec=MemoryInterface)
-    memory.get_attack_results.return_value = []
+    memory.get_attack_results_async = AsyncMock(return_value=[])
 
-    get_cached_results_for_technique(
-        memory,
-        technique_eval_hash="tech-hash-xyz",
-        objective_target_eval_hash="target-hash",
+    (
+        await get_cached_results_for_technique_async(
+            memory,
+            technique_eval_hash="tech-hash-xyz",
+            objective_target_eval_hash="target-hash",
+        )
     )
 
-    memory.get_attack_results.assert_called_once()
-    filters = memory.get_attack_results.call_args.kwargs["identifier_filters"]
+    memory.get_attack_results_async.assert_called_once()
+    filters = memory.get_attack_results_async.call_args.kwargs["identifier_filters"]
     assert len(filters) == 1
     sole = filters[0]
     assert sole.identifier_type == IdentifierType.ATTACK
@@ -303,28 +307,30 @@ def test_get_cached_results_for_technique_builds_default_sql_filter():
     assert sole.value == "tech-hash-xyz"
 
 
-def test_get_cached_results_for_technique_appends_additional_filters():
+async def test_get_cached_results_for_technique_appends_additional_filters():
     memory = MagicMock(spec=MemoryInterface)
-    memory.get_attack_results.return_value = []
+    memory.get_attack_results_async = AsyncMock(return_value=[])
     extra = IdentifierFilter(
         identifier_type=IdentifierType.ATTACK,
         property_path="$.children.attack_technique.children.attack.class_name",
         value="PromptSendingAttack",
     )
 
-    get_cached_results_for_technique(
-        memory,
-        technique_eval_hash="tech-hash",
-        objective_target_eval_hash="target-hash",
-        additional_filters=[extra],
+    (
+        await get_cached_results_for_technique_async(
+            memory,
+            technique_eval_hash="tech-hash",
+            objective_target_eval_hash="target-hash",
+            additional_filters=[extra],
+        )
     )
 
-    filters = memory.get_attack_results.call_args.kwargs["identifier_filters"]
+    filters = memory.get_attack_results_async.call_args.kwargs["identifier_filters"]
     assert len(filters) == 2
     assert filters[1] is extra
 
 
-def test_get_cached_results_for_technique_skips_results_without_identifier():
+async def test_get_cached_results_for_technique_skips_results_without_identifier():
     """Results with no atomic_attack_identifier are ignored, not raised on."""
     target = _make_target_component()
     expected_hash = ObjectiveTargetEvaluationIdentifier(target).eval_hash
@@ -337,9 +343,9 @@ def test_get_cached_results_for_technique_skips_results_without_identifier():
     )
 
     memory = MagicMock(spec=MemoryInterface)
-    memory.get_attack_results.return_value = [orphan, matching]
+    memory.get_attack_results_async = AsyncMock(return_value=[orphan, matching])
 
-    results = get_cached_results_for_technique(
+    results = await get_cached_results_for_technique_async(
         memory,
         technique_eval_hash="tech-hash",
         objective_target_eval_hash=expected_hash,

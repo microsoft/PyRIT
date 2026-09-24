@@ -5,6 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
@@ -85,7 +86,7 @@ def mock_non_true_false_scorer():
 @pytest.fixture
 def mock_prompt_normalizer():
     """Create a mock prompt normalizer for testing"""
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.send_prompt_async = AsyncMock()
     return normalizer
 

@@ -5,7 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import store_message
+from unit.mocks import store_message_async
 
 from pyrit.memory import CentralMemory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
@@ -128,7 +128,7 @@ async def test_conversation_history_scorer_score_async_success(patch_central_dat
         ),
     ]
 
-    memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+    (await memory.add_message_pieces_to_memory_async(message_pieces=message_pieces))
 
     message = MagicMock()
     message.message_pieces = [message_pieces[-1]]  # Score the last message
@@ -212,7 +212,7 @@ async def test_conversation_history_scorer_filters_roles_correctly(patch_central
         ),
     ]
 
-    memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+    (await memory.add_message_pieces_to_memory_async(message_pieces=message_pieces))
 
     message = MagicMock()
     message.message_pieces = [message_pieces[0]]
@@ -261,7 +261,7 @@ async def test_conversation_scorer_persists_scores_exactly_once(patch_central_da
         conversation_id=conversation_id,
         sequence=1,
     )
-    memory.add_message_pieces_to_memory(message_pieces=[message_piece])
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[message_piece]))
 
     score = Score(
         score_value="0.5",
@@ -294,7 +294,7 @@ async def test_conversation_scorer_persists_scores_exactly_once(patch_central_da
         "Scorer.score_async should persist, so no ID regeneration is needed."
     )
 
-    persisted = list(memory.get_scores(score_type="float_scale"))
+    persisted = list(await memory.get_scores_async(score_type="float_scale"))
     assert len(persisted) == 1, f"Expected exactly one ScoreEntry persisted; got {len(persisted)}"
     assert persisted[0].id == original_id
 
@@ -505,7 +505,7 @@ async def test_conversation_scorer_uses_partial_content_when_blocked_content_sco
         blocked_piece,
     ]
 
-    memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+    (await memory.add_message_pieces_to_memory_async(message_pieces=message_pieces))
 
     # Name a piece that is already in the conversation. A scorable is a reference, so a
     # synthetic lookup piece would have to be persisted and would then join the history.
@@ -570,7 +570,7 @@ async def test_conversation_scorer_uses_error_json_when_blocked_content_scoring_
         blocked_piece,
     ]
 
-    memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+    (await memory.add_message_pieces_to_memory_async(message_pieces=message_pieces))
 
     # Name a piece that is already in the conversation. A scorable is a reference, so a
     # synthetic lookup piece would have to be persisted and would then join the history.
@@ -637,7 +637,7 @@ async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_ce
         sequence=2,
         response_error="blocked",
     )
-    memory.add_message_pieces_to_memory(message_pieces=[user_piece, blocked_assistant_piece])
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[user_piece, blocked_assistant_piece]))
 
     # The incoming message itself is the blocked one — previously this would raise.
     blocked_message = Message(message_pieces=[blocked_assistant_piece])
@@ -661,7 +661,7 @@ async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_ce
     scorer = create_conversation_scorer(scorer=mock_scorer)
 
     # Must not raise — previously raised ValueError on the blocked piece.
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(blocked_message)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(blocked_message)))
 
     assert len(scores) == 1
     mock_scorer._score_nested_async.assert_awaited_once()
@@ -686,7 +686,7 @@ async def test_conversation_scorer_errored_trigger_still_reads_the_conversation(
         sequence=2,
         response_error="blocked",
     )
-    memory.add_message_pieces_to_memory(message_pieces=[prior_piece, blocked_piece])
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[prior_piece, blocked_piece]))
 
     wrapped_scorer = MockFloatScaleScorer()
     wrapped_scorer._score_nested_async = AsyncMock(wraps=wrapped_scorer._score_nested_async)
@@ -715,7 +715,7 @@ async def test_conversation_scorer_excludes_simulated_history_by_default(patch_c
         ),
         MessagePiece(role="assistant", original_value="real answer", conversation_id=conversation_id, sequence=3),
     ]
-    memory.add_message_pieces_to_memory(message_pieces=pieces)
+    (await memory.add_message_pieces_to_memory_async(message_pieces=pieces))
     wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
     wrapped_scorer._score_nested_async = AsyncMock(return_value=[])
     wrapped_scorer.get_identifier.return_value = _make_scorer_id()
@@ -740,7 +740,7 @@ async def test_conversation_scorer_does_not_apply_role_policy_to_trigger(patch_c
         conversation_id=conversation_id,
         sequence=2,
     )
-    memory.add_message_pieces_to_memory(message_pieces=[user_piece, trigger])
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[user_piece, trigger]))
     wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
     wrapped_scorer._score_nested_async = AsyncMock(return_value=[])
     wrapped_scorer.get_identifier.return_value = _make_scorer_id()
@@ -768,7 +768,7 @@ async def test_conversation_scorer_is_silent_when_all_history_roles_are_excluded
         conversation_id=conversation_id,
         sequence=1,
     )
-    memory.add_message_pieces_to_memory(message_pieces=[trigger])
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[trigger]))
     wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
     wrapped_scorer.get_identifier.return_value = _make_scorer_id()
     scorer = create_conversation_scorer(scorer=wrapped_scorer)
@@ -823,7 +823,7 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
         response_error="blocked",
     )
 
-    memory.add_message_pieces_to_memory(message_pieces=prior_pieces + [blocked_assistant_piece])
+    (await memory.add_message_pieces_to_memory_async(message_pieces=prior_pieces + [blocked_assistant_piece]))
 
     blocked_message = Message(message_pieces=[blocked_assistant_piece])
 
@@ -867,7 +867,7 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
     inner_scorer = HarmfulContentDetector()
     scorer = create_conversation_scorer(scorer=inner_scorer)
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(blocked_message)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(blocked_message)))
 
     assert len(scores) == 1
     # Must be 1.0 (real score from prior turns), NOT 0.0 (fallback from rejected synthetic piece)

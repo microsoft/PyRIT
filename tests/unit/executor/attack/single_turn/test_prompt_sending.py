@@ -7,7 +7,12 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import MockPromptTarget, get_mock_scorer_identifier, get_mock_target_identifier
+from unit.mocks import (
+    MockPromptTarget,
+    get_mock_prompt_normalizer,
+    get_mock_scorer_identifier,
+    get_mock_target_identifier,
+)
 
 from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
@@ -169,7 +174,7 @@ def mock_non_true_false_scorer():
 @pytest.fixture
 def mock_prompt_normalizer():
     """Create a mock prompt normalizer for testing"""
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.send_prompt_async = AsyncMock()
     return normalizer
 
@@ -409,7 +414,9 @@ class TestSetupPhase:
             next_message=Message.from_prompt(prompt=final_request, role="user"),
         )
 
-        pieces = CentralMemory.get_memory_instance().get_message_pieces(conversation_id=result.conversation_id)
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async(
+            conversation_id=result.conversation_id
+        )
         assistant_piece = next(piece for piece in pieces if piece.original_value == simulated_response)
         final_piece = next(piece for piece in pieces if piece.original_value == final_request)
 
@@ -437,7 +444,9 @@ class TestSetupPhase:
             next_message=Message.from_prompt(prompt="live request", role="user"),
         )
 
-        pieces = CentralMemory.get_memory_instance().get_message_pieces(conversation_id=result.conversation_id)
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async(
+            conversation_id=result.conversation_id
+        )
         assistant_piece = next(piece for piece in pieces if piece.original_value == simulated_response)
 
         assert assistant_piece.role == "simulated_assistant"
@@ -1264,7 +1273,7 @@ class TestAttackLifecycle:
             objective_started.set()
             try:
                 await allow_objective_completion.wait()
-                CentralMemory.get_memory_instance().add_scores_to_memory(scores=[])
+                (await CentralMemory.get_memory_instance().add_scores_to_memory_async(scores=[]))
                 events.append("forbidden_objective_write")
                 return []
             except asyncio.CancelledError:
@@ -1291,11 +1300,11 @@ class TestAttackLifecycle:
             ),
         )
         memory = CentralMemory.get_memory_instance()
-        original_persist_results = memory.add_attack_results_to_memory
+        original_persist_results = memory.add_attack_results_to_memory_async
         persisted_results: list[AttackResult] = []
 
-        def record_attack_results(*, attack_results: list[AttackResult]) -> None:
-            original_persist_results(attack_results=attack_results)
+        async def record_attack_results_async(*, attack_results: list[AttackResult]) -> None:
+            await original_persist_results(attack_results=attack_results)
             persisted_results.extend(attack_results)
             events.append("error_persisted")
 
@@ -1305,8 +1314,9 @@ class TestAttackLifecycle:
         target.reset_conversation_async.side_effect = record_reset
 
         with (
-            patch.object(memory, "add_attack_results_to_memory", side_effect=record_attack_results) as persist_results,
-            patch.object(memory, "add_scores_to_memory") as persist_scores,
+            patch.object(
+                memory, "add_attack_results_to_memory_async", side_effect=record_attack_results_async
+            ) as persist_results,
             patch.object(memory, "add_scores_to_memory_async", new_callable=AsyncMock) as persist_scores_async,
         ):
             with pytest.raises(RuntimeError, match="deterministic auxiliary scorer failure"):
@@ -1328,10 +1338,9 @@ class TestAttackLifecycle:
             assert persisted_results[0].outcome_reason == (
                 "Exception: RuntimeError: deterministic auxiliary scorer failure"
             )
-            stored_results = memory.get_attack_results(objective="Test objective")
+            stored_results = await memory.get_attack_results_async(objective="Test objective")
             assert len(stored_results) == 1
             assert stored_results[0].outcome == AttackOutcome.ERROR
-            persist_scores.assert_not_called()
             persist_scores_async.assert_not_awaited()
             target.reset_conversation_async.assert_awaited_once_with(
                 conversation_id=persisted_results[0].conversation_id
@@ -1342,7 +1351,6 @@ class TestAttackLifecycle:
             terminal_events = list(events)
             allow_objective_completion.set()
             assert events == terminal_events
-            persist_scores.assert_not_called()
             persist_scores_async.assert_not_awaited()
 
     async def test_teardown_async_is_noop(self, mock_target, basic_context):

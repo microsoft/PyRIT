@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.analytics.technique_analysis import compute_technique_stats
+from pyrit.analytics.technique_analysis import compute_technique_stats_async
 from pyrit.converter import Converter, SearchReplaceConverter
 from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, Message, MessagePiece, SeedObjective
@@ -312,7 +312,7 @@ class TestPromptInjectAtomicAttacks:
         with patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async) as send:
             await scenario.run_async()
         assert send.call_count == 2
-        stats = compute_technique_stats(
+        stats = await compute_technique_stats_async(
             technique_eval_hashes=[print_attack.technique_eval_hash, say_attack.technique_eval_hash],
             memory=sqlite_instance,
         )

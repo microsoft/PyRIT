@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_sample_conversations
 
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.score import BatchScorer
 
@@ -36,7 +36,7 @@ class TestBatchScorerInitialization:
 
     def test_init_memory_initialization(self) -> None:
         """Test that memory is properly initialized from CentralMemory."""
-        mock_memory = MagicMock()
+        mock_memory = MagicMock(spec=MemoryInterface)
         with patch.object(CentralMemory, "get_memory_instance", return_value=mock_memory) as mock_get_memory:
             batch_scorer = BatchScorer()
 
@@ -52,8 +52,8 @@ class TestBatchScorerScoreResponsesByFilters:
         self, sample_conversations: MutableSequence[Message]
     ) -> None:
         """Test basic scoring functionality with filters."""
-        memory = MagicMock()
-        memory.get_message_pieces.return_value = [sample_conversations[1].message_pieces[0]]
+        memory = MagicMock(spec=MemoryInterface)
+        memory.get_message_pieces_async = AsyncMock(return_value=[sample_conversations[1].message_pieces[0]])
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
@@ -66,7 +66,7 @@ class TestBatchScorerScoreResponsesByFilters:
                 scorer=scorer, conversation_id=str(uuid.uuid4())
             )
 
-            memory.get_message_pieces.assert_called_once()
+            memory.get_message_pieces_async.assert_called_once()
             scorer.score_batch_async.assert_called_once()
             assert scores[0] == test_score
 
@@ -74,8 +74,8 @@ class TestBatchScorerScoreResponsesByFilters:
         self, sample_conversations: MutableSequence[Message]
     ) -> None:
         """Test scoring with all filter parameters."""
-        memory = MagicMock()
-        memory.get_message_pieces.return_value = [sample_conversations[1].message_pieces[0]]
+        memory = MagicMock(spec=MemoryInterface)
+        memory.get_message_pieces_async = AsyncMock(return_value=[sample_conversations[1].message_pieces[0]])
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
@@ -99,7 +99,7 @@ class TestBatchScorerScoreResponsesByFilters:
             )
 
             # Should call memory with all parameters including None for unspecified ones
-            memory.get_message_pieces.assert_called_once_with(
+            memory.get_message_pieces_async.assert_called_once_with(
                 conversation_id=test_conversation_id,
                 prompt_ids=test_prompt_ids,
                 labels=test_labels,
@@ -114,8 +114,8 @@ class TestBatchScorerScoreResponsesByFilters:
 
     async def test_score_responses_by_filters_raises_error_no_matching_filters(self) -> None:
         """Test that ValueError is raised when no entries match filters."""
-        memory = MagicMock()
-        memory.get_message_pieces.return_value = []
+        memory = MagicMock(spec=MemoryInterface)
+        memory.get_message_pieces_async = AsyncMock(return_value=[])
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             batch_scorer = BatchScorer()
@@ -186,8 +186,8 @@ class TestBatchScorerErrorHandling:
         self, sample_conversations: MutableSequence[Message]
     ) -> None:
         """Test scoring when no filters are provided."""
-        memory = MagicMock()
-        memory.get_message_pieces.return_value = [sample_conversations[1].message_pieces[0]]
+        memory = MagicMock(spec=MemoryInterface)
+        memory.get_message_pieces_async = AsyncMock(return_value=[sample_conversations[1].message_pieces[0]])
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
@@ -198,7 +198,7 @@ class TestBatchScorerErrorHandling:
             await batch_scorer.score_responses_by_filters_async(scorer=scorer)
 
             # Should call memory with all None parameters
-            memory.get_message_pieces.assert_called_once_with(
+            memory.get_message_pieces_async.assert_called_once_with(
                 conversation_id=None,
                 prompt_ids=None,
                 labels=None,
@@ -213,7 +213,7 @@ class TestBatchScorerErrorHandling:
 
     async def test_score_responses_by_filters_handles_multiple_conversations(self) -> None:
         """Test that scoring handles pieces from multiple conversations correctly."""
-        memory = MagicMock()
+        memory = MagicMock(spec=MemoryInterface)
 
         # Create pieces from different conversations
         pieces = [
@@ -243,7 +243,7 @@ class TestBatchScorerErrorHandling:
             ),
         ]
 
-        memory.get_message_pieces.return_value = pieces
+        memory.get_message_pieces_async = AsyncMock(return_value=pieces)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
@@ -268,7 +268,7 @@ class TestBatchScorerErrorHandling:
 
     async def test_score_responses_by_filters_groups_by_sequence_within_conversation(self) -> None:
         """Test that pieces are properly grouped by sequence within each conversation."""
-        memory = MagicMock()
+        memory = MagicMock(spec=MemoryInterface)
 
         # Create multiple pieces in the same sequence
         pieces = [
@@ -298,7 +298,7 @@ class TestBatchScorerErrorHandling:
             ),
         ]
 
-        memory.get_message_pieces.return_value = pieces
+        memory.get_message_pieces_async = AsyncMock(return_value=pieces)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
@@ -320,7 +320,7 @@ class TestBatchScorerErrorHandling:
 
     async def test_score_responses_by_filters_removes_duplicate_message_pieces(self) -> None:
         """Test that duplicate message pieces are filtered out before batch scoring."""
-        memory = MagicMock()
+        memory = MagicMock(spec=MemoryInterface)
         original_piece_id = uuid.uuid4()
 
         pieces = [
@@ -340,7 +340,7 @@ class TestBatchScorerErrorHandling:
             ),
         ]
 
-        memory.get_message_pieces.return_value = pieces
+        memory.get_message_pieces_async = AsyncMock(return_value=pieces)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()

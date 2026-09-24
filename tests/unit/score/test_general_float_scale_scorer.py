@@ -8,6 +8,7 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import NumericRange
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import (
     SelfAskGeneralFloatScaleScorer,
@@ -33,7 +34,7 @@ def general_float_scorer_response() -> Message:
 
 
 async def test_general_float_scorer_score_async(patch_central_database, general_float_scorer_response: Message):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
 
@@ -56,7 +57,7 @@ async def test_general_float_scorer_score_async(patch_central_database, general_
 async def test_general_float_scorer_score_async_with_prompt_f_string(
     general_float_scorer_response: Message, patch_central_database
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
 
@@ -81,7 +82,7 @@ async def test_general_float_scorer_score_async_with_prompt_f_string(
 async def test_general_float_scorer_forwards_response_json_schema(
     patch_central_database, general_float_scorer_response: Message
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
 
@@ -113,7 +114,7 @@ async def test_general_float_scorer_forwards_response_json_schema(
 async def test_general_float_scorer_omits_schema_when_not_provided(
     patch_central_database, general_float_scorer_response: Message
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
 
@@ -132,7 +133,7 @@ async def test_general_float_scorer_omits_schema_when_not_provided(
 
 
 async def test_general_float_scorer_score_async_handles_custom_keys(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     assert chat_target
 
@@ -167,7 +168,7 @@ async def test_general_float_scorer_score_async_handles_custom_keys(patch_centra
 
 
 async def test_general_float_scorer_score_async_min_max_range(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     json_response = (
         dedent(
@@ -207,7 +208,7 @@ def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_da
 
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskGeneralFloatScaleScorer(
@@ -234,7 +235,7 @@ def test_get_scorer_metrics_uses_configured_result_file(patch_central_database, 
 
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,

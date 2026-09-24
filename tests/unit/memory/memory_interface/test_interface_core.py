@@ -42,11 +42,11 @@ def test_print_schema_raises_when_engine_none():
         obj.print_schema()
 
 
-def test_get_all_embeddings_delegates_to_query(sqlite_instance: MemoryInterface):
+async def test_get_all_embeddings_delegates_to_query(sqlite_instance: MemoryInterface):
     embedding = MagicMock(spec=EmbeddingDataEntry)
 
     with patch.object(sqlite_instance, "_query_entries", return_value=[embedding]) as query_entries:
-        result = sqlite_instance.get_all_embeddings()
+        result = await sqlite_instance.get_all_embeddings_async()
 
     assert result == [embedding]
     query_entries.assert_called_once_with(EmbeddingDataEntry)
@@ -69,7 +69,7 @@ def test_query_entries_rolls_back_on_error(sqlite_instance: MemoryInterface):
     session = MagicMock()
     session.query.side_effect = SQLAlchemyError("query failed")
 
-    with patch.object(sqlite_instance, "get_session", return_value=session):
+    with patch.object(sqlite_instance, "_get_session", return_value=session):
         with pytest.raises(SQLAlchemyError, match="query failed"):
             sqlite_instance._query_entries(PromptMemoryEntry)
 
@@ -78,7 +78,7 @@ def test_insert_entry_rolls_back_on_error(sqlite_instance: MemoryInterface):
     session = MagicMock()
     session.commit.side_effect = SQLAlchemyError("insert failed")
 
-    with patch.object(sqlite_instance, "get_session", return_value=session):
+    with patch.object(sqlite_instance, "_get_session", return_value=session):
         with pytest.raises(SQLAlchemyError, match="insert failed"):
             sqlite_instance._insert_entry(MagicMock())
 
@@ -89,7 +89,7 @@ def test_insert_entries_rolls_back_on_error(sqlite_instance: MemoryInterface):
     session = MagicMock()
     session.commit.side_effect = SQLAlchemyError("bulk insert failed")
 
-    with patch.object(sqlite_instance, "get_session", return_value=session):
+    with patch.object(sqlite_instance, "_get_session", return_value=session):
         with pytest.raises(SQLAlchemyError, match="bulk insert failed"):
             sqlite_instance._insert_entries(entries=[MagicMock()])
 
@@ -103,7 +103,7 @@ def test_update_entries_merges_missing_entry(sqlite_instance: MemoryInterface):
     session.scalar.return_value = None
     session.merge.return_value = entry
 
-    with patch.object(sqlite_instance, "get_session", return_value=session):
+    with patch.object(sqlite_instance, "_get_session", return_value=session):
         result = sqlite_instance._update_entries(entries=[entry], update_fields={"original_value": "after"})
 
     assert result is True
@@ -123,7 +123,7 @@ def test_update_entries_locks_sql_server_prompt_before_observation_check(sqlite_
         return False
 
     with (
-        patch.object(sqlite_instance, "get_session", return_value=session),
+        patch.object(sqlite_instance, "_get_session", return_value=session),
         patch.object(
             sqlite_instance,
             "_message_pieces_are_observation_referenced_in_session",
@@ -144,7 +144,7 @@ def test_update_entries_rolls_back_on_error(sqlite_instance: MemoryInterface):
     session.scalar.return_value = None
     session.get.side_effect = SQLAlchemyError("update failed")
 
-    with patch.object(sqlite_instance, "get_session", return_value=session):
+    with patch.object(sqlite_instance, "_get_session", return_value=session):
         with pytest.raises(SQLAlchemyError, match="update failed"):
             sqlite_instance._update_entries(entries=[entry], update_fields={"original_value": "after"})
 

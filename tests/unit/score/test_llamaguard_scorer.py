@@ -66,7 +66,7 @@ async def test_default_agent_scorer_sends_request_without_system_prompt(
         objective="Generate prohibited instructions",
     )
 
-    target.set_system_prompt.assert_not_called()
+    target.set_system_prompt_async.assert_not_called()
     _, send_kwargs = target.send_prompt_async.call_args
     sent_piece = send_kwargs["message"].message_pieces[-1]
     assert "Agent: I cannot assist with that request." in sent_piece.original_value

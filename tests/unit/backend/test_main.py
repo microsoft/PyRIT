@@ -7,8 +7,10 @@ Tests for the FastAPI application entry point (main.py).
 Covers the lifespan manager and setup_frontend function.
 """
 
+import asyncio
 import logging
 import os
+import threading
 from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,14 +18,46 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
 from pyrit.backend.models.converters import CreateConverterRequest
 from pyrit.backend.services.converter_service import ConverterService, get_converter_service
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
-from pyrit.memory import AzureSQLMemory
+from pyrit.memory import AzureSQLMemory, SQLiteMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
+
+
+async def test_health_responds_while_database_operation_is_pending(sqlite_instance: SQLiteMemory) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def wait_in_database() -> int:
+        started.set()
+        if not release.wait(timeout=10):
+            raise RuntimeError("Database wait was not released")
+        return 1
+
+    async with await sqlite_instance.get_session_async() as session:
+        connection = await session.connection()
+        await connection.run_sync(
+            lambda sync_connection: sync_connection.connection.run_async(
+                lambda driver: driver.create_function("wait_in_database", 0, wait_in_database)
+            )
+        )
+        query = asyncio.create_task(session.execute(text("SELECT wait_in_database()")))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await asyncio.wait_for(client.get("/api/health"), timeout=2)
+            assert response.status_code == 200
+            assert response.json()["status"] == "healthy"
+            assert not query.done()
+        finally:
+            release.set()
+            await query
 
 
 @pytest.fixture
@@ -37,6 +71,7 @@ def mock_scenario_run_lifecycle():
         yield service
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestLifespan:
     """Tests for the application lifespan context manager."""
 
@@ -142,8 +177,8 @@ class TestLifespan:
             async with lifespan(app):
                 pass
 
-        shared_memory.get_scenario_run_state_page.assert_not_called()
-        shared_memory.update_scenario_run_state.assert_not_called()
+        shared_memory.get_scenario_run_state_page_async.assert_not_called()
+        shared_memory.update_scenario_run_state_async.assert_not_called()
 
     async def test_lifespan_populates_default_labels_from_operator_and_operation(
         self, mock_scenario_run_lifecycle

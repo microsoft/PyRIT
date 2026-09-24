@@ -7,12 +7,13 @@ To simplify memory interaction, the `pyrit.memory.CentralMemory` class automatic
 **Manual Memory Setting**:
 
 At the beginning of each notebook, make sure to call:
-```
-# Import initialize_pyrit_async
-# Import the specific constant for the MemoryDatabaseType, or provide the literal value
-from pyrit.setup import initialize_pyrit_async, IN_MEMORY, SQLITE, AZURE_SQL
+```python
+from pyrit.memory import CentralMemory
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-await initialize_pyrit_async(memory_db_type: MemoryDatabaseType, memory_instance_kwargs: Any | None)
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)
+memory = CentralMemory.get_memory_instance()
+messages = await memory.get_conversation_messages_async(conversation_id="example")
 ```
 
 The `MemoryDatabaseType` is a `Literal` with 3 options: IN_MEMORY, SQLITE, AZURE_SQL. (Read more below)

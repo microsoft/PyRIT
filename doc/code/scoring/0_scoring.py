@@ -252,11 +252,11 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 memory = CentralMemory.get_memory_instance()
 prompt_ids = []
 for r in results:
-    prompt_ids.extend(str(p.id) for p in memory.get_message_pieces(conversation_id=r.conversation_id))
+    prompt_ids.extend(str(p.id) for p in (await memory.get_message_pieces_async(conversation_id=r.conversation_id)))
 
 batch_scorer = BatchScorer()
 scores = await batch_scorer.score_responses_by_filters_async(scorer=scorer, prompt_ids=prompt_ids)  # type: ignore
 
 for score in scores:
-    text = memory.get_message_pieces(prompt_ids=[str(score.message_piece_id)])[0].original_value
+    text = (await memory.get_message_pieces_async(prompt_ids=[str(score.message_piece_id)]))[0].original_value
     print(f"{score.get_value()} : {text}")

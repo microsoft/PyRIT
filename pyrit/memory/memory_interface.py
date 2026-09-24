@@ -10,21 +10,24 @@ import logging
 import re
 import uuid
 import weakref
-from collections.abc import Collection, Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec, TypeVar
 from urllib.parse import urlparse
 
 from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select, update
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 from sqlalchemy.orm.session import Session
 
+from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
@@ -54,7 +57,7 @@ from pyrit.memory.memory_models import (
     SeedIdentifierEntry,
     TargetIdentifierEntry,
 )
-from pyrit.memory.memory_session import _begin_sqlite_write, _lock_observations
+from pyrit.memory.memory_session import MemorySession, _begin_sqlite_write, _lock_observations
 from pyrit.memory.storage import (
     DataTypeSerializer,
     StorageIO,
@@ -97,6 +100,7 @@ from pyrit.models import (
     SeedGroup,
     SeedIdentifier,
     SeedObjective,
+    SeedPrompt,
     SeedType,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
@@ -115,6 +119,8 @@ _NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
 
 Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
+OperationArgs = ParamSpec("OperationArgs")
+OperationResult = TypeVar("OperationResult")
 
 
 def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[object]) -> tuple[str, ...]:
@@ -379,10 +385,157 @@ class MemoryInterface(abc.ABC):
                 but also includes overhead.
         """
         self.memory_embedding = embedding_model
+        self._operation_session: ContextVar[Session | None] = ContextVar("memory_operation_session", default=None)
+        self._async_engines: dict[asyncio.AbstractEventLoop, AsyncEngine] = {}
         self._init_storage_io()
 
         # Ensure cleanup at process exit
         self.cleanup()
+
+    def _create_async_engine(self) -> AsyncEngine:
+        """
+        Create an engine owned by the current event loop.
+
+        Raises:
+            NotImplementedError: If a legacy backend has no native async driver.
+        """
+        raise NotImplementedError("Implement _create_async_engine to support native async sessions.")
+
+    def _get_async_engine(self) -> AsyncEngine:
+        loop = asyncio.get_running_loop()
+        engine = self._async_engines.get(loop)
+        if engine is None:
+            engine = self._create_async_engine()
+            self._async_engines[loop] = engine
+        return engine
+
+    async def get_session_async(self) -> AsyncSession:
+        """
+        Create an independent async session.
+
+        The caller must close the session with an async context manager.
+
+        Returns:
+            AsyncSession: A session owned by the current event loop.
+
+        Raises:
+            NotImplementedError: If a custom sync session hook has not been migrated.
+        """
+        if self._uses_legacy_session_override():
+            raise NotImplementedError("Override get_session_async when customizing the legacy get_session hook.")
+        return AsyncSession(bind=self._get_async_engine(), sync_session_class=MemorySession)
+
+    def _uses_legacy_session_override(self) -> bool:
+        return (
+            type(self).get_session is not MemoryInterface.get_session
+            and type(self).get_session_async is MemoryInterface.get_session_async
+        )
+
+    def get_session(self) -> Session:
+        """
+        Use ``get_session_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Session: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_session",
+            new_item="MemoryInterface.get_session_async",
+            removed_in="1.4.0",
+        )
+        return self._get_sync_session()
+
+    def _get_session(self) -> Session:
+        """
+        Select the operation's adapted session or a legacy sync session.
+
+        Returns:
+            Session: The session for this operation.
+        """
+        session = self._operation_session.get()
+        if session is not None:
+            return session
+        if type(self).get_session is not MemoryInterface.get_session:
+            return self.get_session()
+        return self._get_sync_session()
+
+    async def _run_database_operation_async(
+        self,
+        database_operation: Callable[OperationArgs, OperationResult],
+        *args: OperationArgs.args,
+        **kwargs: OperationArgs.kwargs,
+    ) -> OperationResult:
+        """
+        Run shared ORM code through the async driver's adapted session.
+
+        Returns:
+            OperationResult: The database operation result.
+        """
+        if (
+            type(self)._create_async_engine is MemoryInterface._create_async_engine  # type: ignore[ty:redundant-condition-strict]
+            or self._uses_legacy_session_override()
+        ):
+            print_deprecation_message(
+                old_item=f"{type(self).__name__} synchronous backend",
+                new_item=f"{type(self).__name__} native async session implementation",
+                removed_in="1.4.0",
+            )
+            return await run_legacy_sync_async(database_operation, *args, **kwargs)
+
+        def execute(session: Session) -> OperationResult:
+            token = self._operation_session.set(session)
+            try:
+                return database_operation(*args, **kwargs)
+            finally:
+                self._operation_session.reset(token)
+
+        async with await self.get_session_async() as session:
+            return await session.run_sync(execute)
+
+    async def initialize_async(self) -> None:
+        """Initialize the schema without blocking the caller's event loop."""
+        try:
+            await run_legacy_sync_async(self._initialize_schema)
+        except BaseException:
+            await self.dispose_engine_async()
+            raise
+
+    def _initialize_schema(self) -> None:
+        """Apply the schema policy; legacy backends initialize in their constructor."""
+        return
+
+    async def dispose_loop_resources_async(self) -> None:
+        """Close resources before their owning event loop stops."""
+        loop = asyncio.get_running_loop()
+        engine = self._async_engines.get(loop)
+        if engine is not None:
+            await engine.dispose()
+            del self._async_engines[loop]
+
+    @legacy_sync_override(lambda: MemoryInterface.dispose_engine)
+    async def dispose_engine_async(self) -> None:
+        """
+        Dispose async and legacy resources after operations have finished.
+
+        Raises:
+            RuntimeError: If another event loop still owns memory resources.
+        """
+        await self.dispose_loop_resources_async()
+        if self._async_engines:
+            raise RuntimeError("Close memory resources on their owning event loops before disposing memory.")
+        await run_legacy_sync_async(self._dispose_sync_engine)
+
+    @legacy_sync_override(lambda: MemoryInterface.reset_database)
+    async def reset_database_async(self) -> None:
+        """Drop and rebuild the schema using the blocking-only Alembic tooling."""
+        await run_legacy_sync_async(self._reset_database)
+
+    @legacy_sync_override(lambda: MemoryInterface.print_schema)
+    async def print_schema_async(self) -> None:
+        """Print the schema without blocking the caller's event loop."""
+        await run_legacy_sync_async(self._print_schema)
 
     def enable_embedding(self, embedding_model: Any | None = None) -> None:
         """
@@ -602,7 +755,7 @@ class MemoryInterface(abc.ABC):
             and_(timestamp == after.timestamp, entry_id < anchor_id),
         )
 
-    def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
+    def _execute_get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
         """
         Load all EmbeddingData from the memory storage handler.
 
@@ -659,7 +812,7 @@ class MemoryInterface(abc.ABC):
             Any: A SQLAlchemy condition for filtering memory entries based on prompt metadata.
         """
 
-    def add_conversation_to_memory(self, *, conversation: Conversation) -> None:
+    def _execute_add_conversation_to_memory(self, *, conversation: Conversation) -> None:
         """
         Register a conversation in memory, recording its conversation-scoped metadata.
 
@@ -686,7 +839,7 @@ class MemoryInterface(abc.ABC):
         """
         self._insert_conversation(conversation=conversation)
 
-    def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+    def _execute_add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Insert a list of message pieces into the memory storage.
 
@@ -726,7 +879,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the message pieces or converter identifiers cannot be persisted.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
                 session.commit()
@@ -802,7 +955,7 @@ class MemoryInterface(abc.ABC):
                 with the same id already exists with a different target.
             SQLAlchemyError: If the insert fails.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 self._insert_conversation_in_session(session=session, conversation=conversation)
                 session.commit()
@@ -840,7 +993,9 @@ class MemoryInterface(abc.ABC):
                 f"target and cannot be re-registered with {entry.target_identifier!r}."
             )
 
-    def add_conversation_retry(self, *, conversation_id: str, sequence: int, reason: ConversationRetryReason) -> None:
+    def _execute_add_conversation_retry(
+        self, *, conversation_id: str, sequence: int, reason: ConversationRetryReason
+    ) -> None:
         """
         Append a retry record to the conversation-scoped metadata for ``conversation_id``.
 
@@ -858,7 +1013,7 @@ class MemoryInterface(abc.ABC):
             SQLAlchemyError: If the database update fails; the transaction is rolled back first.
         """
         record = ConversationRetry(sequence=sequence, reason=reason).model_dump(mode="json")
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 entry = session.get(ConversationEntry, str(conversation_id))
                 if entry is None:
@@ -872,7 +1027,7 @@ class MemoryInterface(abc.ABC):
                 logger.exception(f"Error recording retry for conversation {conversation_id}: {e}")
                 raise
 
-    def delete_conversation_pieces_after_sequence(self, *, conversation_id: str, sequence: int) -> int:
+    def _execute_delete_conversation_pieces_after_sequence(self, *, conversation_id: str, sequence: int) -> int:
         """
         Delete all message pieces in a conversation whose sequence is greater than ``sequence``.
 
@@ -891,7 +1046,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the deletion fails; the transaction is rolled back first.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 pieces = (
                     session.query(PromptMemoryEntry)
@@ -1043,7 +1198,7 @@ class MemoryInterface(abc.ABC):
             seen_hashes.add(entry.hash)
         return identifiers
 
-    def get_target_identifiers(
+    def _execute_get_target_identifiers(
         self,
         *,
         identifier_hashes: Sequence[str] | None = None,
@@ -1089,7 +1244,7 @@ class MemoryInterface(abc.ABC):
             },
         )
 
-    def get_converter_identifiers(
+    def _execute_get_converter_identifiers(
         self,
         *,
         identifier_hashes: Sequence[str] | None = None,
@@ -1128,7 +1283,7 @@ class MemoryInterface(abc.ABC):
             },
         )
 
-    def get_scorer_identifiers(
+    def _execute_get_scorer_identifiers(
         self,
         *,
         identifier_hashes: Sequence[str] | None = None,
@@ -1162,7 +1317,7 @@ class MemoryInterface(abc.ABC):
             },
         )
 
-    def get_scenario_identifiers(
+    def _execute_get_scenario_identifiers(
         self,
         *,
         identifier_hashes: Sequence[str] | None = None,
@@ -1202,7 +1357,7 @@ class MemoryInterface(abc.ABC):
             },
         )
 
-    def get_seed_identifiers(
+    def _execute_get_seed_identifiers(
         self,
         *,
         identifier_hashes: Sequence[str] | None = None,
@@ -1242,7 +1397,7 @@ class MemoryInterface(abc.ABC):
             },
         )
 
-    def get_attack_identifiers(
+    def _execute_get_attack_identifiers(
         self,
         *,
         identifier_hashes: Sequence[str] | None = None,
@@ -1282,7 +1437,7 @@ class MemoryInterface(abc.ABC):
             },
         )
 
-    def get_attack_technique_identifiers(
+    def _execute_get_attack_technique_identifiers(
         self,
         *,
         identifier_hashes: Sequence[str] | None = None,
@@ -1310,7 +1465,7 @@ class MemoryInterface(abc.ABC):
             },
         )
 
-    def get_atomic_attack_identifiers(
+    def _execute_get_atomic_attack_identifiers(
         self,
         *,
         identifier_hashes: Sequence[str] | None = None,
@@ -1372,7 +1527,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the query fails.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 query = session.query(model_class)
                 if join_scores and model_class == PromptMemoryEntry:
@@ -1568,7 +1723,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the insertion fails.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 session.add(entry)
                 session.commit()
@@ -1587,7 +1742,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the insertion fails.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 session.add_all(entries)
                 session.commit()
@@ -1596,14 +1751,19 @@ class MemoryInterface(abc.ABC):
                 logger.exception(f"Error inserting multiple entries into the table: {e}")
                 raise
 
-    @abc.abstractmethod
-    def get_session(self) -> Session:
+    def _get_sync_session(self) -> Session:
         """
         Provide a SQLAlchemy session for transactional operations.
 
         Returns:
             Session: A SQLAlchemy session bound to the engine.
+
+        Raises:
+            NotImplementedError: If neither session contract is implemented.
         """
+        if type(self).get_session is MemoryInterface.get_session:
+            raise NotImplementedError("Implement _get_sync_session or the legacy get_session method.")
+        return self.get_session()
 
     def _update_entry(self, entry: Base) -> None:
         """
@@ -1619,7 +1779,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If there's an error during the database operation.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 session.merge(entry)
                 session.commit()
@@ -1645,7 +1805,7 @@ class MemoryInterface(abc.ABC):
         """
         if not update_fields:
             raise ValueError("update_fields must be provided to update prompt entries.")
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 prompt_entry_ids = [entry.id for entry in entries if isinstance(entry, PromptMemoryEntry)]
                 if prompt_entry_ids and session.get_bind().dialect.name == "mssql":
@@ -1706,8 +1866,7 @@ class MemoryInterface(abc.ABC):
             Database-specific SQLAlchemy condition.
         """
 
-    @abc.abstractmethod
-    def get_unique_attack_class_names(self) -> list[str]:
+    def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
         Return sorted unique attack class names from all stored attack results.
 
@@ -1716,10 +1875,15 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             Sorted list of unique attack class name strings.
-        """
 
-    @abc.abstractmethod
-    def get_unique_converter_class_names(self) -> list[str]:
+        Raises:
+            NotImplementedError: If the backend does not implement this query.
+        """
+        if type(self).get_unique_attack_class_names is MemoryInterface.get_unique_attack_class_names:
+            raise NotImplementedError("Implement the unique attack class query.")
+        return self.get_unique_attack_class_names()
+
+    def _execute_get_unique_converter_class_names(self) -> list[str]:
         """
         Return sorted unique converter class names used across all attack results.
 
@@ -1728,10 +1892,15 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             Sorted list of unique converter class name strings.
-        """
 
-    @abc.abstractmethod
-    def get_conversation_stats(self, *, conversation_ids: Sequence[str]) -> dict[str, "ConversationStats"]:
+        Raises:
+            NotImplementedError: If the backend does not implement this query.
+        """
+        if type(self).get_unique_converter_class_names is MemoryInterface.get_unique_converter_class_names:
+            raise NotImplementedError("Implement the unique converter class query.")
+        return self.get_unique_converter_class_names()
+
+    def _execute_get_conversation_stats(self, *, conversation_ids: Sequence[str]) -> dict[str, "ConversationStats"]:
         """
         Return lightweight aggregate statistics for one or more conversations.
 
@@ -1746,7 +1915,13 @@ class MemoryInterface(abc.ABC):
         Returns:
             Mapping from conversation_id to ConversationStats.
             Conversations with no pieces are omitted from the result.
+
+        Raises:
+            NotImplementedError: If the backend does not implement this query.
         """
+        if type(self).get_conversation_stats is MemoryInterface.get_conversation_stats:
+            raise NotImplementedError("Implement the conversation statistics query.")
+        return self.get_conversation_stats(conversation_ids=conversation_ids)
 
     @abc.abstractmethod
     def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
@@ -1839,7 +2014,7 @@ class MemoryInterface(abc.ABC):
             "to support Scenario history queries."
         )
 
-    def add_scores_to_memory(
+    def _execute_add_scores_to_memory(
         self,
         *,
         scores: Sequence[Score],
@@ -1857,6 +2032,7 @@ class MemoryInterface(abc.ABC):
             prepared_content_hashes={},
         )
 
+    @legacy_sync_override(lambda: MemoryInterface.add_scores_to_memory)
     async def add_scores_to_memory_async(
         self,
         *,
@@ -1877,7 +2053,9 @@ class MemoryInterface(abc.ABC):
             )
         )
         if not media_scorables:
-            self.add_scores_to_memory(scores=scores, observations=observations)
+            await self._run_database_operation_async(
+                self._execute_add_scores_to_memory, scores=scores, observations=observations
+            )
             return
 
         prepared_content = await asyncio.gather(
@@ -1898,7 +2076,8 @@ class MemoryInterface(abc.ABC):
             copied_scores.append((score, copied_score))
             scores_to_persist.append(copied_score)
 
-        self._add_scores_to_memory(
+        await self._run_database_operation_async(
+            self._add_scores_to_memory,
             scores=scores_to_persist,
             observations=observations,
             prepared_content_hashes=prepared_hashes,
@@ -1971,7 +2150,7 @@ class MemoryInterface(abc.ABC):
         """
         observations = [Observation.model_validate(observation.model_dump()) for observation in observations]
         new_ids, referenced_ids = self._validate_score_inputs(scores=scores, observations=observations)
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 _begin_sqlite_write(session)
                 self._validate_observation_links(
@@ -2268,7 +2447,9 @@ class MemoryInterface(abc.ABC):
             pieces_by_id.update({entry.id: entry.get_message_piece() for entry in session.scalars(statement)})
         return pieces_by_id
 
-    def get_scorable_content(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, ContentScorable]:
+    def _execute_get_scorable_content(
+        self, *, content_ids: Sequence[uuid.UUID | str]
+    ) -> dict[uuid.UUID, ContentScorable]:
         """
         Load the loose content that stored scores are anchored on.
 
@@ -2292,7 +2473,7 @@ class MemoryInterface(abc.ABC):
             if entry.value is not None
         }
 
-    def get_scorable_content_hashes(
+    def _execute_get_scorable_content_hashes(
         self,
         *,
         content_ids: Sequence[uuid.UUID | str],
@@ -2312,7 +2493,7 @@ class MemoryInterface(abc.ABC):
         )
         return {entry.id: entry.value_sha256 for entry in entries}
 
-    def get_observations(
+    def _execute_get_observations(
         self,
         *,
         observation_ids: Sequence[uuid.UUID | str],
@@ -2345,7 +2526,7 @@ class MemoryInterface(abc.ABC):
         """Persist a complete scorer graph and its target dependencies."""
         cls._persist_identifier(session=session, identifier=scorer_identifier)
 
-    def get_scores(
+    def _execute_get_scores(
         self,
         *,
         score_ids: Sequence[str] | None = None,
@@ -2411,7 +2592,7 @@ class MemoryInterface(abc.ABC):
         score_entries: Sequence[ScoreEntry] = self._query_entries(ScoreEntry, conditions=and_(*conditions))
         return [entry.get_score() for entry in score_entries]
 
-    def get_prompt_scores(
+    def _execute_get_prompt_scores(
         self,
         *,
         role: str | None = None,
@@ -2450,7 +2631,7 @@ class MemoryInterface(abc.ABC):
         Returns:
             Sequence[Score]: A list of scores extracted from the message pieces.
         """
-        message_pieces = self.get_message_pieces(
+        message_pieces = self._execute_get_message_pieces(
             role=role,
             conversation_id=conversation_id,
             prompt_ids=prompt_ids,
@@ -2495,7 +2676,7 @@ class MemoryInterface(abc.ABC):
 
         return [entry.get_score() for entry in entries_by_id.values()]
 
-    def get_conversation_messages(self, *, conversation_id: str) -> MutableSequence[Message]:
+    def _execute_get_conversation_messages(self, *, conversation_id: str) -> MutableSequence[Message]:
         """
         Retrieve a list of Message objects that have the specified conversation ID.
 
@@ -2512,7 +2693,7 @@ class MemoryInterface(abc.ABC):
         """
         if not conversation_id:
             raise ValueError("get_conversation_messages requires a non-empty conversation_id")
-        message_pieces = self.get_message_pieces(conversation_id=conversation_id)
+        message_pieces = self._execute_get_message_pieces(conversation_id=conversation_id)
         return group_conversation_message_pieces_by_sequence(message_pieces=message_pieces)
 
     def _get_conversation(self, *, conversation_id: str) -> Conversation | None:
@@ -2536,7 +2717,28 @@ class MemoryInterface(abc.ABC):
             return None
         return entries[0].get_conversation()
 
-    def get_request_from_response(self, *, response: Message) -> Message:
+    async def get_conversation_metadata_async(self, *, conversation_id: str) -> Conversation | None:
+        """
+        Read the stored metadata for one conversation.
+
+        Args:
+            conversation_id: The conversation to look up.
+
+        Returns:
+            Conversation metadata, or None if the conversation is not stored.
+        """
+        return await self._run_database_operation_async(self._get_conversation, conversation_id=conversation_id)
+
+    async def update_scenario_result_async(self, *, scenario_result: ScenarioResult) -> None:
+        """
+        Persist an updated scenario result.
+
+        Args:
+            scenario_result: The scenario result to update.
+        """
+        await self._run_database_operation_async(self._update_entry, ScenarioResultEntry(entry=scenario_result))
+
+    def _execute_get_request_from_response(self, *, response: Message) -> Message:
         """
         Retrieve the request that produced the given response.
 
@@ -2554,7 +2756,7 @@ class MemoryInterface(abc.ABC):
         if response.sequence < 1:
             raise ValueError("The provided request does not have a preceding request (sequence < 1).")
 
-        conversation = self.get_conversation_messages(conversation_id=response.conversation_id)
+        conversation = self._execute_get_conversation_messages(conversation_id=response.conversation_id)
         return conversation[response.sequence - 1]
 
     def _build_message_piece_identifier_conditions(
@@ -2604,7 +2806,7 @@ class MemoryInterface(abc.ABC):
             )
         return conditions
 
-    def get_message_pieces(
+    def _execute_get_message_pieces(
         self,
         *,
         role: str | None = None,
@@ -2703,7 +2905,7 @@ class MemoryInterface(abc.ABC):
             logger.exception(f"Failed to retrieve prompts with error {e}")
             raise
 
-    def duplicate_messages(self, *, messages: Sequence[Message]) -> tuple[str, Sequence[MessagePiece]]:
+    def _execute_duplicate_messages(self, *, messages: Sequence[Message]) -> tuple[str, Sequence[MessagePiece]]:
         """
         Duplicate messages with a new conversation ID.
 
@@ -2729,7 +2931,7 @@ class MemoryInterface(abc.ABC):
 
         return new_conversation_id, all_pieces
 
-    def duplicate_conversation(self, *, conversation_id: str) -> str:
+    def _execute_duplicate_conversation(self, *, conversation_id: str) -> str:
         """
         Duplicate a conversation for reuse.
 
@@ -2743,18 +2945,18 @@ class MemoryInterface(abc.ABC):
         Returns:
             The uuid for the new conversation.
         """
-        messages = self.get_conversation_messages(conversation_id=conversation_id)
+        messages = self._execute_get_conversation_messages(conversation_id=conversation_id)
         source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
-        new_conversation_id, all_pieces = self.duplicate_messages(messages=messages)
+        new_conversation_id, all_pieces = self._execute_duplicate_messages(messages=messages)
         if all_pieces:
-            self.add_conversation_to_memory(
+            self._execute_add_conversation_to_memory(
                 conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target)
             )
-            self.add_message_pieces_to_memory(message_pieces=all_pieces)
+            self._execute_add_message_pieces_to_memory(message_pieces=all_pieces)
         return new_conversation_id
 
-    def duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
+    def _execute_duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
         """
         Duplicate a conversation, excluding the last turn. In this case, last turn is defined as before the last
         user request (e.g. if there is half a turn, it just removes that half).
@@ -2767,7 +2969,7 @@ class MemoryInterface(abc.ABC):
         Returns:
             The uuid for the new conversation.
         """
-        messages = self.get_conversation_messages(conversation_id=conversation_id)
+        messages = self._execute_get_conversation_messages(conversation_id=conversation_id)
 
         # remove the final turn from the conversation
         if len(messages) == 0:
@@ -2785,16 +2987,16 @@ class MemoryInterface(abc.ABC):
 
         source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
-        new_conversation_id, all_pieces = self.duplicate_messages(messages=messages_to_duplicate)
+        new_conversation_id, all_pieces = self._execute_duplicate_messages(messages=messages_to_duplicate)
         if all_pieces:
-            self.add_conversation_to_memory(
+            self._execute_add_conversation_to_memory(
                 conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target)
             )
-            self.add_message_pieces_to_memory(message_pieces=all_pieces)
+            self._execute_add_message_pieces_to_memory(message_pieces=all_pieces)
 
         return new_conversation_id
 
-    def add_message_to_memory(self, *, request: Message) -> None:
+    def _execute_add_message_to_memory(self, *, request: Message) -> None:
         """
         Insert a list of message pieces into the memory storage.
 
@@ -2804,26 +3006,28 @@ class MemoryInterface(abc.ABC):
         Args:
             request (Message): The message to add to the memory.
         """
-        request.validate()
-
-        embedding_entries = []
-        message_pieces = request.message_pieces
-
-        pieces_to_persist = [piece for piece in message_pieces if not piece.not_in_memory]
-        if not pieces_to_persist:
+        if not self._persist_message(request):
             return
-
-        self._update_sequence(message_pieces=message_pieces)
-
-        # conversation_id validation happens in add_message_pieces_to_memory, the shared choke point.
-        self.add_message_pieces_to_memory(message_pieces=message_pieces)
-
         if self.memory_embedding:
-            for piece in message_pieces:
-                embedding_entry = self.memory_embedding.generate_embedding_memory_data(message_piece=piece)
-                embedding_entries.append(embedding_entry)
-
+            embedding_entries = [
+                self.memory_embedding.generate_embedding_memory_data(message_piece=piece)
+                for piece in request.message_pieces
+            ]
             self._add_embeddings_to_memory(embedding_data=embedding_entries)
+
+    def _persist_message(self, request: Message) -> bool:
+        """
+        Persist a validated message before generating optional embeddings.
+
+        Returns:
+            bool: Whether any message pieces were persisted.
+        """
+        request.validate()
+        if not any(not piece.not_in_memory for piece in request.message_pieces):
+            return False
+        self._update_sequence(message_pieces=request.message_pieces)
+        self._execute_add_message_pieces_to_memory(message_pieces=request.message_pieces)
+        return True
 
     def _update_sequence(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
@@ -2832,7 +3036,7 @@ class MemoryInterface(abc.ABC):
         Args:
             message_pieces (Sequence[MessagePiece]): The list of message pieces to update.
         """
-        prev_conversations = self.get_message_pieces(conversation_id=message_pieces[0].conversation_id)
+        prev_conversations = self._execute_get_message_pieces(conversation_id=message_pieces[0].conversation_id)
 
         sequence = 0
 
@@ -2842,7 +3046,9 @@ class MemoryInterface(abc.ABC):
         for piece in message_pieces:
             piece.sequence = sequence
 
-    def update_prompt_entries_by_conversation_id(self, *, conversation_id: str, update_fields: dict[str, Any]) -> bool:
+    def _execute_update_prompt_entries_by_conversation_id(
+        self, *, conversation_id: str, update_fields: dict[str, Any]
+    ) -> bool:
         """
         Update prompt entries for a given conversation ID with the specified field values.
 
@@ -2893,7 +3099,7 @@ class MemoryInterface(abc.ABC):
         """
         if not piece_ids:
             return False
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             return self._message_pieces_are_observation_referenced_in_session(
                 session=session,
                 piece_ids=piece_ids,
@@ -2928,7 +3134,7 @@ class MemoryInterface(abc.ABC):
                 return True
         return False
 
-    def update_prompt_metadata_by_conversation_id(
+    def _execute_update_prompt_metadata_by_conversation_id(
         self, *, conversation_id: str, prompt_metadata: dict[str, str | int]
     ) -> bool:
         """
@@ -2941,7 +3147,7 @@ class MemoryInterface(abc.ABC):
         Returns:
             bool: True if the update was successful, False otherwise.
         """
-        return self.update_prompt_entries_by_conversation_id(
+        return self._execute_update_prompt_entries_by_conversation_id(
             conversation_id=conversation_id, update_fields={"prompt_metadata": prompt_metadata}
         )
 
@@ -2985,6 +3191,19 @@ class MemoryInterface(abc.ABC):
 
     def reset_database(self) -> None:
         """
+        Use ``reset_database_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.reset_database",
+            new_item="MemoryInterface.reset_database_async",
+            removed_in="1.4.0",
+        )
+        self._reset_database()
+
+    def _reset_database(self) -> None:
+        """
         Drop and recreate all tables in the database.
 
         Raises:
@@ -2997,6 +3216,19 @@ class MemoryInterface(abc.ABC):
         reset_database(engine=self.engine)
 
     def dispose_engine(self) -> None:
+        """
+        Use ``dispose_engine_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.dispose_engine",
+            new_item="MemoryInterface.dispose_engine_async",
+            removed_in="1.4.0",
+        )
+        self._dispose_sync_engine()
+
+    def _dispose_sync_engine(self) -> None:
         """
         Dispose the engine and clean up resources.
         """
@@ -3014,10 +3246,10 @@ class MemoryInterface(abc.ABC):
         Ensure cleanup on process exit.
         """
         # Ensure cleanup at process exit
-        atexit.register(self.dispose_engine)
+        atexit.register(self._dispose_sync_engine)
 
         # Ensure cleanup happens even if the object is garbage collected before process exits
-        weakref.finalize(self, self.dispose_engine)
+        weakref.finalize(self, self._dispose_sync_engine)
 
     def _build_seed_filter_conditions(
         self,
@@ -3116,7 +3348,7 @@ class MemoryInterface(abc.ABC):
 
         return conditions
 
-    def get_seeds(
+    def _execute_get_seeds(
         self,
         *,
         value: str | None = None,
@@ -3195,7 +3427,7 @@ class MemoryInterface(abc.ABC):
             logger.exception(f"Failed to retrieve prompts with dataset name {dataset_name} with error {e}")
             raise
 
-    def remove_seeds_from_memory(
+    def _execute_remove_seeds_from_memory(
         self,
         *,
         value: str | None = None,
@@ -3291,7 +3523,7 @@ class MemoryInterface(abc.ABC):
             )
 
         # Delete matching rows in a single transaction so it is atomic across backends.
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 query = session.query(SeedEntry).filter(and_(*conditions))
                 count = query.delete(synchronize_session=False)
@@ -3302,7 +3534,7 @@ class MemoryInterface(abc.ABC):
                 logger.exception(f"Failed to remove seeds from memory: {e}")
                 raise
 
-    def remove_seed_groups_from_memory(
+    def _execute_remove_seed_groups_from_memory(
         self,
         *,
         value: str | None = None,
@@ -3409,7 +3641,7 @@ class MemoryInterface(abc.ABC):
         # are selected with a server-side subquery rather than materialized into Python and sent back as an
         # IN (...) list, so a broad filter cannot exceed the backend's bound-parameter limit (e.g. Azure SQL).
         # Seeds with a NULL prompt_group_id are excluded, so ungrouped matches are skipped.
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 group_id_subquery = (
                     select(SeedEntry.prompt_group_id)
@@ -3499,8 +3731,8 @@ class MemoryInterface(abc.ABC):
             prompt.date_added = current_time
 
         # Only SeedPrompt has set_encoding_metadata for audio/video/image files
-        if hasattr(prompt, "set_encoding_metadata"):
-            prompt.set_encoding_metadata()  # type: ignore[ty:call-non-callable]
+        if isinstance(prompt, SeedPrompt):
+            await asyncio.to_thread(prompt.set_encoding_metadata)
 
         # Handle serialization for image, audio & video SeedPrompts
         if prompt.data_type in ["image_path", "audio_path", "video_path"]:
@@ -3530,6 +3762,10 @@ class MemoryInterface(abc.ABC):
         for prompt in seeds:
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
+        await self._run_database_operation_async(self._insert_prepared_seeds, seeds=seeds)
+
+    def _insert_prepared_seeds(self, *, seeds: Sequence[Seed]) -> None:
+        """Deduplicate and store seeds after their media is prepared."""
         existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
         new_condition_group_ids = self._get_new_condition_group_ids(
             seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
@@ -3663,7 +3899,7 @@ class MemoryInterface(abc.ABC):
             chunk_size = self._MAX_BIND_VARS - (1 if dataset_name is not None else 0)
             for index in range(0, len(hashes), chunk_size):
                 chunk = hashes[index : index + chunk_size]
-                for existing in self.get_seeds(value_sha256=chunk, dataset_name=dataset_name):
+                for existing in self._execute_get_seeds(value_sha256=chunk, dataset_name=dataset_name):
                     if not existing.value_sha256:
                         continue
                     conditions_key = self._seed_conditions_key(existing)
@@ -3688,7 +3924,7 @@ class MemoryInterface(abc.ABC):
         for dataset in datasets:
             await self.add_seeds_to_memory_async(seeds=dataset.seeds, added_by=added_by)
 
-    def get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
+    def _execute_get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
         """
         Return aggregate metadata for datasets already loaded in memory.
 
@@ -3766,7 +4002,7 @@ class MemoryInterface(abc.ABC):
 
             combined_statement = named_statement.union_all(unnamed_statement)
 
-            with closing(self.get_session()) as session:
+            with closing(self._get_session()) as session:
                 rows = session.execute(combined_statement).all()
 
             summaries_by_dataset: dict[str | None, dict[str, Any]] = {}
@@ -3808,7 +4044,7 @@ class MemoryInterface(abc.ABC):
             logger.exception(f"Failed to retrieve dataset summaries with error {e}")
             raise
 
-    def get_seed_dataset_names(self) -> Sequence[str]:
+    def _execute_get_seed_dataset_names(self) -> Sequence[str]:
         """
         Return a list of all seed dataset names in the memory storage.
 
@@ -3891,7 +4127,21 @@ class MemoryInterface(abc.ABC):
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
             entries.append(SeedEntry(entry=prompt))
 
-        with closing(self.get_session()) as session:
+        return await self._run_database_operation_async(
+            self._replace_prepared_seeds, dataset_name=dataset_name, entries=entries
+        )
+
+    def _replace_prepared_seeds(self, *, dataset_name: str, entries: Sequence[SeedEntry]) -> int:
+        """
+        Replace one dataset in a single transaction.
+
+        Returns:
+            int: The number of deleted seed entries.
+
+        Raises:
+            SQLAlchemyError: If the replacement cannot be committed.
+        """
+        with closing(self._get_session()) as session:
             try:
                 deleted = (
                     session.query(SeedEntry)
@@ -3944,7 +4194,7 @@ class MemoryInterface(abc.ABC):
             all_seeds.extend(prompt_group.seeds)
         await self.add_seeds_to_memory_async(seeds=all_seeds, added_by=added_by)
 
-    def get_seed_groups(
+    def _execute_get_seed_groups(
         self,
         *,
         value: str | None = None,
@@ -3992,7 +4242,7 @@ class MemoryInterface(abc.ABC):
         Returns:
             Sequence[SeedGroup]: A list of `SeedGroup` objects that match the filtering criteria.
         """
-        seeds = self.get_seeds(
+        seeds = self._execute_get_seeds(
             value=value,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
@@ -4014,7 +4264,7 @@ class MemoryInterface(abc.ABC):
         if seeds:
             related_prompt_group_ids = {seed.prompt_group_id for seed in seeds if seed.prompt_group_id}
             if related_prompt_group_ids:
-                seeds = self.get_seeds(prompt_group_ids=list(related_prompt_group_ids))
+                seeds = self._execute_get_seeds(prompt_group_ids=list(related_prompt_group_ids))
 
         # Deduplicate seeds to ensure we don't have duplicate prompts in the groups
         if seeds:
@@ -4027,7 +4277,7 @@ class MemoryInterface(abc.ABC):
 
         return seed_groups
 
-    def add_attack_results_to_memory(self, *, attack_results: Sequence[AttackResult]) -> None:
+    def _execute_add_attack_results_to_memory(self, *, attack_results: Sequence[AttackResult]) -> None:
         """
         Insert a list of attack results into the memory storage.
         The database model automatically calculates objective_sha256 for consistency.
@@ -4036,7 +4286,7 @@ class MemoryInterface(abc.ABC):
             SQLAlchemyError: If the database transaction fails.
         """
         entries = [AttackResultEntry(entry=attack_result) for attack_result in attack_results]
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 for attack_result in attack_results:
                     if attack_result.atomic_attack_identifier is not None:
@@ -4052,7 +4302,7 @@ class MemoryInterface(abc.ABC):
                 session.rollback()
                 raise
 
-    def add_conversation_branches_to_attack(
+    def _execute_add_conversation_branches_to_attack(
         self,
         *,
         attack_result_id: str,
@@ -4082,7 +4332,7 @@ class MemoryInterface(abc.ABC):
         if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
             raise ValueError("Copied message pieces must belong to the prepared branches")
 
-        with closing(self.get_session()) as session, session.begin():
+        with closing(self._get_session()) as session, session.begin():
             entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
             if entry is None:
                 return False
@@ -4102,7 +4352,7 @@ class MemoryInterface(abc.ABC):
             entry.timestamp = datetime.now(UTC)
         return True
 
-    def promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
+    def _execute_promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
         """
         Promote an existing related conversation without losing concurrent branch additions.
 
@@ -4113,7 +4363,7 @@ class MemoryInterface(abc.ABC):
             ValueError: If the requested conversation is not part of this attack.
             SQLAlchemyError: If the transaction fails.
         """
-        with closing(self.get_session()) as session, session.begin():
+        with closing(self._get_session()) as session, session.begin():
             entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
             if entry is None:
                 return False
@@ -4148,7 +4398,7 @@ class MemoryInterface(abc.ABC):
         )
         return session.get(AttackResultEntry, result_id, populate_existing=True)
 
-    def update_attack_result(self, *, conversation_id: str, update_fields: dict[str, Any]) -> bool:
+    def _execute_update_attack_result(self, *, conversation_id: str, update_fields: dict[str, Any]) -> bool:
         """
         Update specific fields of an existing AttackResultEntry identified by conversation_id.
 
@@ -4183,7 +4433,7 @@ class MemoryInterface(abc.ABC):
         self._update_entries(entries=[target_entry], update_fields=update_fields)
         return True
 
-    def update_attack_result_by_id(self, *, attack_result_id: str, update_fields: dict[str, Any]) -> bool:
+    def _execute_update_attack_result_by_id(self, *, attack_result_id: str, update_fields: dict[str, Any]) -> bool:
         """
         Update specific fields of an existing AttackResultEntry identified by its primary key.
 
@@ -4212,7 +4462,7 @@ class MemoryInterface(abc.ABC):
         self._update_entries(entries=[entries[0]], update_fields=update_fields)
         return True
 
-    def get_attack_results(
+    def _execute_get_attack_results(
         self,
         *,
         attack_result_ids: Sequence[str] | None = None,
@@ -4741,7 +4991,7 @@ class MemoryInterface(abc.ABC):
                 seen[entry.conversation_id] = entry
         return [entry.get_attack_result() for entry in seen.values()]
 
-    def get_unique_attack_labels(
+    def _execute_get_unique_attack_labels(
         self,
         *,
         operator: Sequence[str] | None = None,
@@ -4766,7 +5016,7 @@ class MemoryInterface(abc.ABC):
         conditions = self._build_attack_result_scalar_conditions(query=filter_query)
         conditions.extend(self._build_attack_result_label_conditions(query=filter_query))
 
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             query = session.query(AttackResultEntry.labels).filter(AttackResultEntry.labels.isnot(None))
             if conditions:
                 query = query.filter(and_(*conditions))
@@ -4785,9 +5035,9 @@ class MemoryInterface(abc.ABC):
 
         return {key: sorted(values) for key, values in sorted(label_values.items())}
 
-    def get_unique_attack_attribution(self) -> dict[str, list[str]]:
+    def _execute_get_unique_attack_attribution(self) -> dict[str, list[str]]:
         """Return unique dedicated operator and operation values from indexed columns."""
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             operators = [
                 value
                 for (value,) in session.query(AttackResultEntry.operator)
@@ -4804,7 +5054,7 @@ class MemoryInterface(abc.ABC):
             ]
         return {"operators": sorted(operators), "operations": sorted(operations)}
 
-    def add_scenario_results_to_memory(self, *, scenario_results: Sequence[ScenarioResult]) -> None:
+    def _execute_add_scenario_results_to_memory(self, *, scenario_results: Sequence[ScenarioResult]) -> None:
         """
         Insert a list of scenario results into the memory storage.
 
@@ -4815,7 +5065,7 @@ class MemoryInterface(abc.ABC):
             SQLAlchemyError: If a scenario result or identifier graph cannot be persisted.
         """
         entries = [ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             try:
                 for scenario_result in scenario_results:
                     self._persist_scenario_identifier(
@@ -4833,7 +5083,7 @@ class MemoryInterface(abc.ABC):
         """Persist a scenario identifier and its target and scorer dependencies."""
         cls._persist_identifier(session=session, identifier=scenario_identifier)
 
-    def update_scenario_run_state(
+    def _execute_update_scenario_run_state(
         self,
         *,
         scenario_result_id: str,
@@ -4856,7 +5106,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
-        self.update_scenario_run_state_and_metadata_fields(
+        self._execute_update_scenario_run_state_and_metadata_fields(
             scenario_result_id=scenario_result_id,
             scenario_run_state=scenario_run_state,
             error_message=error_message,
@@ -4864,7 +5114,7 @@ class MemoryInterface(abc.ABC):
             metadata_fields={},
         )
 
-    def update_scenario_run_state_and_metadata_fields(
+    def _execute_update_scenario_run_state_and_metadata_fields(
         self,
         *,
         scenario_result_id: str,
@@ -4879,7 +5129,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
 
             if not entry:
@@ -4902,7 +5152,7 @@ class MemoryInterface(abc.ABC):
 
         logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
 
-    def try_update_scenario_run_state(
+    def _execute_try_update_scenario_run_state(
         self,
         *,
         scenario_result_id: str,
@@ -4947,7 +5197,7 @@ class MemoryInterface(abc.ABC):
         ):
             values["completion_time"] = datetime.now(tz=UTC)
 
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             updated_rows = (
                 session.query(ScenarioResultEntry)
                 .filter(
@@ -4962,7 +5212,7 @@ class MemoryInterface(abc.ABC):
             logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
         return bool(updated_rows)
 
-    def update_scenario_metadata(
+    def _execute_update_scenario_metadata(
         self,
         *,
         scenario_result_id: str,
@@ -4983,14 +5233,14 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
             if not entry:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
             entry.scenario_metadata = metadata if metadata else None
             session.commit()
 
-    def update_scenario_metadata_fields(
+    def _execute_update_scenario_metadata_fields(
         self,
         *,
         scenario_result_id: str,
@@ -5002,7 +5252,7 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
             if not entry:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
@@ -5010,13 +5260,13 @@ class MemoryInterface(abc.ABC):
             flag_modified(entry, "scenario_metadata")
             session.commit()
 
-    def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
+    def _execute_get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
             return entry.get_scenario_result() if entry is not None else None
 
-    def get_scenario_run_state_page(
+    def _execute_get_scenario_run_state_page(
         self,
         *,
         states: Sequence[ScenarioRunState],
@@ -5043,7 +5293,7 @@ class MemoryInterface(abc.ABC):
             .order_by(ScenarioResultEntry.id.asc())
             .limit(limit + 1)
         )
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             rows = session.execute(statement).all()
         return (
             [
@@ -5056,7 +5306,7 @@ class MemoryInterface(abc.ABC):
             len(rows) > limit,
         )
 
-    def get_scenario_run_history_page(
+    def _execute_get_scenario_run_history_page(
         self,
         *,
         scenario_names: Sequence[str] | None = None,
@@ -5149,7 +5399,7 @@ class MemoryInterface(abc.ABC):
             ScenarioResultEntry.timestamp.desc(),
             ScenarioResultEntry.id.desc(),
         ).limit(limit + 1)
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             rows = session.execute(statement).all()
         page_rows = rows[:limit]
 
@@ -5174,7 +5424,7 @@ class MemoryInterface(abc.ABC):
             )
             for row in page_rows
         ]
-        aggregates = self.get_scenario_history_aggregates(
+        aggregates = self._execute_get_scenario_history_aggregates(
             scenario_result_ids=[record.scenario_result_id for record in records],
             plan_scenario_ids=[
                 record.scenario_result_id for record in records if record.plan_atomic_groups is not None
@@ -5182,7 +5432,7 @@ class MemoryInterface(abc.ABC):
         )
         return records, aggregates, len(rows) > limit
 
-    def get_scenario_history_aggregates(
+    def _execute_get_scenario_history_aggregates(
         self,
         *,
         scenario_result_ids: Sequence[str],
@@ -5221,7 +5471,7 @@ class MemoryInterface(abc.ABC):
             for scenario_result_id in plan_scenario_ids
             if scenario_result_id in aggregates
         ]
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             aggregate_rows = session.execute(
                 self._build_scenario_history_aggregate_statement(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
             ).all()
@@ -5449,10 +5699,10 @@ class MemoryInterface(abc.ABC):
             return None
         return value if value.tzinfo is not None else None
 
-    def get_unique_scenario_labels(self) -> dict[str, list[str]]:
+    def _execute_get_unique_scenario_labels(self) -> dict[str, list[str]]:
         """Return all unique label values across scenario results."""
         label_values: dict[str, set[str]] = {}
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             rows = (
                 session.query(ScenarioResultEntry.labels)
                 .filter(ScenarioResultEntry.labels.isnot(None))
@@ -5467,7 +5717,7 @@ class MemoryInterface(abc.ABC):
                     label_values.setdefault(key, set()).add(value)
         return {key: sorted(values) for key, values in sorted(label_values.items())}
 
-    def get_scenario_attack_result_deltas(
+    def _execute_get_scenario_attack_result_deltas(
         self,
         *,
         scenario_result_id: str,
@@ -5534,7 +5784,7 @@ class MemoryInterface(abc.ABC):
             .order_by(AttackResultEntry.timestamp.asc(), AttackResultEntry.id.asc())
             .limit(limit + 1)
         )
-        with closing(self.get_session()) as session:
+        with closing(self._get_session()) as session:
             rows = session.execute(statement).all()
 
         has_more = len(rows) > limit
@@ -5583,7 +5833,7 @@ class MemoryInterface(abc.ABC):
             )
         return deltas, has_more
 
-    def get_scenario_results(
+    def _execute_get_scenario_results(
         self,
         *,
         scenario_result_ids: Sequence[str] | None = None,
@@ -5833,6 +6083,19 @@ class MemoryInterface(abc.ABC):
 
     def print_schema(self) -> None:
         """
+        Use ``print_schema_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.print_schema",
+            new_item="MemoryInterface.print_schema_async",
+            removed_in="1.4.0",
+        )
+        self._print_schema()
+
+    def _print_schema(self) -> None:
+        """
         Print the schema of all tables in the database.
 
         Raises:
@@ -5848,3 +6111,3124 @@ class MemoryInterface(abc.ABC):
             print(f"Schema for {table_name}:")
             for column in table.columns:
                 print(f"  Column {column.name} ({column.type})")
+
+    def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
+        """
+        Use ``get_all_embeddings_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[EmbeddingDataEntry]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_all_embeddings",
+            new_item="MemoryInterface.get_all_embeddings_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_all_embeddings()
+
+    @legacy_sync_override(lambda: MemoryInterface.get_all_embeddings)
+    async def get_all_embeddings_async(self) -> Sequence[EmbeddingDataEntry]:
+        """
+        Load all EmbeddingData from the memory storage handler.
+
+        Returns:
+            Sequence[EmbeddingDataEntry]: All stored embedding entries.
+        """
+        return await self._run_database_operation_async(self._execute_get_all_embeddings)
+
+    def add_conversation_to_memory(self, *, conversation: Conversation) -> None:
+        """
+        Use ``add_conversation_to_memory_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.add_conversation_to_memory",
+            new_item="MemoryInterface.add_conversation_to_memory_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_add_conversation_to_memory(conversation=conversation)
+
+    @legacy_sync_override(lambda: MemoryInterface.add_conversation_to_memory)
+    async def add_conversation_to_memory_async(self, *, conversation: Conversation) -> None:
+        """
+        Register a conversation in memory, recording its conversation-scoped metadata.
+
+        A conversation is a first-class entity held with a single target. Build a
+        ``Conversation`` when it is created and call this once (before, or independently
+        of, adding its messages) to record the target it is held with. Message writes
+        (``add_message_to_memory`` / ``add_message_pieces_to_memory``) deliberately do
+        not take a target, so that conversation ownership is expressed in a single place
+        rather than threaded through every write.
+
+        Registration is idempotent only for an identical conversation: re-registering the
+        same ``conversation_id`` with the same target identity is a no-op, even across
+        PyRIT versions (so repeated per-turn registration is safe). Re-registering an existing
+        ``conversation_id`` with a different target is a conflict and raises ``ValueError`` -- a conversation is held
+        with exactly one target and is never re-targeted.
+
+        Args:
+            conversation (Conversation): The conversation metadata to record, carrying the
+                ``conversation_id`` and the target it is held with (if known).
+
+        Raises:
+            ValueError: If ``conversation_id`` is empty, or if a conversation with the same
+                id already exists with a different target.
+        """
+        return await self._run_database_operation_async(
+            self._execute_add_conversation_to_memory, conversation=conversation
+        )
+
+    def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+        """
+        Use ``add_message_pieces_to_memory_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.add_message_pieces_to_memory",
+            new_item="MemoryInterface.add_message_pieces_to_memory_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_add_message_pieces_to_memory(message_pieces=message_pieces)
+
+    @legacy_sync_override(lambda: MemoryInterface.add_message_pieces_to_memory)
+    async def add_message_pieces_to_memory_async(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+        """
+        Insert a list of message pieces into the memory storage.
+
+        Pieces flagged via ``MessagePiece.not_in_memory = True`` are silently filtered
+        out so callers don't need to track persistence policy themselves. Every
+        remaining piece must carry a non-empty ``conversation_id`` (the memory layer
+        never invents one -- see ``_validate_persistable_conversation_ids``).
+
+        Conversation-scoped metadata (the target a conversation is held with) is not
+        recorded here; register it once via ``add_conversation_to_memory`` when the
+        conversation is created.
+
+        This is a template method: subclasses implement only the backend-specific
+        ``_add_message_pieces_to_memory`` and inherit the filtering and validation
+        steps so no subclass can forget to run them.
+
+        Args:
+            message_pieces (Sequence[MessagePiece]): The pieces to persist.
+        """
+        return await self._run_database_operation_async(
+            self._execute_add_message_pieces_to_memory, message_pieces=message_pieces
+        )
+
+    def add_conversation_retry(self, *, conversation_id: str, sequence: int, reason: ConversationRetryReason) -> None:
+        """
+        Use ``add_conversation_retry_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.add_conversation_retry",
+            new_item="MemoryInterface.add_conversation_retry_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_add_conversation_retry(conversation_id=conversation_id, sequence=sequence, reason=reason)
+
+    @legacy_sync_override(lambda: MemoryInterface.add_conversation_retry)
+    async def add_conversation_retry_async(
+        self, *, conversation_id: str, sequence: int, reason: ConversationRetryReason
+    ) -> None:
+        """
+        Append a retry record to the conversation-scoped metadata for ``conversation_id``.
+
+        Records that a turn had to be retried (e.g. because its response failed JSON
+        validation and was rolled back out of memory). The conversation's ``Conversations``
+        row is updated in place; if no row exists yet it is created. This is distinct from
+        the insert-only ``_insert_conversation``.
+
+        Args:
+            conversation_id (str): The conversation whose turn was retried.
+            sequence (int): The sequence the retried turn's request occupies.
+            reason (ConversationRetryReason): Why the turn was retried.
+
+        Raises:
+            SQLAlchemyError: If the database update fails; the transaction is rolled back first.
+        """
+        return await self._run_database_operation_async(
+            self._execute_add_conversation_retry, conversation_id=conversation_id, sequence=sequence, reason=reason
+        )
+
+    def delete_conversation_pieces_after_sequence(self, *, conversation_id: str, sequence: int) -> int:
+        """
+        Use ``delete_conversation_pieces_after_sequence_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            int: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.delete_conversation_pieces_after_sequence",
+            new_item="MemoryInterface.delete_conversation_pieces_after_sequence_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_delete_conversation_pieces_after_sequence(
+            conversation_id=conversation_id, sequence=sequence
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.delete_conversation_pieces_after_sequence)
+    async def delete_conversation_pieces_after_sequence_async(self, *, conversation_id: str, sequence: int) -> int:
+        """
+        Delete all message pieces in a conversation whose sequence is greater than ``sequence``.
+
+        Rolls a conversation back to a baseline so a failed turn can be resent on a clean
+        history. Dependent ``EmbeddingData`` rows for the deleted pieces are removed first to
+        avoid orphaned foreign keys. Pieces at or below ``sequence`` (e.g. the system prompt
+        and any prior good turns) are left intact.
+
+        Args:
+            conversation_id (str): The conversation to roll back.
+            sequence (int): The baseline sequence; pieces with a greater sequence are deleted.
+
+        Returns:
+            int: The number of ``PromptMemoryEntries`` deleted.
+
+        Raises:
+            SQLAlchemyError: If the deletion fails; the transaction is rolled back first.
+        """
+        return await self._run_database_operation_async(
+            self._execute_delete_conversation_pieces_after_sequence, conversation_id=conversation_id, sequence=sequence
+        )
+
+    def get_target_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        endpoint: str | None = None,
+        model_name: str | None = None,
+        underlying_model_name: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_requests_per_minute: int | None = None,
+        supported_auth_modes: Sequence[str] | None = None,
+    ) -> Sequence[TargetIdentifier]:
+        """
+        Use ``get_target_identifiers_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[TargetIdentifier]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_target_identifiers",
+            new_item="MemoryInterface.get_target_identifiers_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_target_identifiers(
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            endpoint=endpoint,
+            model_name=model_name,
+            underlying_model_name=underlying_model_name,
+            temperature=temperature,
+            top_p=top_p,
+            max_requests_per_minute=max_requests_per_minute,
+            supported_auth_modes=supported_auth_modes,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_target_identifiers)
+    async def get_target_identifiers_async(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        endpoint: str | None = None,
+        model_name: str | None = None,
+        underlying_model_name: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_requests_per_minute: int | None = None,
+        supported_auth_modes: Sequence[str] | None = None,
+    ) -> Sequence[TargetIdentifier]:
+        """
+        Retrieve target identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            endpoint (str | None): Target endpoint to match.
+            model_name (str | None): Target model name to match.
+            underlying_model_name (str | None): Underlying model name to match.
+            temperature (float | None): Temperature to match.
+            top_p (float | None): Top-p value to match.
+            max_requests_per_minute (int | None): Request limit to match.
+            supported_auth_modes (Sequence[str] | None): Authentication modes to match exactly, in any order.
+
+        Returns:
+            Sequence[TargetIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_target_identifiers,
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            endpoint=endpoint,
+            model_name=model_name,
+            underlying_model_name=underlying_model_name,
+            temperature=temperature,
+            top_p=top_p,
+            max_requests_per_minute=max_requests_per_minute,
+            supported_auth_modes=supported_auth_modes,
+        )
+
+    def get_converter_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        supported_input_types: Sequence[str] | None = None,
+        supported_output_types: Sequence[str] | None = None,
+        converter_target_hash: str | None = None,
+        sub_converter_hash: str | None = None,
+    ) -> Sequence[ConverterIdentifier]:
+        """
+        Use ``get_converter_identifiers_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[ConverterIdentifier]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_converter_identifiers",
+            new_item="MemoryInterface.get_converter_identifiers_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_converter_identifiers(
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            supported_input_types=supported_input_types,
+            supported_output_types=supported_output_types,
+            converter_target_hash=converter_target_hash,
+            sub_converter_hash=sub_converter_hash,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_converter_identifiers)
+    async def get_converter_identifiers_async(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        supported_input_types: Sequence[str] | None = None,
+        supported_output_types: Sequence[str] | None = None,
+        converter_target_hash: str | None = None,
+        sub_converter_hash: str | None = None,
+    ) -> Sequence[ConverterIdentifier]:
+        """
+        Retrieve converter identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            supported_input_types (Sequence[str] | None): Input types to match exactly, in any order.
+            supported_output_types (Sequence[str] | None): Output types to match exactly, in any order.
+            converter_target_hash (str | None): Converter target hash to match.
+            sub_converter_hash (str | None): Nested converter hash to match.
+
+        Returns:
+            Sequence[ConverterIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_converter_identifiers,
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            supported_input_types=supported_input_types,
+            supported_output_types=supported_output_types,
+            converter_target_hash=converter_target_hash,
+            sub_converter_hash=sub_converter_hash,
+        )
+
+    def get_scorer_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        scorer_type: str | None = None,
+        score_aggregator: str | None = None,
+        prompt_target_hash: str | None = None,
+    ) -> Sequence[ScorerIdentifier]:
+        """
+        Use ``get_scorer_identifiers_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[ScorerIdentifier]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scorer_identifiers",
+            new_item="MemoryInterface.get_scorer_identifiers_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_scorer_identifiers(
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            scorer_type=scorer_type,
+            score_aggregator=score_aggregator,
+            prompt_target_hash=prompt_target_hash,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scorer_identifiers)
+    async def get_scorer_identifiers_async(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        scorer_type: str | None = None,
+        score_aggregator: str | None = None,
+        prompt_target_hash: str | None = None,
+    ) -> Sequence[ScorerIdentifier]:
+        """
+        Retrieve scorer identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            scorer_type (str | None): Scorer type to match.
+            score_aggregator (str | None): Score aggregator to match.
+            prompt_target_hash (str | None): Scorer target hash to match.
+
+        Returns:
+            Sequence[ScorerIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scorer_identifiers,
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            scorer_type=scorer_type,
+            score_aggregator=score_aggregator,
+            prompt_target_hash=prompt_target_hash,
+        )
+
+    def get_scenario_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        version: int | None = None,
+        techniques: Sequence[str] | None = None,
+        datasets: Sequence[str] | None = None,
+        objective_target_hash: str | None = None,
+        objective_scorer_hash: str | None = None,
+    ) -> Sequence[ScenarioIdentifier]:
+        """
+        Use ``get_scenario_identifiers_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[ScenarioIdentifier]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scenario_identifiers",
+            new_item="MemoryInterface.get_scenario_identifiers_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_scenario_identifiers(
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            version=version,
+            techniques=techniques,
+            datasets=datasets,
+            objective_target_hash=objective_target_hash,
+            objective_scorer_hash=objective_scorer_hash,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scenario_identifiers)
+    async def get_scenario_identifiers_async(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        version: int | None = None,
+        techniques: Sequence[str] | None = None,
+        datasets: Sequence[str] | None = None,
+        objective_target_hash: str | None = None,
+        objective_scorer_hash: str | None = None,
+    ) -> Sequence[ScenarioIdentifier]:
+        """
+        Retrieve scenario identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            version (int | None): Scenario definition version to match.
+            techniques (Sequence[str] | None): Technique names to match exactly, in any order.
+            datasets (Sequence[str] | None): Dataset names to match exactly, in any order.
+            objective_target_hash (str | None): Objective target hash to match.
+            objective_scorer_hash (str | None): Objective scorer hash to match.
+
+        Returns:
+            Sequence[ScenarioIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_identifiers,
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            version=version,
+            techniques=techniques,
+            datasets=datasets,
+            objective_target_hash=objective_target_hash,
+            objective_scorer_hash=objective_scorer_hash,
+        )
+
+    def get_seed_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        value: str | None = None,
+        value_sha256: str | None = None,
+        data_type: str | None = None,
+        dataset_name: str | None = None,
+        is_general_technique: bool | None = None,
+    ) -> Sequence[SeedIdentifier]:
+        """
+        Use ``get_seed_identifiers_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[SeedIdentifier]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_seed_identifiers",
+            new_item="MemoryInterface.get_seed_identifiers_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_seed_identifiers(
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            value=value,
+            value_sha256=value_sha256,
+            data_type=data_type,
+            dataset_name=dataset_name,
+            is_general_technique=is_general_technique,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_seed_identifiers)
+    async def get_seed_identifiers_async(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        value: str | None = None,
+        value_sha256: str | None = None,
+        data_type: str | None = None,
+        dataset_name: str | None = None,
+        is_general_technique: bool | None = None,
+    ) -> Sequence[SeedIdentifier]:
+        """
+        Retrieve seed identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            value (str | None): Seed value to match.
+            value_sha256 (str | None): Seed value hash to match.
+            data_type (str | None): Seed data type to match.
+            dataset_name (str | None): Dataset name to match.
+            is_general_technique (bool | None): General-technique flag to match.
+
+        Returns:
+            Sequence[SeedIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_seed_identifiers,
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            value=value,
+            value_sha256=value_sha256,
+            data_type=data_type,
+            dataset_name=dataset_name,
+            is_general_technique=is_general_technique,
+        )
+
+    def get_attack_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        adversarial_system_prompt: str | None = None,
+        adversarial_seed_prompt: str | None = None,
+        objective_target_hash: str | None = None,
+        adversarial_chat_hash: str | None = None,
+        objective_scorer_hash: str | None = None,
+    ) -> Sequence[AttackIdentifier]:
+        """
+        Use ``get_attack_identifiers_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[AttackIdentifier]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_attack_identifiers",
+            new_item="MemoryInterface.get_attack_identifiers_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_attack_identifiers(
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            adversarial_system_prompt=adversarial_system_prompt,
+            adversarial_seed_prompt=adversarial_seed_prompt,
+            objective_target_hash=objective_target_hash,
+            adversarial_chat_hash=adversarial_chat_hash,
+            objective_scorer_hash=objective_scorer_hash,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_attack_identifiers)
+    async def get_attack_identifiers_async(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        adversarial_system_prompt: str | None = None,
+        adversarial_seed_prompt: str | None = None,
+        objective_target_hash: str | None = None,
+        adversarial_chat_hash: str | None = None,
+        objective_scorer_hash: str | None = None,
+    ) -> Sequence[AttackIdentifier]:
+        """
+        Retrieve attack identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            adversarial_system_prompt (str | None): Adversarial system prompt to match.
+            adversarial_seed_prompt (str | None): Adversarial seed prompt to match.
+            objective_target_hash (str | None): Objective target hash to match.
+            adversarial_chat_hash (str | None): Adversarial chat target hash to match.
+            objective_scorer_hash (str | None): Objective scorer hash to match.
+
+        Returns:
+            Sequence[AttackIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_attack_identifiers,
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            adversarial_system_prompt=adversarial_system_prompt,
+            adversarial_seed_prompt=adversarial_seed_prompt,
+            objective_target_hash=objective_target_hash,
+            adversarial_chat_hash=adversarial_chat_hash,
+            objective_scorer_hash=objective_scorer_hash,
+        )
+
+    def get_attack_technique_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        attack_identifier_hash: str | None = None,
+    ) -> Sequence[AttackTechniqueIdentifier]:
+        """
+        Use ``get_attack_technique_identifiers_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[AttackTechniqueIdentifier]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_attack_technique_identifiers",
+            new_item="MemoryInterface.get_attack_technique_identifiers_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_attack_technique_identifiers(
+            identifier_hashes=identifier_hashes, class_name=class_name, attack_identifier_hash=attack_identifier_hash
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_attack_technique_identifiers)
+    async def get_attack_technique_identifiers_async(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        attack_identifier_hash: str | None = None,
+    ) -> Sequence[AttackTechniqueIdentifier]:
+        """
+        Retrieve attack technique identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            attack_identifier_hash (str | None): Attack identifier hash to match.
+
+        Returns:
+            Sequence[AttackTechniqueIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_attack_technique_identifiers,
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            attack_identifier_hash=attack_identifier_hash,
+        )
+
+    def get_atomic_attack_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        attack_technique_identifier_hash: str | None = None,
+    ) -> Sequence[AtomicAttackIdentifier]:
+        """
+        Use ``get_atomic_attack_identifiers_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[AtomicAttackIdentifier]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_atomic_attack_identifiers",
+            new_item="MemoryInterface.get_atomic_attack_identifiers_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_atomic_attack_identifiers(
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            attack_technique_identifier_hash=attack_technique_identifier_hash,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_atomic_attack_identifiers)
+    async def get_atomic_attack_identifiers_async(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        attack_technique_identifier_hash: str | None = None,
+    ) -> Sequence[AtomicAttackIdentifier]:
+        """
+        Retrieve atomic attack identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            attack_technique_identifier_hash (str | None): Attack technique hash to match.
+
+        Returns:
+            Sequence[AtomicAttackIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_atomic_attack_identifiers,
+            identifier_hashes=identifier_hashes,
+            class_name=class_name,
+            attack_technique_identifier_hash=attack_technique_identifier_hash,
+        )
+
+    def get_unique_attack_class_names(self) -> list[str]:
+        """
+        Use ``get_unique_attack_class_names_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            list[str]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_unique_attack_class_names",
+            new_item="MemoryInterface.get_unique_attack_class_names_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_unique_attack_class_names()
+
+    @legacy_sync_override(lambda: MemoryInterface.get_unique_attack_class_names)
+    async def get_unique_attack_class_names_async(self) -> list[str]:
+        """
+        Return sorted unique attack class names from all stored attack results.
+
+        Extracts class_name from the atomic_attack_identifier JSON column via a
+        database-level DISTINCT query.
+
+        Returns:
+            Sorted list of unique attack class name strings.
+        """
+        return await self._run_database_operation_async(self._execute_get_unique_attack_class_names)
+
+    def get_unique_converter_class_names(self) -> list[str]:
+        """
+        Use ``get_unique_converter_class_names_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            list[str]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_unique_converter_class_names",
+            new_item="MemoryInterface.get_unique_converter_class_names_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_unique_converter_class_names()
+
+    @legacy_sync_override(lambda: MemoryInterface.get_unique_converter_class_names)
+    async def get_unique_converter_class_names_async(self) -> list[str]:
+        """
+        Return sorted unique converter class names used across all attack results.
+
+        Extracts class_name values from the nested request_converters array
+        within the atomic_attack_identifier JSON column via a database-level query.
+
+        Returns:
+            Sorted list of unique converter class name strings.
+        """
+        return await self._run_database_operation_async(self._execute_get_unique_converter_class_names)
+
+    def get_conversation_stats(self, *, conversation_ids: Sequence[str]) -> dict[str, "ConversationStats"]:
+        """
+        Use ``get_conversation_stats_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            dict[str, 'ConversationStats']: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_conversation_stats",
+            new_item="MemoryInterface.get_conversation_stats_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_conversation_stats(conversation_ids=conversation_ids)
+
+    @legacy_sync_override(lambda: MemoryInterface.get_conversation_stats)
+    async def get_conversation_stats_async(self, *, conversation_ids: Sequence[str]) -> dict[str, "ConversationStats"]:
+        """
+        Return lightweight aggregate statistics for one or more conversations.
+
+        Computes per-conversation message count (distinct sequence numbers),
+        a truncated last-message preview, the first non-empty labels dict,
+        and the earliest message timestamp using efficient SQL aggregation
+        instead of loading full pieces.
+
+        Args:
+            conversation_ids: The conversation IDs to query.
+
+        Returns:
+            Mapping from conversation_id to ConversationStats.
+            Conversations with no pieces are omitted from the result.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_conversation_stats, conversation_ids=conversation_ids
+        )
+
+    def add_scores_to_memory(self, *, scores: Sequence[Score], observations: Sequence[Observation] = ()) -> None:
+        """
+        Use ``add_scores_to_memory_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.add_scores_to_memory",
+            new_item="MemoryInterface.add_scores_to_memory_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_add_scores_to_memory(scores=scores, observations=observations)
+
+    def get_scorable_content(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, ContentScorable]:
+        """
+        Use ``get_scorable_content_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            dict[uuid.UUID, ContentScorable]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scorable_content",
+            new_item="MemoryInterface.get_scorable_content_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_scorable_content(content_ids=content_ids)
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scorable_content)
+    async def get_scorable_content_async(
+        self, *, content_ids: Sequence[uuid.UUID | str]
+    ) -> dict[uuid.UUID, ContentScorable]:
+        """
+        Load the loose content that stored scores are anchored on.
+
+        Args:
+            content_ids: The ids named by ``ContentEntryScorable`` anchors.
+
+        Returns:
+            dict[uuid.UUID, ContentScorable]: The content by id, omitting ids with no row.
+        """
+        return await self._run_database_operation_async(self._execute_get_scorable_content, content_ids=content_ids)
+
+    def get_scorable_content_hashes(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, str]:
+        """
+        Use ``get_scorable_content_hashes_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            dict[uuid.UUID, str]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scorable_content_hashes",
+            new_item="MemoryInterface.get_scorable_content_hashes_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_scorable_content_hashes(content_ids=content_ids)
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scorable_content_hashes)
+    async def get_scorable_content_hashes_async(
+        self, *, content_ids: Sequence[uuid.UUID | str]
+    ) -> dict[uuid.UUID, str]:
+        """
+        Load the immutable content digest for stored score anchors.
+
+        Returns:
+            dict[uuid.UUID, str]: SHA-256 digests by content ID.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scorable_content_hashes, content_ids=content_ids
+        )
+
+    def get_observations(self, *, observation_ids: Sequence[uuid.UUID | str]) -> list[Observation]:
+        """
+        Use ``get_observations_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            list[Observation]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_observations",
+            new_item="MemoryInterface.get_observations_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_observations(observation_ids=observation_ids)
+
+    @legacy_sync_override(lambda: MemoryInterface.get_observations)
+    async def get_observations_async(self, *, observation_ids: Sequence[uuid.UUID | str]) -> list[Observation]:
+        """
+        Load observations by ID.
+
+        Args:
+            observation_ids (Sequence[uuid.UUID | str]): Observation IDs to load.
+
+        Returns:
+            list[Observation]: Stored observations in the requested order. Missing IDs are omitted.
+        """
+        return await self._run_database_operation_async(self._execute_get_observations, observation_ids=observation_ids)
+
+    def get_scores(
+        self,
+        *,
+        score_ids: Sequence[str] | None = None,
+        score_type: str | None = None,
+        score_category: str | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
+    ) -> Sequence[Score]:
+        """
+        Use ``get_scores_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[Score]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scores", new_item="MemoryInterface.get_scores_async", removed_in="1.4.0"
+        )
+        return self._execute_get_scores(
+            score_ids=score_ids,
+            score_type=score_type,
+            score_category=score_category,
+            sent_after=sent_after,
+            sent_before=sent_before,
+            identifier_filters=identifier_filters,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scores)
+    async def get_scores_async(
+        self,
+        *,
+        score_ids: Sequence[str] | None = None,
+        score_type: str | None = None,
+        score_category: str | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
+    ) -> Sequence[Score]:
+        """
+        Retrieve a list of Score objects based on the specified filters.
+
+        Args:
+            score_ids (Sequence[str] | None): A list of score IDs to filter by.
+            score_type (str | None): The type of the score to filter by.
+            score_category (str | None): The category of the score to filter by.
+            sent_after (datetime | None): Filter for scores sent after this datetime.
+            sent_before (datetime | None): Filter for scores sent before this datetime.
+            identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
+                allows filtering by various scorer identifier JSON properties. Defaults to None.
+
+        Returns:
+            Sequence[Score]: A list of Score objects that match the specified filters.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scores,
+            score_ids=score_ids,
+            score_type=score_type,
+            score_category=score_category,
+            sent_after=sent_after,
+            sent_before=sent_before,
+            identifier_filters=identifier_filters,
+        )
+
+    def get_prompt_scores(
+        self,
+        *,
+        role: str | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str | uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        prompt_metadata: dict[str, str | int] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
+    ) -> Sequence[Score]:
+        """
+        Use ``get_prompt_scores_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[Score]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_prompt_scores",
+            new_item="MemoryInterface.get_prompt_scores_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_prompt_scores(
+            role=role,
+            conversation_id=conversation_id,
+            prompt_ids=prompt_ids,
+            labels=labels,
+            prompt_metadata=prompt_metadata,
+            sent_after=sent_after,
+            sent_before=sent_before,
+            original_values=original_values,
+            converted_values=converted_values,
+            data_type=data_type,
+            not_data_type=not_data_type,
+            converted_value_sha256=converted_value_sha256,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_prompt_scores)
+    async def get_prompt_scores_async(
+        self,
+        *,
+        role: str | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str | uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        prompt_metadata: dict[str, str | int] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
+    ) -> Sequence[Score]:
+        """
+        Retrieve scores attached to message pieces based on the specified filters.
+
+        Args:
+            role (str | None, optional): The role of the prompt. Defaults to None.
+            conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
+            prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
+                Defaults to None.
+            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
+                Defaults to None.
+            sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
+            sent_before (datetime | None, optional): Filter for prompts sent before this datetime. Defaults to None.
+            original_values (Sequence[str] | None, optional): A list of original values. Defaults to None.
+            converted_values (Sequence[str] | None, optional): A list of converted values. Defaults to None.
+            data_type (str | None, optional): The data type to filter by. Defaults to None.
+            not_data_type (str | None, optional): The data type to exclude. Defaults to None.
+            converted_value_sha256 (Sequence[str] | None, optional): A list of SHA256 hashes of converted values.
+                Defaults to None.
+
+        Returns:
+            Sequence[Score]: A list of scores extracted from the message pieces.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_prompt_scores,
+            role=role,
+            conversation_id=conversation_id,
+            prompt_ids=prompt_ids,
+            labels=labels,
+            prompt_metadata=prompt_metadata,
+            sent_after=sent_after,
+            sent_before=sent_before,
+            original_values=original_values,
+            converted_values=converted_values,
+            data_type=data_type,
+            not_data_type=not_data_type,
+            converted_value_sha256=converted_value_sha256,
+        )
+
+    def get_conversation_messages(self, *, conversation_id: str) -> MutableSequence[Message]:
+        """
+        Use ``get_conversation_messages_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            MutableSequence[Message]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_conversation_messages",
+            new_item="MemoryInterface.get_conversation_messages_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_conversation_messages(conversation_id=conversation_id)
+
+    @legacy_sync_override(lambda: MemoryInterface.get_conversation_messages)
+    async def get_conversation_messages_async(self, *, conversation_id: str) -> MutableSequence[Message]:
+        """
+        Retrieve a list of Message objects that have the specified conversation ID.
+
+        Args:
+            conversation_id (str): The conversation ID to match.
+
+        Returns:
+            MutableSequence[Message]: A list of chat memory entries with the specified conversation ID.
+
+        Raises:
+            ValueError: If conversation_id is empty or None. A falsy id would cause the underlying
+                get_message_pieces filter to be skipped, silently returning pieces from every
+                conversation in memory.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_conversation_messages, conversation_id=conversation_id
+        )
+
+    def get_request_from_response(self, *, response: Message) -> Message:
+        """
+        Use ``get_request_from_response_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Message: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_request_from_response",
+            new_item="MemoryInterface.get_request_from_response_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_request_from_response(response=response)
+
+    @legacy_sync_override(lambda: MemoryInterface.get_request_from_response)
+    async def get_request_from_response_async(self, *, response: Message) -> Message:
+        """
+        Retrieve the request that produced the given response.
+
+        Args:
+            response (Message): The response message object to match.
+
+        Returns:
+            Message: The corresponding message object.
+
+        Raises:
+            ValueError: If the response is not from an assistant role or has no preceding request.
+        """
+        return await self._run_database_operation_async(self._execute_get_request_from_response, response=response)
+
+    def get_message_pieces(
+        self,
+        *,
+        role: str | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str | uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        prompt_metadata: dict[str, str | int] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
+    ) -> Sequence[MessagePiece]:
+        """
+        Use ``get_message_pieces_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[MessagePiece]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_message_pieces",
+            new_item="MemoryInterface.get_message_pieces_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_message_pieces(
+            role=role,
+            conversation_id=conversation_id,
+            prompt_ids=prompt_ids,
+            labels=labels,
+            prompt_metadata=prompt_metadata,
+            sent_after=sent_after,
+            sent_before=sent_before,
+            original_values=original_values,
+            converted_values=converted_values,
+            data_type=data_type,
+            not_data_type=not_data_type,
+            converted_value_sha256=converted_value_sha256,
+            identifier_filters=identifier_filters,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_message_pieces)
+    async def get_message_pieces_async(
+        self,
+        *,
+        role: str | None = None,
+        conversation_id: str | uuid.UUID | None = None,
+        prompt_ids: Sequence[str | uuid.UUID] | None = None,
+        labels: dict[str, str] | None = None,
+        prompt_metadata: dict[str, str | int] | None = None,
+        sent_after: datetime | None = None,
+        sent_before: datetime | None = None,
+        original_values: Sequence[str] | None = None,
+        converted_values: Sequence[str] | None = None,
+        data_type: str | None = None,
+        not_data_type: str | None = None,
+        converted_value_sha256: Sequence[str] | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
+    ) -> Sequence[MessagePiece]:
+        """
+        Retrieve a list of MessagePiece objects based on the specified filters.
+
+        Args:
+            role (str | None, optional): The role of the prompt. Defaults to None.
+            conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
+            prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
+                Defaults to None.
+            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
+                Defaults to None.
+            sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
+            sent_before (datetime | None, optional): Filter for prompts sent before this datetime. Defaults to None.
+            original_values (Sequence[str] | None, optional): A list of original values. Defaults to None.
+            converted_values (Sequence[str] | None, optional): A list of converted values. Defaults to None.
+            data_type (str | None, optional): The data type to filter by. Defaults to None.
+            not_data_type (str | None, optional): The data type to exclude. Defaults to None.
+            converted_value_sha256 (Sequence[str] | None, optional): A list of SHA256 hashes of converted values.
+                Defaults to None.
+            identifier_filters (Sequence[IdentifierFilter] | None, optional):
+                A sequence of IdentifierFilter objects that
+                allow filtering by various identifier JSON properties. Defaults to None.
+
+        Returns:
+            Sequence[MessagePiece]: A list of MessagePiece objects that match the specified filters.
+
+        Raises:
+            Exception: If there is an error retrieving the prompts,
+                an exception is logged and an empty list is returned.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_message_pieces,
+            role=role,
+            conversation_id=conversation_id,
+            prompt_ids=prompt_ids,
+            labels=labels,
+            prompt_metadata=prompt_metadata,
+            sent_after=sent_after,
+            sent_before=sent_before,
+            original_values=original_values,
+            converted_values=converted_values,
+            data_type=data_type,
+            not_data_type=not_data_type,
+            converted_value_sha256=converted_value_sha256,
+            identifier_filters=identifier_filters,
+        )
+
+    def duplicate_messages(self, *, messages: Sequence[Message]) -> tuple[str, Sequence[MessagePiece]]:
+        """
+        Use ``duplicate_messages_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            tuple[str, Sequence[MessagePiece]]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.duplicate_messages",
+            new_item="MemoryInterface.duplicate_messages_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_duplicate_messages(messages=messages)
+
+    @legacy_sync_override(lambda: MemoryInterface.duplicate_messages)
+    async def duplicate_messages_async(self, *, messages: Sequence[Message]) -> tuple[str, Sequence[MessagePiece]]:
+        """
+        Duplicate messages with a new conversation ID.
+
+        Each duplicated piece gets a fresh ``id`` and ``timestamp`` while
+        preserving ``original_prompt_id`` for tracking lineage.
+
+        Args:
+            messages: The messages to duplicate.
+
+        Returns:
+            Tuple of (new_conversation_id, duplicated_message_pieces).
+        """
+        return await self._run_database_operation_async(self._execute_duplicate_messages, messages=messages)
+
+    def duplicate_conversation(self, *, conversation_id: str) -> str:
+        """
+        Use ``duplicate_conversation_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            str: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.duplicate_conversation",
+            new_item="MemoryInterface.duplicate_conversation_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_duplicate_conversation(conversation_id=conversation_id)
+
+    @legacy_sync_override(lambda: MemoryInterface.duplicate_conversation)
+    async def duplicate_conversation_async(self, *, conversation_id: str) -> str:
+        """
+        Duplicate a conversation for reuse.
+
+        This can be useful when an attack strategy requires branching out from a particular point in the conversation.
+        One cannot continue both branches with the same conversation ID since that would corrupt
+        the memory. Instead, one needs to duplicate the conversation and continue with the new conversation ID.
+
+        Args:
+            conversation_id (str): The conversation ID with existing conversations.
+
+        Returns:
+            The uuid for the new conversation.
+        """
+        return await self._run_database_operation_async(
+            self._execute_duplicate_conversation, conversation_id=conversation_id
+        )
+
+    def duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
+        """
+        Use ``duplicate_conversation_excluding_last_turn_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            str: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.duplicate_conversation_excluding_last_turn",
+            new_item="MemoryInterface.duplicate_conversation_excluding_last_turn_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_duplicate_conversation_excluding_last_turn(conversation_id=conversation_id)
+
+    @legacy_sync_override(lambda: MemoryInterface.duplicate_conversation_excluding_last_turn)
+    async def duplicate_conversation_excluding_last_turn_async(self, *, conversation_id: str) -> str:
+        """
+        Duplicate a conversation, excluding the last turn. In this case, last turn is defined as before the last
+        user request (e.g. if there is half a turn, it just removes that half).
+
+        This can be useful when an attack strategy requires back tracking the last prompt/response pair.
+
+        Args:
+            conversation_id (str): The conversation ID with existing conversations.
+
+        Returns:
+            The uuid for the new conversation.
+        """
+        return await self._run_database_operation_async(
+            self._execute_duplicate_conversation_excluding_last_turn, conversation_id=conversation_id
+        )
+
+    def add_message_to_memory(self, *, request: Message) -> None:
+        """
+        Use ``add_message_to_memory_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.add_message_to_memory",
+            new_item="MemoryInterface.add_message_to_memory_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_add_message_to_memory(request=request)
+
+    @legacy_sync_override(lambda: MemoryInterface.add_message_to_memory)
+    async def add_message_to_memory_async(self, *, request: Message) -> None:
+        """
+        Insert a list of message pieces into the memory storage.
+
+        Automatically updates the sequence to be the next number in the conversation.
+        If necessary, generates embedding data for applicable entries
+
+        Args:
+            request (Message): The message to add to the memory.
+        """
+        if not await self._run_database_operation_async(self._persist_message, request):
+            return
+        if self.memory_embedding:
+            entries = [
+                await asyncio.to_thread(self.memory_embedding.generate_embedding_memory_data, message_piece=piece)
+                for piece in request.message_pieces
+            ]
+            await self._run_database_operation_async(self._add_embeddings_to_memory, embedding_data=entries)
+
+    def update_prompt_entries_by_conversation_id(self, *, conversation_id: str, update_fields: dict[str, Any]) -> bool:
+        """
+        Use ``update_prompt_entries_by_conversation_id_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            bool: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.update_prompt_entries_by_conversation_id",
+            new_item="MemoryInterface.update_prompt_entries_by_conversation_id_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_update_prompt_entries_by_conversation_id(
+            conversation_id=conversation_id, update_fields=update_fields
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.update_prompt_entries_by_conversation_id)
+    async def update_prompt_entries_by_conversation_id_async(
+        self, *, conversation_id: str, update_fields: dict[str, Any]
+    ) -> bool:
+        """
+        Update prompt entries for a given conversation ID with the specified field values.
+
+        Args:
+            conversation_id (str): The conversation ID of the entries to be updated.
+            update_fields (dict): A dictionary of field names and their new values (ex. {"labels": {"test": "value"}})
+
+        Returns:
+            bool: True if the update was successful, False otherwise.
+
+        Raises:
+            ValueError: If update_fields is empty or not provided.
+            ValueError: If an entry is immutable observation evidence.
+        """
+        return await self._run_database_operation_async(
+            self._execute_update_prompt_entries_by_conversation_id,
+            conversation_id=conversation_id,
+            update_fields=update_fields,
+        )
+
+    def update_prompt_metadata_by_conversation_id(
+        self, *, conversation_id: str, prompt_metadata: dict[str, str | int]
+    ) -> bool:
+        """
+        Use ``update_prompt_metadata_by_conversation_id_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            bool: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.update_prompt_metadata_by_conversation_id",
+            new_item="MemoryInterface.update_prompt_metadata_by_conversation_id_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_update_prompt_metadata_by_conversation_id(
+            conversation_id=conversation_id, prompt_metadata=prompt_metadata
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.update_prompt_metadata_by_conversation_id)
+    async def update_prompt_metadata_by_conversation_id_async(
+        self, *, conversation_id: str, prompt_metadata: dict[str, str | int]
+    ) -> bool:
+        """
+        Update the metadata of prompt entries in memory for a given conversation ID.
+
+        Args:
+            conversation_id (str): The conversation ID of the entries to be updated.
+            prompt_metadata (dict[str, str | int]): New metadata.
+
+        Returns:
+            bool: True if the update was successful, False otherwise.
+        """
+        return await self._run_database_operation_async(
+            self._execute_update_prompt_metadata_by_conversation_id,
+            conversation_id=conversation_id,
+            prompt_metadata=prompt_metadata,
+        )
+
+    def get_seeds(
+        self,
+        *,
+        value: str | None = None,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> Sequence[Seed]:
+        """
+        Use ``get_seeds_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[Seed]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_seeds", new_item="MemoryInterface.get_seeds_async", removed_in="1.4.0"
+        )
+        return self._execute_get_seeds(
+            value=value,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_seeds)
+    async def get_seeds_async(
+        self,
+        *,
+        value: str | None = None,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> Sequence[Seed]:
+        """
+        Retrieve a list of seed prompts based on the specified filters.
+
+        Args:
+            value (str): The value to match by substring. If None, all values are returned.
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are returned.
+            dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
+            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+                Supports wildcards: % (any characters) and _ (single character).
+                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
+            data_types (Sequence[str] | None): List of data types to filter seed prompts by
+                (e.g., text, image_path).
+            harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
+            all harm categories are considered.
+                Specifying multiple harm categories returns only prompts that are marked with all harm categories.
+            added_by (str): The user who added the prompts.
+            authors (Sequence[str]): A list of authors to filter by.
+                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
+                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            source (str): The source to filter by. If None, all sources are considered.
+            seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
+                "simulated_conversation").
+            parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively returns
+                prompt templates instead of prompts.
+            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+            prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+
+        Returns:
+            Sequence[Seed]: A list of seeds (e.g., SeedPrompt, SeedObjective, SeedSimulatedConversation)
+                matching the criteria.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_seeds,
+            value=value,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
+    def remove_seeds_from_memory(
+        self,
+        *,
+        value: str | None = None,
+        exact: bool = True,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> int:
+        """
+        Use ``remove_seeds_from_memory_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            int: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.remove_seeds_from_memory",
+            new_item="MemoryInterface.remove_seeds_from_memory_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_remove_seeds_from_memory(
+            value=value,
+            exact=exact,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.remove_seeds_from_memory)
+    async def remove_seeds_from_memory_async(
+        self,
+        *,
+        value: str | None = None,
+        exact: bool = True,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> int:
+        """
+        Delete a list of seed prompts based on the specified filters.
+
+        Accepts the same filtering parameters as get_seeds (plus an exact flag). It is recommended to
+        call get_seeds with the same filters first to preview which seeds will be removed. At least one
+        filter must be provided to prevent accidental deletion of all seeds. The deletion runs in a single
+        transaction, so it works consistently across SQLite and Azure SQL.
+
+        Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
+        serialized file on disk is left in place; delete those files separately if they are no longer needed.
+
+        Args:
+            value (str): The value to match. For the remove methods this defaults to full-string equality
+                (exact=True) so a short or common value does not delete far more seeds than intended; pass
+                exact=False to match by substring instead. If None, all values are considered.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
+                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
+                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
+                by substring.
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are considered.
+            dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
+            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+                Supports wildcards: % (any characters) and _ (single character).
+                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
+            data_types (Sequence[str] | None): List of data types to filter seed prompts by
+                (e.g., text, image_path).
+            harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
+            all harm categories are considered.
+                Specifying multiple harm categories matches only prompts that are marked with all harm categories.
+            added_by (str): The user who added the prompts.
+            authors (Sequence[str]): A list of authors to filter by.
+                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
+                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            source (str): The source to filter by. If None, all sources are considered.
+            seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
+                "simulated_conversation").
+            parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively targets
+                prompt templates instead of prompts.
+            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+            prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+
+        Returns:
+            int: The number of seeds removed.
+
+        Raises:
+            ValueError: If no filters are provided.
+            SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
+        """
+        return await self._run_database_operation_async(
+            self._execute_remove_seeds_from_memory,
+            value=value,
+            exact=exact,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
+    def remove_seed_groups_from_memory(
+        self,
+        *,
+        value: str | None = None,
+        exact: bool = True,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> int:
+        """
+        Use ``remove_seed_groups_from_memory_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            int: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.remove_seed_groups_from_memory",
+            new_item="MemoryInterface.remove_seed_groups_from_memory_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_remove_seed_groups_from_memory(
+            value=value,
+            exact=exact,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.remove_seed_groups_from_memory)
+    async def remove_seed_groups_from_memory_async(
+        self,
+        *,
+        value: str | None = None,
+        exact: bool = True,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> int:
+        """
+        Delete groups of seed prompts based on the provided filtering criteria.
+
+        Unlike remove_seeds_from_memory, which deletes only the individual seeds that match, this
+        removes every seed that shares a prompt_group_id with any matching seed. This preserves group
+        integrity: filtering by a single modality (e.g. data_types=["image_path"]) or attribute removes
+        the whole group rather than leaving a partial group behind. It accepts the same filtering
+        parameters as get_seeds (plus an exact flag). It is recommended to call get_seed_groups with the
+        same filters first to preview which groups will be removed. At least one filter must be provided
+        to prevent accidental deletion of all seeds. The deletion runs in a single transaction, so it
+        works consistently across SQLite and Azure SQL.
+
+        Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
+        one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+
+        Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
+        serialized file on disk is left in place; delete those files separately if they are no longer needed.
+
+        Args:
+            value (str): The value to match. For the remove methods this defaults to full-string equality
+                (exact=True) so a short or common value does not delete far more seeds than intended; pass
+                exact=False to match by substring instead. If None, all values are considered.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
+                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
+                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
+                by substring.
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are considered.
+            dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
+            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+                Supports wildcards: % (any characters) and _ (single character).
+                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
+            data_types (Sequence[str] | None): List of data types to filter seed prompts by
+                (e.g., text, image_path).
+            harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
+            all harm categories are considered.
+                Specifying multiple harm categories matches only prompts that are marked with all harm categories.
+            added_by (str): The user who added the prompts.
+            authors (Sequence[str]): A list of authors to filter by.
+                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
+                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            source (str): The source to filter by. If None, all sources are considered.
+            seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
+                "simulated_conversation").
+            parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively targets
+                prompt templates instead of prompts.
+            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+            prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+
+        Returns:
+            int: The number of seeds removed across all affected groups.
+
+        Raises:
+            ValueError: If no filters are provided.
+            SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
+        """
+        return await self._run_database_operation_async(
+            self._execute_remove_seed_groups_from_memory,
+            value=value,
+            exact=exact,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
+    def get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
+        """
+        Use ``get_seed_dataset_summaries_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[SeedDatasetSummary]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_seed_dataset_summaries",
+            new_item="MemoryInterface.get_seed_dataset_summaries_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_seed_dataset_summaries()
+
+    @legacy_sync_override(lambda: MemoryInterface.get_seed_dataset_summaries)
+    async def get_seed_dataset_summaries_async(self) -> Sequence[SeedDatasetSummary]:
+        """
+        Return aggregate metadata for datasets already loaded in memory.
+
+        The queries intentionally project only dataset metadata and counts. Seed values and
+        media are never hydrated, so callers can build dataset cards without materializing
+        every prompt or fetching providers.
+
+        Named dataset grouping and metadata matching stay on the original collated
+        dataset_name column. NULL and empty names are aggregated separately into the
+        unnamed population so their shared logical groups are counted exactly once.
+
+        Returns:
+            Sequence[SeedDatasetSummary]: One summary for each stored dataset, including
+            a single deterministic entry for seeds without a dataset name.
+        """
+        return await self._run_database_operation_async(self._execute_get_seed_dataset_summaries)
+
+    def get_seed_dataset_names(self) -> Sequence[str]:
+        """
+        Use ``get_seed_dataset_names_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[str]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_seed_dataset_names",
+            new_item="MemoryInterface.get_seed_dataset_names_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_seed_dataset_names()
+
+    @legacy_sync_override(lambda: MemoryInterface.get_seed_dataset_names)
+    async def get_seed_dataset_names_async(self) -> Sequence[str]:
+        """
+        Return a list of all seed dataset names in the memory storage.
+
+        Returns:
+            Sequence[str]: A list of unique dataset names.
+        """
+        return await self._run_database_operation_async(self._execute_get_seed_dataset_names)
+
+    def get_seed_groups(
+        self,
+        *,
+        value: str | None = None,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+        group_length: Sequence[int] | None = None,
+    ) -> Sequence[SeedGroup]:
+        """
+        Use ``get_seed_groups_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[SeedGroup]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_seed_groups",
+            new_item="MemoryInterface.get_seed_groups_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_seed_groups(
+            value=value,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+            group_length=group_length,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_seed_groups)
+    async def get_seed_groups_async(
+        self,
+        *,
+        value: str | None = None,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+        group_length: Sequence[int] | None = None,
+    ) -> Sequence[SeedGroup]:
+        """
+        Retrieve groups of seed prompts based on the provided filtering criteria.
+
+        Args:
+            value (str | None, Optional): The value to match by substring.
+            value_sha256 (Sequence[str] | None, Optional): SHA256 hash of value to filter seed groups by.
+            dataset_name (str | None, Optional): Name of the dataset to match exactly.
+            dataset_name_pattern (str | None, Optional): A pattern to match dataset names using SQL LIKE syntax.
+                Supports wildcards: % (any characters) and _ (single character).
+                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
+            data_types (Sequence[str] | None, Optional): List of data types to filter seed prompts by
+            (e.g., text, image_path).
+            harm_categories (Sequence[str] | None, Optional): List of harm categories to filter seed prompts by.
+            added_by (str | None, Optional): The user who added the seed groups to filter by.
+            authors (Sequence[str] | None, Optional): List of authors to filter seed groups by.
+            groups (Sequence[str] | None, Optional): List of groups to filter seed groups by.
+            source (str | None, Optional): The source from which the seed prompts originated.
+            seed_type (SeedType | None, Optional): The type of seed to filter by ("prompt", "objective", or
+                "simulated_conversation").
+            parameters (Sequence[str] | None, Optional): List of parameters to filter by.
+            metadata (dict[str, str | int] | None, Optional): A free-form dictionary for tagging
+                prompts with custom metadata.
+            prompt_group_ids (Sequence[uuid.UUID] | None, Optional): List of prompt group IDs to filter by.
+            group_length (Sequence[int] | None, Optional): The number of seeds in the group to filter by.
+
+        Returns:
+            Sequence[SeedGroup]: A list of `SeedGroup` objects that match the filtering criteria.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_seed_groups,
+            value=value,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+            group_length=group_length,
+        )
+
+    def add_attack_results_to_memory(self, *, attack_results: Sequence[AttackResult]) -> None:
+        """
+        Use ``add_attack_results_to_memory_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.add_attack_results_to_memory",
+            new_item="MemoryInterface.add_attack_results_to_memory_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_add_attack_results_to_memory(attack_results=attack_results)
+
+    @legacy_sync_override(lambda: MemoryInterface.add_attack_results_to_memory)
+    async def add_attack_results_to_memory_async(self, *, attack_results: Sequence[AttackResult]) -> None:
+        """
+        Insert a list of attack results into the memory storage.
+        The database model automatically calculates objective_sha256 for consistency.
+
+        Raises:
+            SQLAlchemyError: If the database transaction fails.
+        """
+        return await self._run_database_operation_async(
+            self._execute_add_attack_results_to_memory, attack_results=attack_results
+        )
+
+    def add_conversation_branches_to_attack(
+        self,
+        *,
+        attack_result_id: str,
+        conversations: Sequence[Conversation],
+        message_pieces: Sequence[MessagePiece],
+        source_conversation: Conversation | None = None,
+    ) -> bool:
+        """
+        Use ``add_conversation_branches_to_attack_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            bool: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.add_conversation_branches_to_attack",
+            new_item="MemoryInterface.add_conversation_branches_to_attack_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_add_conversation_branches_to_attack(
+            attack_result_id=attack_result_id,
+            conversations=conversations,
+            message_pieces=message_pieces,
+            source_conversation=source_conversation,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.add_conversation_branches_to_attack)
+    async def add_conversation_branches_to_attack_async(
+        self,
+        *,
+        attack_result_id: str,
+        conversations: Sequence[Conversation],
+        message_pieces: Sequence[MessagePiece],
+        source_conversation: Conversation | None = None,
+    ) -> bool:
+        """
+        Atomically store prepared conversations, copied pieces, and their attack references.
+
+        The caller prepares the copies. This method only persists them, preserving the usual
+        conversation and message insertion invariants. A supplied source must still be an
+        active objective conversation when the transaction acquires the attack's write lock.
+
+        Returns:
+            bool: False when the attack no longer exists.
+
+        Raises:
+            ValueError: If the source is unrelated, branch IDs repeat, or pieces belong elsewhere.
+            SQLAlchemyError: If persistence fails; the complete preparation is rolled back.
+        """
+        return await self._run_database_operation_async(
+            self._execute_add_conversation_branches_to_attack,
+            attack_result_id=attack_result_id,
+            conversations=conversations,
+            message_pieces=message_pieces,
+            source_conversation=source_conversation,
+        )
+
+    def promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
+        """
+        Use ``promote_attack_conversation_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            bool: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.promote_attack_conversation",
+            new_item="MemoryInterface.promote_attack_conversation_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_promote_attack_conversation(
+            attack_result_id=attack_result_id, conversation_id=conversation_id
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.promote_attack_conversation)
+    async def promote_attack_conversation_async(self, *, attack_result_id: str, conversation_id: str) -> bool:
+        """
+        Promote an existing related conversation without losing concurrent branch additions.
+
+        Returns:
+            bool: False when the attack no longer exists.
+
+        Raises:
+            ValueError: If the requested conversation is not part of this attack.
+            SQLAlchemyError: If the transaction fails.
+        """
+        return await self._run_database_operation_async(
+            self._execute_promote_attack_conversation,
+            attack_result_id=attack_result_id,
+            conversation_id=conversation_id,
+        )
+
+    def update_attack_result(self, *, conversation_id: str, update_fields: dict[str, Any]) -> bool:
+        """
+        Use ``update_attack_result_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            bool: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.update_attack_result",
+            new_item="MemoryInterface.update_attack_result_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_update_attack_result(conversation_id=conversation_id, update_fields=update_fields)
+
+    @legacy_sync_override(lambda: MemoryInterface.update_attack_result)
+    async def update_attack_result_async(self, *, conversation_id: str, update_fields: dict[str, Any]) -> bool:
+        """
+        Update specific fields of an existing AttackResultEntry identified by conversation_id.
+
+        This method queries for the raw database entry by conversation_id and updates
+        the specified fields in place, avoiding the creation of duplicate rows.
+
+        Args:
+            conversation_id (str): The conversation ID of the attack result to update.
+            update_fields (dict[str, Any]): A dictionary of column names to new values.
+                Valid fields include 'adversarial_chat_conversation_ids',
+                'pruned_conversation_ids', 'outcome', 'attack_metadata', etc.
+
+        Returns:
+            bool: True if the update was successful, False if the entry was not found.
+
+        Raises:
+            ValueError: If update_fields is empty.
+        """
+        return await self._run_database_operation_async(
+            self._execute_update_attack_result, conversation_id=conversation_id, update_fields=update_fields
+        )
+
+    def update_attack_result_by_id(self, *, attack_result_id: str, update_fields: dict[str, Any]) -> bool:
+        """
+        Use ``update_attack_result_by_id_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            bool: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.update_attack_result_by_id",
+            new_item="MemoryInterface.update_attack_result_by_id_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_update_attack_result_by_id(attack_result_id=attack_result_id, update_fields=update_fields)
+
+    @legacy_sync_override(lambda: MemoryInterface.update_attack_result_by_id)
+    async def update_attack_result_by_id_async(self, *, attack_result_id: str, update_fields: dict[str, Any]) -> bool:
+        """
+        Update specific fields of an existing AttackResultEntry identified by its primary key.
+
+        Args:
+            attack_result_id: The UUID primary key of the AttackResultEntry.
+            update_fields: Column names to new values.
+
+        Returns:
+            True if the update was successful, False if the entry was not found.
+        """
+        return await self._run_database_operation_async(
+            self._execute_update_attack_result_by_id, attack_result_id=attack_result_id, update_fields=update_fields
+        )
+
+    def get_attack_results(
+        self,
+        *,
+        attack_result_ids: Sequence[str] | None = None,
+        conversation_id: str | None = None,
+        objective: str | None = None,
+        objective_sha256: Sequence[str] | None = None,
+        outcome: str | None = None,
+        attack_classes: Sequence[str] | None = None,
+        atomic_attack_eval_hashes: Sequence[str] | None = None,
+        converter_classes: Sequence[str] | None = None,
+        converter_classes_match: Literal["all", "any"] = "all",
+        has_converters: bool | None = None,
+        include_scenario_attacks: bool = True,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+        operator: str | Sequence[str] | None = None,
+        operation: str | Sequence[str] | None = None,
+        targeted_harm_categories: Sequence[str] | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
+        scenario_result_id: str | None = None,
+        min_turns: int | None = None,
+        max_turns: int | None = None,
+        limit: int | None = None,
+        after: AttackResultKeysetCursor | None = None,
+    ) -> Sequence[AttackResult]:
+        """
+        Use ``get_attack_results_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[AttackResult]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_attack_results",
+            new_item="MemoryInterface.get_attack_results_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_attack_results(
+            attack_result_ids=attack_result_ids,
+            conversation_id=conversation_id,
+            objective=objective,
+            objective_sha256=objective_sha256,
+            outcome=outcome,
+            attack_classes=attack_classes,
+            atomic_attack_eval_hashes=atomic_attack_eval_hashes,
+            converter_classes=converter_classes,
+            converter_classes_match=converter_classes_match,
+            has_converters=has_converters,
+            include_scenario_attacks=include_scenario_attacks,
+            labels=labels,
+            operator=operator,
+            operation=operation,
+            targeted_harm_categories=targeted_harm_categories,
+            identifier_filters=identifier_filters,
+            scenario_result_id=scenario_result_id,
+            min_turns=min_turns,
+            max_turns=max_turns,
+            limit=limit,
+            after=after,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_attack_results)
+    async def get_attack_results_async(
+        self,
+        *,
+        attack_result_ids: Sequence[str] | None = None,
+        conversation_id: str | None = None,
+        objective: str | None = None,
+        objective_sha256: Sequence[str] | None = None,
+        outcome: str | None = None,
+        attack_classes: Sequence[str] | None = None,
+        atomic_attack_eval_hashes: Sequence[str] | None = None,
+        converter_classes: Sequence[str] | None = None,
+        converter_classes_match: Literal["all", "any"] = "all",
+        has_converters: bool | None = None,
+        include_scenario_attacks: bool = True,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+        operator: str | Sequence[str] | None = None,
+        operation: str | Sequence[str] | None = None,
+        targeted_harm_categories: Sequence[str] | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
+        scenario_result_id: str | None = None,
+        min_turns: int | None = None,
+        max_turns: int | None = None,
+        limit: int | None = None,
+        after: AttackResultKeysetCursor | None = None,
+    ) -> Sequence[AttackResult]:
+        """
+        Retrieve a list of AttackResult objects based on the specified filters.
+
+        Args:
+            attack_result_ids (Sequence[str] | None, optional): A list of attack result IDs. Defaults to None.
+            conversation_id (str | None, optional): The conversation ID to filter by. Defaults to None.
+            objective (str | None, optional): The objective to filter by (substring match). Defaults to None.
+            objective_sha256 (Sequence[str] | None, optional): A list of objective SHA256 hashes to filter by.
+                Defaults to None.
+            outcome (str | None, optional): The outcome to filter by (success, failure, undetermined).
+                Defaults to None.
+            attack_classes (Sequence[str] | None, optional): Filter by exact attack class_name in
+                atomic_attack_identifier. Returns attacks matching ANY of the listed class names
+                (OR logic, case-sensitive). An empty sequence applies no filter. Defaults to None.
+            atomic_attack_eval_hashes (Sequence[str] | None, optional): Filter by behavioral
+                equivalence hash on ``atomic_attack_identifier.eval_hash`` (auto-stamped on persistence
+                by ``AtomicAttackEvaluationIdentifier``). Returns results matching ANY of the listed
+                hashes (OR logic, case-sensitive). Designed for ASR aggregation by technique
+                configuration. An empty sequence applies no filter. Defaults to None.
+            converter_classes (Sequence[str] | None, optional): Filter by converter class names.
+                Combination semantics for multiple entries are controlled by ``converter_classes_match``.
+                An empty sequence filters to attacks that used no converters; ``None`` applies no
+                filter. To filter by presence/absence of any converter explicitly, use the
+                ``has_converters`` parameter instead. Defaults to None.
+            converter_classes_match (Literal["all", "any"]): How to combine multiple entries in
+                ``converter_classes``. ``"all"`` (default) matches attacks that used every listed
+                converter (AND, case-insensitive). ``"any"`` matches attacks that used at least one
+                listed converter (OR, case-insensitive). Ignored when ``converter_classes`` has
+                fewer than 2 entries or is empty.
+            has_converters (bool | None, optional): Filter by converter presence.
+                ``True`` returns only attacks that used at least one converter. ``False`` returns
+                only attacks that used no converters. ``None`` applies no filter. Defaults to None.
+            include_scenario_attacks (bool, optional): Whether to include attacks created as part
+                of scenario runs. Defaults to ``True``.
+            labels (Mapping[str, str | Sequence[str]] | None, optional): Filter results
+                by arbitrary attack labels. The legacy ``operator`` and ``operation`` aliases
+                are accepted through PyRIT 1.3 and normalized to dedicated filters. Entries
+                are AND-combined across label names; within a
+                single entry, a string value is an equality match and a sequence value is
+                an OR match over the listed values. An empty sequence applies no filter
+                for that label. Defaults to None.
+            operator (str | Sequence[str] | None, optional): Filter by dedicated operator values.
+            operation (str | Sequence[str] | None, optional): Filter by dedicated operation values.
+            targeted_harm_categories (Sequence[str] | None, optional): Filter results by the
+                harm categories targeted by the attack (stored on
+                ``AttackResultEntry.targeted_harm_categories``, auto-populated from the
+                attack's SeedGroup). Returns attacks targeting ANY of the listed categories
+                (OR logic, case-insensitive). An empty sequence applies no filter. Defaults
+                to None.
+            identifier_filters (Sequence[IdentifierFilter] | None, optional):
+                A sequence of IdentifierFilter objects that allows filtering by various attack identifier
+                JSON properties. Defaults to None.
+            scenario_result_id (str | None, optional): Filter to attack results linked to a
+                specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
+                Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
+                removed per-scenario error_attack_result_ids manifest. Defaults to None.
+            min_turns (int | None, optional): If set, only return attacks whose
+                ``executed_turns`` is greater than or equal to this value. Applied after
+                per-conversation deduplication (i.e. to the surviving newest row per
+                conversation), so it never resurfaces an older duplicate. Defaults to None.
+            max_turns (int | None, optional): If set, only return attacks whose
+                ``executed_turns`` is less than or equal to this value. Applied after
+                deduplication, mirroring ``min_turns``. Defaults to None.
+            limit (int | None, optional): Maximum number of deduplicated attack results to
+                return, ordered by recency. When either ``limit`` or ``after`` is provided,
+                deduplication and pagination happen in the database (via a ``NOT EXISTS`` anti-join)
+                instead of loading every row into memory. Defaults to None (return all).
+            after (AttackResultKeysetCursor | None, optional): Keyset (seek) anchor from a
+                previous page. When provided, only results ordered strictly after the anchor
+                under the recency sort are returned, giving insert/delete-stable pagination
+                without a drifting numeric offset. Defaults to None (start at the first page).
+
+        Returns:
+            Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
+
+        Raises:
+            ValueError: If any label key contains characters outside the allowlist
+                ``[A-Za-z0-9_.-]+``.
+            ValueError: If ``limit`` or ``after`` is combined with ``attack_result_ids`` or
+                ``objective_sha256`` (id-batched lookups do not support SQL pagination).
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_attack_results,
+            attack_result_ids=attack_result_ids,
+            conversation_id=conversation_id,
+            objective=objective,
+            objective_sha256=objective_sha256,
+            outcome=outcome,
+            attack_classes=attack_classes,
+            atomic_attack_eval_hashes=atomic_attack_eval_hashes,
+            converter_classes=converter_classes,
+            converter_classes_match=converter_classes_match,
+            has_converters=has_converters,
+            include_scenario_attacks=include_scenario_attacks,
+            labels=labels,
+            operator=operator,
+            operation=operation,
+            targeted_harm_categories=targeted_harm_categories,
+            identifier_filters=identifier_filters,
+            scenario_result_id=scenario_result_id,
+            min_turns=min_turns,
+            max_turns=max_turns,
+            limit=limit,
+            after=after,
+        )
+
+    def get_unique_attack_labels(
+        self,
+        *,
+        operator: Sequence[str] | None = None,
+        operation: Sequence[str] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> dict[str, list[str]]:
+        """
+        Use ``get_unique_attack_labels_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            dict[str, list[str]]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_unique_attack_labels",
+            new_item="MemoryInterface.get_unique_attack_labels_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_unique_attack_labels(operator=operator, operation=operation, labels=labels)
+
+    @legacy_sync_override(lambda: MemoryInterface.get_unique_attack_labels)
+    async def get_unique_attack_labels_async(
+        self,
+        *,
+        operator: Sequence[str] | None = None,
+        operation: Sequence[str] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> dict[str, list[str]]:
+        """
+        Return unique arbitrary labels, optionally narrowed by indexed attribution first.
+
+        Args:
+            operator (Sequence[str] | None): Operator values used to narrow rows.
+            operation (Sequence[str] | None): Operation values used to narrow rows.
+            labels (Mapping[str, str | Sequence[str]] | None): Arbitrary label filters used
+                to narrow rows.
+
+        Returns:
+            dict[str, list[str]]: Mapping of label keys to sorted lists of
+            unique values.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_unique_attack_labels, operator=operator, operation=operation, labels=labels
+        )
+
+    def get_unique_attack_attribution(self) -> dict[str, list[str]]:
+        """
+        Use ``get_unique_attack_attribution_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            dict[str, list[str]]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_unique_attack_attribution",
+            new_item="MemoryInterface.get_unique_attack_attribution_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_unique_attack_attribution()
+
+    @legacy_sync_override(lambda: MemoryInterface.get_unique_attack_attribution)
+    async def get_unique_attack_attribution_async(self) -> dict[str, list[str]]:
+        """Return unique dedicated operator and operation values from indexed columns."""
+        return await self._run_database_operation_async(self._execute_get_unique_attack_attribution)
+
+    def add_scenario_results_to_memory(self, *, scenario_results: Sequence[ScenarioResult]) -> None:
+        """
+        Use ``add_scenario_results_to_memory_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.add_scenario_results_to_memory",
+            new_item="MemoryInterface.add_scenario_results_to_memory_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_add_scenario_results_to_memory(scenario_results=scenario_results)
+
+    @legacy_sync_override(lambda: MemoryInterface.add_scenario_results_to_memory)
+    async def add_scenario_results_to_memory_async(self, *, scenario_results: Sequence[ScenarioResult]) -> None:
+        """
+        Insert a list of scenario results into the memory storage.
+
+        Args:
+            scenario_results: Sequence of ScenarioResult objects to store in the database.
+
+        Raises:
+            SQLAlchemyError: If a scenario result or identifier graph cannot be persisted.
+        """
+        return await self._run_database_operation_async(
+            self._execute_add_scenario_results_to_memory, scenario_results=scenario_results
+        )
+
+    def update_scenario_run_state(
+        self,
+        *,
+        scenario_result_id: str,
+        scenario_run_state: ScenarioRunState,
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        """
+        Use ``update_scenario_run_state_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.update_scenario_run_state",
+            new_item="MemoryInterface.update_scenario_run_state_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_update_scenario_run_state(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state=scenario_run_state,
+            error_message=error_message,
+            error_type=error_type,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.update_scenario_run_state)
+    async def update_scenario_run_state_async(
+        self,
+        *,
+        scenario_result_id: str,
+        scenario_run_state: ScenarioRunState,
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        """
+        Update the run state of an existing scenario result.
+
+        Performs a targeted UPDATE of only the state/error columns instead of
+        rebuilding the entire ``ScenarioResultEntry`` row.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+            scenario_run_state (ScenarioRunState): The new state for the scenario.
+            error_message (str | None): Optional scenario-level error message.
+            error_type (str | None): Optional exception class name.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        return await self._run_database_operation_async(
+            self._execute_update_scenario_run_state,
+            scenario_result_id=scenario_result_id,
+            scenario_run_state=scenario_run_state,
+            error_message=error_message,
+            error_type=error_type,
+        )
+
+    def update_scenario_run_state_and_metadata_fields(
+        self,
+        *,
+        scenario_result_id: str,
+        scenario_run_state: ScenarioRunState,
+        metadata_fields: Mapping[str, Any],
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        """
+        Use ``update_scenario_run_state_and_metadata_fields_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.update_scenario_run_state_and_metadata_fields",
+            new_item="MemoryInterface.update_scenario_run_state_and_metadata_fields_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_update_scenario_run_state_and_metadata_fields(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state=scenario_run_state,
+            metadata_fields=metadata_fields,
+            error_message=error_message,
+            error_type=error_type,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.update_scenario_run_state_and_metadata_fields)
+    async def update_scenario_run_state_and_metadata_fields_async(
+        self,
+        *,
+        scenario_result_id: str,
+        scenario_run_state: ScenarioRunState,
+        metadata_fields: Mapping[str, Any],
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        """
+        Update run state and merge scenario metadata in one transaction.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        return await self._run_database_operation_async(
+            self._execute_update_scenario_run_state_and_metadata_fields,
+            scenario_result_id=scenario_result_id,
+            scenario_run_state=scenario_run_state,
+            metadata_fields=metadata_fields,
+            error_message=error_message,
+            error_type=error_type,
+        )
+
+    def try_update_scenario_run_state(
+        self,
+        *,
+        scenario_result_id: str,
+        expected_states: Collection[ScenarioRunState],
+        scenario_run_state: ScenarioRunState,
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> bool:
+        """
+        Use ``try_update_scenario_run_state_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            bool: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.try_update_scenario_run_state",
+            new_item="MemoryInterface.try_update_scenario_run_state_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_try_update_scenario_run_state(
+            scenario_result_id=scenario_result_id,
+            expected_states=expected_states,
+            scenario_run_state=scenario_run_state,
+            error_message=error_message,
+            error_type=error_type,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.try_update_scenario_run_state)
+    async def try_update_scenario_run_state_async(
+        self,
+        *,
+        scenario_result_id: str,
+        expected_states: Collection[ScenarioRunState],
+        scenario_run_state: ScenarioRunState,
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> bool:
+        """
+        Update the run state only when the stored state is one of ``expected_states``.
+
+        The compare and the write are a single UPDATE so a run that reached a terminal state
+        on another thread is not overwritten. A read followed by
+        ``update_scenario_run_state`` cannot give that guarantee because scenario
+        preparation and cancellation run on different threads.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+            expected_states (Collection[ScenarioRunState]): States the row may currently be in.
+            scenario_run_state (ScenarioRunState): The new state for the scenario.
+            error_message (str | None): Optional scenario-level error message.
+            error_type (str | None): Optional exception class name.
+
+        Returns:
+            bool: True if the row was updated, False if it was missing or in another state.
+
+        Raises:
+            ValueError: If ``expected_states`` is empty.
+        """
+        return await self._run_database_operation_async(
+            self._execute_try_update_scenario_run_state,
+            scenario_result_id=scenario_result_id,
+            expected_states=expected_states,
+            scenario_run_state=scenario_run_state,
+            error_message=error_message,
+            error_type=error_type,
+        )
+
+    def update_scenario_metadata(self, *, scenario_result_id: str, metadata: dict[str, Any]) -> None:
+        """
+        Use ``update_scenario_metadata_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.update_scenario_metadata",
+            new_item="MemoryInterface.update_scenario_metadata_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_update_scenario_metadata(scenario_result_id=scenario_result_id, metadata=metadata)
+
+    @legacy_sync_override(lambda: MemoryInterface.update_scenario_metadata)
+    async def update_scenario_metadata_async(self, *, scenario_result_id: str, metadata: dict[str, Any]) -> None:
+        """
+        Replace the ``scenario_metadata`` JSON blob on an existing scenario result.
+
+        Used by the scenario layer to persist first-run state (e.g.
+        ``objective_hashes``) that resume needs to replay. Performs a
+        targeted UPDATE so it doesn't clobber other columns.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+            metadata (dict[str, Any]): The full metadata dict to store. Pass the
+                merged dict, not just the new keys — this writes the whole value.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        return await self._run_database_operation_async(
+            self._execute_update_scenario_metadata, scenario_result_id=scenario_result_id, metadata=metadata
+        )
+
+    def update_scenario_metadata_fields(self, *, scenario_result_id: str, fields: Mapping[str, Any]) -> None:
+        """
+        Use ``update_scenario_metadata_fields_async``.
+
+        This synchronous API is deprecated and can block the caller.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.update_scenario_metadata_fields",
+            new_item="MemoryInterface.update_scenario_metadata_fields_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_update_scenario_metadata_fields(scenario_result_id=scenario_result_id, fields=fields)
+
+    @legacy_sync_override(lambda: MemoryInterface.update_scenario_metadata_fields)
+    async def update_scenario_metadata_fields_async(
+        self, *, scenario_result_id: str, fields: Mapping[str, Any]
+    ) -> None:
+        """
+        Merge selected fields into persisted scenario metadata in one transaction.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        return await self._run_database_operation_async(
+            self._execute_update_scenario_metadata_fields, scenario_result_id=scenario_result_id, fields=fields
+        )
+
+    def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
+        """
+        Use ``get_scenario_result_header_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            ScenarioResult | None: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scenario_result_header",
+            new_item="MemoryInterface.get_scenario_result_header_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_scenario_result_header(scenario_result_id=scenario_result_id)
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scenario_result_header)
+    async def get_scenario_result_header_async(self, *, scenario_result_id: str) -> ScenarioResult | None:
+        """Return one ScenarioResult header without hydrating linked attack results."""
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_result_header, scenario_result_id=scenario_result_id
+        )
+
+    def get_scenario_run_state_page(
+        self, *, states: Sequence[ScenarioRunState], after_id: str | None = None, limit: int = 500
+    ) -> tuple[list[ScenarioRunStateRecord], bool]:
+        """
+        Use ``get_scenario_run_state_page_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            tuple[list[ScenarioRunStateRecord], bool]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scenario_run_state_page",
+            new_item="MemoryInterface.get_scenario_run_state_page_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_scenario_run_state_page(states=states, after_id=after_id, limit=limit)
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scenario_run_state_page)
+    async def get_scenario_run_state_page_async(
+        self, *, states: Sequence[ScenarioRunState], after_id: str | None = None, limit: int = 500
+    ) -> tuple[list[ScenarioRunStateRecord], bool]:
+        """
+        Return one bounded ID/state page without hydrating ScenarioResults or AttackResults.
+
+        Returns:
+            tuple[list[ScenarioRunStateRecord], bool]: State records and whether another page exists.
+
+        Raises:
+            ValueError: If the limit or cursor ID is invalid.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_run_state_page, states=states, after_id=after_id, limit=limit
+        )
+
+    def get_scenario_run_history_page(
+        self,
+        *,
+        scenario_names: Sequence[str] | None = None,
+        statuses: Sequence[str] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+        cursor: ScenarioHistoryKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
+        """
+        Use ``get_scenario_run_history_page_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scenario_run_history_page",
+            new_item="MemoryInterface.get_scenario_run_history_page_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_scenario_run_history_page(
+            scenario_names=scenario_names, statuses=statuses, labels=labels, cursor=cursor, limit=limit
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scenario_run_history_page)
+    async def get_scenario_run_history_page_async(
+        self,
+        *,
+        scenario_names: Sequence[str] | None = None,
+        statuses: Sequence[str] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+        cursor: ScenarioHistoryKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
+        """
+        Return one descending scenario-history page and its database-side attempt metrics.
+
+        Only selected ScenarioResult columns and the linked AttackResult columns
+        required for aggregate counts are read. Full ORM result objects and their
+        relationships are never hydrated, and attempt metrics are reduced to one
+        aggregate row per history row inside the database.
+
+        Returns:
+            tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
+                Page headers, attempt aggregates keyed by scenario ID, and whether
+                another page exists.
+
+        Raises:
+            ValueError: If the limit, cursor ID, or label keys are invalid.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_run_history_page,
+            scenario_names=scenario_names,
+            statuses=statuses,
+            labels=labels,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    def get_scenario_history_aggregates(
+        self, *, scenario_result_ids: Sequence[str], plan_scenario_ids: Sequence[str] = ()
+    ) -> dict[str, ScenarioHistoryAggregate]:
+        """
+        Use ``get_scenario_history_aggregates_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            dict[str, ScenarioHistoryAggregate]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scenario_history_aggregates",
+            new_item="MemoryInterface.get_scenario_history_aggregates_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_scenario_history_aggregates(
+            scenario_result_ids=scenario_result_ids, plan_scenario_ids=plan_scenario_ids
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scenario_history_aggregates)
+    async def get_scenario_history_aggregates_async(
+        self, *, scenario_result_ids: Sequence[str], plan_scenario_ids: Sequence[str] = ()
+    ) -> dict[str, ScenarioHistoryAggregate]:
+        """
+        Return one attempt aggregate per requested scenario run.
+
+        Persisted attempts are grouped into logical work units before being counted, so
+        retries and errored re-runs of the same objective collapse into a single unit.
+        For every scenario listed in ``plan_scenario_ids`` the persisted run plan resolves
+        those units: attempts are matched to their planned atomic group and seed group
+        (remapping objective-hash attribution onto the planned seed group ID), and attempts
+        that resolve to no planned unit are excluded from the counters. Scenarios outside
+        ``plan_scenario_ids`` keep the persisted attribution as the unit identity and count
+        every unit, which is the legacy behavior for runs without a usable plan.
+
+        Args:
+            scenario_result_ids (Sequence[str]): Scenario run IDs to aggregate.
+            plan_scenario_ids (Sequence[str], optional): Subset of ``scenario_result_ids``
+                whose persisted run plan should resolve and filter units. Defaults to ().
+
+        Returns:
+            dict[str, ScenarioHistoryAggregate]: One aggregate per requested scenario ID.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_history_aggregates,
+            scenario_result_ids=scenario_result_ids,
+            plan_scenario_ids=plan_scenario_ids,
+        )
+
+    def get_unique_scenario_labels(self) -> dict[str, list[str]]:
+        """
+        Use ``get_unique_scenario_labels_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            dict[str, list[str]]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_unique_scenario_labels",
+            new_item="MemoryInterface.get_unique_scenario_labels_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_unique_scenario_labels()
+
+    @legacy_sync_override(lambda: MemoryInterface.get_unique_scenario_labels)
+    async def get_unique_scenario_labels_async(self) -> dict[str, list[str]]:
+        """Return all unique label values across scenario results."""
+        return await self._run_database_operation_async(self._execute_get_unique_scenario_labels)
+
+    def get_scenario_attack_result_deltas(
+        self, *, scenario_result_id: str, cursor: AttackResultKeysetCursor | None = None, limit: int = 100
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        """
+        Use ``get_scenario_attack_result_deltas_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            tuple[list[ScenarioAttackResultDelta], bool]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scenario_attack_result_deltas",
+            new_item="MemoryInterface.get_scenario_attack_result_deltas_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_scenario_attack_result_deltas(
+            scenario_result_id=scenario_result_id, cursor=cursor, limit=limit
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scenario_attack_result_deltas)
+    async def get_scenario_attack_result_deltas_async(
+        self, *, scenario_result_id: str, cursor: AttackResultKeysetCursor | None = None, limit: int = 100
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        """
+        Return bounded scenario-linked result deltas in ascending keyset order.
+
+        This projection selects only progress fields and the linked objective
+        score. It never hydrates ORM relationships, prompt rows, or a full
+        ScenarioResult.
+
+        Returns:
+            tuple[list[ScenarioAttackResultDelta], bool]: The page and whether more rows exist.
+
+        Raises:
+            ValueError: If the limit or cursor identifiers are invalid.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_attack_result_deltas,
+            scenario_result_id=scenario_result_id,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    def get_scenario_results(
+        self,
+        *,
+        scenario_result_ids: Sequence[str] | None = None,
+        scenario_name: str | None = None,
+        scenario_version: int | None = None,
+        pyrit_version: str | None = None,
+        added_after: datetime | None = None,
+        added_before: datetime | None = None,
+        labels: dict[str, str] | None = None,
+        objective_target_endpoint: str | None = None,
+        objective_target_model_name: str | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
+        limit: int | None = None,
+    ) -> Sequence[ScenarioResult]:
+        """
+        Use ``get_scenario_results_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            Sequence[ScenarioResult]: The operation result.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.get_scenario_results",
+            new_item="MemoryInterface.get_scenario_results_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_get_scenario_results(
+            scenario_result_ids=scenario_result_ids,
+            scenario_name=scenario_name,
+            scenario_version=scenario_version,
+            pyrit_version=pyrit_version,
+            added_after=added_after,
+            added_before=added_before,
+            labels=labels,
+            objective_target_endpoint=objective_target_endpoint,
+            objective_target_model_name=objective_target_model_name,
+            identifier_filters=identifier_filters,
+            limit=limit,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.get_scenario_results)
+    async def get_scenario_results_async(
+        self,
+        *,
+        scenario_result_ids: Sequence[str] | None = None,
+        scenario_name: str | None = None,
+        scenario_version: int | None = None,
+        pyrit_version: str | None = None,
+        added_after: datetime | None = None,
+        added_before: datetime | None = None,
+        labels: dict[str, str] | None = None,
+        objective_target_endpoint: str | None = None,
+        objective_target_model_name: str | None = None,
+        identifier_filters: Sequence[IdentifierFilter] | None = None,
+        limit: int | None = None,
+    ) -> Sequence[ScenarioResult]:
+        """
+        Retrieve a list of ScenarioResult objects based on the specified filters.
+
+        Results are always ordered by completion_time descending (most recent first).
+
+        Args:
+            scenario_result_ids (Sequence[str] | None, optional): A list of scenario result IDs.
+                Defaults to None.
+            scenario_name (str | None, optional): The scenario name to filter by (substring match).
+                Defaults to None.
+            scenario_version (int | None, optional): The scenario version to filter by. Defaults to None.
+            pyrit_version (str | None, optional): The PyRIT version to filter by. Defaults to None.
+            added_after (datetime | None, optional): Filter for scenarios completed after this datetime.
+                Defaults to None.
+            added_before (datetime | None, optional): Filter for scenarios completed before this datetime.
+                Defaults to None.
+            labels (dict[str, str] | None, optional): A dictionary of memory labels to filter by.
+                Defaults to None.
+            objective_target_endpoint (str | None, optional): Filter for scenarios where the
+                objective_target_identifier has an endpoint attribute containing this value (case-insensitive).
+                Defaults to None.
+            objective_target_model_name (str | None, optional): Filter for scenarios where the
+                objective_target_identifier has a model_name attribute containing this value (case-insensitive).
+                Defaults to None.
+            identifier_filters (Sequence[IdentifierFilter] | None, optional):
+                A sequence of IdentifierFilter objects that allows filtering by identifier JSON properties.
+                Defaults to None.
+            limit (int | None): Maximum number of results to return. Defaults to None (no limit).
+
+        Returns:
+            Sequence[ScenarioResult]: A list of ScenarioResult objects that match the specified filters,
+                ordered by completion_time descending.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_results,
+            scenario_result_ids=scenario_result_ids,
+            scenario_name=scenario_name,
+            scenario_version=scenario_version,
+            pyrit_version=pyrit_version,
+            added_after=added_after,
+            added_before=added_before,
+            labels=labels,
+            objective_target_endpoint=objective_target_endpoint,
+            objective_target_model_name=objective_target_model_name,
+            identifier_filters=identifier_filters,
+            limit=limit,
+        )

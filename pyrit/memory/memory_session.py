@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from sqlite3 import Connection as SQLiteConnection
 from typing import Any
 
+from aiosqlite import Connection as AsyncSQLiteConnection
 from sqlalchemy import delete, inspect, select
 from sqlalchemy.orm import Session
 
@@ -29,8 +30,8 @@ def _begin_sqlite_write(session: Session) -> None:
     if session.get_bind().dialect.name == "sqlite":
         connection = session.connection()
         driver_connection = connection.connection.driver_connection
-        if not isinstance(driver_connection, SQLiteConnection):
-            raise TypeError("SQLite memory requires a sqlite3.Connection.")
+        if not isinstance(driver_connection, (SQLiteConnection, AsyncSQLiteConnection)):
+            raise TypeError("SQLite memory requires a sqlite3 or aiosqlite connection.")
         if not driver_connection.in_transaction:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
 

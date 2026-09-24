@@ -2,11 +2,11 @@
 # Licensed under the MIT license.
 
 import os
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 from unittest.mock import patch
 
 import pytest
-from integration.mocks import get_memory_interface
+from integration.mocks import get_memory_interface_async
 
 from pyrit.common.path import HOME_PATH
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -16,8 +16,9 @@ _AZURE_KEY_AUTH_DISABLED_REASON = "Azure key-based (local) auth is disabled in o
 
 
 @pytest.fixture
-def memory() -> Generator[MemoryInterface, None, None]:
-    yield from get_memory_interface()
+async def memory() -> AsyncGenerator[MemoryInterface, None]:
+    async for instance in get_memory_interface_async():
+        yield instance
 
 
 @pytest.fixture(

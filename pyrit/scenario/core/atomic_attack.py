@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
@@ -399,7 +400,7 @@ class AtomicAttack:
             )
 
             # Enrich atomic_attack_identifier with seed identifiers
-            self._enrich_atomic_attack_identifiers(results=results)
+            (await self._enrich_atomic_attack_identifiers_async(results=results))
 
             # Log completion status
             if results.has_incomplete:
@@ -452,4 +453,41 @@ class AtomicAttack:
                         update_fields={
                             "atomic_attack_identifier": identifier.model_dump(),
                         },
+                    )
+
+    @legacy_sync_override(lambda: AtomicAttack._enrich_atomic_attack_identifiers)
+    async def _enrich_atomic_attack_identifiers_async(self, *, results: AttackExecutorResult[AttackResult]) -> None:
+        """
+        Enrich each AttackResult's atomic_attack_identifier with seed group and
+        technique information, then persist the update to the database.
+
+        Uses ``results.input_indices`` to map each completed result back to its
+        originating seed group by index, then rebuilds the atomic_attack_identifier
+        to include the seed identifiers and any technique seeds. The enriched
+        identifier is then flushed back to the corresponding ``AttackResultEntry`` row.
+
+        Args:
+            results: The execution results to enrich.
+        """
+        memory = CentralMemory.get_memory_instance()
+
+        for result, idx in zip(results.completed_results, results.input_indices, strict=True):
+            if idx < len(self._seed_groups):
+                identifier = AtomicAttackIdentifier.build(
+                    technique_identifier=self._attack_technique.get_identifier(),
+                    seed_group=self._seed_groups[idx],
+                )
+
+                # Persist the enriched identifier back to the database.
+                # Stamp eval_hash so it lands in the stored JSON for DB-level filtering.
+                identifier = identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
+
+                result.atomic_attack_identifier = identifier
+
+                if result.attack_result_id:
+                    (
+                        await memory.update_attack_result_by_id_async(
+                            attack_result_id=result.attack_result_id,
+                            update_fields={"atomic_attack_identifier": identifier.model_dump()},
+                        )
                     )

@@ -162,4 +162,4 @@ result = await generator.execute_async(  # type: ignore
     prompt_templates=prompt_templates,
 )
 
-FuzzerResultPrinter().print_result(result=result)
+(await FuzzerResultPrinter().print_result_async(result=result))

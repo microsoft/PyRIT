@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from unit.mocks import get_mock_target_identifier, store_message
+from unit.mocks import get_mock_target_identifier, store_message_async
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory
@@ -20,6 +20,7 @@ from pyrit.models import (
     MessagePiece,
     SeedPrompt,
 )
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import JsonSchemaResponseHandler, MessageScorable, RefusalScorerPaths, SelfAskRefusalScorer
 
 
@@ -39,7 +40,7 @@ def scorer_true_false_response() -> Message:
 
 
 async def test_refusal_scorer_score(scorer_true_false_response: Message, patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
@@ -55,18 +56,18 @@ async def test_refusal_scorer_score(scorer_true_false_response: Message, patch_c
 
 
 async def test_refusal_scorer_set_system_prompt(scorer_true_false_response: Message, patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
     scorer = SelfAskRefusalScorer(chat_target=chat_target)
 
     await scorer.score_text_async("true false")
 
-    chat_target.set_system_prompt.assert_called_once()
+    chat_target.set_system_prompt_async.assert_called_once()
 
 
 async def test_refusal_scorer_no_task(scorer_true_false_response: Message, patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
     scorer = SelfAskRefusalScorer(chat_target=chat_target)
@@ -80,7 +81,7 @@ async def test_refusal_scorer_no_task(scorer_true_false_response: Message, patch
 
 
 async def test_refusal_scorer_with_task(scorer_true_false_response: Message, patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
     scorer = SelfAskRefusalScorer(chat_target=chat_target)
@@ -98,7 +99,7 @@ async def test_refusal_scorer_image_non_block(
     patch_central_database,
     tmp_path: Path,
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -115,18 +116,18 @@ async def test_refusal_scorer_image_non_block(
 
 async def test_refusal_scorer_adds_to_memory(scorer_true_false_response: Message):
     memory = MagicMock(MemoryInterface)
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = SelfAskRefusalScorer(chat_target=chat_target)
         await scorer.score_text_async(text="string")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()
 
 
 async def test_refusal_scorer_bad_json_exception_retries(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value="this is not a json")])
@@ -141,7 +142,7 @@ async def test_refusal_scorer_bad_json_exception_retries(patch_central_database)
 
 
 async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     json_response = (
@@ -170,7 +171,7 @@ async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_centra
 async def test_refusal_scorer_list_response_retries_and_succeeds(
     scorer_true_false_response: Message, patch_central_database
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     list_response = Message(message_pieces=[MessagePiece(role="assistant", original_value='[{"score_value": true}]')])
     chat_target.send_prompt_async = AsyncMock(side_effect=[[list_response], [scorer_true_false_response]])
@@ -183,7 +184,7 @@ async def test_refusal_scorer_list_response_retries_and_succeeds(
 
 
 async def test_refusal_scorer_list_response_retry_exhaustion_raises_invalid_json(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     def _list_response(*args, **kwargs):
@@ -201,7 +202,7 @@ async def test_refusal_scorer_list_response_retry_exhaustion_raises_invalid_json
 async def test_refusal_scorer_invalid_score_value_retries_and_succeeds(
     scorer_true_false_response: Message, patch_central_database
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     invalid_response = Message(
         message_pieces=[
@@ -221,7 +222,7 @@ async def test_refusal_scorer_invalid_score_value_retries_and_succeeds(
 
 
 async def test_refusal_scorer_invalid_score_value_retry_exhaustion_raises_invalid_json(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     def _invalid_response(*args, **kwargs):
@@ -247,7 +248,7 @@ async def test_refusal_scorer_invalid_score_value_retry_exhaustion_raises_invali
 
 async def test_score_async_filtered_response(patch_central_database):
     memory = CentralMemory.get_memory_instance()
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock()
     scorer = SelfAskRefusalScorer(chat_target=chat_target)
@@ -258,8 +259,8 @@ async def test_score_async_filtered_response(patch_central_database):
         response_error="blocked",
         conversation_id=str(uuid4()),
     ).to_message()
-    memory.add_message_pieces_to_memory(message_pieces=request.message_pieces)
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
+    (await memory.add_message_pieces_to_memory_async(message_pieces=request.message_pieces))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(request)))
 
     assert len(scores) == 1
     assert scores[0].score_value == "true"
@@ -304,7 +305,7 @@ class TestRefusalScorerSystemPromptPath:
         self, scorer_true_false_response: Message, patch_central_database
     ):
         """Test that OBJECTIVE_LENIENT mode can be used."""
-        chat_target = MagicMock()
+        chat_target = MagicMock(spec=PromptTarget)
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
         chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -320,7 +321,7 @@ class TestRefusalScorerSystemPromptPath:
         self, scorer_true_false_response: Message, patch_central_database
     ):
         """Test that NO_OBJECTIVE_STRICT mode can be used."""
-        chat_target = MagicMock()
+        chat_target = MagicMock(spec=PromptTarget)
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
         chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -336,7 +337,7 @@ class TestRefusalScorerSystemPromptPath:
         self, scorer_true_false_response: Message, patch_central_database
     ):
         """Test OBJECTIVE_STRICT mode with an objective."""
-        chat_target = MagicMock()
+        chat_target = MagicMock(spec=PromptTarget)
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
         chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -356,7 +357,7 @@ EXPECTED_REFUSAL_RESPONSE_JSON_SCHEMA = COMMON_JSON_SCHEMAS["true_false_with_rat
 @pytest.mark.parametrize("scorer_path", list(RefusalScorerPaths))
 async def test_refusal_scorer_loads_response_json_schema(scorer_path: RefusalScorerPaths, patch_central_database):
     """Test that each refusal YAML populates the response handler schema with the expected schema."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskRefusalScorer(
@@ -372,7 +373,7 @@ async def test_refusal_scorer_passes_response_json_schema_to_target(
     scorer_true_false_response: Message, patch_central_database
 ):
     """Test that response_json_schema is forwarded to the prompt target via prompt_metadata."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -389,7 +390,7 @@ async def test_refusal_scorer_omits_json_schema_when_seed_has_none(
     scorer_true_false_response: Message, patch_central_database
 ):
     """When the seed prompt has no schema, prompt_metadata must NOT include the json_schema key."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -409,7 +410,7 @@ async def test_refusal_scorer_omits_json_schema_when_seed_has_none(
 @pytest.mark.parametrize("scorer_path", list(RefusalScorerPaths))
 async def test_refusal_scorer_identifier_includes_schema(scorer_path: RefusalScorerPaths, patch_central_database):
     """The scorer identifier must carry the schema so identical-config scorers hash the same."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskRefusalScorer(
@@ -425,7 +426,7 @@ async def test_refusal_scorer_metadata_round_trips_through_json_response_config(
     scorer_true_false_response: Message, patch_central_database
 ):
     """The prompt_metadata produced by the scorer must be consumable by JsonResponseConfig."""
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -447,7 +448,7 @@ class TestRefusalScorerPromptFormatString:
         self, scorer_true_false_response: Message, patch_central_database
     ):
         """Test that custom prompt_format_string is used."""
-        chat_target = MagicMock()
+        chat_target = MagicMock(spec=PromptTarget)
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
         chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -467,7 +468,7 @@ class TestRefusalScorerPromptFormatString:
         self, scorer_true_false_response: Message, patch_central_database
     ):
         """Test custom prompt_format_string with no objective uses 'Not provided'."""
-        chat_target = MagicMock()
+        chat_target = MagicMock(spec=PromptTarget)
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
         chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -487,7 +488,7 @@ class TestRefusalScorerPromptFormatString:
         self, scorer_true_false_response: Message, patch_central_database
     ):
         """Test that default prompt format is used when not specified."""
-        chat_target = MagicMock()
+        chat_target = MagicMock(spec=PromptTarget)
         chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
         chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
@@ -506,21 +507,21 @@ def test_refusal_init_no_chat_target_raises():
 
 
 def test_refusal_score_category_normalized_from_str(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     scorer = SelfAskRefusalScorer(chat_target=chat_target, score_category="custom_refusal")
     assert scorer._score_category == ["custom_refusal"]
 
 
 def test_refusal_score_category_normalized_from_sequence(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     scorer = SelfAskRefusalScorer(chat_target=chat_target, score_category=["a", "b"])
     assert scorer._score_category == ["a", "b"]
 
 
 def test_refusal_init_system_prompt_str_and_invalid_type(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskRefusalScorer(chat_target=chat_target, system_prompt="verbatim")

@@ -48,12 +48,12 @@ memory = CentralMemory.get_memory_instance()
 await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="test")  # type: ignore
 
 # Retrieve the dataset from memory
-seeds = memory.get_seeds(dataset_name="pyrit_example_dataset")
+seeds = await memory.get_seeds_async(dataset_name="pyrit_example_dataset")
 print(f"Number of prompts in dataset: {len(seeds)}")
 
 # Note we can add it again without creating duplicates
 await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="test")  # type: ignore
-seeds = memory.get_seeds(dataset_name="pyrit_example_dataset")
+seeds = await memory.get_seeds_async(dataset_name="pyrit_example_dataset")
 print(f"Number of prompts in dataset after re-adding: {len(seeds)}")
 
 # %% [markdown]
@@ -67,7 +67,7 @@ print(f"Number of prompts in dataset after re-adding: {len(seeds)}")
 # The example below shows the dataset we just uploaded (`pyrit_example_dataset`), but `get_seed_dataset_names()` returns all datasets in memory.
 
 # %%
-all_dataset_names = memory.get_seed_dataset_names()
+all_dataset_names = await memory.get_seed_dataset_names_async()
 print("All dataset names in memory:", all_dataset_names)
 
 # %% [markdown]
@@ -91,26 +91,28 @@ def print_group(seed_group):
 
 
 # Get all seeds in the dataset we just uploaded
-seed_groups = memory.get_seed_groups(dataset_name="pyrit_example_dataset")
+seed_groups = await memory.get_seed_groups_async(dataset_name="pyrit_example_dataset")
 print("First seed from pyrit_example_dataset:")
 print("----------")
 print_group(seed_groups[0])
 
 # Filter by SeedObjectives
-seed_groups = memory.get_seed_groups(dataset_name="pyrit_example_dataset", seed_type="objective", group_length=[1])
+seed_groups = await memory.get_seed_groups_async(
+    dataset_name="pyrit_example_dataset", seed_type="objective", group_length=[1]
+)
 print("First SeedObjective from pyrit_example_dataset without a seedprompt:")
 print("----------")
 print_group(seed_groups[0])
 
 # Filter by metadata to get seed prompts in .wav format and samplerate 24000 kBits/s
 print("First WAV seed in the database")
-seed_groups = memory.get_seed_groups(metadata={"format": "wav", "samplerate": 24000})
+seed_groups = await memory.get_seed_groups_async(metadata={"format": "wav", "samplerate": 24000})
 print("----------")
 print_group(seed_groups[0])
 
 # Filter by image seeds
 print("First image seed in the dataset")
-seed_groups = memory.get_seed_groups(data_types=["image_path"], dataset_name="pyrit_example_dataset")
+seed_groups = await memory.get_seed_groups_async(data_types=["image_path"], dataset_name="pyrit_example_dataset")
 print("----------")
 print_group(seed_groups[0])
 
@@ -123,15 +125,15 @@ print_group(seed_groups[0])
 
 # %%
 # Preview the seeds that will be removed using the same filters
-seeds_to_remove = memory.get_seeds(dataset_name="pyrit_example_dataset")
+seeds_to_remove = await memory.get_seeds_async(dataset_name="pyrit_example_dataset")
 print(f"Seeds matching the filter: {len(seeds_to_remove)}")
 
 # Remove them and get back the number of seeds deleted
-removed_count = memory.remove_seeds_from_memory(dataset_name="pyrit_example_dataset")
+removed_count = await memory.remove_seeds_from_memory_async(dataset_name="pyrit_example_dataset")
 print(f"Removed {removed_count} seeds")
 
 # Confirm they are gone
-seeds = memory.get_seeds(dataset_name="pyrit_example_dataset")
+seeds = await memory.get_seeds_async(dataset_name="pyrit_example_dataset")
 print(f"Seeds remaining in dataset: {len(seeds)}")
 
 # %% [markdown]

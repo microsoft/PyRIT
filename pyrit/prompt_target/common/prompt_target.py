@@ -6,6 +6,8 @@ import logging
 from collections.abc import Mapping
 from typing import Any, ClassVar, Literal, final
 
+from pyrit.common.async_compatibility import legacy_sync_override
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import (
@@ -283,7 +285,9 @@ class PromptTarget(Identifiable):
         """
         conversation_id = message.message_pieces[0].conversation_id
         persisted_messages = (
-            list(self._memory.get_conversation_messages(conversation_id=conversation_id)) if conversation_id else []
+            list(await self._memory.get_conversation_messages_async(conversation_id=conversation_id))
+            if conversation_id
+            else []
         )
         persisted_messages = filter_non_replayable_messages(messages=persisted_messages)
         conversation = send_context.select_history(messages=persisted_messages) if send_context else persisted_messages
@@ -337,6 +341,11 @@ class PromptTarget(Identifiable):
             ValueError: If the target does not support multi-turn or editable history.
             RuntimeError: If the conversation already has messages.
         """
+        print_deprecation_message(
+            old_item="PromptTarget.set_system_prompt",
+            new_item="PromptTarget.set_system_prompt_async",
+            removed_in="1.4.0",
+        )
         if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
             raise ValueError(
                 f"Target {type(self).__name__} does not support setting a system prompt. "
@@ -358,6 +367,64 @@ class PromptTarget(Identifiable):
                 original_value=system_prompt,
                 converted_value=system_prompt,
             ).to_message(),
+        )
+
+    @legacy_sync_override(lambda: PromptTarget.set_system_prompt)
+    async def set_system_prompt_async(
+        self,
+        *,
+        system_prompt: str,
+        conversation_id: str,
+    ) -> None:
+        """
+        Inject a system prompt into memory for the given conversation.
+
+        Writes a ``system``-role message so the target's normalization pipeline
+        (or the target itself, when it natively supports system prompts) will
+        pick it up on the next ``send_prompt_async`` call.
+
+        If the target does not natively support system prompts, whether this
+        call is ultimately honored depends on the target's
+        ``CapabilityHandlingPolicy``:
+
+        * ``ADAPT`` — the normalization pipeline (e.g. system squash) will
+          fold the system message into user content on the wire.
+        * ``RAISE`` — the first send after the system prompt is set will
+          raise, because the pipeline cannot adapt the missing capability.
+
+        Args:
+            system_prompt (str): The system prompt text to set.
+            conversation_id (str): The conversation id to attach the prompt to.
+
+        Raises:
+            ValueError: If the target does not support multi-turn or editable history.
+            RuntimeError: If the conversation already has messages.
+        """
+        if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
+            raise ValueError(
+                f"Target {type(self).__name__} does not support setting a system prompt. "
+                "It must support both multi-turn conversations and editable history."
+            )
+
+        messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
+
+        if messages:
+            raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
+
+        (
+            await self._memory.add_conversation_to_memory_async(
+                conversation=Conversation(conversation_id=conversation_id, target_identifier=self.get_identifier())
+            )
+        )
+        (
+            await self._memory.add_message_to_memory_async(
+                request=MessagePiece(
+                    role="system",
+                    conversation_id=conversation_id,
+                    original_value=system_prompt,
+                    converted_value=system_prompt,
+                ).to_message()
+            )
         )
 
     async def reset_conversation_async(self, *, conversation_id: str) -> None:
@@ -382,7 +449,19 @@ class PromptTarget(Identifiable):
         """
         Dispose database engine to release database connections and resources.
         """
+        print_deprecation_message(
+            old_item="PromptTarget.dispose_db_engine",
+            new_item="PromptTarget.dispose_db_engine_async",
+            removed_in="1.4.0",
+        )
         self._memory.dispose_engine()
+
+    @legacy_sync_override(lambda: PromptTarget.dispose_db_engine)
+    async def dispose_db_engine_async(self) -> None:
+        """
+        Dispose database engine to release database connections and resources.
+        """
+        (await self._memory.dispose_engine_async())
 
     def _create_identifier(
         self,

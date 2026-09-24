@@ -764,12 +764,12 @@ def _make_attack_result_with_attribution(*, outcome: AttackOutcome, parent_colle
 class TestCollectCachedCompletionPairs:
     """Tests for ``_collect_cached_completion_pairs`` — now delegates to ``pyrit.analytics``."""
 
-    _ANALYTICS_PATH = "pyrit.scenario.scenarios.benchmark.adversarial.get_cached_results_for_technique"
+    _ANALYTICS_PATH = "pyrit.scenario.scenarios.benchmark.adversarial.get_cached_results_for_technique_async"
     _IDENTIFIER_PATH = "pyrit.scenario.scenarios.benchmark.adversarial.ObjectiveTargetEvaluationIdentifier"
 
     def _make_bench(self, *, with_target_identifier: bool = True) -> AdversarialBenchmark:
         bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
-        bench._memory = MagicMock()
+        bench._memory = MagicMock(spec=MemoryInterface)
         bench._objective_target_identifier = MagicMock() if with_target_identifier else None
         return bench
 
@@ -785,27 +785,27 @@ class TestCollectCachedCompletionPairs:
         identifier_instance.eval_hash = eval_hash
         return patch(self._IDENTIFIER_PATH, return_value=identifier_instance)
 
-    def test_returns_empty_when_no_objective_target_identifier(self):
+    async def test_returns_empty_when_no_objective_target_identifier(self):
         """Pre-``initialize_async`` state: no identifier means the cache filter is a no-op."""
         bench = self._make_bench(with_target_identifier=False)
         candidates = [self._make_candidate(technique_eval_hash="hash_a")]
 
         with patch(self._ANALYTICS_PATH) as analytics_mock:
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert cached == set()
         analytics_mock.assert_not_called()
 
-    def test_returns_empty_when_no_atomic_attacks(self):
+    async def test_returns_empty_when_no_atomic_attacks(self):
         """No candidates → no analytics calls and an empty result."""
         bench = self._make_bench()
         with self._patch_identifier(), patch(self._ANALYTICS_PATH) as analytics_mock:
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=[])
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=[])
 
         assert cached == set()
         analytics_mock.assert_not_called()
 
-    def test_returns_hash_when_success_match_exists(self):
+    async def test_returns_hash_when_success_match_exists(self):
         bench = self._make_bench()
         candidates = [self._make_candidate(technique_eval_hash="hash_a", atomic_attack_name="attack_a")]
 
@@ -818,11 +818,11 @@ class TestCollectCachedCompletionPairs:
                 ],
             ),
         ):
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert cached == {"attack_a"}
 
-    def test_returns_hash_when_failure_match_exists(self):
+    async def test_returns_hash_when_failure_match_exists(self):
         bench = self._make_bench()
         candidates = [self._make_candidate(technique_eval_hash="hash_a", atomic_attack_name="attack_a")]
 
@@ -835,11 +835,11 @@ class TestCollectCachedCompletionPairs:
                 ],
             ),
         ):
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert cached == {"attack_a"}
 
-    def test_excludes_hash_when_only_error_or_undetermined_matches(self):
+    async def test_excludes_hash_when_only_error_or_undetermined_matches(self):
         """ERROR / UNDETERMINED outcomes must NOT count as cached so transient failures retry."""
         bench = self._make_bench()
         candidates = [self._make_candidate(technique_eval_hash="hash_a", atomic_attack_name="attack_a")]
@@ -856,20 +856,20 @@ class TestCollectCachedCompletionPairs:
                 ],
             ),
         ):
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert cached == set()
 
-    def test_excludes_hash_when_no_matches(self):
+    async def test_excludes_hash_when_no_matches(self):
         bench = self._make_bench()
         candidates = [self._make_candidate(technique_eval_hash="hash_a")]
 
         with self._patch_identifier(), patch(self._ANALYTICS_PATH, return_value=[]):
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert cached == set()
 
-    def test_dedupes_unique_technique_hashes_across_candidates(self):
+    async def test_dedupes_unique_technique_hashes_across_candidates(self):
         """Three candidates sharing two unique hashes → analytics called twice, not three times.
 
         Two candidates share hash_a (attack_a1 and attack_a2); one has hash_b (attack_b1).
@@ -895,14 +895,14 @@ class TestCollectCachedCompletionPairs:
             self._patch_identifier(eval_hash="obj_hash"),
             patch(self._ANALYTICS_PATH, side_effect=_fake_analytics) as analytics_mock,
         ):
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert cached == {"attack_a1", "attack_b1", "attack_a2"}
         assert analytics_mock.call_count == 2
         called_technique_hashes = {call.kwargs["technique_eval_hash"] for call in analytics_mock.call_args_list}
         assert called_technique_hashes == {"hash_a", "hash_b"}
 
-    def test_delegates_with_memory_and_objective_target_hash(self):
+    async def test_delegates_with_memory_and_objective_target_hash(self):
         """Each analytics call passes the scenario's memory + the computed objective target hash."""
         bench = self._make_bench()
         candidates = [self._make_candidate(technique_eval_hash="hash_a")]
@@ -911,7 +911,7 @@ class TestCollectCachedCompletionPairs:
             self._patch_identifier(eval_hash="my_obj_target_hash"),
             patch(self._ANALYTICS_PATH, return_value=[]) as analytics_mock,
         ):
-            bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            (await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates))
 
         analytics_mock.assert_called_once_with(
             bench._memory,
@@ -919,18 +919,18 @@ class TestCollectCachedCompletionPairs:
             objective_target_eval_hash="my_obj_target_hash",
         )
 
-    def test_skips_candidates_with_no_technique_eval_hash(self):
+    async def test_skips_candidates_with_no_technique_eval_hash(self):
         """A candidate whose ``technique_eval_hash`` is ``None`` is silently ignored."""
         bench = self._make_bench()
         candidates = [self._make_candidate(technique_eval_hash=None)]
 
         with self._patch_identifier(), patch(self._ANALYTICS_PATH) as analytics_mock:
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert cached == set()
         analytics_mock.assert_not_called()
 
-    def test_analytics_lookup_exception_is_swallowed_per_hash(self):
+    async def test_analytics_lookup_exception_is_swallowed_per_hash(self):
         """A failing analytics lookup for one hash must not block the others — that hash is not cached."""
         bench = self._make_bench()
         candidates = [
@@ -944,12 +944,12 @@ class TestCollectCachedCompletionPairs:
             return [_make_attack_result_with_attribution(outcome=AttackOutcome.SUCCESS, parent_collection="attack_b")]
 
         with self._patch_identifier(), patch(self._ANALYTICS_PATH, side_effect=fake_analytics):
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         # hash_a was the failed lookup → not cached (will retry). hash_b succeeded → cached by name.
         assert cached == {"attack_b"}
 
-    def test_identifier_construction_failure_falls_back_to_empty(self):
+    async def test_identifier_construction_failure_falls_back_to_empty(self):
         """If ``ObjectiveTargetEvaluationIdentifier`` raises, cache becomes a no-op rather than blocking."""
         bench = self._make_bench()
         candidates = [self._make_candidate(technique_eval_hash="hash_a")]
@@ -958,7 +958,7 @@ class TestCollectCachedCompletionPairs:
             patch(self._IDENTIFIER_PATH, side_effect=RuntimeError("bad identifier")),
             patch(self._ANALYTICS_PATH) as analytics_mock,
         ):
-            cached = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert cached == set()
         analytics_mock.assert_not_called()
@@ -973,7 +973,7 @@ class TestCollectCachedCompletionPairs:
 class TestSkipCachedFilter:
     """End-to-end tests for the ``skip_cached`` filter applied in ``_build_atomic_attacks_async``."""
 
-    _ANALYTICS_PATH = "pyrit.scenario.scenarios.benchmark.adversarial.get_cached_results_for_technique"
+    _ANALYTICS_PATH = "pyrit.scenario.scenarios.benchmark.adversarial.get_cached_results_for_technique_async"
     _IDENTIFIER_PATH = "pyrit.scenario.scenarios.benchmark.adversarial.ObjectiveTargetEvaluationIdentifier"
 
     def _make_bench(self, *, use_cached: bool) -> AdversarialBenchmark:
@@ -1147,7 +1147,7 @@ def _technique_eval_hash_for(target: ComponentIdentifier) -> str:
     return AtomicAttackEvaluationIdentifier(atomic).eval_hash
 
 
-def _persist_attack_result(
+async def _persist_attack_result_async(
     memory: MemoryInterface,
     target: ComponentIdentifier,
     *,
@@ -1170,7 +1170,7 @@ def _persist_attack_result(
         timestamp=datetime.now(UTC),
         attribution_data={"parent_collection": atomic_attack_name} if atomic_attack_name else None,
     )
-    memory.add_attack_results_to_memory(attack_results=[attack_result])
+    (await memory.add_attack_results_to_memory_async(attack_results=[attack_result]))
     return attack_result
 
 
@@ -1202,40 +1202,48 @@ def _make_candidate(*, technique_eval_hash: str, atomic_attack_name: str = "atta
 class TestCollectCachedCompletionPairsWithRealMemory:
     """End-to-end cache coverage through real ``SQLiteMemory``."""
 
-    def test_cold_cache_returns_empty(self, sqlite_instance):
+    async def test_cold_cache_returns_empty(self, sqlite_instance):
         target = _make_objective_target_component()
         bench = _make_bench_with_real_memory(sqlite_instance, target)
         candidate = _make_candidate(technique_eval_hash=_technique_eval_hash_for(target))
 
-        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+        result = await bench._collect_cached_completion_pairs_async(atomic_attacks=[candidate])
 
         assert result == set()
 
-    def test_returns_hash_for_success_match_in_real_db(self, sqlite_instance):
+    async def test_returns_hash_for_success_match_in_real_db(self, sqlite_instance):
         target = _make_objective_target_component()
-        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.SUCCESS, atomic_attack_name="attack_a")
+        (
+            await _persist_attack_result_async(
+                sqlite_instance, target, outcome=AttackOutcome.SUCCESS, atomic_attack_name="attack_a"
+            )
+        )
 
         bench = _make_bench_with_real_memory(sqlite_instance, target)
         tech_hash = _technique_eval_hash_for(target)
         candidate = _make_candidate(technique_eval_hash=tech_hash, atomic_attack_name="attack_a")
 
-        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+        result = await bench._collect_cached_completion_pairs_async(atomic_attacks=[candidate])
 
         assert result == {"attack_a"}
 
-    def test_returns_hash_for_failure_match_in_real_db(self, sqlite_instance):
+    async def test_returns_hash_for_failure_match_in_real_db(self, sqlite_instance):
         target = _make_objective_target_component()
-        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.FAILURE, atomic_attack_name="attack_a")
+        (
+            await _persist_attack_result_async(
+                sqlite_instance, target, outcome=AttackOutcome.FAILURE, atomic_attack_name="attack_a"
+            )
+        )
 
         bench = _make_bench_with_real_memory(sqlite_instance, target)
         tech_hash = _technique_eval_hash_for(target)
         candidate = _make_candidate(technique_eval_hash=tech_hash, atomic_attack_name="attack_a")
 
-        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+        result = await bench._collect_cached_completion_pairs_async(atomic_attacks=[candidate])
 
         assert result == {"attack_a"}
 
-    def test_filters_out_persisted_results_with_different_objective_target(self, sqlite_instance):
+    async def test_filters_out_persisted_results_with_different_objective_target(self, sqlite_instance):
         """A row with a matching technique hash but a different target hash is rejected."""
         persisted_target = _make_objective_target_component(model_name="gpt-4o", temperature=0.7)
         bench_target = _make_objective_target_component(model_name="gpt-4o-mini", temperature=0.7)
@@ -1249,16 +1257,16 @@ class TestCollectCachedCompletionPairsWithRealMemory:
             != ObjectiveTargetEvaluationIdentifier(bench_target).eval_hash
         )
 
-        _persist_attack_result(sqlite_instance, persisted_target, outcome=AttackOutcome.SUCCESS)
+        (await _persist_attack_result_async(sqlite_instance, persisted_target, outcome=AttackOutcome.SUCCESS))
 
         bench = _make_bench_with_real_memory(sqlite_instance, bench_target)
         candidate = _make_candidate(technique_eval_hash=_technique_eval_hash_for(bench_target))
 
-        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+        result = await bench._collect_cached_completion_pairs_async(atomic_attacks=[candidate])
 
         assert result == set()
 
-    def test_filters_out_persisted_results_with_different_technique_hash(self, sqlite_instance):
+    async def test_filters_out_persisted_results_with_different_technique_hash(self, sqlite_instance):
         """A row whose technique eval hash differs is rejected by the SQL filter."""
         persisted_target = _make_objective_target_component(model_name="gpt-4o", temperature=0.0)
         bench_target = _make_objective_target_component(model_name="gpt-4o", temperature=0.7)
@@ -1267,33 +1275,41 @@ class TestCollectCachedCompletionPairsWithRealMemory:
         # and the SQL filter returns no rows.
         assert _technique_eval_hash_for(persisted_target) != _technique_eval_hash_for(bench_target)
 
-        _persist_attack_result(sqlite_instance, persisted_target, outcome=AttackOutcome.SUCCESS)
+        (await _persist_attack_result_async(sqlite_instance, persisted_target, outcome=AttackOutcome.SUCCESS))
 
         bench = _make_bench_with_real_memory(sqlite_instance, bench_target)
         candidate = _make_candidate(technique_eval_hash=_technique_eval_hash_for(bench_target))
 
-        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+        result = await bench._collect_cached_completion_pairs_async(atomic_attacks=[candidate])
 
         assert result == set()
 
-    def test_filters_out_error_only_history(self, sqlite_instance):
+    async def test_filters_out_error_only_history(self, sqlite_instance):
         """Outcomes other than SUCCESS / FAILURE never count as cached."""
         target = _make_objective_target_component()
-        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.ERROR)
-        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.UNDETERMINED)
+        (await _persist_attack_result_async(sqlite_instance, target, outcome=AttackOutcome.ERROR))
+        (await _persist_attack_result_async(sqlite_instance, target, outcome=AttackOutcome.UNDETERMINED))
 
         bench = _make_bench_with_real_memory(sqlite_instance, target)
         candidate = _make_candidate(technique_eval_hash=_technique_eval_hash_for(target))
 
-        result = bench._collect_cached_completion_pairs(atomic_attacks=[candidate])
+        result = await bench._collect_cached_completion_pairs_async(atomic_attacks=[candidate])
 
         assert result == set()
 
-    def test_dedupes_candidates_with_same_technique_hash(self, sqlite_instance):
+    async def test_dedupes_candidates_with_same_technique_hash(self, sqlite_instance):
         """Two candidates sharing a technique hash are evaluated independently by name."""
         target = _make_objective_target_component()
-        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.SUCCESS, atomic_attack_name="attack_a")
-        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.SUCCESS, atomic_attack_name="attack_b")
+        (
+            await _persist_attack_result_async(
+                sqlite_instance, target, outcome=AttackOutcome.SUCCESS, atomic_attack_name="attack_a"
+            )
+        )
+        (
+            await _persist_attack_result_async(
+                sqlite_instance, target, outcome=AttackOutcome.SUCCESS, atomic_attack_name="attack_b"
+            )
+        )
 
         bench = _make_bench_with_real_memory(sqlite_instance, target)
         tech_hash = _technique_eval_hash_for(target)
@@ -1302,11 +1318,11 @@ class TestCollectCachedCompletionPairsWithRealMemory:
             _make_candidate(technique_eval_hash=tech_hash, atomic_attack_name="attack_b"),
         ]
 
-        result = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+        result = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert result == {"attack_a", "attack_b"}
 
-    def test_same_technique_hash_only_harmbench_cached_when_only_harmbench_persisted(self, sqlite_instance):
+    async def test_same_technique_hash_only_harmbench_cached_when_only_harmbench_persisted(self, sqlite_instance):
         """Dataset-level scoping: same technique+target hash, only harmbench records in DB.
 
         Both harmbench and advbench candidates share a technique_eval_hash (same technique,
@@ -1317,8 +1333,10 @@ class TestCollectCachedCompletionPairsWithRealMemory:
         harmbench_name = "red_teaming__adv_a_harmbench"
         advbench_name = "red_teaming__adv_a_advbench"
 
-        _persist_attack_result(
-            sqlite_instance, target, outcome=AttackOutcome.SUCCESS, atomic_attack_name=harmbench_name
+        (
+            await _persist_attack_result_async(
+                sqlite_instance, target, outcome=AttackOutcome.SUCCESS, atomic_attack_name=harmbench_name
+            )
         )
 
         bench = _make_bench_with_real_memory(sqlite_instance, target)
@@ -1328,21 +1346,27 @@ class TestCollectCachedCompletionPairsWithRealMemory:
             _make_candidate(technique_eval_hash=tech_hash, atomic_attack_name=advbench_name),
         ]
 
-        result = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+        result = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert result == {harmbench_name}
         assert advbench_name not in result
 
-    def test_same_technique_hash_both_datasets_cached_when_both_persisted(self, sqlite_instance):
+    async def test_same_technique_hash_both_datasets_cached_when_both_persisted(self, sqlite_instance):
         """Dataset-level scoping: same technique+target, both datasets have prior results → both skipped."""
         target = _make_objective_target_component()
         harmbench_name = "red_teaming__adv_a_harmbench"
         advbench_name = "red_teaming__adv_a_advbench"
 
-        _persist_attack_result(
-            sqlite_instance, target, outcome=AttackOutcome.SUCCESS, atomic_attack_name=harmbench_name
+        (
+            await _persist_attack_result_async(
+                sqlite_instance, target, outcome=AttackOutcome.SUCCESS, atomic_attack_name=harmbench_name
+            )
         )
-        _persist_attack_result(sqlite_instance, target, outcome=AttackOutcome.FAILURE, atomic_attack_name=advbench_name)
+        (
+            await _persist_attack_result_async(
+                sqlite_instance, target, outcome=AttackOutcome.FAILURE, atomic_attack_name=advbench_name
+            )
+        )
 
         bench = _make_bench_with_real_memory(sqlite_instance, target)
         tech_hash = _technique_eval_hash_for(target)
@@ -1351,7 +1375,7 @@ class TestCollectCachedCompletionPairsWithRealMemory:
             _make_candidate(technique_eval_hash=tech_hash, atomic_attack_name=advbench_name),
         ]
 
-        result = bench._collect_cached_completion_pairs(atomic_attacks=candidates)
+        result = await bench._collect_cached_completion_pairs_async(atomic_attacks=candidates)
 
         assert result == {harmbench_name, advbench_name}
 

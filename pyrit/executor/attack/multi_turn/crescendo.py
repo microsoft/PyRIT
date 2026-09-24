@@ -362,8 +362,10 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         # Set the system prompt for adversarial chat via the manager, injecting Crescendo's
         # prepended-conversation context as an extra render value.
-        self._build_adversarial_manager(context=context).set_adversarial_system_prompt(
-            conversation_context=adversarial_chat_context,
+        (
+            await self._build_adversarial_manager(context=context).set_adversarial_system_prompt_async(
+                conversation_context=adversarial_chat_context
+            )
         )
 
         # Initialize backtrack count in context
@@ -733,7 +735,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             str: The new conversation ID after backtracking.
         """
         # Access memory through the conversation manager's memory instance
-        new_conversation_id = self._memory.duplicate_conversation_excluding_last_turn(
+        new_conversation_id = await self._memory.duplicate_conversation_excluding_last_turn_async(
             conversation_id=conversation_id,
         )
         self._logger.debug(f"Backtracked conversation from {conversation_id} to {new_conversation_id}")

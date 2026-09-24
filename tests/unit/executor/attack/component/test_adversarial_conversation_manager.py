@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.exceptions import BadRequestException, EmptyResponseException, InvalidJsonException, PyritException
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
@@ -34,7 +35,6 @@ from pyrit.models import (
     SeedPrompt,
     get_common_json_schema,
 )
-from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
@@ -82,7 +82,7 @@ def _per_turn(value: str = "{{ feedback_text }}") -> SeedPrompt:
 
 
 def _normalizer(return_text: str | None) -> MagicMock:
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     response = None if return_text is None else Message.from_prompt(prompt=return_text, role="assistant")
     normalizer.send_prompt_async = AsyncMock(return_value=response)
     return normalizer
@@ -455,7 +455,7 @@ class TestResolveConfig:
 
 
 class TestSetAdversarialSystemPrompt:
-    def test_renders_objective_and_max_turns_and_sets_on_conversation(self):
+    async def test_renders_objective_and_max_turns_and_sets_on_conversation(self):
         target = _target()
         manager = _manager(
             adversarial_target=target,
@@ -464,16 +464,16 @@ class TestSetAdversarialSystemPrompt:
             max_turns=7,
             conversation_id="conv-sys",
         )
-        manager.set_adversarial_system_prompt()
-        target.set_system_prompt.assert_called_once()
-        kwargs = target.set_system_prompt.call_args.kwargs
+        (await manager.set_adversarial_system_prompt_async())
+        target.set_system_prompt_async.assert_called_once()
+        kwargs = target.set_system_prompt_async.call_args.kwargs
         assert kwargs["system_prompt"] == "SYS obj=the goal turns=7"
         assert kwargs["conversation_id"] == "conv-sys"
 
-    def test_empty_rendered_system_prompt_raises(self):
+    async def test_empty_rendered_system_prompt_raises(self):
         manager = _manager(adversarial_system_prompt=_system_prompt("{{ objective }}"), objective="")
         with pytest.raises(ValueError, match="must be defined"):
-            manager.set_adversarial_system_prompt()
+            (await manager.set_adversarial_system_prompt_async())
 
 
 # --- first-message rendering -------------------------------------------------

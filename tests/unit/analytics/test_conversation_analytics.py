@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from collections.abc import Sequence
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
@@ -25,14 +25,14 @@ def sample_message_pieces() -> Sequence[MessagePiece]:
     return flatten_to_message_pieces(conversations)
 
 
-def test_get_similar_chat_messages_by_content(mock_memory_interface, sample_message_pieces):
+async def test_get_similar_chat_messages_by_content(mock_memory_interface, sample_message_pieces):
     sample_message_pieces[0].converted_value = "Hello, how are you?"
     sample_message_pieces[2].converted_value = "Hello, how are you?"
 
-    mock_memory_interface.get_message_pieces.return_value = sample_message_pieces
+    mock_memory_interface.get_message_pieces_async = AsyncMock(return_value=sample_message_pieces)
 
     analytics = ConversationAnalytics(memory_interface=mock_memory_interface)
-    similar_messages = analytics.get_prompt_entries_with_same_converted_content(
+    similar_messages = await analytics.get_prompt_entries_with_same_converted_content_async(
         chat_message_content="Hello, how are you?"
     )
 
@@ -44,7 +44,7 @@ def test_get_similar_chat_messages_by_content(mock_memory_interface, sample_mess
         assert message.metric == "exact_match"
 
 
-def test_get_similar_chat_messages_by_embedding(mock_memory_interface, sample_message_pieces):
+async def test_get_similar_chat_messages_by_embedding(mock_memory_interface, sample_message_pieces):
     sample_message_pieces[0].converted_value = "Similar message"
     sample_message_pieces[1].converted_value = "Different message"
 
@@ -59,11 +59,11 @@ def test_get_similar_chat_messages_by_embedding(mock_memory_interface, sample_me
     ]
 
     # Mock the get_all_embeddings method to return the mock EmbeddingData entries
-    mock_memory_interface.get_all_embeddings.return_value = mock_embeddings
-    mock_memory_interface.get_message_pieces.return_value = sample_message_pieces
+    mock_memory_interface.get_all_embeddings_async = AsyncMock(return_value=mock_embeddings)
+    mock_memory_interface.get_message_pieces_async = AsyncMock(return_value=sample_message_pieces)
 
     analytics = ConversationAnalytics(memory_interface=mock_memory_interface)
-    similar_messages = analytics.get_similar_chat_messages_by_embedding(
+    similar_messages = await analytics.get_similar_chat_messages_by_embedding_async(
         chat_message_embedding=target_embedding, threshold=0.99
     )
 

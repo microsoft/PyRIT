@@ -288,7 +288,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # The adversarial conversation manager owns rendering and setting the system prompt.
         # ``set_system_prompt`` rejects any conversation that already has messages, so this must run
         # before we hydrate the adversarial chat with the swapped prepended turns below.
-        self._build_adversarial_manager(context=context).set_adversarial_system_prompt()
+        (await self._build_adversarial_manager(context=context).set_adversarial_system_prompt_async())
 
         # Set up adversarial chat with prepended conversation
         if context.prepended_conversation:
@@ -298,14 +298,16 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 adversarial_chat_conversation_id=context.session.adversarial_chat_conversation_id,
             )
 
-            self._memory.add_conversation_to_memory(
-                conversation=Conversation(
-                    conversation_id=context.session.adversarial_chat_conversation_id,
-                    target_identifier=self._adversarial_chat.get_identifier(),
+            (
+                await self._memory.add_conversation_to_memory_async(
+                    conversation=Conversation(
+                        conversation_id=context.session.adversarial_chat_conversation_id,
+                        target_identifier=self._adversarial_chat.get_identifier(),
+                    )
                 )
             )
             for msg in adversarial_messages:
-                self._memory.add_message_to_memory(request=msg)
+                (await self._memory.add_message_to_memory_async(request=msg))
 
     async def _perform_async(self, *, context: MultiTurnAttackContext[Any]) -> AttackResult:
         """
@@ -481,7 +483,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         """
         logger.info(f"Sending prompt to target: {message.get_value()[:50]}...")
 
-        self._rotate_conversation_for_single_turn_target(context=context)
+        (await self._rotate_conversation_for_single_turn_target_async(context=context))
 
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,

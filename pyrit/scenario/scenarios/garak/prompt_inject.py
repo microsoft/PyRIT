@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults, forward_init_parameters
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.converter import SearchReplaceConverter
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
@@ -261,7 +262,7 @@ class PromptInject(Scenario):
             self._objective_scorer_identifier = self._objective_scorer.get_identifier()
         self._dataset_config = config
         groups = await config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
-        self._technique_templates = self._load_technique_templates()
+        self._technique_templates = await self._load_technique_templates_async()
         return groups
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
@@ -367,6 +368,25 @@ class PromptInject(Scenario):
             DatasetConstraintError: If a selected technique has no template.
         """
         seeds = CentralMemory.get_memory_instance().get_seeds(dataset_name=self.TECHNIQUE_DATASET_NAME)
+        templates = {seed.name: seed for seed in seeds if isinstance(seed, SeedPrompt) and seed.name}
+        selected = {technique.value for technique in self._scenario_techniques}
+        missing = selected - templates.keys()
+        if missing:
+            raise DatasetConstraintError(f"PromptInject technique templates are missing: {sorted(missing)}.")
+        return templates
+
+    @legacy_sync_override(lambda: PromptInject._load_technique_templates)
+    async def _load_technique_templates_async(self) -> dict[str, SeedPrompt]:
+        """
+        Load the selected technique templates from memory.
+
+        Returns:
+            dict[str, SeedPrompt]: Technique templates keyed by technique name.
+
+        Raises:
+            DatasetConstraintError: If a selected technique has no template.
+        """
+        seeds = await CentralMemory.get_memory_instance().get_seeds_async(dataset_name=self.TECHNIQUE_DATASET_NAME)
         templates = {seed.name: seed for seed in seeds if isinstance(seed, SeedPrompt) and seed.name}
         selected = {technique.value for technique in self._scenario_techniques}
         missing = selected - templates.keys()

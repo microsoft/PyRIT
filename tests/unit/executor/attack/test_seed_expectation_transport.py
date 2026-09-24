@@ -77,7 +77,7 @@ seeds:
         )
         dataset = SeedDataset.from_yaml_file(path)
         await sqlite_instance.add_seeds_to_memory_async(seeds=dataset.seeds, added_by="test")
-        [stored_group] = sqlite_instance.get_seed_groups(dataset_name="tool_expectations")
+        [stored_group] = await sqlite_instance.get_seed_groups_async(dataset_name="tool_expectations")
         params = await AttackParameters.from_seed_group_async(seed_group=AttackSeedGroup(seeds=stored_group.seeds))
         assert params.expectation == ScoringExpectation(
             objective="Read the file", conditions=(ToolsCalled(tools=(ToolCallRequirement(name="read_file"),)),)
@@ -102,9 +102,9 @@ seeds:
             Scorer.validate_expectation_for_scorers(scorers=[scorer], expectation=None)
         [score] = await scorer.score_async(scorable=scope, expectation=params.expectation)
         assert score.get_value() is True
-        [stored_score] = sqlite_instance.get_scores(score_ids=[score.id])
+        [stored_score] = await sqlite_instance.get_scores_async(score_ids=[score.id])
         assert stored_score.scored_expectation == params.expectation
-        [observation] = sqlite_instance.get_observations(observation_ids=score.observation_ids)
+        [observation] = await sqlite_instance.get_observations_async(observation_ids=score.observation_ids)
         client.close()
 
         changed_seed = SeedObjective(
@@ -223,7 +223,7 @@ seeds:
         result = await compound.execute_async(objective="Parent objective")
 
         assert result.outcome == AttackOutcome.SUCCESS
-        [score] = sqlite_instance.get_scores(score_type="true_false")
+        [score] = await sqlite_instance.get_scores_async(score_type="true_false")
         assert score.scored_expectation == group.scoring_expectation
 
     async def test_yaml_memory_attack_score_round_trip_async(
@@ -249,7 +249,7 @@ seeds:
         )
         dataset = SeedDataset.from_yaml_file(path)
         await sqlite_instance.add_seeds_to_memory_async(seeds=dataset.seeds, added_by="test")
-        [stored_group] = sqlite_instance.get_seed_groups(dataset_name="seed_expectation_transport")
+        [stored_group] = await sqlite_instance.get_seed_groups_async(dataset_name="seed_expectation_transport")
         group = AttackSeedGroup(seeds=stored_group.seeds)
         target = MockPromptTarget()
         attack = PromptSendingAttack(
@@ -262,7 +262,7 @@ seeds:
         [result] = batch.get_results()
         assert result.outcome == AttackOutcome.SUCCESS
         assert target.prompt_sent == ["Return one word"]
-        [score] = sqlite_instance.get_scores(score_type="true_false")
+        [score] = await sqlite_instance.get_scores_async(score_type="true_false")
         assert score.scored_expectation == group.scoring_expectation
         assert score.get_value() is True
         assert result.last_response is not None

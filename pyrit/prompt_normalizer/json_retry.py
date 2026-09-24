@@ -61,17 +61,21 @@ async def send_json_with_retry_async(
         ValueError: If the target returns no response.
     """
     memory = normalizer.memory
-    existing_pieces = memory.get_message_pieces(conversation_id=conversation_id)
+    existing_pieces = await memory.get_message_pieces_async(conversation_id=conversation_id)
     baseline = max((piece.sequence for piece in existing_pieces), default=-1)
 
     @pyrit_json_retry
     async def _attempt_async() -> T:
-        deleted = memory.delete_conversation_pieces_after_sequence(conversation_id=conversation_id, sequence=baseline)
+        deleted = await memory.delete_conversation_pieces_after_sequence_async(
+            conversation_id=conversation_id, sequence=baseline
+        )
         if deleted:
-            memory.add_conversation_retry(
-                conversation_id=conversation_id,
-                sequence=baseline + 1,
-                reason=ConversationRetryReason.JSON_PARSING,
+            (
+                await memory.add_conversation_retry_async(
+                    conversation_id=conversation_id,
+                    sequence=baseline + 1,
+                    reason=ConversationRetryReason.JSON_PARSING,
+                )
             )
         response = await normalizer.send_prompt_async(message=message, conversation_id=conversation_id, target=target)
         if not response:

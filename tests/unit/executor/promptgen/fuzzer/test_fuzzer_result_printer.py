@@ -24,10 +24,10 @@ def _assert_no_live_control_characters(printed: str, *, enable_colors: bool) -> 
 class TestFuzzerResultPrinter:
     @pytest.mark.parametrize("enable_colors", [True, False])
     @pytest.mark.parametrize("payload", AnsiAttackConverter.LIVE_PAYLOADS)
-    def test_print_result_escapes_control_characters(self, payload: str, enable_colors: bool, capsys) -> None:
+    async def test_print_result_escapes_control_characters(self, payload: str, enable_colors: bool, capsys) -> None:
         result = FuzzerResult(successful_templates=[f"template {payload} {{{{ prompt }}}}"])
 
-        FuzzerResultPrinter(enable_colors=enable_colors).print_result(result)
+        (await FuzzerResultPrinter(enable_colors=enable_colors).print_result_async(result))
 
         _assert_no_live_control_characters(capsys.readouterr().out, enable_colors=enable_colors)
 
@@ -39,11 +39,11 @@ class TestFuzzerResultPrinter:
 
         _assert_no_live_control_characters(capsys.readouterr().out, enable_colors=False)
 
-    def test_print_result_escapes_carriage_returns(self, capsys) -> None:
+    async def test_print_result_escapes_carriage_returns(self, capsys) -> None:
         # print_result wraps before it colors, and textwrap replaces a lone carriage return with a
         # space, so the template has to be escaped before it is wrapped.
         result = FuzzerResult(successful_templates=["alpha\rbeta {{ prompt }}"])
 
-        FuzzerResultPrinter(enable_colors=False).print_result(result)
+        (await FuzzerResultPrinter(enable_colors=False).print_result_async(result))
 
         assert "alpha\\rbeta" in capsys.readouterr().out

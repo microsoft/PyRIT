@@ -34,7 +34,7 @@ async def _load_result_async(*, scenario_result_id: str) -> ScenarioResult:
         env_files=[],
         silent=True,
     )
-    results = CentralMemory.get_memory_instance().get_scenario_results(
+    results = await CentralMemory.get_memory_instance().get_scenario_results_async(
         scenario_result_ids=[scenario_result_id],
     )
     if not results:

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
@@ -310,6 +311,46 @@ class Jailbreak(Scenario):
             return list(jailbreak_names)
         return TextJailBreak.get_jailbreak_templates(num_templates=num_jailbreaks or _DEFAULT_NUM_JAILBREAKS)
 
+    @legacy_sync_override(lambda: Jailbreak._resolve_templates)
+    async def _resolve_templates_async(self) -> list[str]:
+        """
+        Resolve the jailbreak templates for this run, replaying the persisted set on resume.
+
+        On a fresh run this reads the run parameters: an explicit ``jailbreak_names`` set or a random
+        ``num_jailbreaks`` sample (defaulting to a small random draw when neither is given). On resume
+        the originally chosen set is read back from the stored ``ScenarioResult`` metadata so a random
+        sample isn't redrawn (which would diverge from the persisted attacks).
+
+        Returns:
+            list[str]: The jailbreak template file names to run.
+
+        Raises:
+            ValueError: If both ``num_jailbreaks`` and ``jailbreak_names`` are provided, or if
+                ``jailbreak_names`` contains an unknown template.
+        """
+        if self._scenario_result_id is not None:
+            stored = await self._memory.get_scenario_results_async(scenario_result_ids=[self._scenario_result_id])
+            if stored:
+                persisted = (stored[0].metadata or {}).get(_JAILBREAK_TEMPLATES_METADATA_KEY)
+                if persisted:
+                    return list(persisted)
+
+        num_jailbreaks = self.params.get("num_jailbreaks")
+        jailbreak_names = self.params.get("jailbreak_names")
+
+        if jailbreak_names and num_jailbreaks:
+            raise ValueError(
+                "Please provide only one of `num_jailbreaks` (random selection)"
+                " or `jailbreak_names` (specific selection)."
+            )
+        if jailbreak_names:
+            available = set(TextJailBreak.get_jailbreak_templates())
+            diff = set(jailbreak_names) - available
+            if diff:
+                raise ValueError(f"Error: could not find templates `{diff}`!")
+            return list(jailbreak_names)
+        return TextJailBreak.get_jailbreak_templates(num_templates=num_jailbreaks or _DEFAULT_NUM_JAILBREAKS)
+
     def _build_initial_scenario_metadata(self) -> dict[str, Any]:
         """
         Persist the resolved jailbreak templates alongside the base scenario metadata.
@@ -464,7 +505,7 @@ class Jailbreak(Scenario):
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
-        self._resolved_jailbreaks = self._resolve_templates()
+        self._resolved_jailbreaks = await self._resolve_templates_async()
         num_attempts = self.params["num_jailbreak_attempts"]
 
         technique_factories = resolve_technique_factories(context=context, extra_factories=_extra_default_factories())

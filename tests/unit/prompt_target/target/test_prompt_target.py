@@ -56,13 +56,15 @@ def mock_attack_strategy():
     return strategy
 
 
-def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy):
-    azure_openai_target.set_system_prompt(
-        system_prompt="system prompt",
-        conversation_id="1",
+async def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy):
+    (
+        await azure_openai_target.set_system_prompt_async(
+            system_prompt="system prompt",
+            conversation_id="1",
+        )
     )
 
-    chats = azure_openai_target._memory.get_message_pieces(conversation_id="1")
+    chats = await azure_openai_target._memory.get_message_pieces_async(conversation_id="1")
     assert len(chats) == 1, f"Expected 1 chat, got {len(chats)}"
     assert chats[0].api_role == "system"
     assert chats[0].converted_value == "system prompt"
@@ -71,12 +73,14 @@ def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_st
 async def test_set_system_prompt_adds_memory(
     azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy
 ):
-    azure_openai_target.set_system_prompt(
-        system_prompt="system prompt",
-        conversation_id="1",
+    (
+        await azure_openai_target.set_system_prompt_async(
+            system_prompt="system prompt",
+            conversation_id="1",
+        )
     )
 
-    chats = azure_openai_target._memory.get_message_pieces(conversation_id="1")
+    chats = await azure_openai_target._memory.get_message_pieces_async(conversation_id="1")
     assert len(chats) == 1, f"Expected 1 chats, got {len(chats)}"
     assert chats[0].api_role == "system"
 
@@ -103,9 +107,11 @@ async def test_send_prompt_with_system_calls_chat_complete(
     ) as mock_create:
         mock_create.return_value = mock_response
 
-        azure_openai_target.set_system_prompt(
-            system_prompt="system prompt",
-            conversation_id="1",
+        (
+            await azure_openai_target.set_system_prompt_async(
+                system_prompt="system prompt",
+                conversation_id="1",
+            )
         )
 
         request = sample_entries[0]
@@ -219,7 +225,7 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
     user_msg = _make_lineage_message(role="user", content="follow-up question")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [history_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[history_msg])
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -262,7 +268,7 @@ async def test_response_preserves_metadata_after_history_squash():
     user_msg = _make_lineage_message(role="user", content="follow-up question")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [history_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[history_msg])
     target._memory = mock_memory
 
     mock_completion = _make_mock_chat_completion("target response")
@@ -308,7 +314,7 @@ async def test_system_squash_preserves_metadata():
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [system_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[system_msg])
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -358,7 +364,7 @@ async def test_history_squash_preserves_metadata_on_all_output_pieces():
     )
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [history_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[history_msg])
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -389,7 +395,7 @@ async def test_conversation_id_stamped_without_merging_normalizer_output_metadat
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [history_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[history_msg])
     target._memory = mock_memory
 
     # Simulate a normalizer that inserts a new message with a random conversation_id.
@@ -455,7 +461,7 @@ async def test_json_schema_stripped_for_non_schema_target_remains_authoritative(
     user_msg = Message(message_pieces=[piece])
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -489,7 +495,7 @@ async def test_json_schema_only_metadata_fully_stripped_remains_authoritative():
     user_msg = Message(message_pieces=[piece])
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -512,7 +518,7 @@ async def test_no_warning_when_message_count_unchanged():
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     with patch.object(target.configuration, "normalize_async", new_callable=AsyncMock) as mock_normalize:
