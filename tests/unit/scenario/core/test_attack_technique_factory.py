@@ -934,6 +934,117 @@ class TestCustomAdversarialPrompt:
             )
 
 
+class TestWithAdversarialSystemPromptPrefix:
+    """Tests for ``with_adversarial_system_prompt_prefix``, the explicit prefix-layering API."""
+
+    class _AdversarialAttack:
+        def __init__(self, *, objective_target=None, attack_scoring_config=None, attack_adversarial_config=None):
+            self.attack_adversarial_config = attack_adversarial_config
+
+        def get_identifier(self):
+            return ComponentIdentifier(class_name="_AdversarialAttack", class_module="test")
+
+    @staticmethod
+    def _scoring():
+        return MagicMock(spec=AttackScoringConfig)
+
+    def test_reaches_attack_config(self):
+        prefix = "Static guidance"
+        factory = AttackTechniqueFactory(name="durian", attack_class=self._AdversarialAttack)
+
+        technique = factory.with_adversarial_system_prompt_prefix(prefix).create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+        )
+
+        assert technique.attack.attack_adversarial_config.system_prompt_prefix == prefix
+
+    def test_does_not_mutate_original_factory(self):
+        """Deriving a prefixed factory must not change what the original factory creates."""
+        prefix = "Static guidance"
+        factory = AttackTechniqueFactory(name="durian", attack_class=self._AdversarialAttack)
+
+        factory.with_adversarial_system_prompt_prefix(prefix)
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+        )
+
+        assert technique.attack.attack_adversarial_config.system_prompt_prefix is None
+
+    def test_returns_modified_simulated_seed_without_mutating_factory(self):
+        prefix = "Static guidance"
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_simulated",
+            attack_class=_StubAttack,
+        )
+
+        new_factory = factory.with_adversarial_system_prompt_prefix(prefix)
+        technique = new_factory.create(
+            objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=self._scoring()
+        )
+
+        assert new_factory is not factory
+        assert factory.seed_technique is not None
+        assert new_factory.seed_technique is not None
+        assert technique.seed_technique is not None
+        original_seed = factory.seed_technique.seeds[0]
+        modified_seed = new_factory.seed_technique.seeds[0]
+        copied_seed = technique.seed_technique.seeds[0]
+        original_value = original_seed.adversarial_chat_system_prompt.value
+        assert modified_seed.adversarial_chat_system_prompt.value == f"{prefix}\n\n{original_value}"
+        assert copied_seed.adversarial_chat_system_prompt.value == f"{prefix}\n\n{original_value}"
+        assert modified_seed.id != original_seed.id
+        assert factory.get_identifier().hash != new_factory.get_identifier().hash
+
+    def test_changes_factory_identity_on_attack_config_path(self):
+        """A prefix changes the technique, so the derived factory must not share the original's hash."""
+        factory = AttackTechniqueFactory(name="durian", attack_class=self._AdversarialAttack)
+
+        new_factory = factory.with_adversarial_system_prompt_prefix("Static guidance")
+
+        assert factory.get_identifier().hash != new_factory.get_identifier().hash
+
+    def test_distinct_prefixes_produce_distinct_identities(self):
+        """Two factories differing only by prefix text must not collide."""
+        factory = AttackTechniqueFactory(name="durian", attack_class=self._AdversarialAttack)
+
+        first = factory.with_adversarial_system_prompt_prefix("Guidance A")
+        second = factory.with_adversarial_system_prompt_prefix("Guidance B")
+
+        assert first.get_identifier().hash != second.get_identifier().hash
+
+    def test_layers_new_prefix_ahead_of_existing_on_attack_config_path(self):
+        """Repeated calls must layer rather than discard the earlier prefix."""
+        factory = AttackTechniqueFactory(name="durian", attack_class=self._AdversarialAttack)
+
+        technique = (
+            factory.with_adversarial_system_prompt_prefix("Never break character.")
+            .with_adversarial_system_prompt_prefix("Shared benchmark guidance.")
+            .create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=self._scoring(),
+                adversarial_chat=MagicMock(spec=PromptTarget),
+            )
+        )
+
+        assert technique.attack.attack_adversarial_config.system_prompt_prefix == (
+            "Shared benchmark guidance.\n\nNever break character."
+        )
+
+    def test_rejects_unsupported_adversarial_factory(self):
+        factory = AttackTechniqueFactory(
+            name="unsupported",
+            attack_class=_StubAttack,
+            uses_adversarial=True,
+        )
+
+        with pytest.raises(ValueError, match="cannot accept an adversarial system prompt prefix"):
+            factory.with_adversarial_system_prompt_prefix("Static guidance")
+
+
 class TestResolveAdversarialChat:
     class _AdversarialAttack:
         def __init__(self, *, objective_target=None, attack_scoring_config=None, attack_adversarial_config=None):
