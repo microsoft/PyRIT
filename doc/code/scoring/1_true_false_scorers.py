@@ -147,6 +147,13 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 # decoded metadata) appears in the response — the fast, deterministic way to tell whether a target
 # decoded an encoded prompt. It backs the Garak encoding scenario.
 #
+# ### GarakExploitationScorer
+#
+# `GarakExploitationScorer` applies Garak's Jinja-expression or SQL-injection detection rules
+# to emitted text. By default, it loads the matching packaged payload corpus; pass `payloads`
+# to use a different reference set. A positive result means the model emitted exploit material,
+# not that a template engine or database executed it. It backs the Garak exploitation scenario.
+#
 # ### DivergenceScorer
 #
 # `DivergenceScorer` detects meaningful continuation following the repetition named by an expectation
