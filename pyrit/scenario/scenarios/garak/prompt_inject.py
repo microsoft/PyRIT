@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import random
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults, forward_init_parameters
@@ -24,6 +23,7 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.scenarios.garak._prompt_injection import sample_with_coverage
 from pyrit.score import (
     SubStringScorer,
     TrueFalseCompositeScorer,
@@ -110,23 +110,12 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
                 f"PromptInject max_dataset_size ({cap}) must be at least the number of goal_texts "
                 f"({len(self._goal_texts)})."
             )
-        pairs = [(name, group) for name, groups in groups_by_dataset.items() for group in groups]
-        indices_by_goal: dict[str, list[int]] = {goal: [] for goal in self._goal_texts}
-        for index, (_, group) in enumerate(pairs):
-            indices_by_goal[(group.objective.metadata or {})["goal_text"]].append(index)
-        missing = [goal for goal, indices in indices_by_goal.items() if not indices]
-        if missing:
-            raise DatasetConstraintError(f"PromptInject has no contexts for goal_texts: {missing}.")
-        if cap is None or len(pairs) <= cap:
-            return groups_by_dataset
-        selected = {random.choice(indices) for indices in indices_by_goal.values()}
-        remaining = [index for index in range(len(pairs)) if index not in selected]
-        selected.update(random.sample(remaining, cap - len(selected)))
-        result: dict[str, list[AttackSeedGroup]] = {}
-        for index in sorted(selected):
-            name, group = pairs[index]
-            result.setdefault(name, []).append(group)
-        return result
+        return sample_with_coverage(
+            groups_by_dataset=groups_by_dataset,
+            cap=cap,
+            required_keys=self._goal_texts,
+            key=lambda group: (group.objective.metadata or {})["goal_text"],
+        )
 
     def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """

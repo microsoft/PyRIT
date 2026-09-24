@@ -300,6 +300,52 @@ def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
     assert metrics.krippendorff_alpha_model == 1.0
 
 
+def test_compute_harm_metrics_reports_constant_guess_baseline(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # Gold scores 0, 0.25, 0.5, 1.0: median 0.375, so a constant guess is off by
+    # 0.375, 0.125, 0.125 and 0.625, a mean absolute error of 0.3125.
+    all_human_scores = np.array([[0.0, 0.25, 0.5, 1.0]])
+    all_model_scores = np.array([[0.0, 0.25, 0.5, 1.0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.baseline_mean_absolute_error == pytest.approx(0.3125)
+    assert metrics.mean_absolute_error < metrics.baseline_mean_absolute_error
+
+
+def test_compute_harm_metrics_baseline_guesses_the_median_not_the_mean(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # Skewed gold scores: the median 0 gives an error of 0.25, the mean 0.25 would give 0.375.
+    all_human_scores = np.array([[0.0, 0.0, 0.0, 1.0]])
+    all_model_scores = np.array([[0.0, 0.0, 0.0, 1.0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.baseline_mean_absolute_error == pytest.approx(0.25)
+
+
+def test_compute_harm_metrics_baseline_uses_the_median_of_the_human_raters(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # Three raters: per-response gold is the median, 0.25 and 0.75, whose median is 0.5.
+    all_human_scores = np.array([[0.0, 0.75], [0.25, 0.75], [1.0, 1.0]])
+    all_model_scores = np.array([[0.25, 0.75]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.baseline_mean_absolute_error == pytest.approx(0.25)
+
+
+def test_compute_harm_metrics_constant_scorer_matches_the_baseline(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_human_scores = np.array([[0.0, 0.25, 0.5, 1.0, 0.75]])
+    # A scorer that always answers the median gold score is exactly the baseline.
+    all_model_scores = np.full((1, 5), 0.5)
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.mean_absolute_error == pytest.approx(metrics.baseline_mean_absolute_error)
+
+
 def test_compute_harm_metrics_partial_agreement(mock_harm_scorer):
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
     # 2 responses, 3 human scores each, model is off by 0.1 for each (constant bias, zero variance)

@@ -84,6 +84,37 @@ async function openOperationPicker(page: Page) {
 }
 
 test.describe("operation picker placement", () => {
+  test("keeps metadata editable in a narrow bar without duplicating it in Default Labels", async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 800 });
+    await setupMocks(page, ["op_alpha", "op_beta"]);
+    await page.goto("/");
+
+    const bar = page.getByRole("region", { name: "Default Labels" });
+    await expect(bar.getByText("New run labels", { exact: true })).toHaveCount(0);
+    await expect(bar.getByText("Used for new attacks and scans.", { exact: false })).toHaveCount(0);
+
+    await bar.getByRole("button", { name: /^Edit operation, currently / }).click();
+    await page.getByRole("option", { name: "op_beta", exact: true }).click();
+    await expect(bar.getByRole("button", { name: "Edit operation, currently op_beta" })).toBeVisible();
+
+    await bar.getByRole("button", { name: /^Edit operator, currently / }).click();
+    await page.getByRole("textbox", { name: "Value for operator label" }).fill("alice");
+    await page.getByRole("textbox", { name: "Value for operator label" }).press("Enter");
+    await expect(bar.getByRole("button", { name: "Edit operator, currently alice" })).toBeVisible();
+
+    await bar.getByTestId("labels-icon-btn").click();
+    const popover = page.getByRole("group").filter({
+      has: page.getByRole("heading", { name: "Default Labels" }),
+    });
+    await expect(popover.getByRole("heading", { name: "Default Labels" })).toBeVisible();
+    await expect(popover.getByText("added to new attacks and scans", { exact: true })).toBeVisible();
+    await expect(popover.getByText("Run metadata", { exact: true })).toHaveCount(0);
+    await expect(popover.getByText("Add Label", { exact: true })).toHaveCount(0);
+    await expect(popover.getByRole("button", { name: /^Edit (operator|operation),/ })).toHaveCount(0);
+    await expect(popover.getByRole("textbox", { name: "Label key" })).toBeVisible();
+    await expect(popover.getByRole("button", { name: "Add", exact: true })).toBeVisible();
+  });
+
   test("caps the list height and anchors it to the input", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await setupMocks(page, operations(60));
@@ -115,7 +146,7 @@ test.describe("operation picker placement", () => {
     await page.setViewportSize({ width: 1280, height: 420 });
     await setupMocks(page, operations(60));
     await page.goto("/");
-    await page.getByRole("region", { name: "New run labels" }).evaluate(
+    await page.getByRole("region", { name: "Default Labels" }).evaluate(
       (bar: HTMLElement) => { bar.style.marginTop = "240px"; },
     );
     await page.getByTestId("label-operation").click();
@@ -363,7 +394,7 @@ test.describe("operation picker persistence", () => {
     // What is on screen is also what a refresh would restore.
     expect(
       await page.evaluate(() =>
-        window.localStorage.getItem("pyrit.globalLabels"),
+        window.localStorage.getItem("pyrit.userPreferences.v1.local"),
       ),
     ).toContain("op_picked_early");
   });

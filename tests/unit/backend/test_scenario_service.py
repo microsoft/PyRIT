@@ -8,7 +8,7 @@ Tests for backend scenario service and routes.
 import asyncio
 import threading
 from collections import OrderedDict
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +22,7 @@ from pyrit.backend.routes.scenarios import estimate_scenario_run_size
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_service import (
     ScenarioService,
+    _metadata_to_registered_scenario,
     get_scenario_service,
 )
 from pyrit.models import (
@@ -34,8 +35,20 @@ from pyrit.models import (
     ScenarioTechniqueSummary,
 )
 from pyrit.models.catalog.scenario import RegisteredScenario
-from pyrit.registry import ScenarioMetadata
-from pyrit.scenario.core import DatasetAttackConfiguration, ScenarioTechnique
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.registry import ScenarioMetadata, ScenarioRegistry, TargetRegistry
+from pyrit.scenario import Scenario
+from pyrit.scenario.core import (
+    DatasetAttackConfiguration,
+    ScenarioTechnique,
+    get_default_adversarial_target,
+    override_default_adversarial_target,
+)
+from pyrit.scenario.scenarios.airt.scam import Scam
+from unit.mocks import MockPromptTarget
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
 
 
 class _EstimateTechnique(ScenarioTechnique):
@@ -97,6 +110,7 @@ def _make_scenario_metadata(
     default_datasets: tuple[str, ...] = ("test_dataset",),
     baseline_policy: str = "enabled",
     include_baseline_by_default: bool = True,
+    uses_default_adversarial_target: bool = False,
 ) -> ScenarioMetadata:
     """Create a ScenarioMetadata instance for testing."""
     return ScenarioMetadata(
@@ -115,12 +129,204 @@ def _make_scenario_metadata(
         default_datasets=default_datasets,
         baseline_policy=baseline_policy,
         include_baseline_by_default=include_baseline_by_default,
+        uses_default_adversarial_target=uses_default_adversarial_target,
     )
+
+
+@pytest.mark.parametrize("uses_default", [False, True])
+def test_catalog_preserves_adversarial_default_usage(uses_default: bool) -> None:
+    """The public catalog exposes usage from real registry metadata."""
+    metadata = _make_scenario_metadata(uses_default_adversarial_target=uses_default)
+    summary = _metadata_to_registered_scenario(metadata=metadata)
+    assert summary.model_dump()["uses_default_adversarial_target"] is uses_default
 
 
 # ============================================================================
 # ScenarioService Unit Tests
 # ============================================================================
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAdversarialEstimateScope:
+    async def test_cold_registry_estimate_uses_selected_target_without_global_fallback_async(self) -> None:
+        registry = ScenarioRegistry()
+        selected = MockPromptTarget()
+        targets = {
+            "objective": MockPromptTarget(),
+            "selected": selected,
+            "objective_scorer_chat": MockPromptTarget(),
+        }
+        target_registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        target_registry.instances.get.side_effect = targets.get
+
+        async def estimate_async(scenario: Scam, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
+            assert scenario._adversarial_chat is selected
+            assert get_default_adversarial_target() is selected
+            return ScenarioRunSizeEstimate(estimated_attack_count=0)
+
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
+            patch.object(Scam, "get_run_size_estimate_async", autospec=True, side_effect=estimate_async),
+            patch(
+                "pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget",
+                side_effect=AssertionError("The request must not construct the server fallback."),
+            ),
+        ):
+            assert registry._metadata_cache is None
+            service = ScenarioService()
+            result = await service.estimate_scenario_run_size_async(
+                scenario_name="airt.scam",
+                request=ScenarioRunSizeEstimateRequest(
+                    target_name="objective",
+                    adversarial_target_name="selected",
+                    max_dataset_size=1,
+                ),
+            )
+            assert result is not None
+            assert result.estimated_attack_count == 0
+            assert registry._metadata_cache is None
+            assert not service._estimate_cache
+
+    async def test_unknown_scenario_returns_none_without_metadata_construction_async(self) -> None:
+        registry = MagicMock(spec=ScenarioRegistry)
+        registry.get_class.side_effect = KeyError("missing")
+        with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry):
+            result = await ScenarioService().estimate_scenario_run_size_async(
+                scenario_name="missing",
+                request=ScenarioRunSizeEstimateRequest(),
+            )
+        assert result is None
+        registry.get_registered_class_metadata.assert_not_called()
+        registry.create_and_estimate_async.assert_not_called()
+
+    async def test_omitted_adversarial_selection_preserves_outer_scope_async(self) -> None:
+        outer = MockPromptTarget()
+        registry = MagicMock(spec=ScenarioRegistry)
+        registry.get_registered_class_metadata.return_value = _make_scenario_metadata()
+
+        async def estimate_async(**kwargs: object) -> ScenarioRunSizeEstimate:
+            assert get_default_adversarial_target() is outer
+            await asyncio.sleep(0)
+            assert get_default_adversarial_target() is outer
+            return ScenarioRunSizeEstimate(estimated_attack_count=0)
+
+        registry.create_and_estimate_async = AsyncMock(side_effect=estimate_async)
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            override_default_adversarial_target(outer),
+        ):
+            result = await ScenarioService().estimate_scenario_run_size_async(
+                scenario_name="test.scenario",
+                request=ScenarioRunSizeEstimateRequest(),
+            )
+            assert result.estimated_attack_count == 0
+            assert get_default_adversarial_target() is outer
+
+    async def test_concurrent_estimates_scope_introspection_and_preserve_default_cache_async(self) -> None:
+        first, second, fallback = (MockPromptTarget() for _ in range(3))
+        targets = {"first": first, "second": second, "adversarial_chat": fallback}
+        target_registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        target_registry.instances.get.side_effect = targets.get
+        registry = MagicMock(spec=ScenarioRegistry)
+        metadata = _make_scenario_metadata()
+        registry.get_registered_class_metadata.return_value = metadata
+        introspected: list[PromptTarget] = []
+        estimated: list[PromptTarget] = []
+        default_estimate = ScenarioRunSizeEstimate(estimated_attack_count=0)
+        arrived = asyncio.Event()
+
+        def construct() -> MagicMock:
+            introspected.append(get_default_adversarial_target())
+            scenario = MagicMock(spec=Scenario)
+            scenario._default_dataset_config = DatasetAttackConfiguration(dataset_names=["test_dataset"])
+            return scenario
+
+        async def estimate_async(**kwargs: object) -> ScenarioRunSizeEstimate:
+            target = get_default_adversarial_target()
+            estimated.append(target)
+            if len(estimated) == 2:
+                arrived.set()
+            await asyncio.wait_for(arrived.wait(), timeout=5)
+            assert get_default_adversarial_target() is target
+            return ScenarioRunSizeEstimate.unavailable(note="request-specific")
+
+        default_scenario = MagicMock(spec=Scenario)
+        default_scenario.get_default_run_size_estimate_async = AsyncMock(return_value=default_estimate)
+        registry.create_instance.return_value = default_scenario
+        registry.get_class.return_value = construct
+        registry.create_and_estimate_async = AsyncMock(side_effect=estimate_async)
+        with (
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        ):
+            service = ScenarioService()
+            service._estimate_semaphore = asyncio.Semaphore(2)
+            before = await service.get_scenario_async(scenario_name=metadata.registry_name)
+            cache_before = dict(service._estimate_cache)
+            await asyncio.gather(
+                *(
+                    service.estimate_scenario_run_size_async(
+                        scenario_name=metadata.registry_name,
+                        request=ScenarioRunSizeEstimateRequest(adversarial_target_name=name, max_dataset_size=1),
+                    )
+                    for name in ("first", "second")
+                )
+            )
+            assert introspected == estimated == [first, second]
+            assert get_default_adversarial_target() is fallback
+            assert dict(service._estimate_cache) == cache_before
+            assert await service.get_scenario_async(scenario_name=metadata.registry_name) == before
+            registry.create_instance.assert_called_once()
+
+    @pytest.mark.parametrize("error", [ValueError, asyncio.CancelledError])
+    async def test_estimate_scope_resets_on_failure_async(self, error: type[BaseException]) -> None:
+        selected, fallback = MockPromptTarget(), MockPromptTarget()
+        registry = MagicMock(spec=ScenarioRegistry)
+        registry.get_registered_class_metadata.return_value = _make_scenario_metadata()
+        target_registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        target_registry.instances.get.side_effect = {"selected": selected, "adversarial_chat": fallback}.get
+
+        async def fail_async(**kwargs: object) -> ScenarioRunSizeEstimate:
+            assert get_default_adversarial_target() is selected
+            raise error("estimate stopped")
+
+        registry.create_and_estimate_async = AsyncMock(side_effect=fail_async)
+        with (
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        ):
+            service = ScenarioService()
+            with pytest.raises(error, match="estimate stopped"):
+                await service.estimate_scenario_run_size_async(
+                    scenario_name="test.scenario",
+                    request=ScenarioRunSizeEstimateRequest(adversarial_target_name="selected"),
+                )
+            assert get_default_adversarial_target() is fallback
+            assert not service._estimate_cache
+
+    @pytest.mark.parametrize("selection", ["missing", "wrong_type", "single_turn"])
+    async def test_estimate_rejects_invalid_explicit_target_async(self, selection: str) -> None:
+        single_turn = MockPromptTarget()
+        single_turn.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=False))
+        targets = {"wrong_type": object(), "single_turn": single_turn}
+        target_registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        target_registry.instances.get.side_effect = targets.get
+        target_registry.instances.get_names.return_value = list(targets)
+        registry = MagicMock(spec=ScenarioRegistry)
+        registry.get_registered_class_metadata.return_value = _make_scenario_metadata()
+        with (
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        ):
+            service = ScenarioService()
+            with pytest.raises(ValueError, match="not found|must be a PromptTarget|must support multi_turn"):
+                await service.estimate_scenario_run_size_async(
+                    scenario_name="test.scenario",
+                    request=ScenarioRunSizeEstimateRequest(adversarial_target_name=selection),
+                )
+            registry.create_and_estimate_async.assert_not_called()
+            assert ScenarioConfigurationResolver.resolve_adversarial_target(target_name=None) is None
 
 
 class TestScenarioServiceListScenarios:

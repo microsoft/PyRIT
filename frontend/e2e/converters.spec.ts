@@ -471,14 +471,14 @@ async function mockBackendAPIs(page: Page) {
   });
 }
 
-/** Navigate to the target registry, set the mock target as active, then return to chat. */
+/** Navigate to the target registry, set the objective default, then return to chat. */
 async function activateMockTarget(page: Page) {
   await page.getByTitle("Registry").click();
   await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 
-  const setActiveBtn = page.getByRole("button", { name: /set active/i });
-  await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
-  await setActiveBtn.click();
+  const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
+  await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
+  await objectiveDefault.selectOption({ index: 1 });
 
   await page.getByTitle("Chat", { exact: true }).click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
@@ -574,8 +574,8 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page.getByTitle("Registry", { exact: true }).click();
-    await page.getByTestId(`target-row-${targetRegistryName}`)
-      .getByRole("button", { name: "Set Active", exact: true }).click();
+    await page.getByRole("combobox", { name: "Default objective target", exact: true })
+      .selectOption(targetRegistryName);
     await page.getByTitle("Chat", { exact: true }).click();
     await expect(page.getByTestId("chat-input")).toBeEnabled();
   });

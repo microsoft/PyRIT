@@ -702,7 +702,7 @@ class TestAdversarialReplyParsedConsistentlyAcrossAttacks:
 
 
 # Adversarial system prompts routed through ``_AdversarialConversationManager`` but not exposed via a
-# ``*SystemPromptPaths`` enum: the SimulatedConversation crescendo personas (each drives an inner
+# ``*SystemPromptPaths`` enum: SimulatedConversation crescendo personas (each drives an inner
 # ``RedTeamingAttack`` whose adversarial system prompt is the YAML) and the scam-scenario persuasion
 # persona (set as ``AttackAdversarialConfig.system_prompt``).
 _NON_ENUM_ADVERSARIAL_SYSTEM_PROMPTS = [

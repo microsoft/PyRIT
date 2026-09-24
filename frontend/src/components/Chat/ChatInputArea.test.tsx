@@ -88,20 +88,17 @@ describe("ChatInputArea", () => {
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
-  it("should expose the visible target prerequisite to the tour", () => {
+  it("should show a disabled composer without a no-target warning", () => {
     render(
       <TestWrapper>
-        <ChatInputArea {...defaultProps} noTargetSelected />
+        <ChatInputArea {...defaultProps} activeTarget={null} disabled />
       </TestWrapper>
     );
 
-    expect(screen.getByTestId("no-target-banner")).toHaveAttribute(
-      "data-tour",
-      "chat-prerequisite"
-    );
-    expect(
-      screen.queryByRole("button", { name: /toggle converter panel/i })
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(getSendButton()).toBeDisabled();
+    expect(screen.queryByText("No target selected")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Configure Target" })).not.toBeInTheDocument();
   });
 
   it("should show a retry action when target verification fails", async () => {

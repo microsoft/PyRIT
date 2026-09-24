@@ -322,6 +322,9 @@ class RegisteredScenario(BaseModel):
         "enabled", description="Whether baseline execution is enabled, disabled, or forbidden"
     )
     include_baseline_by_default: bool = Field(True, description="Whether an omitted baseline flag includes it")
+    uses_default_adversarial_target: bool = Field(
+        False, description="Whether any available technique uses the shared adversarial target"
+    )
     supported_parameters: list[Parameter] = Field(
         default_factory=list, description="Scenario-declared custom parameters"
     )
@@ -334,6 +337,11 @@ class RegisteredScenario(BaseModel):
 class ScenarioRunSizeEstimateRequest(BaseModel):
     """Request-specific scenario run-size configuration."""
 
+    adversarial_target_name: str | None = Field(
+        None,
+        min_length=1,
+        description="Registered multi-turn target overriding only the adversarial fallback for this request",
+    )
     target_name: str | None = Field(
         None,
         description="Optional registered objective target used to resolve target-capability-dependent estimates",
@@ -375,6 +383,11 @@ class RunScenarioRequest(BaseModel):
 
     scenario_name: str = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
     target_name: str = Field(..., description="Name of a registered target from the TargetRegistry")
+    adversarial_target_name: str | None = Field(
+        None,
+        min_length=1,
+        description="Registered multi-turn target overriding only the adversarial fallback for this run",
+    )
     initializers: list[str] | None = Field(
         None, description="Initializer names to run before scenario (e.g., ['target', 'load_default_datasets'])"
     )

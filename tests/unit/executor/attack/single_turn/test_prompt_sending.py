@@ -1246,6 +1246,105 @@ class TestAttackLifecycle:
         attack._perform_async.assert_called_once_with(context=basic_context)
         attack._teardown_async.assert_called_once_with(context=basic_context)
 
+    async def test_scorer_failure_cancels_siblings_before_error_persistence_and_reset(self, mock_true_false_scorer):
+        target = MockPromptTarget()
+        target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]
+        auxiliary_scorer = MagicMock(spec=Scorer)
+        auxiliary_scorer.get_identifier.return_value = get_mock_scorer_identifier()
+        objective_started = asyncio.Event()
+        allow_objective_completion = asyncio.Event()
+        events: list[str] = []
+        scorer_tasks: list[asyncio.Task[object]] = []
+
+        async def slow_objective_score_async(**kwargs) -> list[Score]:
+            current_task = asyncio.current_task()
+            assert current_task is not None
+            scorer_tasks.append(current_task)
+            events.append("objective_started")
+            objective_started.set()
+            try:
+                await allow_objective_completion.wait()
+                CentralMemory.get_memory_instance().add_scores_to_memory(scores=[])
+                events.append("forbidden_objective_write")
+                return []
+            except asyncio.CancelledError:
+                events.append("objective_cancelled")
+                raise
+            finally:
+                events.append("objective_finalized")
+
+        async def failing_auxiliary_score_async(**kwargs) -> list[Score]:
+            current_task = asyncio.current_task()
+            assert current_task is not None
+            scorer_tasks.append(current_task)
+            await objective_started.wait()
+            events.append("auxiliary_raised")
+            raise RuntimeError("deterministic auxiliary scorer failure")
+
+        mock_true_false_scorer.score_async = slow_objective_score_async
+        auxiliary_scorer.score_async = failing_auxiliary_score_async
+        attack = PromptSendingAttack(
+            objective_target=target,
+            attack_scoring_config=AttackScoringConfig(
+                objective_scorer=mock_true_false_scorer,
+                auxiliary_scorers=[auxiliary_scorer],
+            ),
+        )
+        memory = CentralMemory.get_memory_instance()
+        original_persist_results = memory.add_attack_results_to_memory
+        persisted_results: list[AttackResult] = []
+
+        def record_attack_results(*, attack_results: list[AttackResult]) -> None:
+            original_persist_results(attack_results=attack_results)
+            persisted_results.extend(attack_results)
+            events.append("error_persisted")
+
+        async def record_reset(*, conversation_id: str) -> None:
+            events.append("target_reset")
+
+        target.reset_conversation_async.side_effect = record_reset
+
+        with (
+            patch.object(memory, "add_attack_results_to_memory", side_effect=record_attack_results) as persist_results,
+            patch.object(memory, "add_scores_to_memory") as persist_scores,
+            patch.object(memory, "add_scores_to_memory_async", new_callable=AsyncMock) as persist_scores_async,
+        ):
+            with pytest.raises(RuntimeError, match="deterministic auxiliary scorer failure"):
+                await attack.execute_async(objective="Test objective")
+            events.append("caller_received")
+
+            assert events == [
+                "objective_started",
+                "auxiliary_raised",
+                "objective_cancelled",
+                "objective_finalized",
+                "error_persisted",
+                "target_reset",
+                "caller_received",
+            ]
+            assert persist_results.call_count == 1
+            assert len(persisted_results) == 1
+            assert persisted_results[0].outcome == AttackOutcome.ERROR
+            assert persisted_results[0].outcome_reason == (
+                "Exception: RuntimeError: deterministic auxiliary scorer failure"
+            )
+            stored_results = memory.get_attack_results(objective="Test objective")
+            assert len(stored_results) == 1
+            assert stored_results[0].outcome == AttackOutcome.ERROR
+            persist_scores.assert_not_called()
+            persist_scores_async.assert_not_awaited()
+            target.reset_conversation_async.assert_awaited_once_with(
+                conversation_id=persisted_results[0].conversation_id
+            )
+            assert len(scorer_tasks) == 2
+            assert all(task.done() for task in scorer_tasks)
+
+            terminal_events = list(events)
+            allow_objective_completion.set()
+            assert events == terminal_events
+            persist_scores.assert_not_called()
+            persist_scores_async.assert_not_awaited()
+
     async def test_teardown_async_is_noop(self, mock_target, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target)
 
