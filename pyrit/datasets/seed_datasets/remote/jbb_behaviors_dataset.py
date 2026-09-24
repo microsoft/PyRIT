@@ -128,12 +128,13 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
             seed_prompts: list[SeedUnion] = []
 
             for item in data:
-                # Extract the required fields
-                behavior = item.get("Behavior", "").strip()
+                # "Goal" holds the full harmful request; "Behavior" is only a short label (e.g. "Defamation").
+                goal = (item.get("Goal") or "").strip()
+                behavior = (item.get("Behavior") or "").strip()
                 category = item.get("Category", "")
 
-                if not behavior:
-                    logger.warning("[JBB-Behaviors] Skipping item with empty behavior field")
+                if not goal:
+                    logger.warning("[JBB-Behaviors] Skipping item with empty goal field")
                     continue
 
                 standardized_categories = self._standardize_harm_categories(
@@ -143,7 +144,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
 
                 # Create SeedPrompt object with all metadata
                 seed_prompt = SeedPrompt(
-                    value=behavior,
+                    value=goal,
                     data_type="text",
                     name="JBB-Behaviors",
                     dataset_name=self.dataset_name,
@@ -153,7 +154,9 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
                     groups=self._GROUPS,
                     source=self.source,
                     metadata={
+                        "jbb_behavior": behavior,
                         "jbb_category": category,
+                        "jbb_target": (item.get("Target") or "").strip(),
                         "original_source": "JailbreakBench",
                     },
                 )
