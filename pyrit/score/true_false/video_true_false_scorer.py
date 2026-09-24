@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 
-from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoreStatus, ScoringExpectation
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoreStatus, ScoringExpectation
+from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
@@ -91,44 +92,25 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
             sub_scorers=sub_scorer_ids,
         )
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the frame scorer and the optional audio scorer."""
+        image_scorer = self._video_helper.image_scorer
+        return (image_scorer, self.audio_scorer) if self.audio_scorer is not None else (image_scorer,)
+
+    def _get_child_expectations(
+        self, *, expectation: ScoringExpectation | None
+    ) -> tuple[tuple[Scorer, ScoringExpectation | None], ...]:
         """
-        Report the union of conditions matched by the media scorers.
+        Prepare the same transformed contexts that frame and audio judges receive.
 
         Returns:
-            frozenset[type[Condition]]: The matched condition types.
+            tuple: Child scorers and their effective inputs.
         """
-        scorers = [self._video_helper.image_scorer]
-        if self.audio_scorer:
-            scorers.append(self.audio_scorer)
-        conditions: set[type[Condition]] = set()
-        for scorer in scorers:
-            conditions.update(scorer.matched_conditions())
-        return frozenset(conditions)
+        return self._video_helper.get_child_expectations(expectation=expectation, audio_scorer=self.audio_scorer)
 
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the union of conditions required by the media scorers.
-
-        Returns:
-            frozenset[type[Condition]]: The required condition types.
-        """
-        scorers = [self._video_helper.image_scorer]
-        if self.audio_scorer:
-            scorers.append(self.audio_scorer)
-        conditions: set[type[Condition]] = set()
-        for scorer in scorers:
-            conditions.update(scorer.required_conditions())
-        return frozenset(conditions)
-
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        """Validate all media scorer criteria before acquiring evidence or sending prompts."""
-        super()._validate_expectation(expectation=expectation)
-        self._video_helper.image_scorer._validate_expectation(expectation=expectation)
-        if self.audio_scorer is not None:
-            self.audio_scorer._validate_expectation(expectation=expectation)
-
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score a single video piece by extracting frames and optionally audio, then aggregating their scores.
 
@@ -138,15 +120,18 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
 
         Args:
             message_piece: The message piece containing the video.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the frame and audio scorers.
 
         Returns:
             List containing a single aggregated score for the video.
         """
+        objective = expectation.objective if expectation else None
         piece_id = message_piece.id
 
         # Get scores for all frames and aggregate with OR (True if ANY frame matches)
-        frame_scores = await self._video_helper._score_frames_async(message_piece=message_piece, objective=objective)
+        frame_scores = await self._video_helper._score_frames_async(
+            message_piece=message_piece, expectation=expectation
+        )
         frame_result = TrueFalseScoreAggregator.OR(frame_scores)
 
         # Create a Score from the frame aggregation result
@@ -166,7 +151,7 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
         # Score audio if audio_scorer is provided
         if self.audio_scorer:
             audio_scores = await self._video_helper._score_video_audio_async(
-                message_piece=message_piece, audio_scorer=self.audio_scorer, objective=objective
+                message_piece=message_piece, audio_scorer=self.audio_scorer, expectation=expectation
             )
             if audio_scores:
                 # AND: both frame and audio must be true
