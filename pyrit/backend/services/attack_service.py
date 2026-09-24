@@ -106,7 +106,7 @@ class AttackService:
     def __init__(self) -> None:
         """Initialize the attack service."""
         self._memory = CentralMemory.get_memory_instance()
-        self._message_send_service = MessageSendService(memory=self._memory)
+        self._message_send_service = MessageSendService()
 
     # ========================================================================
     # Public API Methods

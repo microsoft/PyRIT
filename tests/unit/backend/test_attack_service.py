@@ -43,7 +43,7 @@ from pyrit.backend.services.pagination import (
     normalize_label_filters,
 )
 from pyrit.common.utils import to_sha256
-from pyrit.memory import SQLiteMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.memory_models import ConversationEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -75,8 +75,7 @@ def mock_memory() -> MagicMock:
 @pytest.fixture
 def attack_service(mock_memory):
     """Create an attack service with mocked memory."""
-    with patch("pyrit.backend.services.attack_service.CentralMemory") as mock_central:
-        mock_central.get_memory_instance.return_value = mock_memory
+    with patch.object(CentralMemory, "get_memory_instance", return_value=mock_memory):
         service = AttackService()
         yield service
 
@@ -218,14 +217,13 @@ class TestAttackServiceInit:
 
     def test_init_gets_memory_instance(self) -> None:
         """Test that init gets the memory instance."""
-        with patch("pyrit.backend.services.attack_service.CentralMemory") as mock_central:
+        with patch.object(CentralMemory, "get_memory_instance") as get_memory:
             mock_memory = MagicMock()
-            mock_central.get_memory_instance.return_value = mock_memory
+            get_memory.return_value = mock_memory
 
             service = AttackService()
 
-            mock_central.get_memory_instance.assert_called_once()
-            assert service._memory == mock_memory
+            assert service._memory is service._message_send_service._memory is PromptNormalizer()._memory is mock_memory
 
 
 # ============================================================================
@@ -1791,7 +1789,7 @@ class TestAttackServiceSingleton:
         """Test that get_attack_service returns an AttackService instance."""
         get_attack_service.cache_clear()
 
-        with patch("pyrit.backend.services.attack_service.CentralMemory"):
+        with patch.object(CentralMemory, "get_memory_instance"):
             service = get_attack_service()
             assert isinstance(service, AttackService)
 
@@ -1799,7 +1797,7 @@ class TestAttackServiceSingleton:
         """Test that get_attack_service returns the same instance."""
         get_attack_service.cache_clear()
 
-        with patch("pyrit.backend.services.attack_service.CentralMemory"):
+        with patch.object(CentralMemory, "get_memory_instance"):
             service1 = get_attack_service()
             service2 = get_attack_service()
             assert service1 is service2

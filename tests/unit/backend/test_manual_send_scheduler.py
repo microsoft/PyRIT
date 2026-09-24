@@ -164,3 +164,68 @@ def test_default_scheduler_is_shared() -> None:
         assert get_manual_send_scheduler() is get_manual_send_scheduler()
     finally:
         get_manual_send_scheduler.cache_clear()
+
+
+async def test_metadata_updates_serialize_only_the_same_attack_async() -> None:
+    scheduler = ManualSendScheduler()
+    attempted, entered = asyncio.Event(), asyncio.Event()
+
+    async def update_async() -> None:
+        attempted.set()
+        async with scheduler.metadata_update_async(attack_result_id="first"):
+            entered.set()
+
+    try:
+        async with scheduler.metadata_update_async(attack_result_id="first"):
+            waiting = asyncio.create_task(update_async())
+            await attempted.wait()
+            assert not entered.is_set()
+            async with scheduler.metadata_update_async(attack_result_id="second"):
+                assert scheduler._metadata_updates == {"first", "second"}
+            assert scheduler._metadata_updates == {"first"}
+    finally:
+        await waiting
+    assert entered.is_set()
+    assert not scheduler._metadata_updates
+
+
+@pytest.mark.parametrize("queued", [False, True])
+async def test_metadata_cancellation_releases_only_its_own_guard_async(queued: bool) -> None:
+    scheduler = ManualSendScheduler()
+    attempted, entered = asyncio.Event(), asyncio.Event()
+
+    async def update_async() -> None:
+        attempted.set()
+        async with scheduler.metadata_update_async(attack_result_id="attack"):
+            entered.set()
+            await asyncio.Event().wait()
+
+    if queued:
+        async with scheduler.metadata_update_async(attack_result_id="attack"):
+            update = asyncio.create_task(update_async())
+            await attempted.wait()
+            assert not entered.is_set()
+            update.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await update
+            assert scheduler._metadata_updates == {"attack"}
+    else:
+        update = asyncio.create_task(update_async())
+        await entered.wait()
+        update.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await update
+
+    assert not scheduler._metadata_updates
+    async with scheduler.metadata_update_async(attack_result_id="attack"):
+        assert scheduler._metadata_updates == {"attack"}
+
+
+async def test_metadata_failure_releases_the_guard_async() -> None:
+    scheduler = ManualSendScheduler()
+    with pytest.raises(RuntimeError, match="metadata"):
+        async with scheduler.metadata_update_async(attack_result_id="attack"):
+            raise RuntimeError("metadata")
+    assert not scheduler._metadata_updates
+    async with scheduler.metadata_update_async(attack_result_id="attack"):
+        assert scheduler._metadata_updates == {"attack"}

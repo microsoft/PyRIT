@@ -42,6 +42,7 @@ class ManualSendScheduler:
         self._max_concurrency = max_concurrency
         self._max_operations = max_operations
         self._conversations: set[str] = set()
+        self._metadata_updates: set[str] = set()
         self._condition = asyncio.Condition()
         self._queue: deque[object] = deque()
         self._active = 0
@@ -105,6 +106,24 @@ class ManualSendScheduler:
                 self._active -= 1
                 if exclusive:
                     self._exclusive = False
+                self._condition.notify_all()
+
+    @asynccontextmanager
+    async def metadata_update_async(self, *, attack_result_id: str) -> AsyncIterator[None]:
+        """
+        Serialize the complete metadata read/merge/write for one attack.
+
+        Yields:
+            None: Ownership of the attack's metadata update.
+        """
+        async with self._condition:
+            await self._condition.wait_for(lambda: attack_result_id not in self._metadata_updates)
+            self._metadata_updates.add(attack_result_id)
+        try:
+            yield
+        finally:
+            async with self._condition:
+                self._metadata_updates.remove(attack_result_id)
                 self._condition.notify_all()
 
 

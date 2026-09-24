@@ -40,12 +40,17 @@ dispatching, using any supported message role. `MessageSendService` owns prepara
 converter selection, dispatch through `PromptNormalizer`, and attack metadata updates.
 The normalizer still owns request/response conversion and persistence; `AttackService`
 maps the resulting stored data to the response, including stored target errors.
+All three use the application's `CentralMemory` instance.
 
 All manual-message service instances share one process-local scheduler. It admits up to
 64 operations (active and waiting), with up to 4 executing at once. Sends using an
 RPM-limited target or request/response converters execute exclusively, conservatively
 covering targets used inside converters. Ready operations enter execution in FIFO order.
 These limits do not coordinate other backend processes, scenario runs, or converter previews.
+
+Metadata read/merge/write operations are serialized per attack, including ordinary sends
+to different conversations. Provider calls can still run concurrently; an older metadata
+write cannot overwrite a newer response pointer, timestamp, or converter history.
 
 An admitted operation owns its conversation until it finishes, fails, or completes
 cancellation cleanup. Offloaded memory writes finish before ownership is released.

@@ -17,7 +17,7 @@ from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler, ge
 from pyrit.backend.services.media_persistence import persist_media_value_async
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.deprecation import print_deprecation_message
-from pyrit.memory import CentralMemory, MemoryInterface, data_serializer_factory
+from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
     AtomicAttackIdentifier,
@@ -60,11 +60,10 @@ class MessageSendService:
     def __init__(
         self,
         *,
-        memory: MemoryInterface | None = None,
         scheduler: ManualSendScheduler | None = None,
     ) -> None:
         """Initialize the manual-message service with the application's memory."""
-        self._memory = memory if memory is not None else CentralMemory.get_memory_instance()
+        self._memory = CentralMemory.get_memory_instance()
         self._scheduler = scheduler if scheduler is not None else get_manual_send_scheduler()
 
     async def add_message_async(self, *, attack_result_id: str, request: AddMessageRequest) -> None:
@@ -192,20 +191,21 @@ class MessageSendService:
                 applied_converter_identifiers=applied_converter_identifiers,
             )
 
-        await self._complete_memory_write_async(
-            partial(
-                self._update_attack_after_message,
-                attack_result_id=attack_result_id,
-                last_response_id=last_response_id,
-                request_converter_configurations=self._exclude_preconverted_piece_indexes(
-                    configurations=request_converter_configurations,
-                    preconverted_indexes=preconverted_indexes,
-                    piece_count=len(request.pieces),
-                ),
-                response_converter_configurations=response_converter_configurations,
-                applied_converter_identifiers=applied_converter_identifiers,
+        async with self._scheduler.metadata_update_async(attack_result_id=attack_result_id):
+            await self._complete_memory_write_async(
+                partial(
+                    self._update_attack_after_message,
+                    attack_result_id=attack_result_id,
+                    last_response_id=last_response_id,
+                    request_converter_configurations=self._exclude_preconverted_piece_indexes(
+                        configurations=request_converter_configurations,
+                        preconverted_indexes=preconverted_indexes,
+                        piece_count=len(request.pieces),
+                    ),
+                    response_converter_configurations=response_converter_configurations,
+                    applied_converter_identifiers=applied_converter_identifiers,
+                )
             )
-        )
 
     def _validate_target_match(
         self, *, attack_identifier: ComponentIdentifier | None, target: PromptTarget | None
@@ -256,7 +256,6 @@ class MessageSendService:
         Raises:
             ValueError: If the attack disappeared before its metadata could be updated.
         """
-        # Converter-bearing sends hold an exclusive slot through this read/merge/write.
         results = self._memory.get_attack_results(attack_result_ids=[attack_result_id])
         if not results:
             raise ValueError(f"Attack '{attack_result_id}' not found after message send")
