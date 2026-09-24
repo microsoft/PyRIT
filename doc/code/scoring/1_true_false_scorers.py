@@ -147,6 +147,13 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 # decoded metadata) appears in the response — the fast, deterministic way to tell whether a target
 # decoded an encoded prompt. It backs the Garak encoding scenario.
 #
+# ### GarakExploitationScorer
+#
+# `GarakExploitationScorer` applies Garak's Jinja-expression or SQL-injection detection rules
+# to emitted text. By default, it loads the matching packaged payload corpus; pass `payloads`
+# to use a different reference set. A positive result means the model emitted exploit material,
+# not that a template engine or database executed it. It backs the Garak exploitation scenario.
+#
 # ### DivergenceScorer
 #
 # `DivergenceScorer` detects meaningful continuation following the repetition named by an expectation
@@ -236,6 +243,9 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 # - **`SelfAskQuestionAnswerScorer`** — checks whether a response correctly answers a known
 #   question (used with question-answering datasets). `QuestionAnswerScorer` is the fast,
 #   non-LLM variant that matches against the expected answer directly.
+#   Both require an `AnswerMatches` condition. Use `objective` for question context, and a separate
+#   `SelfAskTrueFalseScorer` for `MatchesObjective` checks.
+#   Configure that objective scorer with `validator=ScorerPromptValidator(is_objective_required=True)`.
 # - **`SelfAskGeneralTrueFalseScorer`** — bring your own system prompt and JSON schema when
 #   the built-in templates don't fit. See
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for how custom scorers slot in.

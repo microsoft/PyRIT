@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.messages.message import Message
 from pyrit.models.messages.message_piece import MessagePiece
+from pyrit.models.score.expectation import ScoringExpectation
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
@@ -297,6 +298,14 @@ class SeedGroup(BaseModel):
     def objective(self) -> SeedObjective | None:
         """The objective for this group."""
         return self._get_objective()
+
+    @property
+    def scoring_expectation(self) -> ScoringExpectation | None:
+        """The objective text and typed criteria authored by this group's objective seed."""
+        objective = self.objective
+        if objective is None:
+            return None
+        return ScoringExpectation(objective=objective.value, conditions=objective.conditions)
 
     @property
     def harm_categories(self) -> list[str]:
