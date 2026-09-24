@@ -14,6 +14,7 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 import pyrit.backend.services.scenario_run_service as _svc_mod
+from pyrit import _compatibility
 from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
@@ -197,7 +198,8 @@ class TestResumeScenarioRunRoute:
         assert set(path) == {"post"}
         assert "requestBody" not in path["post"]
         assert [(parameter["name"], parameter["in"]) for parameter in path["post"]["parameters"]] == [
-            ("scenario_result_id", "path")
+            ("scenario_result_id", "path"),
+            (_compatibility.COMPATIBILITY_HEADER, "header"),
         ]
         assert "ResumeScenarioRunRequest" not in schema["components"]["schemas"]
         assert "ScenarioResumeOptions" not in schema["components"]["schemas"]
