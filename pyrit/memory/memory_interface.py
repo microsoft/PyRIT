@@ -3433,6 +3433,7 @@ class MemoryInterface(abc.ABC):
 
     def _add_list_conditions(
         self,
+        *,
         field: InstrumentedAttribute[Any],
         conditions: "list[ColumnElement[bool]]",
         values: Sequence[str] | None = None,
