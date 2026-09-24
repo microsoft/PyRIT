@@ -362,6 +362,107 @@ class TestSeedSimulatedConversationLoadSimulatedTargetSystemPrompt:
             )
 
 
+class TestSeedSimulatedConversationWithLayeredPrefix:
+    """Tests for SeedSimulatedConversation.with_layered_prefix method."""
+
+    def test_prepends_prefix_ahead_of_adversarial_prompt(self, tmp_path):
+        """Test that the prefix is prepended ahead of the adversarial chat system prompt."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path)
+
+        copied = conv.with_layered_prefix("Never break character.")
+
+        assert copied.adversarial_chat_system_prompt.value == "Never break character.\n\nObjective: {{ objective }}"
+
+    def test_layers_new_prefix_ahead_of_existing_prefix(self, tmp_path):
+        """Test that a new prefix is combined ahead of a previously layered one."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path).with_layered_prefix(
+            "Never break character."
+        )
+
+        copied = conv.with_layered_prefix("Shared benchmark guidance.")
+
+        assert copied.adversarial_chat_system_prompt.value == (
+            "Shared benchmark guidance.\n\nNever break character.\n\nObjective: {{ objective }}"
+        )
+
+    def test_raises_when_prefix_contains_jinja_syntax(self, tmp_path):
+        """Test that a prefix containing Jinja syntax raises rather than silently rendering."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path)
+
+        with pytest.raises(ValueError, match="must be static text without Jinja syntax"):
+            conv.with_layered_prefix("Never break character {{ objective }}.")
+
+    def test_does_not_mutate_original_seed(self, tmp_path):
+        """Test that the original seed's adversarial chat system prompt is left untouched."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path)
+        original_value = conv.adversarial_chat_system_prompt.value
+
+        conv.with_layered_prefix("Never break character.")
+
+        assert conv.adversarial_chat_system_prompt.value == original_value
+
+    def test_returns_seed_with_fresh_id(self, tmp_path):
+        """Test that the copy gets a new id rather than reusing the original's."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path)
+
+        copied = conv.with_layered_prefix("Never break character.")
+
+        assert copied.id != conv.id
+
+    def test_recomputes_value_to_reflect_new_prefix(self, tmp_path):
+        """Test that the derived value field reflects the combined prompt, not the stale original."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path)
+
+        copied = conv.with_layered_prefix("Never break character.")
+
+        assert copied.value != conv.value
+        combined_value = json.loads(copied.value)["adversarial_chat_system_prompt"]["value"]
+        assert combined_value == "Never break character.\n\nObjective: {{ objective }}"
+
+    def test_preserves_other_fields(self, tmp_path):
+        """Test that fields unrelated to the adversarial prompt are carried over unchanged."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
+        conv = SeedSimulatedConversation(adversarial_chat_system_prompt_path=adv_path, num_turns=5, sequence=2)
+
+        copied = conv.with_layered_prefix("Never break character.")
+
+        assert copied.num_turns == 5
+        assert copied.sequence == 2
+        assert copied.simulated_target_system_prompt is conv.simulated_target_system_prompt
+
+    def test_does_not_reprepare_simulated_target_prompt(self, tmp_path):
+        """Test that layering a prefix does not re-render deferred template syntax on other prompts."""
+        deferred_template = "{% raw %}{% if num_turns == 1 %}one turn{% else %}many turns{% endif %}{% endraw %}"
+        sim_path = tmp_path / "simulated.yaml"
+        sim_path.write_text(
+            f"data_type: text\nparameters:\n  - objective\n  - num_turns\nvalue: '{deferred_template}'\n"
+        )
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: 'Objective: {{ objective }}'\ndata_type: text\nparameters:\n  - objective")
+        conv = SeedSimulatedConversation(
+            adversarial_chat_system_prompt_path=adv_path,
+            simulated_target_system_prompt_path=sim_path,
+            num_turns=1,
+        )
+
+        copied = conv.with_layered_prefix("Never break character.")
+
+        assert copied.simulated_target_system_prompt.render_template_value(objective="o", num_turns=1) == "one turn"
+
+
 class TestSeedSimulatedConversationCanonicalPrompts:
     """Tests for the canonical SeedPrompt fields and the deprecated path inputs."""
 

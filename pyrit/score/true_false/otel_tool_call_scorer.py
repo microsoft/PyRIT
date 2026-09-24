@@ -45,8 +45,7 @@ def match_tools_called(
 class OtelToolCallScorer(TrueFalseScorer):
     """Score actual tool invocations, not requested calls or response claims."""
 
-    MATCHED_CONDITIONS = frozenset({ToolsCalled})
-    REQUIRED_CONDITIONS = frozenset({ToolsCalled})
+    CONDITION_TYPE = ToolsCalled
 
     def __init__(self, *, source: ObservationSource[TraceScorable]) -> None:
         """Initialize with a condition-independent, caller-configured trace source."""
@@ -58,10 +57,6 @@ class OtelToolCallScorer(TrueFalseScorer):
             params={"matching_version": 1},
             children={"source": self._source.get_identifier()},
         )
-
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        super()._validate_expectation(expectation=expectation)
-        self._condition(expectation)
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         if not isinstance(scorable, TraceScorable):
@@ -83,7 +78,7 @@ class OtelToolCallScorer(TrueFalseScorer):
     ) -> list[Score]:
         if not isinstance(evidence, ToolEventsObservationPayload):
             raise NonReplayableObservationError("Tool-call scoring requires a stored tool-event observation.")
-        condition = self._condition(expectation)
+        condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalled)
         value = match_tools_called(condition=condition, payload=evidence, acquisition=observation.acquisition)
         names = ", ".join(tool.name for tool in condition.tools)
         rationale = (
@@ -106,14 +101,3 @@ class OtelToolCallScorer(TrueFalseScorer):
                 observation_ids=[observation.id],
             )
         ]
-
-    @staticmethod
-    def _condition(expectation: ScoringExpectation | None) -> ToolsCalled:
-        conditions = (
-            [condition for condition in expectation.conditions if isinstance(condition, ToolsCalled)]
-            if expectation
-            else []
-        )
-        if len(conditions) != 1:
-            raise ValueError("OtelToolCallScorer requires exactly one ToolsCalled condition.")
-        return conditions[0]

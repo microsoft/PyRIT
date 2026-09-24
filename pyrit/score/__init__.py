@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
     from pyrit.score.true_false.gandalf_scorer import GandalfScorer
+    from pyrit.score.true_false.garak_exploitation_scorer import GarakExploitationDetector, GarakExploitationScorer
     from pyrit.score.true_false.llamaguard_parser import LLAMAGUARD_3_CATEGORY_CODES, parse_llamaguard_response
     from pyrit.score.true_false.llamaguard_policy import LlamaGuardCategory, LlamaGuardPolicy
     from pyrit.score.true_false.llamaguard_scorer import (
@@ -170,6 +171,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MessageTrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
     "FloatScaleThresholdScorer": "pyrit.score.true_false.float_scale_threshold_scorer",
     "GandalfScorer": "pyrit.score.true_false.gandalf_scorer",
+    "GarakExploitationDetector": "pyrit.score.true_false.garak_exploitation_scorer",
+    "GarakExploitationScorer": "pyrit.score.true_false.garak_exploitation_scorer",
     "HarmHumanLabeledEntry": "pyrit.score.scorer_evaluation.human_labeled_dataset",
     "HarmScorerEvaluator": "pyrit.score.scorer_evaluation.scorer_evaluator",
     "HarmScorerMetrics": "pyrit.score.scorer_evaluation.scorer_metrics",
