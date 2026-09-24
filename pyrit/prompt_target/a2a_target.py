@@ -1,13 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
+import time
 import uuid
+from dataclasses import dataclass
 from typing import Any, Literal
-from urllib.parse import urljoin
 
 import httpx
 
+from pyrit.exceptions import RateLimitException, pyrit_target_retry
+from pyrit.exceptions.exception_classes import CONTENT_FILTER_MARKERS
 from pyrit.models import (
     Message,
     construct_response_from_request,
@@ -20,6 +24,17 @@ from pyrit.prompt_target.common.utils import limit_requests_per_minute
 logger = logging.getLogger(__name__)
 
 RPC_METHOD_NOT_FOUND = -32601
+_PENDING_TASK_STATES = frozenset({"submitted", "working"})
+_INTERRUPTED_TASK_STATES = frozenset({"input-required", "auth-required"})
+_TASK_POLL_INTERVAL_SECONDS = 1.0
+
+
+@dataclass
+class _A2AConversationState:
+    """Server-issued identifiers that continue one PyRIT conversation on the agent."""
+
+    context_id: str | None = None
+    open_task_id: str | None = None
 
 
 class A2ATarget(PromptTarget):
@@ -35,8 +50,10 @@ class A2ATarget(PromptTarget):
     If the target agent responds with JSON-RPC error code -32601 (Method not found),
     it automatically falls back to 0.2 and pins that dialect for subsequent turns.
 
-    Multi-turn conversation sessions are maintained by associating PyRIT conversation IDs
-    with active server task IDs, ensuring session continuity during iterative red-teaming.
+    Each PyRIT conversation maps to one A2A context (``contextId`` in 0.3, ``sessionId`` in 0.2),
+    so the agent keeps its own server-side state across turns. Tasks left waiting for input are
+    continued with their task ID. Requests ask the agent to block until the task completes, and
+    tasks still pending are polled with ``tasks/get``.
     """
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
@@ -54,6 +71,7 @@ class A2ATarget(PromptTarget):
         api_key: str | None = None,
         api_key_header: str = "X-API-Key",
         dialect: Literal["auto", "v03", "v02"] = "auto",
+        task_timeout_seconds: float = 120.0,
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
         **httpx_client_kwargs: Any,
@@ -67,10 +85,17 @@ class A2ATarget(PromptTarget):
             api_key (str, Optional): Custom API key for the agent.
             api_key_header (str): Header name for the API key (defaults to "X-API-Key").
             dialect (Literal["auto", "v03", "v02"]): A2A protocol dialect to use. Defaults to "auto".
+            task_timeout_seconds (float): How long to poll a pending task before giving up. Defaults to 120.
             max_requests_per_minute (int, Optional): Rate limit cap for requests per minute.
             custom_configuration (TargetConfiguration, Optional): Custom target capabilities override.
             **httpx_client_kwargs: Additional keyword arguments passed to httpx.AsyncClient.
+
+        Raises:
+            ValueError: If the dialect is not supported.
         """
+        if dialect not in ("auto", "v03", "v02"):
+            raise ValueError(f"Unsupported A2A dialect '{dialect}'. Expected 'auto', 'v03' or 'v02'.")
+
         super().__init__(
             endpoint=endpoint,
             max_requests_per_minute=max_requests_per_minute,
@@ -82,7 +107,8 @@ class A2ATarget(PromptTarget):
         self._api_key = api_key
         self._api_key_header = api_key_header
         self._dialect: Literal["auto", "v03", "v02"] = dialect
-        self._conversation_tasks: dict[str, str] = {}
+        self._task_timeout_seconds = task_timeout_seconds
+        self._conversations: dict[str, _A2AConversationState] = {}
         self._httpx_client_kwargs = httpx_client_kwargs
 
     def _build_headers(self) -> dict[str, str]:
@@ -96,166 +122,190 @@ class A2ATarget(PromptTarget):
             headers[self._api_key_header] = self._api_key
         return headers
 
-    def _build_payload(self, dialect: Literal["v03", "v02"], message_text: str, task_id: str | None) -> dict[str, Any]:
-        rpc_id = str(uuid.uuid4())
+    @staticmethod
+    def _rpc(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        return {"jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": method, "params": params}
+
+    def _build_payload(
+        self, *, dialect: Literal["v03", "v02"], message_text: str, state: _A2AConversationState
+    ) -> dict[str, Any]:
         if dialect == "v03":
-            params: dict[str, Any] = {
-                "message": {
-                    "role": "user",
-                    "parts": [{"kind": "text", "text": message_text}],
-                }
+            message: dict[str, Any] = {
+                "kind": "message",
+                "messageId": str(uuid.uuid4()),
+                "role": "user",
+                "parts": [{"kind": "text", "text": message_text}],
             }
-            if task_id:
-                params["task_id"] = task_id
-            return {
-                "jsonrpc": "2.0",
-                "id": rpc_id,
-                "method": "message/send",
-                "params": params,
-            }
-        # Dialect v0.2
-        effective_id = task_id or str(uuid.uuid4())
-        return {
-            "jsonrpc": "2.0",
-            "id": rpc_id,
-            "method": "tasks/send",
-            "params": {
-                "id": effective_id,
-                "message": {
-                    "role": "user",
-                    "parts": [{"type": "text", "text": message_text}],
-                },
-            },
+            if state.context_id:
+                message["contextId"] = state.context_id
+            if state.open_task_id:
+                message["taskId"] = state.open_task_id
+            return self._rpc("message/send", {"message": message, "configuration": {"blocking": True}})
+
+        params: dict[str, Any] = {
+            "id": state.open_task_id or str(uuid.uuid4()),
+            "message": {"role": "user", "parts": [{"type": "text", "text": message_text}]},
         }
+        if state.context_id:
+            params["sessionId"] = state.context_id
+        return self._rpc("tasks/send", params)
 
     @staticmethod
-    def _extract_response_text(result_or_error: dict[str, Any]) -> str:
+    def _parts_text(parts: Any) -> list[str]:
+        if not isinstance(parts, list):
+            return []
+        return [str(part["text"]) for part in parts if isinstance(part, dict) and "text" in part]
+
+    @classmethod
+    def _extract_response_text(cls, result: Any) -> str:
         """
-        Extract the conversational text or refusal from an A2A JSON-RPC response.
+        Extract the agent's text from an A2A ``Message`` or ``Task`` result.
 
         Returns:
-            str: Extracted response content or refusal description.
+            str: The concatenated text parts of the agent's reply.
         """
-        if "error" in result_or_error and result_or_error["error"] is not None:
-            err = result_or_error["error"]
-            err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            return f"[A2A Refusal] {err_msg}"
-
-        result = result_or_error.get("result")
-        if not result or not isinstance(result, dict):
+        if not isinstance(result, dict):
             return str(result) if result is not None else ""
 
-        # Check message parts (spec standard)
-        msg = result.get("message")
-        if isinstance(msg, dict):
-            parts = msg.get("parts")
-            if isinstance(parts, list):
-                texts = [str(part.get("text", "")) for part in parts if isinstance(part, dict) and "text" in part]
-                if texts:
-                    return "\n".join(texts)
+        # Message result, or a message embedded in a legacy task result
+        texts = cls._parts_text(result.get("parts"))
+        if not texts and isinstance(result.get("message"), dict):
+            texts = cls._parts_text(result["message"].get("parts"))
+        if texts:
+            return "\n".join(texts)
 
-        # Check artifacts
+        # Task artifacts
         artifacts = result.get("artifacts")
         if isinstance(artifacts, list):
-            texts = []
-            for art in artifacts:
-                if isinstance(art, dict):
-                    parts = art.get("parts")
-                    if isinstance(parts, list):
-                        for part in parts:
-                            if isinstance(part, dict) and "text" in part:
-                                texts.append(str(part.get("text", "")))
+            for artifact in artifacts:
+                if isinstance(artifact, dict):
+                    texts.extend(cls._parts_text(artifact.get("parts")))
             if texts:
                 return "\n".join(texts)
 
-        # Check status message
+        # Task status message, e.g. input-required or failed
         status = result.get("status")
-        if isinstance(status, dict) and "message" in status:
-            return str(status["message"])
+        if isinstance(status, dict) and isinstance(status.get("message"), dict):
+            texts = cls._parts_text(status["message"].get("parts"))
+            if texts:
+                return "\n".join(texts)
 
         return str(result)
 
     @staticmethod
-    def _extract_task_id(result: dict[str, Any] | None) -> str | None:
-        if not result or not isinstance(result, dict):
-            return None
-        # In v0.3 it is often taskId or task_id; in v0.2 it is id
-        return result.get("taskId") or result.get("task_id") or result.get("id")
+    def _update_state(*, state: _A2AConversationState, result: Any) -> None:
+        if not isinstance(result, dict):
+            return
+        context_id = result.get("contextId") or result.get("sessionId")
+        if context_id:
+            state.context_id = context_id
+        task_state = result.get("status", {}).get("state") if isinstance(result.get("status"), dict) else None
+        is_task = result.get("kind") == "task" or "status" in result
+        state.open_task_id = result.get("id") if is_task and task_state in _INTERRUPTED_TASK_STATES else None
 
+    async def _post_async(self, client: httpx.AsyncClient, payload: dict[str, Any]) -> dict[str, Any]:
+        resp = await client.post(self._endpoint, json=payload, headers=self._build_headers())
+        if resp.status_code == 429:
+            raise RateLimitException(message=f"A2A agent rate limited: {resp.text}")
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        return data
+
+    async def _await_task_async(self, client: httpx.AsyncClient, data: dict[str, Any]) -> dict[str, Any]:
+        deadline = time.monotonic() + self._task_timeout_seconds
+        while True:
+            result = data.get("result")
+            if not isinstance(result, dict):
+                return data
+            status = result.get("status")
+            if not (isinstance(status, dict) and status.get("state") in _PENDING_TASK_STATES):
+                return data
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"A2A task {result['id']} still {status['state']} after {self._task_timeout_seconds} seconds."
+                )
+            await asyncio.sleep(_TASK_POLL_INTERVAL_SECONDS)
+            data = await self._post_async(client, self._rpc("tasks/get", {"id": result["id"]}))
+
+    @pyrit_target_retry
     @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        """
+        Send the latest message to the agent, continuing the conversation's A2A context.
+
+        Args:
+            normalized_conversation (list[Message]): Normalized conversation with the current request last.
+
+        Returns:
+            list[Message]: A list containing the agent's response.
+
+        Raises:
+            ValueError: If no conversation is provided.
+            RateLimitException: If the agent, or the model behind it, is rate limited.
+        """
         if not normalized_conversation:
             raise ValueError("No conversation provided to A2ATarget.")
 
-        latest_message = normalized_conversation[-1]
-        message_piece = latest_message.get_piece()
-        val = message_piece.converted_value
-        if val is None:
-            val = message_piece.original_value
-        prompt_text = str(val)
+        message_piece = normalized_conversation[-1].get_piece()
         conversation_id = message_piece.conversation_id or ""
+        if conversation_id not in self._conversations and len(normalized_conversation) > 1:
+            logger.warning(
+                "A2ATarget has no A2A context for conversation %s; earlier turns are not visible to the agent.",
+                conversation_id,
+            )
+        state = self._conversations.setdefault(conversation_id, _A2AConversationState())
+        prompt_text = message_piece.converted_value
 
-        task_id = self._conversation_tasks.get(conversation_id)
         current_dialect: Literal["v03", "v02"] = "v02" if self._dialect == "v02" else "v03"
-        payload = self._build_payload(dialect=current_dialect, message_text=prompt_text, task_id=task_id)
-        headers = self._build_headers()
-
         async with httpx.AsyncClient(**self._httpx_client_kwargs) as client:
-            resp = await client.post(self._endpoint, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+            data = await self._post_async(
+                client, self._build_payload(dialect=current_dialect, message_text=prompt_text, state=state)
+            )
 
             # Handle automatic dialect fallback if method not found
-            if (
-                self._dialect == "auto"
-                and current_dialect == "v03"
-                and isinstance(data, dict)
-                and data.get("error", {}).get("code") == RPC_METHOD_NOT_FOUND
-            ):
+            error = data.get("error")
+            if self._dialect == "auto" and isinstance(error, dict) and error.get("code") == RPC_METHOD_NOT_FOUND:
                 logger.info("A2A method message/send returned -32601; falling back to tasks/send (dialect 0.2)")
                 current_dialect = "v02"
-                payload = self._build_payload(dialect=current_dialect, message_text=prompt_text, task_id=task_id)
-                retry_resp = await client.post(self._endpoint, json=payload, headers=headers)
-                retry_resp.raise_for_status()
-                data = retry_resp.json()
-                self._dialect = "v02"
-            elif self._dialect == "auto":
+                data = await self._post_async(
+                    client, self._build_payload(dialect=current_dialect, message_text=prompt_text, state=state)
+                )
+            if self._dialect == "auto" and data.get("error") is None:
                 self._dialect = current_dialect
 
-        extracted_text = self._extract_response_text(data)
+            data = await self._await_task_async(client, data)
 
-        # Update active task id for this conversation
-        if isinstance(data, dict) and "result" in data:
-            new_task_id = self._extract_task_id(data.get("result"))
-            if new_task_id:
-                self._conversation_tasks[conversation_id] = new_task_id
+        error = data.get("error")
+        if error is not None:
+            error_text = str(error)
+            # agents may relay an upstream model rate limit as an internal error
+            if "429" in str(error.get("message", "") if isinstance(error, dict) else error):
+                raise RateLimitException(message=f"A2A agent relayed a rate limit: {error_text}")
+            is_blocked = any(marker in error_text for marker in CONTENT_FILTER_MARKERS)
+            logger.warning("A2A agent at %s returned error: %s", self._endpoint, error_text)
+            return [
+                construct_response_from_request(
+                    request=message_piece,
+                    response_text_pieces=[error_text],
+                    response_type="error",
+                    error="blocked" if is_blocked else "unknown",
+                )
+            ]
 
-        response_entry = construct_response_from_request(
-            request=message_piece,
-            response_text_pieces=[extracted_text],
-        )
-        return [response_entry]
+        result = data.get("result")
+        self._update_state(state=state, result=result)
+        return [
+            construct_response_from_request(
+                request=message_piece,
+                response_text_pieces=[self._extract_response_text(result)],
+            )
+        ]
 
-    async def get_agent_card_async(self) -> dict[str, Any]:
+    async def reset_conversation_async(self, *, conversation_id: str) -> None:
         """
-        Discover and retrieve the Agent Card manifest from standard discovery paths.
+        Forget the A2A context held for a conversation.
 
-        Checks `/.well-known/agent-card.json` first, falling back to `/agent.json`.
-
-        Returns:
-            dict[str, Any]: The parsed JSON Agent Card metadata.
+        Args:
+            conversation_id (str): PyRIT conversation ID.
         """
-        paths = ["/.well-known/agent-card.json", "/agent.json"]
-        headers = self._build_headers()
-        base_url = self._endpoint.split("/tasks")[0].split("/message")[0]
-
-        async with httpx.AsyncClient(**self._httpx_client_kwargs) as client:
-            for p in paths:
-                target_url = urljoin(base_url, p)
-                try:
-                    resp = await client.get(target_url, headers=headers)
-                    if resp.status_code == 200:
-                        return resp.json()
-                except Exception as exc:
-                    logger.debug(f"Failed to fetch agent card from {target_url}: {exc}")
-        return {}
+        self._conversations.pop(conversation_id, None)

@@ -1,227 +1,300 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import A2ATarget
 
+ENDPOINT = "https://agent.example.com/a2a"
 
-@pytest.fixture
-def user_message():
+
+def _user_message(text: str = "Hello A2A Agent", conversation_id: str = "conv-1234") -> Message:
     piece = MessagePiece(
         role="user",
-        original_value="Hello A2A Agent",
-        converted_value="Hello A2A Agent",
-        conversation_id="conv-1234",
+        original_value=text,
+        converted_value=text,
+        conversation_id=conversation_id,
     )
     return Message(message_pieces=[piece])
 
 
+def _response(payload: dict, status_code: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.text = str(payload)
+    resp.json.return_value = payload
+    return resp
+
+
+def _task(text: str | None, *, state: str = "completed", task_id: str = "task-1", context_id: str = "ctx-1") -> dict:
+    result: dict = {"kind": "task", "id": task_id, "contextId": context_id, "status": {"state": state}}
+    result["artifacts"] = [{"parts": [{"kind": "text", "text": text}]}] if text is not None else []
+    return {"jsonrpc": "2.0", "id": "1", "result": result}
+
+
+@pytest.fixture(autouse=True)
+def no_retry_wait(monkeypatch):
+    monkeypatch.setenv("RETRY_WAIT_MIN_SECONDS", "0")
+    monkeypatch.setenv("RETRY_WAIT_MAX_SECONDS", "0")
+
+
 @pytest.mark.usefixtures("patch_central_database")
 def test_a2a_target_initialization():
-    target = A2ATarget(
-        endpoint="https://agent.example.com/api/a2a",
-        auth_token="test-token",
-        api_key="test-api-key",
-    )
-    assert target._endpoint == "https://agent.example.com/api/a2a"
-    assert target._auth_token == "test-token"
-    assert target._api_key == "test-api-key"
-    assert target._dialect == "auto"
-    assert target._configuration.capabilities.supports_multi_turn is True
+    target = A2ATarget(endpoint=ENDPOINT + "/", auth_token="test-token", api_key="test-api-key")
+    assert target._endpoint == ENDPOINT
+    assert target._build_headers()["Authorization"] == "Bearer test-token"
+    assert target._build_headers()["X-API-Key"] == "test-api-key"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_a2a_target_rejects_unknown_dialect():
+    with pytest.raises(ValueError):
+        A2ATarget(endpoint=ENDPOINT, dialect="v9")  # type: ignore[arg-type]
 
 
 @pytest.mark.usefixtures("patch_central_database")
 @patch("httpx.AsyncClient.post")
-async def test_a2a_send_prompt_v03_success(mock_post, user_message):
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "result": {
-            "taskId": "task-xyz",
-            "message": {
-                "role": "assistant",
-                "parts": [{"kind": "text", "text": "I am an A2A agent reply."}],
-            },
-        },
-    }
-    mock_post.return_value = mock_resp
+async def test_a2a_send_prompt_v03_success(mock_post):
+    mock_post.return_value = _response(_task("I am an A2A agent reply."))
 
-    target = A2ATarget(endpoint="https://agent.example.com/a2a")
-    responses = await target.send_prompt_async(message=user_message)
+    target = A2ATarget(endpoint=ENDPOINT)
+    responses = await target.send_prompt_async(message=_user_message())
 
-    assert len(responses) == 1
     assert responses[0].message_pieces[0].converted_value == "I am an A2A agent reply."
-
-    # Verify v0.3 payload
-    call_args = mock_post.call_args
-    sent_json = call_args.kwargs["json"]
-    assert sent_json["method"] == "message/send"
-    assert sent_json["params"]["message"]["parts"][0]["kind"] == "text"
-    assert sent_json["params"]["message"]["parts"][0]["text"] == "Hello A2A Agent"
     assert target._dialect == "v03"
 
+    sent_json = mock_post.call_args.kwargs["json"]
+    assert sent_json["method"] == "message/send"
+    assert sent_json["params"]["configuration"] == {"blocking": True}
+    message = sent_json["params"]["message"]
+    assert message["kind"] == "message"
+    assert message["messageId"]
+    assert message["parts"] == [{"kind": "text", "text": "Hello A2A Agent"}]
+    assert "contextId" not in message
+    assert "taskId" not in message
+
 
 @pytest.mark.usefixtures("patch_central_database")
 @patch("httpx.AsyncClient.post")
-async def test_a2a_send_prompt_v03_fallback_to_v02(mock_post, user_message):
-    # First call: method not found (-32601) on v0.3
-    resp_err = MagicMock()
-    resp_err.status_code = 200
-    resp_err.json.return_value = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "error": {"code": -32601, "message": "Method not found"},
-    }
-
-    # Second call (retry with v0.2): success
-    resp_v02 = MagicMock()
-    resp_v02.status_code = 200
-    resp_v02.json.return_value = {
-        "jsonrpc": "2.0",
-        "id": "2",
-        "result": {
-            "id": "task-v02",
-            "message": {
-                "role": "assistant",
-                "parts": [{"type": "text", "text": "V0.2 task response"}],
+async def test_a2a_message_result(mock_post):
+    mock_post.return_value = _response(
+        {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "result": {
+                "kind": "message",
+                "role": "agent",
+                "messageId": "m-1",
+                "contextId": "ctx-9",
+                "parts": [{"kind": "text", "text": "Direct reply"}],
             },
-        },
-    }
-    mock_post.side_effect = [resp_err, resp_v02]
+        }
+    )
 
-    target = A2ATarget(endpoint="https://agent.example.com/a2a")
-    responses = await target.send_prompt_async(message=user_message)
+    target = A2ATarget(endpoint=ENDPOINT)
+    responses = await target.send_prompt_async(message=_user_message())
 
-    assert len(responses) == 1
-    assert responses[0].message_pieces[0].converted_value == "V0.2 task response"
+    assert responses[0].message_pieces[0].converted_value == "Direct reply"
+    assert target._conversations["conv-1234"].context_id == "ctx-9"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("asyncio.sleep", new_callable=AsyncMock)
+@patch("httpx.AsyncClient.post")
+async def test_a2a_polls_pending_task(mock_post, _mock_sleep):
+    mock_post.side_effect = [
+        _response(_task(None, state="submitted", task_id="task-9")),
+        _response(_task("Finished", task_id="task-9")),
+    ]
+
+    target = A2ATarget(endpoint=ENDPOINT)
+    responses = await target.send_prompt_async(message=_user_message())
+
+    assert responses[0].message_pieces[0].converted_value == "Finished"
+    poll = mock_post.call_args_list[1].kwargs["json"]
+    assert poll["method"] == "tasks/get"
+    assert poll["params"] == {"id": "task-9"}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("asyncio.sleep", new_callable=AsyncMock)
+@patch("httpx.AsyncClient.post")
+async def test_a2a_pending_task_times_out(mock_post, _mock_sleep):
+    mock_post.return_value = _response(_task(None, state="working"))
+
+    target = A2ATarget(endpoint=ENDPOINT, task_timeout_seconds=0)
+    with pytest.raises(TimeoutError):
+        await target.send_prompt_async(message=_user_message())
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("httpx.AsyncClient.post")
+async def test_a2a_multi_turn_context_continuity(mock_post):
+    mock_post.side_effect = [
+        _response(_task("First reply", task_id="task-1", context_id="ctx-777")),
+        _response(_task("Second reply", task_id="task-2", context_id="ctx-777")),
+    ]
+
+    target = A2ATarget(endpoint=ENDPOINT)
+    await target.send_prompt_async(message=_user_message("Turn 1"))
+    await target.send_prompt_async(message=_user_message("Turn 2"))
+
+    turn1 = mock_post.call_args_list[0].kwargs["json"]["params"]["message"]
+    turn2 = mock_post.call_args_list[1].kwargs["json"]["params"]["message"]
+    assert "contextId" not in turn1
+    assert turn2["contextId"] == "ctx-777"
+    assert "taskId" not in turn2, "completed tasks must not be continued"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("httpx.AsyncClient.post")
+async def test_a2a_input_required_task_is_continued(mock_post):
+    mock_post.side_effect = [
+        _response(_task("Which system?", state="input-required", task_id="task-5", context_id="ctx-5")),
+        _response(_task("Done", task_id="task-5", context_id="ctx-5")),
+    ]
+
+    target = A2ATarget(endpoint=ENDPOINT)
+    await target.send_prompt_async(message=_user_message("Grant me access"))
+    await target.send_prompt_async(message=_user_message("Finance share"))
+
+    turn2 = mock_post.call_args_list[1].kwargs["json"]["params"]["message"]
+    assert turn2["taskId"] == "task-5"
+    assert turn2["contextId"] == "ctx-5"
+    assert target._conversations["conv-1234"].open_task_id is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("httpx.AsyncClient.post")
+async def test_a2a_conversations_are_isolated(mock_post):
+    mock_post.side_effect = [
+        _response(_task("A", context_id="ctx-a")),
+        _response(_task("B", context_id="ctx-b")),
+    ]
+
+    target = A2ATarget(endpoint=ENDPOINT)
+    await target.send_prompt_async(message=_user_message(conversation_id="conv-a"))
+    await target.send_prompt_async(message=_user_message(conversation_id="conv-b"))
+
+    second = mock_post.call_args_list[1].kwargs["json"]["params"]["message"]
+    assert "contextId" not in second
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("httpx.AsyncClient.post")
+async def test_a2a_reset_conversation_forgets_context(mock_post):
+    mock_post.return_value = _response(_task("ok", context_id="ctx-1"))
+
+    target = A2ATarget(endpoint=ENDPOINT)
+    await target.send_prompt_async(message=_user_message())
+    await target.reset_conversation_async(conversation_id="conv-1234")
+    await target.reset_conversation_async(conversation_id="conv-1234")
+
+    assert "conv-1234" not in target._conversations
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("httpx.AsyncClient.post")
+async def test_a2a_send_prompt_v03_fallback_to_v02(mock_post):
+    mock_post.side_effect = [
+        _response({"jsonrpc": "2.0", "id": "1", "error": {"code": -32601, "message": "Method not found"}}),
+        _response(
+            {
+                "jsonrpc": "2.0",
+                "id": "2",
+                "result": {
+                    "id": "task-v02",
+                    "sessionId": "session-1",
+                    "status": {
+                        "state": "completed",
+                        "message": {"role": "agent", "parts": [{"type": "text", "text": "Legacy 0.2 reply"}]},
+                    },
+                },
+            }
+        ),
+        _response(_task("Second legacy reply")),
+    ]
+
+    target = A2ATarget(endpoint=ENDPOINT)
+    responses = await target.send_prompt_async(message=_user_message())
+
+    assert responses[0].message_pieces[0].converted_value == "Legacy 0.2 reply"
     assert target._dialect == "v02"
-    assert mock_post.call_count == 2
-
-    # Check that retry used tasks/send and type: text
     retry_json = mock_post.call_args_list[1].kwargs["json"]
     assert retry_json["method"] == "tasks/send"
     assert retry_json["params"]["message"]["parts"][0]["type"] == "text"
 
-
-@pytest.mark.usefixtures("patch_central_database")
-@patch("httpx.AsyncClient.post")
-async def test_a2a_multi_turn_task_continuity(mock_post, user_message):
-    # Turn 1 response
-    turn1_resp = MagicMock()
-    turn1_resp.status_code = 200
-    turn1_resp.json.return_value = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "result": {
-            "taskId": "server-task-789",
-            "message": {"parts": [{"kind": "text", "text": "First turn answer"}]},
-        },
-    }
-    # Turn 2 response
-    turn2_resp = MagicMock()
-    turn2_resp.status_code = 200
-    turn2_resp.json.return_value = {
-        "jsonrpc": "2.0",
-        "id": "2",
-        "result": {
-            "taskId": "server-task-789",
-            "message": {"parts": [{"kind": "text", "text": "Second turn answer"}]},
-        },
-    }
-    mock_post.side_effect = [turn1_resp, turn2_resp]
-
-    target = A2ATarget(endpoint="https://agent.example.com/a2a")
-
-    # Turn 1
-    await target.send_prompt_async(message=user_message)
-    turn1_sent = mock_post.call_args_list[0].kwargs["json"]
-    assert "task_id" not in turn1_sent["params"]
-
-    # Turn 2 with same conversation ID
-    turn2_message = Message(
-        message_pieces=[
-            MessagePiece(
-                role="user",
-                original_value="Follow up question",
-                converted_value="Follow up question",
-                conversation_id="conv-1234",
-            )
-        ]
-    )
-    await target.send_prompt_async(message=turn2_message)
-    turn2_sent = mock_post.call_args_list[1].kwargs["json"]
-    assert turn2_sent["params"]["task_id"] == "server-task-789"
+    await target.send_prompt_async(message=_user_message("Turn 2"))
+    turn2 = mock_post.call_args_list[2].kwargs["json"]
+    assert turn2["method"] == "tasks/send"
+    assert turn2["params"]["sessionId"] == "session-1"
+    assert turn2["params"]["id"] != "task-v02", "completed 0.2 tasks must not be reused"
 
 
 @pytest.mark.usefixtures("patch_central_database")
 @patch("httpx.AsyncClient.post")
-async def test_a2a_jsonrpc_refusal_handled_as_response(mock_post, user_message):
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "error": {
-            "code": -32000,
-            "message": "Security policy refused the requested action.",
-        },
-    }
-    mock_post.return_value = mock_resp
-
-    target = A2ATarget(endpoint="https://agent.example.com/a2a")
-    responses = await target.send_prompt_async(message=user_message)
-
-    assert len(responses) == 1
-    assert (
-        responses[0].message_pieces[0].converted_value == "[A2A Refusal] Security policy refused the requested action."
+async def test_a2a_jsonrpc_error_is_error_response(mock_post):
+    mock_post.return_value = _response(
+        {"jsonrpc": "2.0", "id": "1", "error": {"code": -32603, "message": "Received 400 from a service request"}}
     )
+
+    target = A2ATarget(endpoint=ENDPOINT)
+    responses = await target.send_prompt_async(message=_user_message())
+
+    piece = responses[0].message_pieces[0]
+    assert piece.converted_value_data_type == "error"
+    assert piece.response_error == "unknown"
+    assert target._dialect == "auto"
 
 
 @pytest.mark.usefixtures("patch_central_database")
 @patch("httpx.AsyncClient.post")
-async def test_a2a_auth_headers_sent(mock_post, user_message):
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "result": {"message": {"parts": [{"kind": "text", "text": "Authenticated"}]}},
-    }
-    mock_post.return_value = mock_resp
-
-    target = A2ATarget(
-        endpoint="https://agent.example.com/a2a",
-        auth_token="jwt.token.here",
-        api_key="custom-key-123",
-        api_key_header="X-Custom-Key",
+async def test_a2a_content_filter_error_is_blocked(mock_post):
+    mock_post.return_value = _response(
+        {"jsonrpc": "2.0", "id": "1", "error": {"code": -32000, "message": "content_filter: prompt blocked"}}
     )
-    await target.send_prompt_async(message=user_message)
 
-    headers = mock_post.call_args.kwargs["headers"]
-    assert headers["Authorization"] == "Bearer jwt.token.here"
-    assert headers["X-Custom-Key"] == "custom-key-123"
+    target = A2ATarget(endpoint=ENDPOINT)
+    responses = await target.send_prompt_async(message=_user_message())
+
+    assert responses[0].message_pieces[0].response_error == "blocked"
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@patch("httpx.AsyncClient.get")
-async def test_a2a_agent_card_discovery(mock_get):
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "name": "CustomerSupportAgent",
-        "description": "Handles billing and support queries",
-        "version": "1.0.0",
-    }
-    mock_get.return_value = mock_resp
+@patch("httpx.AsyncClient.post")
+async def test_a2a_retries_relayed_rate_limit(mock_post):
+    mock_post.side_effect = [
+        _response({"jsonrpc": "2.0", "id": "1", "error": {"code": -32603, "message": "Received 429 from a service"}}),
+        _response(_task("After retry")),
+    ]
 
-    target = A2ATarget(endpoint="https://agent.example.com/a2a/tasks")
-    card = await target.get_agent_card_async()
+    target = A2ATarget(endpoint=ENDPOINT)
+    responses = await target.send_prompt_async(message=_user_message())
 
-    assert card["name"] == "CustomerSupportAgent"
-    assert mock_get.call_args[0][0] == "https://agent.example.com/.well-known/agent-card.json"
+    assert responses[0].message_pieces[0].converted_value == "After retry"
+    assert mock_post.call_count == 2
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("httpx.AsyncClient.post")
+async def test_a2a_retries_http_rate_limit(mock_post):
+    mock_post.side_effect = [_response({}, status_code=429), _response(_task("After retry"))]
+
+    target = A2ATarget(endpoint=ENDPOINT)
+    responses = await target.send_prompt_async(message=_user_message())
+
+    assert responses[0].message_pieces[0].converted_value == "After retry"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("httpx.AsyncClient.post")
+async def test_a2a_auth_headers_sent(mock_post):
+    mock_post.return_value = _response(_task("Authed"))
+
+    target = A2ATarget(endpoint=ENDPOINT, auth_token="secret-bearer-token")
+    await target.send_prompt_async(message=_user_message())
+
+    assert mock_post.call_args.kwargs["headers"]["Authorization"] == "Bearer secret-bearer-token"
