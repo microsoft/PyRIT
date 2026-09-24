@@ -7,17 +7,17 @@ This is a **fork of `microsoft/PyRIT`** maintained by **shashank03-dev** for **o
 
 ## Contributor identity (STRICT — every commit, push, and PR is mine)
 
-**Sole contributor on everything in this fork: `shashank03-dev` (GitHub: https://github.com/shashank03-dev).**
+**Sole contributor on everything in this fork: SHASHANK — GitHub `shashank03-dev` (https://github.com/shashank03-dev).**
 
 Every commit, push, PR, issue comment, and review reply must be authored **and** committed as me — never as an assistant, bot, or tool. Before the first commit in any clone or session, set and verify:
 
 ```bash
-git config user.name  "shashank03-dev"
+git config user.name  "SHASHANK"
 git config user.email "235868702+shashank03-dev@users.noreply.github.com"   # GitHub no-reply → links to my profile
 git config user.name && git config user.email                                  # verify before committing
 ```
 
-- Check with `git log -1 --format='%an <%ae> | %cn <%ce>'` — **both** author and committer must be `shashank03-dev`. If either is wrong, fix it before pushing (`git commit --amend --reset-author --no-edit` on an unpushed commit).
+- Check with `git log -1 --format='%an <%ae> | %cn <%ce>'` — **both** author and committer must be `SHASHANK <235868702+shashank03-dev@users.noreply.github.com>`. If either is wrong, fix it before pushing (`git commit --amend --reset-author --no-edit` on an unpushed commit).
 - **No `Co-Authored-By` trailers, no `Generated with ...` lines, no session links, no AI/tool attribution** in commit messages, PR titles/bodies, or code comments.
 - PRs are opened from my fork (`shashank03-dev:<branch>` → `microsoft/PyRIT:main`) and signed off by me (CLA is signed under my account).
 
