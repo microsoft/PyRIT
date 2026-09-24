@@ -10,7 +10,6 @@ retrieving results, and cancellation.
 
 import asyncio
 import base64
-import contextlib
 import functools
 import json
 import logging
@@ -207,6 +206,7 @@ class ScenarioRunService:
         # they are serialized onto a single worker. The event loop is still free while they run,
         # which is the point of the offload.
         self._prepare_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pyrit-scenario-prep")
+        self._preparations: set[asyncio.Future[_PreparedRun]] = set()
         self._terminal_errors: OrderedDict[str, str] = OrderedDict()
         self._active_scenario_result_id: str | None = None
         self._queued_runs: deque[_ActiveTask] = deque()
@@ -217,6 +217,77 @@ class ScenarioRunService:
         self._pending_resume_requests: set[str] = set()
         self._queue_revision = 0
         self._stopping = False
+        self._stop_epoch = 0
+        self._stop_tasks: set[asyncio.Task[None]] = set()
+
+    def active_work(self) -> tuple[list[str], int]:
+        """Return scheduled scenario IDs and other work that must drain."""
+        scenario_ids = [
+            *([self._active_scenario_result_id] if self._active_scenario_result_id else []),
+            *(run.scenario_result_id for run in self._queued_runs),
+        ]
+        return scenario_ids, len(self._preparations) + len(self._stop_tasks) + len(self._handoff_retry_tasks)
+
+    def request_stop(self) -> None:
+        """Stop admission and request cancellation for all scheduled scenarios."""
+        if self._stopping:
+            return
+        self._stopping = True
+        self._stop_epoch += 1
+        stop_task = asyncio.create_task(self._stop_scenarios_async())
+        self._stop_tasks.add(stop_task)
+        stop_task.add_done_callback(self._stop_tasks.discard)
+
+    async def _stop_scenarios_async(self) -> None:
+        active_task: asyncio.Task[None] | None = None
+        retry_tasks: list[asyncio.Task[None]] = []
+        async with self._scheduler_lock:
+            for queued in tuple(self._queued_runs):
+                try:
+                    await asyncio.to_thread(
+                        self._memory.try_update_scenario_run_state,
+                        scenario_result_id=queued.scenario_result_id,
+                        expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED},
+                        scenario_run_state=ScenarioRunState.CANCELLED,
+                        error_message="Stopped for PyRIT reinitialization.",
+                        error_type="CancelledError",
+                    )
+                except Exception:
+                    logger.exception(
+                        "Could not cancel queued scenario %s during reinitialization.",
+                        queued.scenario_result_id,
+                    )
+                else:
+                    self._queued_runs.remove(queued)
+                    self._queue_revision += 1
+            if self._active_scenario_result_id is not None:
+                active = self._active_tasks[self._active_scenario_result_id]
+                active.cancellation_state = ScenarioRunState.CANCELLED
+                active.cancellation_reason = "Stopped for PyRIT reinitialization."
+                active.cancellation_error_type = "CancelledError"
+                active_task = active.task
+            retry_tasks = list(self._handoff_retry_tasks)
+        for retry_task in retry_tasks:
+            retry_task.cancel()
+        if retry_tasks:
+            await asyncio.gather(*retry_tasks, return_exceptions=True)
+        if active_task is not None and not active_task.done():
+            active_task.cancel()
+            await asyncio.gather(active_task, return_exceptions=True)
+
+    def reopen(self) -> None:
+        """Reopen admission without restarting scenarios cancelled during draining."""
+        self._stopping = False
+        for active in tuple(self._active_tasks.values()):
+            if active.task is not None and active.task.done():
+                self._schedule_terminalization_retry(active=active)
+
+    async def close_async(self) -> None:
+        """Close a service only after all tracked work has drained."""
+        scenario_ids, remaining = self.active_work()
+        if scenario_ids or remaining:
+            raise RuntimeError("Scenario work has not drained.")
+        await asyncio.to_thread(self._prepare_executor.shutdown, wait=True)
 
     async def start_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
         """
@@ -362,6 +433,7 @@ class ScenarioRunService:
         """
         if self._stopping:
             raise RuntimeError("Scenario run scheduling is stopping.")
+        admitted_epoch = self._stop_epoch
         resumed_from_cancelled = await asyncio.to_thread(
             self._is_run_cancelled, scenario_result_id=request.scenario_result_id
         )
@@ -371,6 +443,8 @@ class ScenarioRunService:
             self._prepare_executor,
             functools.partial(self._prepare_run_blocking, request=request),
         )
+        self._preparations.add(prepare_task)
+        prepare_task.add_done_callback(self._preparations.discard)
         if request.scenario_result_id:
             prepare_task.add_done_callback(lambda _: self._preparing_run_ids.discard(request.scenario_result_id or ""))
         try:
@@ -391,6 +465,16 @@ class ScenarioRunService:
             raise ValueError("Scenario did not produce a scenario_result_id during initialization.")
         if request.scenario_result_id and scenario_result_id != request.scenario_result_id:
             raise ValueError("Scenario initialization changed the saved result ID; resume was not started.")
+        if admitted_epoch != self._stop_epoch:
+            await asyncio.to_thread(
+                self._memory.try_update_scenario_run_state,
+                scenario_result_id=scenario_result_id,
+                expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED},
+                scenario_run_state=ScenarioRunState.CANCELLED,
+                error_message="Stopped for PyRIT reinitialization.",
+                error_type="CancelledError",
+            )
+            raise RuntimeError("Scenario preparation stopped for PyRIT reinitialization.")
         persisted = await asyncio.to_thread(
             self._memory.get_scenario_results,
             scenario_result_ids=[scenario_result_id],
@@ -493,6 +577,7 @@ class ScenarioRunService:
                     error_message="The start request was cancelled while the scenario was being initialized.",
                 )
             except Exception as update_error:
+                self._failed_stops[scenario_result_id] = _ActiveTask(scenario_result_id=scenario_result_id)
                 logger.warning(
                     f"Could not mark abandoned scenario run {scenario_result_id} as cancelled: {update_error}"
                 )
@@ -2104,6 +2189,19 @@ class ScenarioRunService:
 
 
 _service_instance: ScenarioRunService | None = None
+
+
+def peek_scenario_run_service() -> ScenarioRunService | None:
+    """Return the existing service without constructing one for lifecycle inspection."""
+    return _service_instance
+
+
+async def reset_scenario_run_service_async() -> None:
+    """Close and discard the drained singleton."""
+    global _service_instance
+    if _service_instance is not None:
+        await _service_instance.close_async()
+        _service_instance = None
 
 
 def get_scenario_run_service() -> ScenarioRunService:

@@ -45,3 +45,11 @@ class UpdateEnvironmentFileRequest(BaseModel):
 
     content: str = Field(..., description="Raw dotenv file contents")
     version: str = Field(..., description="Version token returned by the latest content read")
+
+
+class ReinitializeRequest(BaseModel):
+    """Apply saved sources, optionally confirming the currently displayed work."""
+
+    version: str
+    stop_scenarios: bool = False
+    work_revision: int | None = None

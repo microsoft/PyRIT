@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
+import { useRuntime } from '@/hooks/useRuntime'
 import { targetsApi } from '@/services/api'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import { toApiError } from '@/services/errors'
@@ -27,6 +28,7 @@ interface UseAttackTargetResolutionOptions {
   attackTarget: TargetInfo | null
   attackTargetSource: 'persisted' | 'created'
   createdTarget?: TargetInstance | null
+  createdTargetGeneration?: string
 }
 
 interface UseAttackTargetResolutionResult {
@@ -67,7 +69,9 @@ export function useAttackTargetResolution({
   attackTarget,
   attackTargetSource,
   createdTarget,
+  createdTargetGeneration,
 }: UseAttackTargetResolutionOptions): UseAttackTargetResolutionResult {
+  const { generation, ready } = useRuntime()
   const [registryResolution, setRegistryResolution] = useState<RegistryResolution>({
     attackId: null,
     attackLoadSequence: 0,
@@ -76,7 +80,7 @@ export function useAttackTargetResolution({
   const [resolutionAttempt, setResolutionAttempt] = useState(0)
 
   useEffect(() => {
-    if (!attackId || !hasCompleteIdentifier(attackTarget)) return
+    if (!ready || !attackId || !hasCompleteIdentifier(attackTarget)) return
     if (attackTargetSource === 'created') return
 
     let cancelled = false
@@ -105,13 +109,15 @@ export function useAttackTargetResolution({
     return () => {
       cancelled = true
     }
-  }, [attackId, attackLoadSequence, attackTarget, attackTargetSource, resolutionAttempt])
+  }, [attackId, attackLoadSequence, attackTarget, attackTargetSource, resolutionAttempt, generation, ready])
 
   const getResolutionStatus = (): AttackTargetResolutionStatus => {
     if (!attackId) return 'idle'
     if (!hasCompleteIdentifier(attackTarget)) return 'legacy'
     if (attackTargetSource === 'created') {
-      return createdTarget && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
+      return createdTargetGeneration === generation
+        && createdTarget
+        && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
         ? 'resolved' : 'unavailable'
     }
     if (

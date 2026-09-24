@@ -6,6 +6,7 @@
 import logging
 import os
 from hashlib import sha256
+from typing import Any
 
 from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -16,6 +17,7 @@ from pyrit.backend.models.configuration import (
     ConfigurationFileContent,
     EnvironmentFileContent,
     EnvironmentFileListResponse,
+    ReinitializeRequest,
     UpdateConfigurationFileRequest,
     UpdateEnvironmentFileRequest,
 )
@@ -28,6 +30,46 @@ from pyrit.exceptions import KeyVaultInitializationException
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["config"], dependencies=[Depends(require_admin)])
+
+
+@router.get("/runtime")
+async def runtime_status_async(request: Request) -> dict[str, Any]:
+    """Return administrator-visible runtime status and outstanding work."""
+    return request.app.state.runtime_lifecycle.status()
+
+
+@router.post("/runtime/apply", status_code=202)
+async def reinitialize_async(body: ReinitializeRequest, request: Request) -> dict[str, Any]:
+    """
+    Apply saved configuration in the current backend process.
+
+    Returns:
+        dict[str, Any]: Accepted operation or rejection status.
+    """
+    result = request.app.state.runtime_lifecycle.begin_apply(
+        version=body.version,
+        stop_scenarios=body.stop_scenarios,
+        work_revision=body.work_revision,
+    )
+    _audit_configuration_access(
+        request=request,
+        action="apply",
+        source="runtime",
+        outcome=result["outcome"],
+        version=body.version,
+    )
+    return result
+
+
+@router.post("/runtime/cancel")
+async def cancel_pending_apply_async(request: Request) -> dict[str, Any]:
+    """
+    Cancel a timed-out pending apply without resuming cancelled runs.
+
+    Returns:
+        dict[str, Any]: Updated status or a busy outcome.
+    """
+    return request.app.state.runtime_lifecycle.cancel_pending()
 
 
 def _content_hash(content: str) -> str:

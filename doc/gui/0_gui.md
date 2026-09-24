@@ -358,7 +358,57 @@ The **Configuration** page provides administrator-only editing for the files and
 - **Initializers** shows the read-only startup sequence from the active `.pyrit_conf`, in run order, along with the catalog of registered initializers.
 - **Custom Initializers** registers or removes Python initializer scripts. This tab requires `allow_custom_initializers: true`; scripts are stored in the configured local directory or Azure Blob container and must define a concrete `PyRITInitializer` subclass.
 
-Use **Reload** to discard local edits and fetch the latest source content. Saved configuration and environment changes take effect after restarting PyRIT. Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
+Use **Reload file** to fetch the latest source content; unsaved edits require explicit discard confirmation.
+**Save** only persists a source. **Reinitialize PyRIT** separately applies saved configuration, environment sources,
+and stored initializer scripts for every user of this backend. Save or discard editor changes first.
+Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
+
+### Reinitializing without a process restart
+
+This capability is available to administrators without a configuration opt-in.
+It is limited to **one backend process and one replica**.
+It is disabled when `WEB_CONCURRENCY`, `UVICORN_WORKERS`, `PYRIT_API_WORKERS`, or `PYRIT_REPLICAS` specifies anything
+other than `1`. Do not use it behind a multi-worker server or across multiple replicas; it is not a distributed
+configuration update. External scaling settings cannot be discovered from within a process.
+
+Reinitialization resets setup-owned component registries and recreates backend services. Components created only
+through the GUI must be recreated. The same memory object and persisted history are retained, including an in-memory
+database. Changing the memory type, Azure SQL connection, or Azure results storage configuration requires a backend
+restart and is rejected before stopping work.
+
+If work is active, review the displayed scenario IDs, preparation count, and in-flight sends, then explicitly choose
+**Stop scenarios and reinitialize**. New runtime requests are rejected while stopping or initializing. Scenario tasks
+are cancelled and their cleanup is awaited. Preparation threads cannot be killed; queued preparations are cancelled
+where possible, and running or abandoned preparations must finish without launching a scenario. Chat sends and
+background estimates finish before any runtime reset. Completed history remains; cancelled runs never restart
+automatically. External provider calls already sent may still complete and incur charges.
+
+After the bounded drain deadline expires, the runtime remains blocked. **Retry reinitialization** checks the saved
+sources again and waits again, or **Cancel pending apply** reopens the unchanged runtime without resuming cancelled
+scenarios. A drain timeout does not apply environment assignments, reset registries, or run initializers.
+Operation status survives a browser disconnect or navigation; other connected clients detect runtime generation
+changes and refresh catalogs without discarding chat or configuration drafts.
+
+If parsing or initialization fails at startup or during apply, the server and administration UI remain available,
+but runtime operations are unavailable. Repair the saved YAML, environment source, or custom initializer and retry.
+For a broken custom script, inspect its source, remove it, and upload corrected source. Malformed startup YAML does
+not enable custom code management or assume environment paths. Authentication and authorization retain their
+process-start settings; reinitialization does not recreate them.
+
+Selected environment assignments replace existing process values, **including deployment-provided values**.
+Omitted variables remain unchanged; empty assignments set an empty value. Key Vault source selection and
+`.env.local` priority are preserved, and interpolation uses the new selected values. Ordinary library initialization
+keeps its existing precedence; replacement is an explicit reinitialization option. There is no rollback of
+environment assignments, initializer side effects, memory writes, or external actions if initialization fails.
+Listener and authentication settings remain process-start-only. This does not run a process supervisor, restart a
+container, or make local source files durable when a container is replaced.
+
+API clients can use administrator-only `GET /api/config/runtime`, `POST /api/config/runtime/apply`
+(`version`, `stop_scenarios`, `work_revision`), and `POST /api/config/runtime/cancel`. Obtain the configuration version
+from `GET /api/config` and the work revision from status. A newly admitted operation returns HTTP 202 and is tracked
+in status; outcomes distinguish busy, confirmation-required, version-conflict, invalid-configuration, stop-timeout,
+and initialization-failed. Authenticated non-admin clients can read readiness and generation only at `GET /api/runtime`.
+`GET /api/health` reports server responsiveness, not runtime readiness.
 
 ---
 

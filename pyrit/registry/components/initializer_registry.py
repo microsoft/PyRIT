@@ -281,7 +281,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         if not spec or not spec.loader:
             raise ValueError(f"Could not load initializer script: {file_path}")
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        exec(compile(file_path.read_text(encoding="utf-8"), str(file_path), "exec"), module.__dict__)
         return module
 
     @staticmethod
@@ -313,7 +313,9 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             )
         ]
 
-    def create_from_script_paths(self, *, script_paths: Sequence[str | Path]) -> list[PyRITInitializer]:
+    def create_from_script_paths(
+        self, *, script_paths: Sequence[str | Path], strict: bool = False
+    ) -> list[PyRITInitializer]:
         """
         Load initializer instances from external Python script files.
 
@@ -327,6 +329,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             script_paths (Sequence[str | Path]): Python (.py) file paths to load
                 initializers from. Relative paths resolve against the current
                 working directory.
+            strict (bool): Raise rather than skip a class whose constructor fails.
 
         Returns:
             list[PyRITInitializer]: Instantiated initializers, in load order.
@@ -356,6 +359,8 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
                         file_instances.append(init_cls())
                         logger.debug(f"Found and instantiated {init_cls.__name__} in {script_path.name}")
                     except Exception as e:
+                        if strict:
+                            raise
                         logger.warning(f"Could not instantiate {init_cls.__name__} from {script_path.name}: {e}")
 
                 if not file_instances:
@@ -411,18 +416,27 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         logger.info(f"Registered custom initializer: {name} ({discovered.__name__})")
         return name
 
-    def register_stored_initializers(self) -> None:
-        """Register all valid custom initializers from the configured storage source."""
+    def register_stored_initializers(self, *, strict: bool = False) -> None:
+        """
+        Register custom initializers from the configured storage source.
+
+        Raises:
+            ValueError: If strict registration encounters a conflicting name or invalid script.
+        """
         self._ensure_discovered()
         for name, script_content in self._get_custom_storage().list_scripts().items():
             try:
                 validate_registry_name(name)
                 if name in self._classes:
+                    if strict:
+                        raise ValueError("Stored initializer conflicts with an existing registration.")
                     logger.warning(f"Skipping stored custom initializer '{name}': name is already registered.")
                     continue
                 discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
                 self.register_class(discovered, name=name)
             except Exception:
+                if strict:
+                    raise
                 logger.exception(f"Skipping stored custom initializer '{name}': registration failed.")
 
     def list_stored_initializer_sources(self) -> tuple[str, list[tuple[str, str, str]]]:

@@ -1131,3 +1131,26 @@ export interface ScenarioRunProgress {
   has_more: boolean
   plan_complete: boolean
 }
+export interface RuntimeReadiness {
+  ready: boolean
+  state: string
+  generation: string
+}
+
+export interface RuntimeStatus {
+  state: string
+  generation: string
+  version: string | null
+  enabled: boolean
+  applying: boolean
+  outcome: string
+  message: string
+  work_revision: number
+  active_work: {
+    scenario_ids: string[]
+    preparing: number
+    sends: number
+    requests: number
+    estimates: number
+  }
+}

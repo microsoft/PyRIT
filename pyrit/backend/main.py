@@ -5,7 +5,6 @@
 FastAPI application entry point for PyRIT backend.
 """
 
-import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -22,7 +21,7 @@ from starlette.types import Scope
 import pyrit
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
-from pyrit.backend.models.initializers import ConfiguredInitializerSetting
+from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import (
     attacks,
     auth,
@@ -39,12 +38,7 @@ from pyrit.backend.routes import (
     version,
 )
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
-from pyrit.backend.services.converter_service import get_converter_service
-from pyrit.backend.services.environment_file_service import EnvironmentFileService
-from pyrit.backend.services.scenario_run_service import get_scenario_run_service
-from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
-from pyrit.registry import InitializerRegistry
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 
 # Check for development mode from environment variable
 DEV_MODE = os.getenv("PYRIT_DEV_MODE", "false").lower() == "true"
@@ -64,68 +58,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     configuration_file_service = ConfigurationFileService(config_file_value=os.getenv("PYRIT_CONFIG_FILE"))
     app.state.configuration_file_service = configuration_file_service
-    async with configuration_file_service.resolve_async() as config_file:
-        config = ConfigurationLoader.load_with_overrides(config_file=config_file)
-    resolved_env_files = config.resolve_env_files()
-    read_only_file_sources = {}
-    if os.getenv("PYRIT_ENV_CONTENTS"):
-        read_only_file_sources[CONFIGURATION_DIRECTORY_PATH / ".env"] = (
-            "This file is materialized from the Container App secret and cannot be persisted here. "
-            "Update the deployment secret instead."
-        )
-    app.state.environment_file_service = EnvironmentFileService(
-        resolved_env_files=list(resolved_env_files) if resolved_env_files is not None else None,
-        env_akv_ref=config.resolve_env_akv_ref(),
-        env_akv_strict=config.env_akv_strict,
-        read_only_file_sources=read_only_file_sources,
-    )
-    initializer_registry = InitializerRegistry.get_registry_singleton()
-    initializer_registry.configure_custom_scripts_source(config.custom_initializers_source)
-    if config.allow_custom_initializers:
-        await asyncio.to_thread(initializer_registry.register_stored_initializers)
-    await config.initialize_pyrit_async(raise_on_initializer_error=False)
-
-    app.state.configured_initializers = [
-        ConfiguredInitializerSetting(
-            initializer_name=initializer.name,
-            parameters=initializer.args,
-            order_index=order_index,
-        )
-        for order_index, initializer in enumerate(config.initializer_configs)
-    ]
-
-    # Expose config values to route handlers via app.state
-    default_labels: dict[str, str] = {}
-    if config.operator:
-        default_labels["operator"] = config.operator
-    if config.operation:
-        default_labels["operation"] = config.operation
-    app.state.default_labels = default_labels
-    app.state.max_concurrent_scenario_runs = config.max_concurrent_scenario_runs
-    app.state.allow_custom_initializers = config.allow_custom_initializers
-
-    if config.allow_custom_initializers:
-        logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
-
-    scenario_run_service = get_scenario_run_service()
-    await scenario_run_service.reconcile_interrupted_runs_async()
+    runtime = RuntimeLifecycle(app=app, source=configuration_file_service)
+    app.state.runtime_lifecycle = runtime
+    await runtime.startup_async()
 
     # Mount the bundled frontend (or print a dev/missing-frontend notice).
     # Done here rather than at module load so test imports of `pyrit.backend.main`
     # don't emit noise and don't perform filesystem side effects.
     setup_frontend()
 
-    converter_service = await asyncio.to_thread(get_converter_service)
     try:
         yield
     finally:
-        try:
-            await scenario_run_service.shutdown_async()
-        finally:
-            try:
-                await converter_service.close_async()
-            finally:
-                get_converter_service.cache_clear()
+        await runtime.shutdown_async()
 
 
 app = FastAPI(
@@ -147,6 +92,7 @@ app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
 
 # Attach X-Request-ID to every request/response for log correlation
 app.add_middleware(RequestIdMiddleware)
+app.add_middleware(RuntimeAdmissionMiddleware)
 
 # Microsoft Graph-backed authentication (PKCE — no client secrets needed)
 # Disabled if tenant/client configuration is absent; enabled deployments require allowed groups.

@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { buildConverterInputs } from '@/components/Chat/converterTypes'
+import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
@@ -21,6 +22,7 @@ interface VersionedInput extends ConverterInputPiece {
 }
 
 interface ConversionState {
+  generation: string
   sourceInputs: ConverterInputPiece[]
   inputs: VersionedInput[]
   nextRevision: number
@@ -152,8 +154,10 @@ function invalidatePiece(state: ConversionState, pieceId: string): ConversionSta
 }
 
 export function useChatConverters(text: string, attachments: MessageAttachment[]): ChatConverterController {
+  const { generation } = useRuntime()
   const inputs = useMemo(() => buildConverterInputs(text, attachments), [text, attachments])
   const [state, setState] = useState<ConversionState>(() => ({
+    generation,
     sourceInputs: inputs,
     inputs: inputs.map((input: ConverterInputPiece) => ({ ...input, revision: 0 })),
     nextRevision: 0,
@@ -169,7 +173,24 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   const nextRunId = useRef(0)
   const activeRun = useRef<number | null>(null)
 
-  if (state.sourceInputs !== inputs) setState(reconcileInputs(state, inputs))
+  if (state.generation !== generation) {
+    activeRun.current = null
+    setState({
+      ...state,
+      generation,
+      sourceInputs: inputs,
+      inputs: inputs.map((input: ConverterInputPiece) => ({ ...input, revision: state.nextRevision + 1 })),
+      nextRevision: state.nextRevision + 1,
+      workingInputs: {},
+      stageResults: {},
+      errors: {},
+      applied: {},
+      runId: state.runId + 1,
+      isConverting: false,
+    })
+  } else if (state.sourceInputs !== inputs) {
+    setState(reconcileInputs(state, inputs))
+  }
 
   const setPipeline = useCallback((
     pieceType: string,

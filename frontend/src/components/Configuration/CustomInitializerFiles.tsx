@@ -4,6 +4,7 @@ import { MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
 
 import CustomInitializers from '@/components/Initializers/CustomInitializers'
 import { initializersApi } from '@/services/api'
+import { useRuntime } from '@/hooks/useRuntime'
 import { toApiError } from '@/services/errors'
 import type { CustomInitializer } from '@/types'
 
@@ -15,6 +16,7 @@ interface StatusMessage {
 }
 
 export default function CustomInitializerFiles() {
+  const { generation } = useRuntime()
   const styles = useConfigurationStyles()
   const [items, setItems] = useState<CustomInitializer[]>([])
   const [loading, setLoading] = useState(true)
@@ -26,7 +28,6 @@ export default function CustomInitializerFiles() {
     let cancelled = false
 
     const loadAsync = async (): Promise<void> => {
-      setLoading(true)
       try {
         const response = await initializersApi.listCustom()
         if (!cancelled) {
@@ -47,7 +48,7 @@ export default function CustomInitializerFiles() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [generation])
 
   const reload = async (): Promise<void> => {
     const response = await initializersApi.listCustom()

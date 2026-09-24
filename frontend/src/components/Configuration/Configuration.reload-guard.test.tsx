@@ -140,7 +140,7 @@ describe('Configuration failed environment reload guard', () => {
 
     mockedConfigurationApi.listEnvironmentFiles.mockRejectedValueOnce(new Error('Reload failed'))
 
-    await user.click(screen.getByRole('button', { name: 'Reload' }))
+    await user.click(screen.getByRole('button', { name: 'Reload file' }))
     await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
 
     expect(await screen.findByText('Reload failed')).toBeInTheDocument()
