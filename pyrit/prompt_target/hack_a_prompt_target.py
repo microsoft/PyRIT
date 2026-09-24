@@ -561,11 +561,12 @@ class HackAPromptTarget(PromptTarget):
             str: The concatenated answer.
 
         Raises:
-            ValueError: If the stream reports an error, or finishes for the reason
-                ``"error"``, or carries no text part at all. The platform reports these
-                inside an HTTP 200, so ``raise_for_status()`` never sees them; returning
-                the text that arrived before the failure would present a truncated
-                answer as a complete one.
+            ValueError: If the stream reports an error, finishes for the reason
+                ``"error"``, carries a part this target reads but cannot decode, or
+                carries no text part at all. The platform reports failures inside an
+                HTTP 200, so ``raise_for_status()`` never sees them, and a body that
+                stops mid-part is the same kind of failure: returning the text that
+                arrived before it would present a truncated answer as a complete one.
         """
         pieces: list[str] = []
 
@@ -574,9 +575,7 @@ class HackAPromptTarget(PromptTarget):
             line = line.removesuffix("\r")
 
             if line.startswith(cls._ERROR_PART_PREFIX):
-                raise ValueError(
-                    f"The chat response reported an error: {cls._decode_part(line, cls._ERROR_PART_PREFIX)!r}"
-                )
+                raise ValueError(f"The chat response reported an error: {line!r}")
 
             if line.startswith(cls._FINISH_PART_PREFIXES):
                 finish = cls._decode_part(line, line[:2])
@@ -588,8 +587,11 @@ class HackAPromptTarget(PromptTarget):
                 continue
 
             piece = cls._decode_part(line, cls._TEXT_PART_PREFIX)
-            if isinstance(piece, str):
-                pieces.append(piece)
+            if not isinstance(piece, str):
+                raise ValueError(
+                    f"A '{cls._TEXT_PART_PREFIX}' part of the chat response did not hold a string: {line!r}"
+                )
+            pieces.append(piece)
 
         if not pieces:
             raise ValueError(
@@ -602,17 +604,24 @@ class HackAPromptTarget(PromptTarget):
     @classmethod
     def _decode_part(cls, line: str, prefix: str) -> Any:
         """
-        Decode the JSON payload of one data-stream part, or return ``None``.
+        Decode the JSON payload of one data-stream part.
+
+        Only the parts this target acts on are decoded, so a part that does not parse
+        is a truncated or changed stream rather than metadata to skip. It is raised
+        rather than warned about: the caller cannot tell a complete answer from one
+        that stops mid-part, and a warning does not reach it.
 
         Args:
             line (str): The whole line, prefix included.
             prefix (str): The part prefix to strip.
 
         Returns:
-            Any: The decoded payload, or ``None`` if it does not parse.
+            Any: The decoded payload.
+
+        Raises:
+            ValueError: If the payload is not valid JSON.
         """
         try:
             return json.loads(line[len(prefix) :])
-        except json.JSONDecodeError:
-            logger.warning(f"Dropping a malformed '{prefix}' part of the response: {line}")
-            return None
+        except json.JSONDecodeError as error:
+            raise ValueError(f"A '{prefix}' part of the chat response did not parse: {line!r}") from error

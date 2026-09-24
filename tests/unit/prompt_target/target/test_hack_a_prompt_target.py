@@ -228,9 +228,6 @@ async def test_hack_a_prompt_reset_conversation_warns_about_the_session(
         ('f:{"messageId":"msg-1"}\n0:"only text"\ne:{"finishReason":"stop"}\n', "only text"),
         ('0:"quoted \\"word\\" and\\nnewline"\n', 'quoted "word" and\nnewline'),
         ('0:"\\u00e4\\u00f6"\n', "äö"),
-        ('0:not json\n0:" kept"\n', " kept"),
-        ('0:123\n0:" kept"\n', " kept"),
-        ('0:{"text":"object"}\n0:" kept"\n', " kept"),
         ('0:""\n', ""),
         # str.splitlines() also breaks at these three; the wire delimiter does not,
         # and they are ordinary characters inside a JSON string.
@@ -252,7 +249,6 @@ def test_hack_a_prompt_parses_streamed_parts(response_text: str, expected: str):
         'e:{"finishReason":"stop"}\n',
         'f:{"messageId":"m"}\ne:{"finishReason":"stop"}\n',
         'data: {"type":"text-delta","delta":"v5 framing"}\n',
-        "0:not json\n",
     ],
 )
 def test_hack_a_prompt_without_a_text_part_raises(response_text: str):
@@ -273,6 +269,28 @@ def test_hack_a_prompt_stream_errors_raise(response_text: str, match: str):
     # The platform reports these inside an HTTP 200, so raise_for_status() never sees
     # them; returning the text that arrived first would pass a truncated answer off as
     # a complete one.
+    with pytest.raises(ValueError, match=match):
+        HackAPromptTarget._parse_stream(response_text)
+
+
+@pytest.mark.parametrize(
+    ("response_text", "match"),
+    [
+        # A body that stops mid-part is a truncated stream, not metadata to skip.
+        ('0:"Hello"\n0:" unfinished', "did not parse"),
+        ("0:not json\n", "did not parse"),
+        ('0:not json\n0:" kept"\n', "did not parse"),
+        ('0:"Hi"\nd:{"finishReason":', "did not parse"),
+        ('0:"Hi"\ne:{"finishReason":', "did not parse"),
+        # A text part is defined to hold a JSON string; anything else is a change of
+        # protocol, and the text beside it is not a whole answer either.
+        ('0:123\n0:" kept"\n', "did not hold a string"),
+        ('0:{"text":"object"}\n0:" kept"\n', "did not hold a string"),
+    ],
+)
+def test_hack_a_prompt_malformed_parts_raise(response_text: str, match: str):
+    # Dropping the part and returning what decoded would hand the caller a truncated
+    # answer with response_error="none"; a warning does not reach the caller at all.
     with pytest.raises(ValueError, match=match):
         HackAPromptTarget._parse_stream(response_text)
 
