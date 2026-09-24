@@ -897,13 +897,40 @@ def test_reject_jinja_syntax_uses_custom_component_name():
 
 def test_compose_with_prefix_joins_prefix_and_base():
     """The prefix and base prompt are joined with a blank line between them, prefix first."""
-    base = SeedPrompt(value="base persona {{ objective }}", data_type="text", parameters=["objective"])
+    base = SeedPrompt(
+        value="base persona {{ objective }}", data_type="text", parameters=["objective"], is_jinja_template=True
+    )
 
     combined = SeedPrompt.compose_with_prefix(base_prompt=base, prefix="extra rules", required_parameters=["objective"])
 
     assert combined.value == "extra rules\n\nbase persona {{ objective }}"
     assert combined.is_jinja_template is True
     assert combined.parameters == ["objective"]
+
+
+def test_compose_with_prefix_preserves_untrusted_base_trust_marker():
+    """An untrusted base must not be promoted to a template, which would render its raw wrapper."""
+    base = SeedPrompt(
+        value=SeedPrompt.escape_for_jinja("payload {% endraw %}{{ 7*7 }}{% raw %} tail"),
+        data_type="text",
+        is_jinja_template=False,
+    )
+
+    combined = SeedPrompt.compose_with_prefix(base_prompt=base, prefix="extra rules", required_parameters=[])
+
+    assert combined.is_jinja_template is False
+    assert "49" not in combined.value
+    assert combined.value == f"extra rules\n\n{base.value}"
+
+
+def test_compose_with_prefix_preserves_untrusted_prefix_trust_marker():
+    """An untrusted SeedPrompt prefix also blocks promotion, since its text lands in the result."""
+    base = SeedPrompt(value="base {{ objective }}", data_type="text", parameters=["objective"], is_jinja_template=True)
+    prefix = SeedPrompt(value="untrusted rules", data_type="text", parameters=["objective"], is_jinja_template=False)
+
+    combined = SeedPrompt.compose_with_prefix(base_prompt=base, prefix=prefix, required_parameters=["objective"])
+
+    assert combined.is_jinja_template is False
 
 
 def test_compose_with_prefix_joins_seed_prompt_prefix_and_base():

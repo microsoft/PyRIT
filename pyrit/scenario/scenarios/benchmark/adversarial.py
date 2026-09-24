@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from functools import cache
 from typing import TYPE_CHECKING, ClassVar
@@ -386,7 +387,7 @@ class AdversarialBenchmark(Scenario):
             )
 
         resolved_targets = self._resolve_adversarial_targets(target_names=target_names)
-        guidance = _get_benchmark_adversarial_guidance()
+        guidance = await asyncio.to_thread(_get_benchmark_adversarial_guidance)
         technique_factories = {
             name: factory.with_adversarial_system_prompt_prefix(guidance)
             for name, factory in resolve_technique_factories(context=context).items()
