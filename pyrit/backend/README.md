@@ -71,7 +71,7 @@ from pyrit.cli.api_client import PyRITApiClient
 
 
 async def list_scenarios():
-    async with PyRITApiClient(base_url="http://127.0.0.1:8000") as client:
+    async with PyRITApiClient(base_url="http://127.0.0.1:8000", auth_mode="auto") as client:
         print(await client.list_scenarios_async())
 
 

@@ -7,6 +7,7 @@ Unit tests for pyrit.cli.api_client.PyRITApiClient.
 
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -110,6 +111,39 @@ async def test_handshake_authenticates_before_version_and_stamps_business_reques
         ("GET", "/api/scenarios/runs/abc"),
         ("POST", "/api/scenarios/runs/abc/cancel"),
     ]
+    assert opened[0].is_closed
+    provider.close_async.assert_awaited_once()
+
+
+def test_backend_readme_example_authenticates_before_handshake(transport_client):
+    readme = Path(__file__).resolve().parents[3] / "pyrit/backend/README.md"
+    example = readme.read_text(encoding="utf-8").split("```python\n", 1)[1].split("```", 1)[0]
+    requests = []
+    provider = MagicMock(get_token_async=AsyncMock(return_value="token"), close_async=AsyncMock())
+
+    def handler(request):
+        requests.append(request.url.path)
+        if request.url.path == "/api/auth/config":
+            return httpx.Response(
+                200,
+                json={
+                    "enabled": True,
+                    "tenantId": "tenant",
+                    "clientId": "client",
+                    "scopes": ["https://graph.microsoft.com/User.Read"],
+                },
+            )
+        assert request.headers.get("Authorization") == "Bearer token"
+        assert request.headers[COMPATIBILITY_HEADER] == COMPATIBILITY_ID
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"compatibility_id": COMPATIBILITY_ID})
+        assert request.url.path == "/api/scenarios/catalog"
+        return httpx.Response(200, json={"items": []})
+
+    opened = transport_client(handler)
+    with patch("pyrit.cli._auth.create_token_provider_async", AsyncMock(return_value=provider)):
+        exec(compile(example, str(readme), "exec"), {})
+    assert requests == ["/api/auth/config", "/api/version", "/api/scenarios/catalog"]
     assert opened[0].is_closed
     provider.close_async.assert_awaited_once()
 
