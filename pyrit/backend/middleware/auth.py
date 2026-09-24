@@ -20,6 +20,7 @@ from typing import Any, ClassVar
 
 import httpx
 from fastapi import HTTPException, status
+from starlette._utils import get_route_path
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -129,7 +130,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             Response with 401 if auth fails, otherwise the normal response.
         """
         # Skip auth for public paths and static files
-        path = request.url.path
+        path = get_route_path(request.scope)
         if not self._enabled or path in self._PUBLIC_PATHS or not path.startswith("/api"):
             return await call_next(request)
 

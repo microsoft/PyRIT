@@ -3,8 +3,10 @@
 
 """Reject incompatible API clients before authentication or application work."""
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
+from fastapi import FastAPI
+from starlette._utils import get_route_path
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -24,22 +26,25 @@ class CompatibilityMiddleware:
         self.app = app
         self._compatibility_id = _compatibility.get_compatibility_id()
 
+    @classmethod
+    def requires_compatibility(cls, *, path: str, method: str) -> bool:
+        """Return whether an application-relative path and method require the marker."""
+        return method != "OPTIONS" and (path == "/api" or path.startswith("/api/")) and path not in cls._NEUTRAL_PATHS
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Validate the marker without consuming the body or invoking dependencies."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         compatibility_id = self._compatibility_id
-        if scope["type"] == "http" and "app" in scope:
+        if "app" in scope:
             state = scope["app"].state
             if not hasattr(state, "compatibility_id"):
                 state.compatibility_id = compatibility_id
             compatibility_id = state.compatibility_id
 
-        path = scope.get("path", "")
-        if (
-            scope["type"] != "http"
-            or scope["method"] == "OPTIONS"
-            or (path != "/api" and not path.startswith("/api/"))
-            or path in self._NEUTRAL_PATHS
-        ):
+        if not self.requires_compatibility(path=get_route_path(scope), method=scope["method"]):
             await self.app(scope, receive, send)
             return
 
@@ -72,3 +77,42 @@ class CompatibilityMiddleware:
             },
         )
         await response(scope, receive, send)
+
+
+class CompatibilityAPI(FastAPI):
+    """Document the middleware's required header without adding runtime dependencies."""
+
+    def openapi(self) -> dict[str, Any]:
+        """
+        Extend the framework-generated schema while preserving its generation and caching.
+
+        Returns:
+            The OpenAPI schema with the required business-request header documented.
+        """
+        schema = super().openapi()
+        for path, path_item in schema.get("paths", {}).items():
+            for method, operation in path_item.items():
+                if method not in {"get", "post", "put", "patch", "delete", "head", "trace"}:
+                    continue
+                if not CompatibilityMiddleware.requires_compatibility(path=path, method=method.upper()):
+                    continue
+                parameters = operation.setdefault("parameters", [])
+                if not any(
+                    parameter.get("in") == "header"
+                    and parameter.get("name", "").lower() == _compatibility.COMPATIBILITY_HEADER.lower()
+                    for parameter in parameters
+                ):
+                    parameters.append(
+                        {
+                            "name": _compatibility.COMPATIBILITY_HEADER,
+                            "in": "header",
+                            "required": True,
+                            "schema": {"type": "string"},
+                            "description": (
+                                "The caller's packaged <Python package version>+g<full source commit> identity. "
+                                "Authenticate and compare it with /api/version before sending business requests. "
+                                "Do not copy the backend's identity."
+                            ),
+                        }
+                    )
+        return schema

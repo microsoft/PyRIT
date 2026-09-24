@@ -23,7 +23,7 @@ import pyrit
 from pyrit import _compatibility
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
-from pyrit.backend.middleware.compatibility import CompatibilityMiddleware
+from pyrit.backend.middleware.compatibility import CompatibilityAPI, CompatibilityMiddleware
 from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.routes import (
     attacks,
@@ -131,7 +131,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 get_converter_service.cache_clear()
 
 
-app = FastAPI(
+app = CompatibilityAPI(
     title="PyRIT API",
     description="Python Risk Identification Tool for LLMs - REST API",
     version=pyrit.__version__,

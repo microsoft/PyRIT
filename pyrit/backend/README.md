@@ -81,6 +81,9 @@ asyncio.run(list_scenarios())
 For raw HTTP tooling, obtain the local marker with
 `python -c "from pyrit._compatibility import get_compatibility_id; print(get_compatibility_id())"`,
 authenticate and compare `/api/version`, then pass that local marker as the header.
+The development Swagger UI's **Try it out** exposes this required header on each
+business operation. Enter the same local marker there; neutral operations do not
+require it. Swagger does not perform the compatibility handshake for you.
 Launcher health checks use `/api/health` independently of the gated client lifecycle.
 
 Commit equality cannot distinguish uncommitted edits or dependency differences.

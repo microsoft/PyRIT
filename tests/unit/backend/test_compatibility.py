@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.testclient import TestClient
 
 import pyrit
 from pyrit import _compatibility
 from pyrit.backend.main import app, lifespan
 from pyrit.backend.middleware.auth import AuthenticatedUser, EntraAuthMiddleware
-from pyrit.backend.middleware.compatibility import CompatibilityMiddleware
+from pyrit.backend.middleware.compatibility import CompatibilityAPI, CompatibilityMiddleware
 from pyrit.backend.routes.version import VersionResponse
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
@@ -44,16 +44,91 @@ def guarded_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     return test_app
 
 
-@pytest.fixture
-def guarded_client(guarded_app: FastAPI) -> TestClient:
-    """Do not supply a marker implicitly in protocol tests."""
-    return TestClient(guarded_app)
+@pytest.fixture(
+    params=[
+        pytest.param(("", "", ""), id="direct"),
+        pytest.param(("", "/pyrit", "/pyrit"), id="mounted"),
+        pytest.param(("/pyrit", "", "/pyrit"), id="root-path"),
+        pytest.param(("/pyrit", "", ""), id="stripped-root-path"),
+        pytest.param(("/ap", "", ""), id="root-path-segment-boundary"),
+    ]
+)
+def guarded_client(guarded_app: FastAPI, request: pytest.FixtureRequest) -> TestClient:
+    """Exercise direct and prefixed deployments without implicitly supplying a marker."""
+    root_path, mount_path, url_prefix = request.param
+    guarded_app.root_path = root_path
+    test_app = guarded_app
+    if mount_path:
+        test_app = FastAPI()
+        test_app.mount(mount_path, guarded_app)
+    return TestClient(test_app, base_url=f"http://testserver{url_prefix}")
 
 
 @pytest.fixture
 def graph_user() -> AuthenticatedUser:
     """Provide an authorized Graph identity without network access."""
     return AuthenticatedUser(oid="user-1", name="Test User", email="test@example.com", groups=["allowed-group"])
+
+
+def test_openapi_documents_the_required_header_only_on_business_operations() -> None:
+    schema = app.openapi()
+    neutral_paths = {"/api/health", "/api/auth/config", "/api/version", "/api/media"}
+    business_operations = set()
+    for path, path_item in schema["paths"].items():
+        for method, operation in path_item.items():
+            if method not in {"get", "post", "put", "patch", "delete", "head", "options", "trace"}:
+                continue
+            markers = [
+                parameter
+                for parameter in operation.get("parameters", [])
+                if parameter.get("in") == "header" and parameter.get("name") == _compatibility.COMPATIBILITY_HEADER
+            ]
+            if path in neutral_paths or method == "options":
+                assert not markers, (path, method)
+            else:
+                assert len(markers) == 1, (path, method)
+                marker = markers[0]
+                assert marker["required"] is True
+                assert marker["schema"]["type"] == "string"
+                assert "default" not in marker["schema"]
+                assert "example" not in marker
+                assert "example" not in marker["schema"]
+                business_operations.add((path, method))
+    assert ("/api/auth/access", "get") in business_operations
+    assert ("/api/targets", "post") in business_operations
+
+
+def test_openapi_preserves_framework_generation_caching_and_existing_metadata() -> None:
+    test_app = CompatibilityAPI(title="Test API", summary="Keep this summary", servers=[{"url": "/pyrit"}])
+    query_parameter = {"name": "search", "in": "query", "schema": {"type": "string"}}
+    router = APIRouter()
+
+    @router.get("/api/items", openapi_extra={"parameters": [query_parameter]})
+    async def handler() -> dict[str, bool]:
+        return {"ok": True}
+
+    test_app.include_router(router)
+    original_schema = FastAPI.openapi(test_app)
+    with patch.object(_compatibility, "get_compatibility_id", side_effect=AssertionError("Must not read server ID")):
+        schema = test_app.openapi()
+        assert schema is original_schema
+        assert test_app.openapi() is schema
+        assert schema["info"]["title"] == "Test API"
+        assert schema["info"]["summary"] == "Keep this summary"
+        assert schema["servers"] == [{"url": "/pyrit"}]
+        parameters = schema["paths"]["/api/items"]["get"]["parameters"]
+        assert parameters[0] == query_parameter
+        assert len(parameters) == 2
+        assert parameters[1]["name"] == _compatibility.COMPATIBILITY_HEADER
+
+        added_router = APIRouter()
+        added_router.add_api_route("/api/new", handler, methods=["POST"])
+        test_app.include_router(added_router)
+        test_app.openapi_schema = None
+        refreshed = TestClient(test_app).get("/openapi.json").json()
+        assert refreshed["info"] == schema["info"]
+        assert refreshed["paths"]["/api/items"]["get"]["parameters"] == parameters
+        assert refreshed["paths"]["/api/new"]["post"]["parameters"][0] == parameters[1]
 
 
 @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "PATCH", "DELETE"])
@@ -249,7 +324,7 @@ def test_problem_responses_preserve_security_request_ids_and_cors(guarded_client
     assert response.headers["x-request-id"] == "client-request"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
-    assert response.headers["content-security-policy"]
+    assert response.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
     assert response.headers["access-control-allow-credentials"] == "true"
