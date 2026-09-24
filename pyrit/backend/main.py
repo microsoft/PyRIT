@@ -5,6 +5,7 @@
 FastAPI application entry point for PyRIT backend.
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -58,7 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     2. ``~/.pyrit/.pyrit_conf`` when present
     3. ``PYRIT_CONFIG_FILE`` local path or Azure Blob URI when set
     """
-    app.state.compatibility_id = _compatibility.get_compatibility_id()
+    app.state.compatibility_id = await asyncio.to_thread(_compatibility.get_compatibility_id)
     configuration_file_service = ConfigurationFileService(config_file_value=os.getenv("PYRIT_CONFIG_FILE"))
     app.state.configuration_file_service = configuration_file_service
     runtime = RuntimeLifecycle(app=app, source=configuration_file_service)

@@ -12,6 +12,7 @@ module does not trigger the CLI parse-time import-guard ban on either.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -111,7 +112,7 @@ class PyRITApiClient:
             if self._compatibility_error is not None:
                 raise self._compatibility_error
             try:
-                self._compatibility_id = get_compatibility_id()
+                self._compatibility_id = await asyncio.to_thread(get_compatibility_id)
             except ValueError as exc:
                 self._compatibility_error = CompatibilityError(f"Invalid installed PyRIT compatibility stamp: {exc}")
                 raise self._compatibility_error from exc

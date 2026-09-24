@@ -6,6 +6,7 @@ Unit tests for pyrit.cli.api_client.PyRITApiClient.
 """
 
 import asyncio
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
@@ -401,13 +402,24 @@ def test_init_strips_trailing_slash():
 async def test_async_context_manager_opens_and_closes(mock_httpx_client):
     c = PyRITApiClient(base_url="http://localhost:8000")
     fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
-    with patch("httpx.AsyncClient", fake_async_client_cls):
+    event_loop_thread_id = threading.get_ident()
+
+    def read_stamp() -> str:
+        assert threading.get_ident() != event_loop_thread_id
+        fake_async_client_cls.assert_not_called()
+        return COMPATIBILITY_ID
+
+    with (
+        patch("httpx.AsyncClient", fake_async_client_cls),
+        patch("pyrit._compatibility.get_compatibility_id", side_effect=read_stamp) as stamp_reader,
+    ):
         async with c as opened:
             assert opened is c
             assert c._client is mock_httpx_client
         # After exit, close was called
         mock_httpx_client.aclose.assert_awaited_once()
         assert c._client is None
+    stamp_reader.assert_called_once()
     # Default request_timeout (60s) propagates to the httpx client constructor.
     fake_async_client_cls.assert_called_once_with(base_url="http://localhost:8000", timeout=60.0, event_hooks=ANY)
 
