@@ -847,6 +847,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await expect(page.getByTestId("message-piece-0-0")).toHaveText(appliedOutput);
     const historyResponse = await request.get(
       `/api/attacks/${sent.attack.attack_result_id}/messages?conversation_id=${sent.attack.conversation_id}`,
+      { headers: compatibilityHeaders() },
     );
     expect(historyResponse.ok()).toBeTruthy();
     const history: AddMessageResponse["messages"] = await historyResponse.json();
