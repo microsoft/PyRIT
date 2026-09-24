@@ -175,6 +175,7 @@ class PromptNormalizer:
                 error="processing",
             )
             error_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            error_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
 
             await self._calc_hash_async(request=error_response)
             self.memory.add_message_to_memory(request=error_response)
@@ -194,6 +195,7 @@ class PromptNormalizer:
                 error="empty",
             )
             empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            empty_response.get_piece().prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
             await self._calc_hash_async(request=empty_response)
             self.memory.add_message_to_memory(request=empty_response)
             return empty_response
@@ -208,6 +210,7 @@ class PromptNormalizer:
             for piece in resp.message_pieces:
                 piece.conversation_id = conversation_id
                 piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+                piece.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
             is_last = i == len(responses) - 1
             if is_last:
                 await self.convert_values_async(

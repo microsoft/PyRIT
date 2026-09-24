@@ -394,6 +394,7 @@ class ConversationManager:
                 piece.conversation_id = conversation_id
                 # Copied history did not produce a trace in this conversation.
                 piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+                piece.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
 
             # Count turns at message level (only assistant/simulated_assistant messages)
             # A multi-part response still counts as one turn

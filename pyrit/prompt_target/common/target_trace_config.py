@@ -33,6 +33,7 @@ def target_trace_context(*, config: TargetTraceConfig, request: Message, normali
     for message in (request, normalized_request):
         for piece in message.message_pieces:
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
     if not config.enabled:
         yield
         return

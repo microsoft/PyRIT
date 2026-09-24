@@ -18,7 +18,7 @@ def resolve_message_trace_scope(
     *, scorable: MessageScorable, memory: MemoryInterface
 ) -> tuple[TraceScorable | None, bool]:
     """
-    Resolve user-request traces through the named message, not later turns.
+    Resolve outbound request traces through the named message, not later turns.
 
     Returns:
         The known trace scope and whether every selected request has a link.
@@ -33,7 +33,12 @@ def resolve_message_trace_scope(
     requests = [
         request
         for request in memory.get_message_pieces(conversation_id=piece.conversation_id)
-        if request.role == "user" and request.sequence <= piece.sequence
+        if request.sequence <= piece.sequence
+        and (
+            request.prompt_metadata.get(RequestTraceContext.REQUEST_METADATA_KEY) == 1
+            or RequestTraceContext.METADATA_KEY in request.prompt_metadata
+            or request.role == "user"
+        )
     ]
     links = [RequestTraceContext.from_metadata(request.prompt_metadata) for request in requests]
     trace_ids = tuple(dict.fromkeys(link.trace_id for link in links if link is not None))

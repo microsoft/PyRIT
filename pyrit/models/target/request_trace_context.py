@@ -12,6 +12,7 @@ class RequestTraceContext(BaseModel):
     """Request metadata linking stored evidence to a W3C trace."""
 
     METADATA_KEY: ClassVar[str] = "pyrit_request_trace"
+    REQUEST_METADATA_KEY: ClassVar[str] = "pyrit_target_request"
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     traceparent: str = Field(pattern=r"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$")

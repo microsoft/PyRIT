@@ -3,6 +3,7 @@
 
 import uuid
 from collections.abc import Iterator
+from contextlib import nullcontext
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -18,6 +19,7 @@ from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     Acquisition,
     AttackOutcome,
+    ChatMessageRole,
     Message,
     MessagePiece,
     MessageScorable,
@@ -27,6 +29,7 @@ from pyrit.models import (
     ToolsCalled,
     TraceScorable,
 )
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import HTTPTarget, TargetCapabilities, TargetConfiguration, TargetTraceConfig
 from pyrit.score import (
     InMemoryTraceClient,
@@ -134,8 +137,10 @@ async def test_attack_scores_tool_evidence_and_replays_async(
         assert replay.get_value() == score.get_value()
 
 
+@pytest.mark.parametrize("role", ["user", "tool", "assistant", "developer"])
 async def test_multiturn_attack_combines_only_its_requests_async(
     capture: tuple[InMemoryTraceClient, TracerProvider],
+    role: ChatMessageRole,
 ) -> None:
     client, provider = capture
     scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
@@ -148,7 +153,7 @@ async def test_multiturn_attack_combines_only_its_requests_async(
         objective="use both tools",
         user_messages=[
             Message.from_prompt(prompt="lookup", role="user"),
-            Message.from_prompt(prompt="summarize", role="user"),
+            Message.from_prompt(prompt="summarize", role=role),
         ],
         expectation=_expectation("lookup", "summarize"),
     )
@@ -169,7 +174,7 @@ async def test_auxiliary_trace_score_is_stored_async(
     attack = PromptSendingAttack(
         objective_target=_agent_target(client=client, provider=provider),
         attack_scoring_config=AttackScoringConfig(
-            objective_scorer=SubStringScorer(substring="done"),
+            objective_scorer=OtelToolCallScorer(source=OtelTraceSource(trace_client=client)),
             auxiliary_scorers=[OtelToolCallScorer(source=source)],
         ),
     )
@@ -195,7 +200,7 @@ def _store(*, memory: SQLiteMemory, conversation: str, role: str = "user", trace
 def test_resolver_bounds_scope_to_the_named_message(sqlite_instance: SQLiteMemory) -> None:
     conversation = str(uuid.uuid4())
     _store(memory=sqlite_instance, conversation=conversation, trace_id="1" * 32)
-    response = _store(memory=sqlite_instance, conversation=conversation, role="assistant", trace_id="3" * 32)
+    response = _store(memory=sqlite_instance, conversation=conversation, role="assistant")
     _store(memory=sqlite_instance, conversation=conversation, trace_id="4" * 32)
     _store(memory=sqlite_instance, conversation=str(uuid.uuid4()), trace_id="5" * 32)
     scope, complete = resolve_message_trace_scope(
@@ -208,6 +213,7 @@ def test_resolver_bounds_scope_to_the_named_message(sqlite_instance: SQLiteMemor
 async def test_prepended_history_does_not_carry_trace_links_async(sqlite_instance: SQLiteMemory) -> None:
     source_conversation = str(uuid.uuid4())
     prepended = _store(memory=sqlite_instance, conversation=source_conversation, trace_id="1" * 32)
+    prepended.get_piece().prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
     conversation = str(uuid.uuid4())
     await ConversationManager().add_prepended_conversation_to_memory_async(
         prepended_conversation=[prepended], conversation_id=conversation
@@ -216,6 +222,8 @@ async def test_prepended_history_does_not_carry_trace_links_async(sqlite_instanc
         piece for piece in sqlite_instance.get_message_pieces(conversation_id=conversation) if piece.role == "user"
     )
     assert RequestTraceContext.from_metadata(copied.prompt_metadata) is None
+    assert RequestTraceContext.REQUEST_METADATA_KEY not in copied.prompt_metadata
+    assert prepended.get_piece().prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] == 1
     assert RequestTraceContext.from_metadata(prepended.get_piece().prompt_metadata) is not None
     response = _store(memory=sqlite_instance, conversation=conversation, role="assistant")
     assert resolve_message_trace_scope(scorable=MessageScorable.from_message(response), memory=sqlite_instance) == (
@@ -243,6 +251,101 @@ async def test_unlinked_request_prevents_a_false_verdict_async(sqlite_instance: 
     client.close()
     replayed = (await scorer.score_observation_async(observation=observation, expectation=_expectation("lookup")))[0]
     assert replayed.get_value() is False
+
+
+@pytest.mark.parametrize("role", ["tool", "assistant", "developer"])
+async def test_untraced_non_user_request_prevents_false_verdict_async(
+    sqlite_instance: SQLiteMemory,
+    capture: tuple[InMemoryTraceClient, TracerProvider],
+    role: ChatMessageRole,
+) -> None:
+    client, provider = capture
+    conversation = str(uuid.uuid4())
+    await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt="other", role="user"),
+        target=_agent_target(client=client, provider=provider),
+        conversation_id=conversation,
+    )
+    target = HTTPTarget(
+        http_request="POST / HTTP/1.1\nHost: agent.test\n\n{PROMPT}",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text="done")),
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True)),
+    )
+    response = await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt="untraced", role=role),
+        target=target,
+        conversation_id=conversation,
+    )
+    scope, complete = resolve_message_trace_scope(
+        scorable=MessageScorable.from_message(response), memory=sqlite_instance
+    )
+    assert scope is not None
+    assert not complete
+    assert RequestTraceContext.REQUEST_METADATA_KEY not in response.get_piece().prompt_metadata
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+    score = (
+        await scorer.score_async(scorable=MessageScorable.from_message(response), expectation=_expectation("lookup"))
+    )[0]
+    assert score.is_undetermined
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("failure_stage", ["history", "normalize", "validate"])
+async def test_rejected_resend_cannot_reuse_stored_trace_async(
+    sqlite_instance: SQLiteMemory,
+    capture: tuple[InMemoryTraceClient, TracerProvider],
+    enabled: bool,
+    failure_stage: str,
+) -> None:
+    client, provider = capture
+    original_conversation = str(uuid.uuid4())
+    await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt="lookup", role="user"),
+        target=_agent_target(client=client, provider=provider),
+        conversation_id=original_conversation,
+    )
+    original = next(
+        piece
+        for piece in sqlite_instance.get_message_pieces(conversation_id=original_conversation)
+        if piece.role == "user"
+    )
+    metadata = dict(original.prompt_metadata)
+    duplicate = original.to_message().duplicate()
+    duplicate.get_piece().role = "tool"
+    conversation = str(uuid.uuid4())
+    target = HTTPTarget(
+        http_request="POST / HTTP/1.1\nHost: agent.test\n\n{PROMPT}",
+        trace_config=TargetTraceConfig(enabled=enabled),
+    )
+    if failure_stage == "history":
+        _store(memory=sqlite_instance, conversation=conversation, role="assistant")
+        failure = nullcontext()
+    elif failure_stage == "normalize":
+        failure = patch.object(target, "_get_normalized_conversation_async", side_effect=ValueError("normalize"))
+    else:
+        failure = patch.object(target, "_validate_request", side_effect=ValueError("validate"))
+    with failure, patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send:
+        with pytest.raises(Exception, match="Error sending prompt"):
+            await PromptNormalizer().send_prompt_async(message=duplicate, target=target, conversation_id=conversation)
+        send.assert_not_called()
+    pieces = sqlite_instance.get_message_pieces(conversation_id=conversation)
+    request = next(piece for piece in pieces if piece.role == "tool")
+    response = next(piece for piece in pieces if piece.response_error == "processing")
+    assert RequestTraceContext.from_metadata(request.prompt_metadata) is None
+    assert request.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] == 1
+    assert RequestTraceContext.REQUEST_METADATA_KEY not in response.prompt_metadata
+    source = OtelTraceSource(trace_client=client)
+    with patch.object(source, "acquire_async", new_callable=AsyncMock) as acquire:
+        score = (
+            await OtelToolCallScorer(source=source).score_async(
+                scorable=MessageScorable.from_message(response.to_message()), expectation=_expectation("lookup")
+            )
+        )[0]
+        acquire.assert_not_called()
+    assert score.is_undetermined
+    assert original.prompt_metadata == metadata
+    stored = sqlite_instance.get_message_pieces(prompt_ids=[original.id])[0]
+    assert stored.prompt_metadata == metadata
 
 
 async def test_no_links_does_not_query_source_async(sqlite_instance: SQLiteMemory) -> None:
@@ -280,7 +383,7 @@ async def test_response_errors_do_not_suppress_tool_evidence_async(
     original_send = target._send_prompt_to_target_async
 
     async def send_with_error_async(*, normalized_conversation: list[Message]) -> list[Message]:
-        responses = await original_send(normalized_conversation=normalized_conversation)
+        responses: list[Message] = await original_send(normalized_conversation=normalized_conversation)
         responses[0].get_piece().response_error = error
         responses[0].get_piece().converted_value = ""
         return responses

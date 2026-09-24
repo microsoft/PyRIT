@@ -15,6 +15,7 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    RequestTraceContext,
     TargetIdentifier,
 )
 from pyrit.prompt_target.common.target_capabilities import (
@@ -173,6 +174,9 @@ class PromptTarget(Identifiable):
         Raises:
             ValueError: If the message or normalized conversation are empty.
         """
+        for piece in message.message_pieces:
+            piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
         conversation_id = message.get_piece().conversation_id or ""
         if send_context and send_context.conversation_id != conversation_id:
@@ -196,6 +200,13 @@ class PromptTarget(Identifiable):
                 if send_context:
                     send_context.mark_target_invoked()
                 response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+            for response_message in response:
+                for piece in response_message.message_pieces:
+                    piece.prompt_metadata = {
+                        key: value
+                        for key, value in piece.prompt_metadata.items()
+                        if key not in (RequestTraceContext.METADATA_KEY, RequestTraceContext.REQUEST_METADATA_KEY)
+                    }
             send_succeeded = True
             return response
         finally:

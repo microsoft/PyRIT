@@ -100,6 +100,44 @@ async def test_disabled_trace_removes_stale_links_async(api: bool) -> None:
     assert RequestTraceContext.from_metadata(message.get_piece().prompt_metadata) is None
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("api", [False, True])
+async def test_direct_target_response_excludes_request_metadata_async(api: bool, enabled: bool) -> None:
+    target = _target(
+        api=api,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text="done")),
+        enabled=enabled,
+    )
+    request = Message.from_prompt(prompt="run", role="user")
+    responses = await target.send_prompt_async(message=request)
+    assert request.get_piece().prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] == 1
+    assert (RequestTraceContext.from_metadata(request.get_piece().prompt_metadata) is not None) is enabled
+    for response in responses:
+        for piece in response.message_pieces:
+            assert RequestTraceContext.METADATA_KEY not in piece.prompt_metadata
+            assert RequestTraceContext.REQUEST_METADATA_KEY not in piece.prompt_metadata
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_message_validation_failure_clears_inherited_trace_async(enabled: bool) -> None:
+    target = _target(api=False, transport=httpx.MockTransport(lambda request: httpx.Response(200)), enabled=enabled)
+    original = Message.from_prompt(prompt="run", role="user")
+    original.get_piece().prompt_metadata.update(
+        RequestTraceContext(traceparent=f"00-{'1' * 32}-{'2' * 16}-01").to_metadata()
+    )
+    duplicate = original.duplicate()
+    with (
+        patch.object(Message, "validate", side_effect=ValueError("invalid message")),
+        patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send,
+        pytest.raises(ValueError, match="invalid message"),
+    ):
+        await target.send_prompt_async(message=duplicate)
+    send.assert_not_called()
+    assert RequestTraceContext.from_metadata(duplicate.get_piece().prompt_metadata) is None
+    assert duplicate.get_piece().prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] == 1
+    assert RequestTraceContext.from_metadata(original.get_piece().prompt_metadata) is not None
+
+
 @pytest.mark.parametrize("header", ["TraceParent", "tracestate"])
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_manual_client_headers_require_disabled_tracing_async(header: str, enabled: bool) -> None:
@@ -167,7 +205,10 @@ async def test_transport_retries_share_one_logical_request_trace_async() -> None
     class RetryingHTTP(HTTPTarget):
         @retry(stop=stop_after_attempt(2), wait=wait_none(), retry=retry_if_exception_type(ValueError), reraise=True)
         async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
-            return await super()._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+            responses: list[Message] = await super()._send_prompt_to_target_async(
+                normalized_conversation=normalized_conversation
+            )
+            return responses
 
     emitted: list[str] = []
 
