@@ -121,17 +121,18 @@ class _BrowserLifetimeHarness:
         self.stopped_before_cleanup = False
         self.cleanup_cancellations = 0
         self.authenticator = BrowserSessionCopilotAuthenticator(headless=True)
-        self.page = MagicMock()
+        self.page = MagicMock(spec_set=["goto", "on", "remove_listener"])
         self.page.goto = AsyncMock(side_effect=self._navigate_async)
-        self.context = MagicMock()
+        self.context = MagicMock(spec_set=["pages", "new_page", "close"])
         self.context.pages = [] if phase == "page" else [self.page]
         self.context.new_page = AsyncMock(side_effect=self._new_page_async)
         self.context.close = AsyncMock(side_effect=self._close_context_async)
-        self.playwright = MagicMock()
+        self.playwright = MagicMock(spec_set=["chromium"])
+        self.playwright.chromium = MagicMock(spec_set=["launch_persistent_context"])
         self.playwright.chromium.launch_persistent_context = AsyncMock(side_effect=self._launch_async)
-        self.manager = AsyncMock()
-        self.manager.__aenter__.return_value = self.playwright
-        self.manager.__aexit__.side_effect = self._exit_async
+        self.manager = MagicMock(spec_set=["__aenter__", "__aexit__"])
+        self.manager.__aenter__ = AsyncMock(return_value=self.playwright)
+        self.manager.__aexit__ = AsyncMock(side_effect=self._exit_async)
 
     async def _block_operation_async(self) -> None:
         self.operation_task = asyncio.current_task()
@@ -158,7 +159,10 @@ class _BrowserLifetimeHarness:
         else:
             callback = self.page.on.call_args.args[1]
             callback(
-                MagicMock(url=f"{self.authenticator.DEFAULT_WEBSOCKET_BASE_URL}/ChatHub?access_token={_make_token()}")
+                MagicMock(
+                    spec_set=["url"],
+                    url=f"{self.authenticator.DEFAULT_WEBSOCKET_BASE_URL}/ChatHub?access_token={_make_token()}",
+                )
             )
 
     async def _block_cleanup_async(self) -> None:

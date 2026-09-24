@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
 import type { BackendMessage, BackendMessagePiece } from "@/types";
 import { makeAddMessageResponse } from "./_attacks";
 import { makeTarget } from "./_targets";
@@ -759,6 +759,12 @@ test.describe("Multi-turn conversation flow", () => {
 
   test("should send three messages in sequence", async ({ page }) => {
     const input = page.getByRole("textbox");
+    let createdAttacks = 0;
+    page.on("request", (request: Request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/attacks") {
+        createdAttacks += 1;
+      }
+    });
 
     // Turn 1
     await input.fill("First turn");
@@ -788,6 +794,7 @@ test.describe("Multi-turn conversation flow", () => {
     await expect(getMessageByText(page, "First turn")).toBeVisible();
     await expect(getMessageByText(page, "Second turn")).toBeVisible();
     await expect(getMessageByText(page, "Third turn")).toBeVisible();
+    expect(createdAttacks).toBe(1);
   });
 
   test("should reset conversation on New Chat and send again", async ({ page }) => {
