@@ -299,6 +299,11 @@ class TestDiscovery:
         # concern) but must remain discoverable/buildable so agents can use it.
         assert "SelectiveTextConverter" in registry.get_class_names()
 
+    def test_skips_deprecated_alias_converters(self, registry: ConverterRegistry):
+        names = registry.get_class_names()
+        assert "PromptTemplateConverter" in names
+        assert "TaskFramingConverter" not in names
+
     def test_does_not_register_base_class(self, registry: ConverterRegistry):
         assert "Converter" not in registry.get_class_names()
 

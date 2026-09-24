@@ -1345,6 +1345,7 @@ def _try_instantiate_converter(converter_name: str):
         "CodeChameleonConverter": {"encrypt_type": "reverse"},
         "SearchReplaceConverter": {"pattern": "foo", "replace": "bar"},
         "PersuasionConverter": {"persuasion_technique": "logical_appeal"},
+        "PromptTemplateConverter": {"template": "Test {{ prompt }}"},
         "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
         "VigenereConverter": {"key": "testvalue"},
     }
