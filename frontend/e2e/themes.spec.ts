@@ -30,7 +30,6 @@ const API_RESPONSES: Record<string, unknown> = {
   '/api/auth/config': { clientId: '', tenantId: '', allowedGroupIds: '' },
   '/api/auth/access': { isAdmin: true },
   '/api/health': { status: 'healthy' },
-  '/api/version': mockVersion({ display: 'theme-preview' }),
   '/api/targets': EMPTY_PAGE,
   '/api/targets/catalog': { items: [] },
   '/api/attacks': EMPTY_PAGE,
@@ -59,6 +58,10 @@ async function installAppearanceFixtures(page: Page): Promise<void> {
     const path = new URL(route.request().url()).pathname
     if (route.request().method() !== 'GET') {
       throw new Error(`Changing appearance must not write to the backend: ${path}`)
+    }
+    if (path === '/api/version') {
+      await route.fulfill({ json: mockVersion({ display: 'theme-preview' }) })
+      return
     }
     if (
       path === '/api/scenarios/catalog/missing'
