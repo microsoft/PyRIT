@@ -80,8 +80,8 @@ def test_likert_harm_scorer_does_not_match_objective(likert_scale: LikertScale):
         likert_scale=likert_scale,
     )
 
-    assert scorer.matched_conditions() == frozenset()
-    assert scorer.required_conditions() == frozenset()
+    assert scorer.condition_type is None
+    assert scorer.get_condition_types() == frozenset()
 
 
 async def test_likert_scorer_sets_system_prompt_and_scores(
