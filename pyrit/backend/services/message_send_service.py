@@ -8,10 +8,10 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, cast
+from typing import Any
 
 from pyrit.backend.mappers import request_piece_to_pyrit_message_piece, request_to_pyrit_message
-from pyrit.backend.models.attacks import AddMessageRequest, ConverterConfigurationRequest
+from pyrit.backend.models.attacks import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler, get_manual_send_scheduler
 from pyrit.backend.services.media_persistence import persist_media_value_async
@@ -19,18 +19,39 @@ from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface, data_serializer_factory
 from pyrit.models import (
+    MEDIA_PATH_DATA_TYPES,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     Conversation,
     ConverterIdentifier,
-    PromptDataType,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_applied_converter_identifiers(
+    pieces: list[MessagePieceRequest],
+) -> dict[int, list[ConverterIdentifier]]:
+    """
+    Resolve client-reported execution order without inferring type transitions.
+
+    Returns:
+        Registry-validated converter identifiers by message piece index, preserving order and duplicates.
+    """
+    return {
+        index: [
+            ConverterIdentifier.from_component_identifier(converter.get_identifier())
+            for converter in get_converter_service().get_converter_objects_for_ids(
+                converter_ids=piece.applied_converter_ids
+            )
+        ]
+        for index, piece in enumerate(pieces)
+        if piece.applied_converter_ids
+    }
 
 
 class MessageSendService:
@@ -112,6 +133,7 @@ class MessageSendService:
         preconverted_indexes = {
             index for index, piece in enumerate(request.pieces) if piece.converted_value is not None
         }
+        applied_converter_identifiers = resolve_applied_converter_identifiers(request.pieces)
         last_response_id: str | None = None
 
         existing = await asyncio.to_thread(self._memory.get_message_pieces, conversation_id=msg_conversation_id)
@@ -129,6 +151,7 @@ class MessageSendService:
                     request_converter_configurations=request_converter_configurations,
                     response_converter_configurations=response_converter_configurations,
                     preconverted_indexes=preconverted_indexes,
+                    applied_converter_identifiers=applied_converter_identifiers,
                 )
             except Exception:
                 # PromptNormalizer persists a full error piece (response_error +
@@ -166,6 +189,7 @@ class MessageSendService:
                 request=request,
                 sequence=sequence,
                 target_identifier=existing_metadata.target_identifier if existing_metadata else None,
+                applied_converter_identifiers=applied_converter_identifiers,
             )
 
         await self._complete_memory_write_async(
@@ -173,8 +197,13 @@ class MessageSendService:
                 self._update_attack_after_message,
                 attack_result_id=attack_result_id,
                 last_response_id=last_response_id,
-                request_converter_configurations=request_converter_configurations,
+                request_converter_configurations=self._exclude_preconverted_piece_indexes(
+                    configurations=request_converter_configurations,
+                    preconverted_indexes=preconverted_indexes,
+                    piece_count=len(request.pieces),
+                ),
                 response_converter_configurations=response_converter_configurations,
+                applied_converter_identifiers=applied_converter_identifiers,
             )
         )
 
@@ -209,6 +238,7 @@ class MessageSendService:
         last_response_id: str | None,
         request_converter_configurations: list[ConverterConfiguration],
         response_converter_configurations: list[ConverterConfiguration],
+        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
     ) -> None:
         """
         Update attack recency and converter tracking after a message is added.
@@ -221,6 +251,7 @@ class MessageSendService:
             last_response_id: The latest target response piece ID, if one was stored.
             request_converter_configurations: Resolved request converter configurations used for this message.
             response_converter_configurations: Resolved response converter configurations used for this message.
+            applied_converter_identifiers: Registered converters already applied to each preconverted piece.
 
         Raises:
             ValueError: If the attack disappeared before its metadata could be updated.
@@ -234,7 +265,10 @@ class MessageSendService:
         if last_response_id:
             update_fields["last_response_id"] = last_response_id
 
-        request_converter_ids = self._get_converter_identifiers(configurations=request_converter_configurations)
+        request_converter_ids = [
+            identifier for identifiers in applied_converter_identifiers.values() for identifier in identifiers
+        ]
+        request_converter_ids.extend(self._get_converter_identifiers(configurations=request_converter_configurations))
         response_converter_ids = self._get_converter_identifiers(configurations=response_converter_configurations)
         if request_converter_ids or response_converter_ids:
             attack_strategy_identifier = ar.get_attack_strategy_identifier()
@@ -371,7 +405,7 @@ class MessageSendService:
     @staticmethod
     async def _persist_base64_pieces_async(request: AddMessageRequest) -> None:
         """
-        Persist base64-encoded non-text pieces to disk, updating values in-place.
+        Resolve original and converted media independently, updating values in-place.
 
         The frontend sends binary media (images, audio, etc.) as base64 strings
         with a ``*_path`` data_type.  The PyRIT target layer expects ``*_path``
@@ -384,22 +418,38 @@ class MessageSendService:
         exists in storage.
         """
         for piece in request.pieces:
-            # Only persist *_path types (image_path, audio_path, video_path, binary_path).
-            # Other non-text types (url, reasoning, function_call, tool_call, etc.)
-            # are text-like and must not be base64-decoded.
-            if not piece.data_type.endswith("_path"):
-                continue
+            original_value = piece.original_value
+            converted_value = piece.converted_value
+            converted_type = piece.converted_value_data_type or piece.data_type
+            if piece.data_type in MEDIA_PATH_DATA_TYPES:
+                result = await persist_media_value_async(
+                    value=original_value,
+                    data_type=piece.data_type,
+                    mime_type=piece.mime_type,
+                    serializer_factory=data_serializer_factory,
+                )
+                if result.resolved:
+                    original_value = result.value
+                    if converted_value is None or (
+                        converted_value == piece.original_value and converted_type == piece.data_type
+                    ):
+                        converted_value = original_value
 
-            result = await persist_media_value_async(
-                value=piece.original_value,
-                data_type=cast("PromptDataType", piece.data_type),
-                mime_type=piece.mime_type,
-                serializer_factory=data_serializer_factory,
-            )
-            if result.resolved:
-                piece.original_value = result.value
-                if piece.converted_value is None:
-                    piece.converted_value = result.value
+            if (
+                converted_value is not None
+                and converted_type in MEDIA_PATH_DATA_TYPES
+                and (converted_value != original_value or converted_type != piece.data_type)
+            ):
+                result = await persist_media_value_async(
+                    value=converted_value,
+                    data_type=converted_type,
+                    serializer_factory=data_serializer_factory,
+                )
+                if result.resolved:
+                    converted_value = result.value
+
+            piece.original_value = original_value
+            piece.converted_value = converted_value
 
     async def _send_and_store_message_async(
         self,
@@ -411,6 +461,7 @@ class MessageSendService:
         request_converter_configurations: list[ConverterConfiguration],
         response_converter_configurations: list[ConverterConfiguration],
         preconverted_indexes: set[int],
+        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
     ) -> None:
         """Send message to target via normalizer and store response."""
         await self._persist_base64_pieces_async(request)
@@ -422,6 +473,8 @@ class MessageSendService:
             conversation_id=conversation_id,
             sequence=sequence,
         )
+        for index, identifiers in applied_converter_identifiers.items():
+            pyrit_message.message_pieces[index].converter_identifiers.extend(identifiers)
 
         request_converter_configurations = self._exclude_preconverted_piece_indexes(
             configurations=request_converter_configurations,
@@ -445,6 +498,7 @@ class MessageSendService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
+        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
@@ -456,6 +510,7 @@ class MessageSendService:
                 request=request,
                 sequence=sequence,
                 target_identifier=target_identifier,
+                applied_converter_identifiers=applied_converter_identifiers,
             )
         )
 
@@ -466,17 +521,19 @@ class MessageSendService:
         request: AddMessageRequest,
         sequence: int,
         target_identifier: ComponentIdentifier | None,
+        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
     ) -> None:
         self._memory.add_conversation_to_memory(
             conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
         )
-        for p in request.pieces:
+        for index, p in enumerate(request.pieces):
             piece = request_piece_to_pyrit_message_piece(
                 piece=p,
                 role=request.role,
                 conversation_id=conversation_id,
                 sequence=sequence,
             )
+            piece.converter_identifiers.extend(applied_converter_identifiers.get(index, []))
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
     @staticmethod

@@ -49,7 +49,7 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationResponse,
 )
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.services.message_send_service import MessageSendService
+from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -799,17 +799,19 @@ class AttackService:
         """Store prepended conversation messages in memory."""
         if not prepended:
             return
+        applied_by_message = [resolve_applied_converter_identifiers(msg.pieces) for msg in prepended]
         self._memory.add_conversation_to_memory(
             conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
         )
         for seq, msg in enumerate(prepended):
-            for p in msg.pieces:
+            for index, p in enumerate(msg.pieces):
                 piece = request_piece_to_pyrit_message_piece(
                     piece=p,
                     role=msg.role,
                     conversation_id=conversation_id,
                     sequence=seq,
                 )
+                piece.converter_identifiers.extend(applied_by_message[seq].get(index, []))
                 self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
 

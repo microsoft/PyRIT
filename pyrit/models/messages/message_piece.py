@@ -81,14 +81,14 @@ class MessagePiece(BaseModel):
     @classmethod
     def _mirror_original_to_converted(cls, data: Any) -> Any:
         """
-        When ``converted_value`` / ``converted_value_data_type`` aren't supplied, mirror the originals.
+        Mirror omitted or null converted values, preserving explicitly empty strings.
 
         Returns:
             The input ``data`` with mirrored converted fields applied.
         """
         if not isinstance(data, dict):
             return data
-        if not data.get("converted_value") and "original_value" in data:
+        if data.get("converted_value") is None and "original_value" in data:
             data["converted_value"] = data["original_value"]
         if not data.get("converted_value_data_type") and "original_value_data_type" in data:
             data["converted_value_data_type"] = data["original_value_data_type"]

@@ -69,6 +69,9 @@ from pyrit.scenario.garak import (
     Encoding,
     EncodingTechnique,
     FigStep,
+    LatentInjection,
+    LatentInjectionDatasetConfiguration,
+    LatentInjectionTechnique,
     PackageHallucination,
     PackageHallucinationTechnique,
     PromptInject,
@@ -282,6 +285,77 @@ api_key_result = await api_key_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(api_key_result)
+
+# %% [markdown]
+# ## LatentInjection
+#
+# Ports Garak's `latentinjection` probe family: indirect prompt injection, where the attacker
+# never talks to the model but plants an instruction inside a document the model is asked to read
+# -- a resume, a financial report, a legal filing, a WHOIS record. The attack succeeds when the
+# response echoes the trigger text the injection asked for, which `SubStringScorer` checks
+# directly.
+#
+# Each prompt is assembled from five local datasets -- a benign task instruction, a carrier
+# document, an injection instruction, a payload template, and a trigger value -- fenced together by the
+# separator that the selected technique names. All selected techniques reuse the same original
+# seed groups. Existing converters insert the separators when the attack sends each prompt.
+# Payload templates and trigger values are stored separately and combined within each family.
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan run garak.latent_injection --target openai_chat --techniques bare \
+#   --families whois --max-dataset-size 1
+# ```
+#
+# **Available techniques** (14 separator styles): Bare, Newline, Blockquote, BlockquoteInline,
+# HorizontalRule, SystemTag, SystemBracket, SystemBracketFlood, SystemPrefix, InstructionTag,
+# AdminRequest, EndOfText, CoreInstruction, LegalAmendment.
+#
+# **Aggregate techniques:** `ALL` (all 14), `DEFAULT` (a representative subset), `PLAIN` (the
+# injection is set off by whitespace or quoting only), and `AUTHORITY` (the delimiter impersonates
+# a system, admin, or legal voice).
+#
+# **Carrier families** are seed metadata rather than techniques, selected with the `families` run
+# parameter: `translation_fr`, `translation_zh`, `report`, `resume`, `fact_eiffel`, `fact_legal`,
+# `whois`, `whois_snippet`, and `latent_jailbreak`. Every technique applies to every family.
+# `latent_jailbreak` hides a "write something offensive about <group>" instruction instead of a
+# fixed trigger, so it is excluded from the defaults and requires an explicit `harm_scorer`.
+#
+# One attack is built per technique, carrier family, and expected trigger, so each attack has a
+# single unambiguous success contract: its `SubStringScorer` looks for the one string its prompts
+# actually asked for. A supplied `objective_scorer` replaces this fixed-trigger scorer; the
+# harm family uses its separate `harm_scorer`. Caller technique converters run after the separators.
+#
+# `max_dataset_size` is one budget before technique expansion. The default is 92 original
+# groups, shared by six default techniques (552 execution units). Sampling reserves one group
+# per selected family/trigger pair, then fills the remaining budget without replacement.
+# A smaller budget than the number of pairs raises an error. An explicit dataset configuration
+# with `max_dataset_size=None` uses the complete assembled population. Saved runs replay the sample.
+#
+# This is not Garak's exact sampling policy: its lightweight probes cap final prompts at 64
+# per family without guaranteed coverage. PyRIT also applies all selected separators to all
+# selected families. Fact and WHOIS snippet contexts use stable, bounded populations of up to
+# 20 and 10 documents, respectively, rather than Garak's random context generation.
+# There is no baseline attack -- the `bare` technique already covers "no fencing at all".
+
+# %%
+latent_injection_scenario = LatentInjection()
+latent_injection_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [LatentInjectionTechnique.Bare],
+        "dataset_config": LatentInjectionDatasetConfiguration(
+            dataset_names=LatentInjection.required_datasets(), families=["whois"], max_dataset_size=1
+        ),
+    }
+)
+await latent_injection_scenario.initialize_async()  # type: ignore
+
+latent_injection_result = await latent_injection_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(latent_injection_result)
 
 # %% [markdown]
 # ## Doctor

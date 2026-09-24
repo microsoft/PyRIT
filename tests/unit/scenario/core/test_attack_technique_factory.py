@@ -60,6 +60,19 @@ class _StubAttack:
 class TestFactoryInit:
     """Tests for AttackTechniqueFactory construction and validation."""
 
+    def test_plain_prompt_sending_does_not_use_default_adversarial_target(self) -> None:
+        factory = AttackTechniqueFactory(name="plain", attack_class=PromptSendingAttack)
+        assert factory.uses_default_adversarial_target is False
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("explicit_target", [False, True])
+    def test_simulated_conversation_adversarial_default_usage(self, explicit_target: bool) -> None:
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_journalist_interview",
+            adversarial_chat=MagicMock(spec=PromptTarget) if explicit_target else None,
+        )
+        assert factory.uses_default_adversarial_target is not explicit_target
+
     def test_init_defaults(self):
         factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
 

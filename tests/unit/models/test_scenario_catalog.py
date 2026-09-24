@@ -17,6 +17,17 @@ from pyrit.models import (
     ScenarioRunSizeEstimateStatus,
     ScenarioRunSizeFactor,
 )
+from pyrit.models.catalog.scenario import RunScenarioRequest
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+def test_adversarial_default_request_field_is_optional_and_round_trips(model: type) -> None:
+    required = {"scenario_name": "airt.scam", "target_name": "objective"} if model is RunScenarioRequest else {}
+    assert model(**required).adversarial_target_name is None
+    request = model(adversarial_target_name="adversarial", **required)
+    assert model.model_validate_json(request.model_dump_json()).adversarial_target_name == "adversarial"
+    with pytest.raises(ValidationError, match="adversarial_target_name"):
+        model(adversarial_target_name="", **required)
 
 
 def test_run_size_estimate_compatibility_alias_is_canonical_model() -> None:

@@ -359,9 +359,18 @@ class ConverterOptionsResponse(BaseModel):
 class MessagePieceRequest(BaseModel):
     """A piece of content for a message."""
 
-    data_type: str = Field(default="text", description="Data type: 'text', 'image', 'audio', etc.")
+    data_type: PromptDataType = Field(default="text", description="Original value's prompt data type.")
     original_value: str = Field(..., description="Original value (text or base64 for media)")
     converted_value: str | None = Field(None, description="Converted value. If provided, bypasses converters.")
+    converted_value_data_type: PromptDataType | None = Field(
+        None,
+        description="Final converted value's data type. Defaults to data_type; requires converted_value.",
+    )
+    applied_converter_ids: list[str] | None = Field(
+        None,
+        description="Registry IDs of converters already applied, in execution order, including duplicates. "
+        "Requires converted_value. Use an empty list for manual edits.",
+    )
     mime_type: str | None = Field(None, description="MIME type for media content")
     prompt_metadata: dict[str, Any] | None = Field(
         None,
@@ -372,6 +381,23 @@ class MessagePieceRequest(BaseModel):
         description="ID of the source piece when prepending from an existing conversation. "
         "Preserves lineage so the new piece traces back to the original.",
     )
+
+    @model_validator(mode="after")
+    def _validate_converted_value_data_type(self) -> "MessagePieceRequest":
+        """
+        Validate that an explicit converted type accompanies a converted value.
+
+        Returns:
+            The validated request piece.
+
+        Raises:
+            ValueError: If a converted type is supplied without a converted value.
+        """
+        if self.converted_value_data_type is not None and self.converted_value is None:
+            raise ValueError("converted_value_data_type requires converted_value")
+        if self.applied_converter_ids is not None and self.converted_value is None:
+            raise ValueError("applied_converter_ids requires converted_value")
+        return self
 
 
 class PrependedMessageRequest(BaseModel):
