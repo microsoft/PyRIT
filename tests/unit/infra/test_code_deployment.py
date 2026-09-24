@@ -65,6 +65,52 @@ JQ = shutil.which("jq")
 
 @unittest.skipIf(BASH is None, "Native Bash is not installed")
 class TestLocalDockerBuild(unittest.TestCase):
+    def test_compose_setup_exports_source_provenance_and_fails_on_git_errors(self) -> None:
+        assert BASH is not None
+        commit = "a" * 40
+        git_stub = (
+            'git() { case "$*" in\n'
+            '"rev-parse --verify HEAD") printf "%s\\n" "$TEST_COMMIT";;\n'
+            '"status --porcelain") printf "%s" "$TEST_STATUS"; return "$TEST_STATUS_EXIT";;\n'
+            "*) return 97;; esac; }\n"
+        )
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("PYRIT_SOURCE_")}
+        environment.pop("BASH_ENV", None)
+        for path in ("docker/README.md", "doc/getting_started/install_docker.md"):
+            text = (REPO_ROOT / path).read_text(encoding="utf-8")
+            blocks = [section.split("```", 1)[0] for section in text.split("```bash\n")[1:]]
+            setup = [block for block in blocks if "PYRIT_SOURCE_COMMIT=" in block]
+            assert len(setup) == 1, f"{path} must include one runnable source provenance setup"
+            for status, status_exit, expected in (
+                ("", "0", "false"),
+                (" M pyrit/example.py", "0", "true"),
+                ("?? new-file", "0", "true"),
+                ("", "128", None),
+            ):
+                with self.subTest(path=path, status=status, status_exit=status_exit):
+                    result = subprocess.run(
+                        [BASH, "--noprofile", "--norc", "-s"],
+                        input=git_stub
+                        + setup[0]
+                        + '\nsh -c \'printf "%s\\n%s\\n" "$PYRIT_SOURCE_COMMIT" "$PYRIT_SOURCE_DIRTY"\'\n',
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                        timeout=30,
+                        env={
+                            **environment,
+                            "TEST_COMMIT": commit,
+                            "TEST_STATUS": status,
+                            "TEST_STATUS_EXIT": status_exit,
+                        },
+                    )
+                    if expected is None:
+                        assert result.returncode != 0
+                        assert not result.stdout
+                    else:
+                        assert result.returncode == 0, result.stdout + result.stderr
+                        assert result.stdout.splitlines() == [commit, expected]
+
     def test_only_dirty_local_builds_use_development_preparation(self) -> None:
         assert BASH is not None
         dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
