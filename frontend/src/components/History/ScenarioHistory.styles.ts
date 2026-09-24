@@ -48,7 +48,7 @@ export const useScenarioHistoryStyles = makeStyles({
     overflow: 'auto',
   },
   table: {
-    minWidth: '1120px',
+    minWidth: '1080px',
     backgroundColor: tokens.colorNeutralBackground2,
   },
   clickableRow: {
@@ -76,6 +76,12 @@ export const useScenarioHistoryStyles = makeStyles({
   },
   secondary: {
     color: tokens.colorNeutralForeground3,
+  },
+  stackedCell: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: tokens.spacingVerticalXXS,
   },
   nowrap: {
     whiteSpace: 'nowrap',

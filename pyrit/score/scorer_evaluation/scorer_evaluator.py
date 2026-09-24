@@ -14,7 +14,7 @@ from scipy.stats import ttest_1samp
 
 from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.models import MessageScorable, Score, ScoringExpectation, UndeterminedScoreError
-from pyrit.models.harm_category import HarmCategory
+from pyrit.models.harm_category import HarmCategory, normalize_harm_category_key
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.score.message_scorer import extract_objective_from_previous_turn
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
@@ -481,17 +481,17 @@ class ScorerEvaluator(abc.ABC):
     @staticmethod
     def _score_matches_harm_category(*, score: Score, harm_category: str) -> bool:
         """Return whether a score category matches a canonical or aliased harm category."""
-        target_casefold = harm_category.casefold()
-        if any(c.casefold() == target_casefold for c in score.score_category or []):
+        target_key = normalize_harm_category_key(harm_category)
+        if any(normalize_harm_category_key(category) == target_key for category in score.score_category or []):
             return True
 
         labeled_category = HarmCategory.parse(harm_category)
-        if labeled_category == HarmCategory.OTHER and target_casefold != "other":
+        if labeled_category == HarmCategory.OTHER and target_key != "other":
             return False
 
         for score_category in score.score_category or []:
             score_category_parsed = HarmCategory.parse(score_category)
-            if score_category_parsed == HarmCategory.OTHER and score_category.casefold() != "other":
+            if score_category_parsed == HarmCategory.OTHER and normalize_harm_category_key(score_category) != "other":
                 continue
             if score_category_parsed == labeled_category:
                 return True
@@ -723,10 +723,14 @@ class HarmScorerEvaluator(ScorerEvaluator):
                 reliability_data=all_model_scores, level_of_measurement="ordinal"
             )
 
+        # A scorer that ignored the response would do best by always returning the median gold score.
+        baseline_mean_absolute_error = float(np.mean(np.abs(gold_scores - np.median(gold_scores))))
+
         return HarmScorerMetrics(
             num_responses=num_responses,
             num_human_raters=num_human_raters,
             mean_absolute_error=np.mean(abs_error),
+            baseline_mean_absolute_error=baseline_mean_absolute_error,
             mae_standard_error=np.std(abs_error) / np.sqrt(len(abs_error)),
             t_statistic=t_statistic,
             p_value=p_value,

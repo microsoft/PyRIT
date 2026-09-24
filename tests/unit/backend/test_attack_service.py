@@ -7,6 +7,7 @@ Tests for attack service.
 The attack service uses PyRIT memory with AttackResult as the source of truth.
 """
 
+import asyncio
 import base64
 import json
 import uuid
@@ -17,12 +18,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import pyrit
+import pyrit.backend.services.pagination as backend_pagination
+import pyrit.common.pagination as common_pagination
+from pyrit.backend.mappers.attack_mappers import pyrit_messages_to_dto_async
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AttackSummary,
     ConversationMessagesResponse,
     ConverterConfigurationRequest,
     CreateAttackRequest,
+    CreateConversationRequest,
     MessagePieceRequest,
     PrependedMessageRequest,
     UpdateAttackRequest,
@@ -40,19 +46,29 @@ from pyrit.backend.services.pagination import (
     normalize_label_filters,
 )
 from pyrit.common.utils import to_sha256
+from pyrit.converter import Converter, ConverterResult
+from pyrit.memory import SQLiteMemory
+from pyrit.memory.memory_models import ConversationEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     ChatMessageRole,
     ComponentIdentifier,
+    Conversation,
+    ConversationReference,
+    ConversationType,
     Message,
     MessagePiece,
+    PromptDataType,
     PromptResponseError,
     Score,
+    TargetIdentifier,
 )
 from pyrit.models.conversation_stats import ConversationStats
-from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+from unit.mocks import MockPromptTarget
 
 
 @pytest.fixture
@@ -1982,7 +1998,9 @@ class TestAddMessage:
 
             request = AddMessageRequest(
                 pieces=[
-                    MessagePieceRequest(original_value="Hello", converted_value="SGVsbG8="),
+                    MessagePieceRequest(
+                        original_value="Hello", converted_value="SGVsbG8=", applied_converter_ids=["conv-1"]
+                    ),
                     MessagePieceRequest(original_value="World"),
                 ],
                 send=True,
@@ -1998,6 +2016,11 @@ class TestAddMessage:
             request_configurations = call_kwargs["request_converter_configurations"]
             assert len(request_configurations) == 1
             assert request_configurations[0].indexes_to_apply == [1]
+            sent_pieces = call_kwargs["message"].message_pieces
+            assert sent_pieces[0].original_value == "Hello"
+            assert sent_pieces[0].converted_value == "SGVsbG8="
+            assert [identifier.class_name for identifier in sent_pieces[0].converter_identifiers] == ["Base64Converter"]
+            assert sent_pieces[1].converter_identifiers == []
             assert len(call_kwargs["response_converter_configurations"]) == 1
             update_call = mock_memory.update_attack_result_by_id.call_args[1]
             assert "atomic_attack_identifier" in update_call["update_fields"]
@@ -2023,6 +2046,19 @@ class TestAddMessage:
 @pytest.mark.usefixtures("patch_central_database")
 class TestPagination:
     """Tests for pagination in list_attacks."""
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "DecodedKeysetCursor",
+            "decode_keyset_cursor",
+            "encode_keyset_cursor",
+            "fingerprint_filters",
+            "normalize_label_filters",
+        ],
+    )
+    def test_pagination_reexports_preserve_identity(self, name: str) -> None:
+        assert getattr(backend_pagination, name) is getattr(common_pagination, name)
 
     async def test_list_attacks_first_page_forwards_limit_plus_one_and_no_after(
         self, attack_service, mock_memory
@@ -2071,6 +2107,24 @@ class TestPagination:
         await attack_service.list_attacks_async(limit=20, cursor="ar-attack-1")
 
         assert mock_memory.get_attack_results.call_args[1]["after"] is None
+
+    @pytest.mark.parametrize("field", ["t", "i"])
+    async def test_list_attacks_non_string_cursor_fields_restart_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, field: str
+    ) -> None:
+        payload = {
+            "v": 1,
+            "f": _attack_filter_fingerprint(),
+            "t": "2026-09-21T12:00:00Z",
+            "i": "00000000-0000-0000-0000-000000000001",
+            field: 123,
+        }
+        cursor = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+        mock_memory.get_attack_results.return_value = []
+
+        await attack_service.list_attacks_async(limit=20, cursor=cursor)
+
+        assert mock_memory.get_attack_results.call_args.kwargs["after"] is None
 
     def test_decode_attack_cursor_rejects_invalid_and_round_trips_valid(self) -> None:
         """Bad/legacy/mismatched/naive cursors decode to None; valid round-trips; non-UTC canonicalizes to UTC."""
@@ -2313,6 +2367,159 @@ class TestAttackServiceSingleton:
 @pytest.mark.usefixtures("patch_central_database")
 class TestPersistBase64Pieces:
     """Tests for _persist_base64_pieces_async helper."""
+
+    @pytest.mark.parametrize(
+        ("original_type", "original_value", "converted_type", "converted_value", "expected_types", "extensions"),
+        [
+            (
+                "text",
+                "source",
+                "image_path",
+                "data:image/png;base64,cHJldmlldw==",
+                ["image_path"],
+                [".png"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "text",
+                "Exact description",
+                ["image_path"],
+                [".png"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "audio_path",
+                "data:audio/wav;base64,cHJldmlldw==",
+                ["image_path", "audio_path"],
+                [".png", ".wav"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "image_path",
+                "data:image/jpeg;base64,cHJldmlldw==",
+                ["image_path", "image_path"],
+                [".png", ".jpg"],
+            ),
+        ],
+    )
+    async def test_persists_original_and_converted_media_independently_async(
+        self,
+        *,
+        original_type: PromptDataType,
+        original_value: str,
+        converted_type: PromptDataType,
+        converted_value: str,
+        expected_types: list[PromptDataType],
+        extensions: list[str],
+    ) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type=original_type,
+                    original_value=original_value,
+                    converted_value=converted_value,
+                    converted_value_data_type=converted_type,
+                    mime_type="image/png" if original_type == "image_path" else "text/plain",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        serializers = [MagicMock(value=f"saved-{index}{extension}") for index, extension in enumerate(extensions)]
+        for serializer in serializers:
+            serializer.save_b64_image_async = AsyncMock()
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory", side_effect=serializers) as factory:
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert [call.kwargs["data_type"] for call in factory.call_args_list] == expected_types
+        assert [call.kwargs["extension"] for call in factory.call_args_list] == extensions
+        piece = request.pieces[0]
+        assert piece.data_type == original_type
+        assert piece.converted_value_data_type == converted_type
+        assert piece.original_value == (serializers[0].value if original_type == "image_path" else original_value)
+        assert piece.converted_value == (converted_value if converted_type == "text" else serializers[-1].value)
+        for serializer in serializers:
+            serializer.save_b64_image_async.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("converted_value", "expected_value"),
+        [
+            ("/api/media?path=preview.png", "preview.png"),
+            ("https://example.com/preview.png?token=example", "https://example.com/preview.png?token=example"),
+            ("preview.png", "preview.png"),
+        ],
+    )
+    async def test_converted_media_references_are_not_repersisted_async(
+        self, *, converted_value: str, expected_value: str
+    ) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    original_value="source",
+                    converted_value=converted_value,
+                    converted_value_data_type="image_path",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        with (
+            patch("pyrit.backend.services.media_persistence.Path.is_file", return_value=True),
+            patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory,
+        ):
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert request.pieces[0].original_value == "source"
+        assert request.pieces[0].converted_value == expected_value
+        factory.assert_not_called()
+
+    async def test_identical_original_and_converted_media_saved_once_async(self) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="data:image/png;base64,c291cmNl",
+                    converted_value="data:image/png;base64,c291cmNl",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        serializer = MagicMock(value="saved.png")
+        serializer.save_b64_image_async = AsyncMock()
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory", return_value=serializer):
+            await AttackService._persist_base64_pieces_async(request)
+
+        serializer.save_b64_image_async.assert_awaited_once()
+        assert request.pieces[0].original_value == "saved.png"
+        assert request.pieces[0].converted_value == "saved.png"
+
+    async def test_converted_media_failure_preserves_both_request_values_async(self) -> None:
+        piece = MessagePieceRequest(
+            data_type="image_path",
+            original_value="data:image/png;base64,c291cmNl",
+            converted_value="data:image/png;base64,cHJldmlldw==",
+        )
+        request = AddMessageRequest(pieces=[piece], send=False, target_conversation_id="test-id")
+        before = piece.model_dump()
+        original_serializer = MagicMock(value="source.png")
+        original_serializer.save_b64_image_async = AsyncMock()
+        converted_serializer = MagicMock()
+        converted_serializer.save_b64_image_async = AsyncMock(side_effect=OSError("preview save failed"))
+        with (
+            patch(
+                "pyrit.backend.services.attack_service.data_serializer_factory",
+                side_effect=[original_serializer, converted_serializer],
+            ),
+            pytest.raises(OSError, match="preview save failed"),
+        ):
+            await AttackService._persist_base64_pieces_async(request)
+
+        assert piece.model_dump() == before
 
     async def test_text_pieces_are_unchanged(self, attack_service) -> None:
         """Text pieces should not be modified."""
@@ -2754,6 +2961,95 @@ class TestGetConversations:
 class TestCreateRelatedConversation:
     """Tests for create_related_conversation_async."""
 
+    async def test_empty_history_branch_preserves_target_on_first_send_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = AttackService()
+        target = MockPromptTarget()
+        target_identifier = target.get_identifier()
+        attack = AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective="Branch an empty history",
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
+                attack_identifier=AttackIdentifier(
+                    class_name="ManualAttack",
+                    class_module="pyrit.backend",
+                    objective_target=target_identifier,
+                )
+            ),
+        )
+        await asyncio.to_thread(sqlite_instance.add_attack_results_to_memory, attack_results=[attack])
+        assert (
+            await asyncio.to_thread(sqlite_instance._get_conversation, conversation_id=attack.conversation_id) is None
+        )
+
+        branch = await service.create_related_conversation_async(
+            attack_result_id=attack.attack_result_id,
+            request=CreateConversationRequest(source_conversation_id=attack.conversation_id, cutoff_index=0),
+        )
+
+        assert branch is not None
+        normalizer = PromptNormalizer()
+        for conversation_id in [attack.conversation_id, branch.conversation_id]:
+            await normalizer.send_prompt_async(
+                message=Message.from_prompt(prompt="Hello", role="user"),
+                target=target,
+                conversation_id=conversation_id,
+            )
+            metadata = await asyncio.to_thread(sqlite_instance._get_conversation, conversation_id=conversation_id)
+            assert metadata is not None
+            assert metadata.target_identifier == target_identifier
+            rows = await asyncio.to_thread(
+                sqlite_instance._query_entries,
+                ConversationEntry,
+                conditions=ConversationEntry.conversation_id == conversation_id,
+            )
+            assert rows[0].target_identifier_hash == target_identifier.hash
+        assert target.prompt_sent == ["Hello", "Hello"]
+
+    async def test_nested_branching_preserves_target_after_version_change_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = AttackService()
+        target = TargetIdentifier(class_name="ExampleTarget", class_module="tests.unit", pyrit_version="1.1.0")
+        source = Conversation(conversation_id=str(uuid.uuid4()), target_identifier=target)
+        attack = AttackResult(conversation_id=source.conversation_id, objective="Branch older history")
+        await asyncio.to_thread(sqlite_instance.add_attack_results_to_memory, attack_results=[attack])
+        with patch.object(pyrit, "__version__", "1.1.0"):
+            await asyncio.to_thread(sqlite_instance.add_conversation_to_memory, conversation=source)
+        original = MessagePiece(
+            conversation_id=source.conversation_id, role="user", original_value="Original", sequence=0
+        )
+        await asyncio.to_thread(sqlite_instance.add_message_pieces_to_memory, message_pieces=[original])
+        expected_rows = [(source.conversation_id, "1.1.0", target.model_dump())]
+
+        source_id = source.conversation_id
+        for _ in range(2):
+            branch = await service.create_related_conversation_async(
+                attack_result_id=attack.attack_result_id,
+                request=CreateConversationRequest(source_conversation_id=source_id, cutoff_index=0),
+            )
+            assert branch is not None
+            rows = await asyncio.to_thread(
+                sqlite_instance._query_entries,
+                ConversationEntry,
+                conditions=ConversationEntry.conversation_id == branch.conversation_id,
+            )
+            expected_rows.append((branch.conversation_id, rows[0].pyrit_version, rows[0].target_identifier))
+            pieces = await asyncio.to_thread(sqlite_instance.get_message_pieces, conversation_id=branch.conversation_id)
+            assert [piece.original_prompt_id for piece in pieces] == [original.id]
+            source_id = branch.conversation_id
+
+        rows = await asyncio.to_thread(sqlite_instance._query_entries, ConversationEntry)
+        assert {row.conversation_id: (row.pyrit_version, row.target_identifier) for row in rows} == {
+            conversation_id: (version, identifier) for conversation_id, version, identifier in expected_rows
+        }
+        assert all(row.target_identifier_hash == target.hash for row in rows)
+        current = await asyncio.to_thread(
+            sqlite_instance.get_attack_results, attack_result_ids=[attack.attack_result_id]
+        )
+        assert current[0].get_active_conversation_ids() == {row.conversation_id for row in rows}
+
     async def test_returns_none_when_attack_not_found(self, attack_service, mock_memory):
         """Should return None when the attack doesn't exist."""
         from pyrit.backend.models.attacks import CreateConversationRequest
@@ -2786,12 +3082,33 @@ class TestCreateRelatedConversation:
         assert result.conversation_id is not None
         assert result.conversation_id != "attack-1"
 
-        # Should have called update_attack_result to persist in DB column
-        mock_memory.update_attack_result_by_id.assert_called_once()
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
+        mock_memory.add_conversation_branches_to_attack.assert_called_once()
+        call_kwargs = mock_memory.add_conversation_branches_to_attack.call_args.kwargs
         assert call_kwargs["attack_result_id"] == "attack-1"
-        assert result.conversation_id in call_kwargs["update_fields"]["pruned_conversation_ids"]
-        assert isinstance(call_kwargs["update_fields"]["timestamp"], datetime)
+        assert [conversation.conversation_id for conversation in call_kwargs["conversations"]] == [
+            result.conversation_id
+        ]
+        attack_identifier = ar.get_attack_strategy_identifier()
+        assert attack_identifier is not None
+        assert call_kwargs["conversations"][0].target_identifier == attack_identifier.get_child("objective_target")
+        assert call_kwargs["message_pieces"] == []
+        assert call_kwargs["source_conversation"] is None
+        mock_memory.update_attack_result_by_id.assert_not_called()
+
+    async def test_returns_none_when_attack_disappears_during_creation_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        mock_memory.get_attack_results.return_value = [make_attack_result()]
+        mock_memory.add_conversation_branches_to_attack.return_value = False
+
+        result = await attack_service.create_related_conversation_async(
+            attack_result_id="ar-attack-1", request=CreateConversationRequest()
+        )
+
+        assert result is None
+        mock_memory.add_conversation_to_memory.assert_not_called()
+        mock_memory.add_message_pieces_to_memory.assert_not_called()
+        mock_memory.update_attack_result_by_id.assert_not_called()
 
     async def test_rejects_source_conversation_from_different_attack(self, attack_service, mock_memory):
         """Should raise ValueError when source_conversation_id doesn't belong to the attack."""
@@ -2807,6 +3124,47 @@ class TestCreateRelatedConversation:
                 attack_result_id="ar-attack-1",
                 request=request,
             )
+
+        mock_memory.add_conversation_branches_to_attack.assert_not_called()
+
+    @pytest.mark.parametrize("conversation_type", [ConversationType.ADVERSARIAL, ConversationType.PREPARATION])
+    async def test_rejects_diagnostic_sources_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, conversation_type: ConversationType
+    ) -> None:
+        ar = make_attack_result()
+        ar.related_conversations = {
+            ConversationReference(conversation_id="diagnostic", conversation_type=conversation_type),
+        }
+        mock_memory.get_attack_results.return_value = [ar]
+
+        with pytest.raises(ValueError, match="not part of attack"):
+            await attack_service.create_related_conversation_async(
+                attack_result_id="ar-attack-1",
+                request=CreateConversationRequest(source_conversation_id="diagnostic", cutoff_index=0),
+            )
+
+        mock_memory.get_conversation_messages.assert_not_called()
+        mock_memory.add_conversation_branches_to_attack.assert_not_called()
+
+    async def test_branch_persistence_failure_does_not_commit_copies_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        mock_memory.get_attack_results.return_value = [make_attack_result()]
+        mock_memory.get_conversation_messages.return_value = [_make_message(role="user", sequence=0)]
+        copied = MessagePiece(conversation_id="branch", role="user", original_value="copy")
+        mock_memory.duplicate_messages.return_value = ("branch", [copied])
+        mock_memory.add_conversation_branches_to_attack.side_effect = RuntimeError("branch insertion failed")
+
+        with pytest.raises(RuntimeError, match="branch insertion failed"):
+            await attack_service.create_related_conversation_async(
+                attack_result_id="ar-attack-1",
+                request=CreateConversationRequest(source_conversation_id="attack-1", cutoff_index=0),
+            )
+
+        assert mock_memory.add_conversation_branches_to_attack.call_args.kwargs["message_pieces"] == [copied]
+        mock_memory.add_conversation_to_memory.assert_not_called()
+        mock_memory.add_message_pieces_to_memory.assert_not_called()
+        mock_memory.update_attack_result_by_id.assert_not_called()
 
 
 # ============================================================================
@@ -2830,7 +3188,7 @@ class TestUpdateMainConversation:
         assert result is None
 
     async def test_noop_when_target_is_already_main(self, attack_service, mock_memory):
-        """When target is already the main conversation, return immediately without update."""
+        """Memory must check the current main while holding the attack's write lock."""
         ar = make_attack_result(conversation_id="attack-1")
         mock_memory.get_attack_results.return_value = [ar]
 
@@ -2841,6 +3199,9 @@ class TestUpdateMainConversation:
 
         assert result is not None
         assert result.conversation_id == "attack-1"
+        mock_memory.promote_attack_conversation.assert_called_once_with(
+            attack_result_id="ar-attack-1", conversation_id="attack-1"
+        )
         mock_memory.update_attack_result_by_id.assert_not_called()
 
     async def test_raises_when_conversation_not_part_of_attack(self, attack_service, mock_memory):
@@ -2853,6 +3214,8 @@ class TestUpdateMainConversation:
                 attack_result_id="ar-attack-1",
                 request=UpdateMainConversationRequest(conversation_id="not-related"),
             )
+
+        mock_memory.promote_attack_conversation.assert_not_called()
 
     async def test_swaps_main_conversation(self, attack_service, mock_memory):
         """Changing the main to a related conversation should swap it with the main."""
@@ -2877,16 +3240,25 @@ class TestUpdateMainConversation:
         assert result.attack_result_id == "ar-attack-1"
         assert result.conversation_id == "branch-1"
 
-        # Should update via update_attack_result_by_id
-        mock_memory.update_attack_result_by_id.assert_called_once()
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
+        mock_memory.promote_attack_conversation.assert_called_once()
+        call_kwargs = mock_memory.promote_attack_conversation.call_args.kwargs
         assert call_kwargs["attack_result_id"] == "ar-attack-1"
-        assert call_kwargs["update_fields"]["conversation_id"] == "branch-1"
+        assert call_kwargs["conversation_id"] == "branch-1"
+        mock_memory.update_attack_result_by_id.assert_not_called()
 
-        # Old main should now be in pruned_conversation_ids (user-visible)
-        pruned = call_kwargs["update_fields"]["pruned_conversation_ids"]
-        assert "attack-1" in pruned
-        assert "branch-1" not in pruned
+    async def test_returns_none_when_attack_disappears_during_promotion_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        mock_memory.get_attack_results.return_value = [make_attack_result()]
+        mock_memory.promote_attack_conversation.return_value = False
+
+        result = await attack_service.update_main_conversation_async(
+            attack_result_id="ar-attack-1",
+            request=UpdateMainConversationRequest(conversation_id="attack-1"),
+        )
+
+        assert result is None
+        mock_memory.update_attack_result_by_id.assert_not_called()
 
     @pytest.mark.parametrize("conversation_type", ["preparation", "adversarial"])
     async def test_rejects_promoting_diagnostic_conversation(self, attack_service, mock_memory, conversation_type):
@@ -2908,6 +3280,7 @@ class TestUpdateMainConversation:
                 request=UpdateMainConversationRequest(conversation_id="diagnostic-1"),
             )
 
+        mock_memory.promote_attack_conversation.assert_not_called()
         mock_memory.update_attack_result_by_id.assert_not_called()
 
 
@@ -3029,8 +3402,8 @@ class TestConversationCount:
             request=CreateConversationRequest(),
         )
 
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
-        ids = call_kwargs["update_fields"]["pruned_conversation_ids"]
+        call_kwargs = mock_memory.add_conversation_branches_to_attack.call_args.kwargs
+        ids = [conversation.conversation_id for conversation in call_kwargs["conversations"]]
         assert result.conversation_id in ids
         assert len(ids) == 1
 
@@ -3054,11 +3427,11 @@ class TestConversationCount:
             request=CreateConversationRequest(),
         )
 
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
-        ids = call_kwargs["update_fields"]["pruned_conversation_ids"]
-        assert "conv-existing" in ids
+        call_kwargs = mock_memory.add_conversation_branches_to_attack.call_args.kwargs
+        ids = [conversation.conversation_id for conversation in call_kwargs["conversations"]]
         assert result.conversation_id in ids
-        assert len(ids) == 2
+        assert len(ids) == 1
+        mock_memory.update_attack_result_by_id.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -3145,19 +3518,37 @@ class TestConversationSorting:
 class TestAttackServiceAdditionalCoverage:
     """Targeted branch coverage tests for attack service helpers and converter merge logic."""
 
-    async def test_create_related_conversation_uses_duplicate_branch(self, attack_service, mock_memory):
-        """When source_conversation_id and cutoff_index are provided, duplication path is used."""
+    @pytest.mark.parametrize("has_metadata", [False, True])
+    @pytest.mark.parametrize("has_pieces", [False, True])
+    @pytest.mark.parametrize("has_target", [False, True])
+    async def test_create_related_conversation_uses_duplicate_branch(
+        self,
+        *,
+        attack_service: AttackService,
+        mock_memory: MagicMock,
+        has_metadata: bool,
+        has_pieces: bool,
+        has_target: bool,
+    ) -> None:
+        """Prepare the history without committing it before the atomic branch insertion."""
         from pyrit.backend.models.attacks import CreateConversationRequest
         from pyrit.models import Conversation
 
-        ar = make_attack_result(conversation_id="attack-1")
+        ar = make_attack_result(conversation_id="attack-1", has_target=has_target)
         mock_memory.get_attack_results.return_value = [ar]
-        expected_target = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
-        mock_memory._get_conversation.return_value = Conversation(
-            conversation_id="attack-1", target_identifier=expected_target
+        expected_target = (
+            ComponentIdentifier(
+                class_name="SourceTarget" if has_metadata else "TextTarget", class_module="pyrit.prompt_target"
+            )
+            if has_metadata or has_target
+            else None
         )
+        source = Conversation(conversation_id="attack-1", target_identifier=expected_target)
+        mock_memory._get_conversation.return_value = source if has_metadata else None
+        prepared = Conversation(conversation_id="branch-dup", target_identifier=expected_target)
+        pieces = [MessagePiece(conversation_id="branch-dup", role="user", original_value="copy")] if has_pieces else []
 
-        with patch.object(attack_service, "_duplicate_conversation_up_to", return_value="branch-dup") as mock_dup:
+        with patch.object(attack_service, "_prepare_conversation_up_to", return_value=(prepared, pieces)) as mock_dup:
             result = await attack_service.create_related_conversation_async(
                 attack_result_id="attack-1",
                 request=CreateConversationRequest(source_conversation_id="attack-1", cutoff_index=2),
@@ -3165,11 +3556,21 @@ class TestAttackServiceAdditionalCoverage:
 
         assert result is not None
         assert result.conversation_id == "branch-dup"
-        mock_dup.assert_called_once_with(
-            source_conversation_id="attack-1",
-            cutoff_index=2,
-            target_identifier=expected_target,
-        )
+        mock_dup.assert_called_once()
+        assert mock_dup.call_args.kwargs == {
+            "source_conversation_id": "attack-1",
+            "cutoff_index": 2,
+            "target_identifier": expected_target,
+        }
+        mock_memory.add_conversation_branches_to_attack.assert_called_once()
+        assert mock_memory.add_conversation_branches_to_attack.call_args.kwargs == {
+            "attack_result_id": "attack-1",
+            "conversations": [prepared],
+            "message_pieces": pieces,
+            "source_conversation": source,
+        }
+        mock_memory.add_conversation_to_memory.assert_not_called()
+        mock_memory.add_message_pieces_to_memory.assert_not_called()
 
     async def test_add_message_merges_converter_identifiers_without_duplicates(self, attack_service, mock_memory):
         """Should merge new converter identifiers with existing attack identifiers by hash."""
@@ -3362,6 +3763,38 @@ class TestAttackServiceAdditionalCoverage:
         merged_converter_classes = [c.class_name for c in rebuilt_attack.get_child_list("request_converters")]
         assert merged_converter_classes == ["NewConverter"]
 
+    @pytest.mark.parametrize("cutoff_index,expected_sequences", [(-1, []), (0, [0]), (2, [0, 2])])
+    def test_prepare_conversation_up_to_does_not_persist(
+        self,
+        *,
+        attack_service: AttackService,
+        mock_memory: MagicMock,
+        cutoff_index: int,
+        expected_sequences: list[int],
+    ) -> None:
+        mock_memory.get_conversation_messages.return_value = [
+            _make_message(role="user", sequence=sequence) for sequence in [0, 2, 4]
+        ]
+        pieces = [
+            MessagePiece(conversation_id="prepared", role="user", original_value="copy", sequence=sequence)
+            for sequence in expected_sequences
+        ]
+        mock_memory.duplicate_messages.return_value = ("prepared", pieces)
+        target = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
+
+        conversation, copies = attack_service._prepare_conversation_up_to(
+            source_conversation_id="source", cutoff_index=cutoff_index, target_identifier=target
+        )
+
+        assert conversation == Conversation(conversation_id="prepared", target_identifier=target)
+        assert copies == pieces
+        mock_memory.get_conversation_messages.assert_called_once_with(conversation_id="source")
+        assert [
+            message.sequence for message in mock_memory.duplicate_messages.call_args.kwargs["messages"]
+        ] == expected_sequences
+        mock_memory.add_conversation_to_memory.assert_not_called()
+        mock_memory.add_message_pieces_to_memory.assert_not_called()
+
     def test_duplicate_conversation_up_to_adds_pieces_when_present(self, attack_service, mock_memory):
         """Should duplicate up to cutoff and persist duplicated pieces only when returned."""
         source_messages = [
@@ -3388,6 +3821,7 @@ class TestAttackServiceAdditionalCoverage:
         new_id = attack_service._duplicate_conversation_up_to(source_conversation_id="attack-1", cutoff_index=10)
 
         assert new_id == "branch-empty"
+        mock_memory.add_conversation_to_memory.assert_not_called()
         mock_memory.add_message_pieces_to_memory.assert_not_called()
 
     def test_duplicate_conversation_remaps_assistant_to_simulated(self, attack_service, mock_memory):
@@ -3409,6 +3843,350 @@ class TestAttackServiceAdditionalCoverage:
 
         mock_memory.add_conversation_to_memory.assert_not_called()
         mock_memory.add_message_pieces_to_memory.assert_not_called()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestExactPreviewSend:
+    """Exact applied values reach the target without rerunning preview converters."""
+
+    @pytest.mark.parametrize("send", [True, False])
+    async def test_type_changing_execution_provenance_is_preserved_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, send: bool
+    ) -> None:
+        mock_memory.get_attack_results.return_value = [make_attack_result(conversation_id="test-id")]
+        converters = {}
+        for name, input_type, output_type, output in [
+            ("ToImage", "text", "image_path", "preview.png"),
+            ("ToText", "image_path", "text", "caption"),
+        ]:
+            converter = MagicMock(spec=Converter)
+            converter.get_identifier.return_value = ComponentIdentifier(
+                class_name=name,
+                class_module="pyrit.converter",
+                params={"supported_input_types": (input_type,), "supported_output_types": (output_type,)},
+            )
+            converter.convert_tokens_async = AsyncMock(
+                return_value=ConverterResult(output_text=output, output_type=output_type)
+            )
+            converters[name] = converter
+        ids = ["ToImage", "ToText", "ToImage", "ToText"]
+        configurations = [
+            ConverterConfiguration(
+                converters=[converters[name]],
+                prompt_data_types_to_apply=["text" if name == "ToImage" else "image_path"],
+            )
+            for name in ids
+        ]
+        preview = Message(message_pieces=[MessagePiece(role="user", original_value="source")])
+        await PromptNormalizer().convert_values_async(converter_configurations=configurations, message=preview)
+        expected = [identifier.class_name for identifier in preview.message_pieces[0].converter_identifiers]
+        assert expected == ids
+        for converter in converters.values():
+            converter.convert_tokens_async.reset_mock()
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    original_value="source",
+                    converted_value="edited caption",
+                    converted_value_data_type="text",
+                    applied_converter_ids=ids,
+                )
+            ],
+            send=send,
+            target_conversation_id="test-id",
+            target_registry_name="test-target",
+            request_converter_configurations=[
+                ConverterConfigurationRequest(
+                    converter_ids=[name],
+                    prompt_data_types_to_apply=["text" if name == "ToImage" else "image_path"],
+                )
+                for name in ids
+            ]
+            if send
+            else None,
+        )
+        target = _make_matching_target_mock()
+        target.send_prompt_async = AsyncMock(return_value=[])
+        with (
+            patch("pyrit.backend.services.attack_service.get_converter_service") as converter_service,
+            patch("pyrit.backend.services.attack_service.get_target_service") as target_service,
+            patch("pyrit.prompt_normalizer.prompt_normalizer.CentralMemory") as central_memory,
+            patch.object(PromptNormalizer, "_calc_hash_async", new_callable=AsyncMock),
+        ):
+            converter_service.return_value.get_converter_objects_for_ids.side_effect = lambda *, converter_ids: [
+                converters[name] for name in converter_ids
+            ]
+            target_service.return_value.get_target_object.return_value = target
+            central_memory.get_memory_instance.return_value = mock_memory
+            await attack_service.add_message_async(attack_result_id="test-id", request=request)
+
+        if send:
+            piece = target.send_prompt_async.call_args.kwargs["message"].message_pieces[0]
+        else:
+            piece = mock_memory.add_message_pieces_to_memory.call_args.kwargs["message_pieces"][0]
+            target.send_prompt_async.assert_not_awaited()
+        assert piece.converted_value == "edited caption"
+        assert [identifier.class_name for identifier in piece.converter_identifiers] == expected
+        for converter in converters.values():
+            converter.convert_tokens_async.assert_not_awaited()
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        identifier = AtomicAttackIdentifier.model_validate(update_fields["atomic_attack_identifier"])
+        assert [converter.class_name for converter in identifier.attack_technique.attack.request_converters] == [
+            "ToImage",
+            "ToText",
+        ]
+
+    async def test_unknown_applied_converter_rejected_before_sending_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        mock_memory.get_attack_results.return_value = [make_attack_result(conversation_id="test-id")]
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    original_value="source", converted_value="preview", applied_converter_ids=["unknown"]
+                )
+            ],
+            target_registry_name="test-target",
+            target_conversation_id="test-id",
+        )
+        with (
+            patch("pyrit.backend.services.attack_service.get_converter_service") as converter_service,
+            patch.object(attack_service, "_send_and_store_message_async", new_callable=AsyncMock) as send,
+        ):
+            converter_service.return_value.get_converter_objects_for_ids.side_effect = ValueError(
+                "Converter instance 'unknown' not found"
+            )
+            with pytest.raises(ValueError, match="unknown"):
+                await attack_service.add_message_async(attack_result_id="test-id", request=request)
+        send.assert_not_awaited()
+        mock_memory.add_message_pieces_to_memory.assert_not_called()
+        mock_memory.update_attack_result_by_id.assert_not_called()
+
+    @pytest.mark.parametrize("original_value", ["Original source", ""])
+    @pytest.mark.parametrize("has_converter_pipeline", [True, False])
+    async def test_exact_preview_provenance_survives_memory_and_response_mapping_async(
+        self,
+        *,
+        attack_service: AttackService,
+        sqlite_instance: SQLiteMemory,
+        original_value: str,
+        has_converter_pipeline: bool,
+    ) -> None:
+        conversation_id = str(uuid.uuid4())
+        original_id = str(uuid.uuid4())
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    original_value=original_value,
+                    converted_value="Exact edited preview",
+                    converted_value_data_type="text",
+                    applied_converter_ids=["preview", "preview"] if has_converter_pipeline else [],
+                    original_prompt_id=original_id,
+                    prompt_metadata={"preview": "applied"},
+                )
+            ],
+            target_conversation_id=conversation_id,
+            target_registry_name="test-target",
+        )
+        converter = MagicMock(spec=Converter)
+        converter.get_identifier.return_value = ComponentIdentifier(
+            class_name="RegisteredPreviewConverter",
+            class_module="pyrit.converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+        converter.convert_tokens_async = AsyncMock(side_effect=AssertionError("Preview must not rerun"))
+        configurations = [ConverterConfiguration(converters=[converter, converter])] if has_converter_pipeline else []
+        target = _make_matching_target_mock()
+        target.send_prompt_async = AsyncMock(return_value=[])
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service") as target_service,
+            patch("pyrit.backend.services.attack_service.get_converter_service") as converter_service,
+        ):
+            target_service.return_value.get_target_object.return_value = target
+            converter_service.return_value.get_converter_objects_for_ids.return_value = [converter, converter]
+            await attack_service._send_and_store_message_async(
+                conversation_id=conversation_id,
+                target_registry_name="test-target",
+                request=request,
+                sequence=0,
+                request_converter_configurations=configurations,
+                response_converter_configurations=[],
+                preconverted_indexes={0},
+                applied_converter_identifiers=attack_service._resolve_applied_converter_identifiers(request.pieces),
+            )
+
+        converter.convert_tokens_async.assert_not_awaited()
+        sent_piece = target.send_prompt_async.call_args.kwargs["message"].message_pieces[0]
+        assert sent_piece.original_value == original_value
+        assert sent_piece.converted_value == "Exact edited preview"
+        pieces = sqlite_instance.get_message_pieces(conversation_id=conversation_id)
+        assert len(pieces) == 1
+        piece = pieces[0]
+        assert piece.original_value == original_value
+        assert piece.converted_value == "Exact edited preview"
+        assert piece.original_prompt_id == uuid.UUID(original_id)
+        assert piece.prompt_metadata == {"preview": "applied"}
+        assert piece.original_value_sha256 == to_sha256(original_value)
+        assert piece.converted_value_sha256 == to_sha256("Exact edited preview")
+        views = await pyrit_messages_to_dto_async([Message(message_pieces=pieces)])
+        result = views[0].message_pieces[0].model_dump(mode="json")
+        assert result["original_value"] == original_value
+        assert result["converted_value"] == "Exact edited preview"
+        assert result["converted_value_data_type"] == "text"
+        expected_converter_names = (
+            ["RegisteredPreviewConverter", "RegisteredPreviewConverter"] if has_converter_pipeline else []
+        )
+        assert len(result["converter_identifiers"]) == len(expected_converter_names)
+        assert [identifier.class_name for identifier in piece.converter_identifiers] == expected_converter_names
+
+    @pytest.mark.parametrize(
+        ("original_type", "original_value", "converted_type", "converted_value", "expected_original", "expected_final"),
+        [
+            ("text", "source", "text", "", "source", ""),
+            ("text", "", "text", "Edited preview", "", "Edited preview"),
+            ("text", "source", "image_path", "/api/media?path=preview.png", "source", "preview.png"),
+            (
+                "image_path",
+                "/api/media?path=source.png",
+                "text",
+                "Exact description",
+                "source.png",
+                "Exact description",
+            ),
+            (
+                "image_path",
+                "/api/media?path=source.png",
+                "audio_path",
+                "/api/media?path=preview.wav",
+                "source.png",
+                "preview.wav",
+            ),
+        ],
+    )
+    async def test_send_preserves_exact_preview_and_converts_other_piece_async(
+        self,
+        *,
+        attack_service: AttackService,
+        mock_memory: MagicMock,
+        original_type: PromptDataType,
+        original_value: str,
+        converted_type: PromptDataType,
+        converted_value: str,
+        expected_original: str,
+        expected_final: str,
+    ) -> None:
+        mock_memory.get_attack_results.return_value = [make_attack_result(conversation_id="test-id")]
+        preview_converter = MagicMock(spec=Converter)
+        preview_converter.get_identifier.return_value = ComponentIdentifier(
+            class_name="PreviewConverter",
+            class_module="pyrit.converter",
+            params={"supported_input_types": (original_type,), "supported_output_types": (converted_type,)},
+        )
+        preview_converter.convert_tokens_async = AsyncMock(side_effect=AssertionError("Preview must not run again"))
+        live_converter = MagicMock(spec=Converter)
+        live_converter.get_identifier.return_value = ComponentIdentifier(
+            class_name="LiveConverter",
+            class_module="pyrit.converter",
+            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+        )
+        live_converter.convert_tokens_async = AsyncMock(
+            return_value=ConverterResult(output_text="Live conversion", output_type="text")
+        )
+        converters = {"preview": preview_converter, "live": live_converter}
+        target = _make_matching_target_mock()
+        target.send_prompt_async = AsyncMock(return_value=[])
+        original_id = str(uuid.uuid4())
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type=original_type,
+                    original_value=original_value,
+                    converted_value=converted_value,
+                    converted_value_data_type=converted_type,
+                    applied_converter_ids=["preview", "preview"],
+                    prompt_metadata={"source": "editing-pane"},
+                    original_prompt_id=original_id,
+                ),
+                MessagePieceRequest(original_value="Unconverted"),
+            ],
+            target_registry_name="test-target",
+            target_conversation_id="test-id",
+            request_converter_configurations=[
+                ConverterConfigurationRequest(
+                    converter_ids=["preview", "preview"],
+                    indexes_to_apply=[0],
+                    prompt_data_types_to_apply=[original_type],
+                ),
+                ConverterConfigurationRequest(converter_ids=["live"], indexes_to_apply=[1]),
+            ],
+        )
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service") as target_service,
+            patch("pyrit.backend.services.attack_service.get_converter_service") as converter_service,
+            patch("pyrit.prompt_normalizer.prompt_normalizer.CentralMemory") as central_memory,
+            patch.object(PromptNormalizer, "_calc_hash_async", new_callable=AsyncMock),
+        ):
+            target_service.return_value.get_target_object.return_value = target
+            converter_service.return_value.get_converter_objects_for_ids.side_effect = lambda *, converter_ids: [
+                converters[converter_id] for converter_id in converter_ids
+            ]
+            central_memory.get_memory_instance.return_value = mock_memory
+
+            await attack_service.add_message_async(attack_result_id="test-id", request=request)
+
+        preview_converter.convert_tokens_async.assert_not_awaited()
+        live_converter.convert_tokens_async.assert_awaited_once()
+        target.send_prompt_async.assert_awaited_once()
+        message = target.send_prompt_async.call_args.kwargs["message"]
+        preview, live = message.message_pieces
+        assert preview.original_value == expected_original
+        assert preview.original_value_data_type == original_type
+        assert preview.converted_value == expected_final
+        assert preview.converted_value_data_type == converted_type
+        assert preview.prompt_metadata == {"source": "editing-pane"}
+        assert preview.original_prompt_id == uuid.UUID(original_id)
+        assert [identifier.class_name for identifier in preview.converter_identifiers] == [
+            "PreviewConverter",
+            "PreviewConverter",
+        ]
+        assert live.original_value == "Unconverted"
+        assert live.converted_value == "Live conversion"
+        assert [identifier.class_name for identifier in live.converter_identifiers] == ["LiveConverter"]
+        assert mock_memory.add_message_to_memory.call_args.kwargs["request"] is message
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        identifier = AtomicAttackIdentifier.model_validate(update_fields["atomic_attack_identifier"])
+        assert [converter.class_name for converter in identifier.attack_technique.attack.request_converters] == [
+            "PreviewConverter",
+            "LiveConverter",
+        ]
+
+    def test_preconverted_provenance_preserves_explicit_execution_order(self) -> None:
+        first = MagicMock(spec=Converter)
+        first.get_identifier.return_value = ComponentIdentifier(class_name="First", class_module="test")
+        second = MagicMock(spec=Converter)
+        second.get_identifier.return_value = ComponentIdentifier(class_name="Second", class_module="test")
+        piece = MessagePieceRequest(
+            original_value="source",
+            data_type="text",
+            converted_value="preview.png",
+            converted_value_data_type="image_path",
+            applied_converter_ids=["first", "second", "first"],
+        )
+        with patch("pyrit.backend.services.attack_service.get_converter_service") as converter_service:
+            converter_service.return_value.get_converter_objects_for_ids.return_value = [first, second, first]
+            resolved = AttackService._resolve_applied_converter_identifiers(
+                [piece, MessagePieceRequest(original_value="other")]
+            )
+
+        assert [identifier.class_name for identifier in resolved[0]] == ["First", "Second", "First"]
+        assert 1 not in resolved
+        assert converter_service.return_value.get_converter_objects_for_ids.call_args.kwargs["converter_ids"] == [
+            "first",
+            "second",
+            "first",
+        ]
 
 
 class TestAddMessageGuards:

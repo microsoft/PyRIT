@@ -36,6 +36,10 @@ from pyrit.models import (
     SeedIdentifier,
     SeedPrompt,
     SeedSimulatedConversation,
+    SimulatedTargetSystemPromptPaths,
+    load_next_message_prompt,
+    load_simulated_target_prompt,
+    resolve_prompt_source,
 )
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -165,6 +169,9 @@ class AttackTechniqueFactory(Identifiable):
         name: str,
         attack_class: type[AttackStrategy[Any, Any]] | None = None,
         description: str | None = None,
+        adversarial_chat_system_prompt: SeedPrompt | None = None,
+        simulated_target_system_prompt: SeedPrompt | None = None,
+        next_message_system_prompt: SeedPrompt | None = None,
         adversarial_chat_system_prompt_path: str | Path | None = None,
         simulated_target_system_prompt_path: str | Path | None = None,
         next_message_system_prompt_path: str | Path | None = None,
@@ -192,18 +199,22 @@ class AttackTechniqueFactory(Identifiable):
                 ``PromptSendingAttack``.
             description: Short human-readable summary of what the technique does.
                 Forwarded to the factory constructor as descriptive metadata.
-            adversarial_chat_system_prompt_path: Path to the YAML file containing
-                the adversarial chat system prompt for the simulated conversation.
-                Defaults to ``EXECUTOR_SEED_PROMPT_PATH/red_teaming/{name}.yaml``.
-            simulated_target_system_prompt_path: Optional path to the YAML file
-                containing the system prompt for the simulated target (the
-                assistant side of the generated conversation). When ``None``,
-                ``SeedSimulatedConversation`` falls back to its compliant default.
-            next_message_system_prompt_path: Optional path to the YAML file
-                containing the system prompt for generating a final user message
-                after the simulated conversation. Defaults to
-                ``NextMessageSystemPromptPaths.DIRECT.value``. Ignored (forced to
-                ``None``) when ``final_user_message`` is provided.
+            adversarial_chat_system_prompt: System prompt for the adversarial chat in the
+                simulated conversation. Defaults to the prompt loaded from
+                ``EXECUTOR_SEED_PROMPT_PATH/red_teaming/{name}.yaml``.
+            simulated_target_system_prompt: Optional system prompt for the simulated target
+                (the assistant side of the generated conversation). Defaults to the prompt
+                loaded from ``SimulatedTargetSystemPromptPaths.COMPLIANT``.
+            next_message_system_prompt: Optional system prompt for generating a final user
+                message after the simulated conversation. Defaults to the prompt loaded from
+                ``NextMessageSystemPromptPaths.DIRECT``. Ignored (forced to ``None``) when
+                ``final_user_message`` is provided.
+            adversarial_chat_system_prompt_path: Deprecated. Path to the YAML file containing
+                the adversarial chat system prompt. Use ``adversarial_chat_system_prompt``.
+            simulated_target_system_prompt_path: Deprecated. Path to the YAML file containing
+                the simulated target system prompt. Use ``simulated_target_system_prompt``.
+            next_message_system_prompt_path: Deprecated. Path to the YAML file containing the
+                next-message system prompt. Use ``next_message_system_prompt``.
             final_user_message: Optional fixed final user message. When provided,
                 a static ``SeedPrompt`` carrying this text is appended after the
                 simulated conversation (so it becomes the ``next_message``) and no
@@ -240,29 +251,51 @@ class AttackTechniqueFactory(Identifiable):
         """
         if attack_class is None:
             attack_class = PromptSendingAttack
-        if adversarial_chat_system_prompt_path is None:
-            adversarial_chat_system_prompt_path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{name}.yaml"
+        adversarial_chat_system_prompt = resolve_prompt_source(
+            prompt=adversarial_chat_system_prompt,
+            path=adversarial_chat_system_prompt_path,
+            prompt_name="adversarial_chat_system_prompt",
+            path_name="adversarial_chat_system_prompt_path",
+            load_prompt=SeedPrompt.from_yaml_file,
+        )
+        if adversarial_chat_system_prompt is None:
+            adversarial_chat_system_prompt = SeedPrompt.from_yaml_file(
+                Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{name}.yaml"
+            )
+        simulated_target_system_prompt = resolve_prompt_source(
+            prompt=simulated_target_system_prompt,
+            path=simulated_target_system_prompt_path,
+            prompt_name="simulated_target_system_prompt",
+            path_name="simulated_target_system_prompt_path",
+            load_prompt=load_simulated_target_prompt,
+        )
+        if simulated_target_system_prompt is None:
+            simulated_target_system_prompt = load_simulated_target_prompt(
+                SimulatedTargetSystemPromptPaths.COMPLIANT.value
+            )
 
         # A fixed final user message and an LLM-generated next message are mutually
         # exclusive: when a fixed message is supplied it becomes the next_message via
         # a static SeedPrompt, so no next-message generation prompt is used.
         if final_user_message is not None:
-            next_message_system_prompt_path = None
-        elif next_message_system_prompt_path is None:
-            next_message_system_prompt_path = NextMessageSystemPromptPaths.DIRECT.value
-
-        simulated_conversation_kwargs: dict[str, Any] = {
-            "adversarial_chat_system_prompt_path": Path(adversarial_chat_system_prompt_path),
-            "num_turns": num_turns,
-        }
-        if simulated_target_system_prompt_path is not None:
-            simulated_conversation_kwargs["simulated_target_system_prompt_path"] = Path(
-                simulated_target_system_prompt_path
+            next_message_system_prompt = None
+        else:
+            next_message_system_prompt = resolve_prompt_source(
+                prompt=next_message_system_prompt,
+                path=next_message_system_prompt_path,
+                prompt_name="next_message_system_prompt",
+                path_name="next_message_system_prompt_path",
+                load_prompt=load_next_message_prompt,
             )
-        if next_message_system_prompt_path is not None:
-            simulated_conversation_kwargs["next_message_system_prompt_path"] = Path(next_message_system_prompt_path)
+            if next_message_system_prompt is None:
+                next_message_system_prompt = load_next_message_prompt(NextMessageSystemPromptPaths.DIRECT.value)
 
-        simulated_conversation = SeedSimulatedConversation(**simulated_conversation_kwargs)
+        simulated_conversation = SeedSimulatedConversation(
+            num_turns=num_turns,
+            adversarial_chat_system_prompt=adversarial_chat_system_prompt,
+            simulated_target_system_prompt=simulated_target_system_prompt,
+            next_message_system_prompt=next_message_system_prompt,
+        )
 
         seeds: list[Any] = [simulated_conversation]
         if final_user_message is not None:
@@ -511,6 +544,14 @@ class AttackTechniqueFactory(Identifiable):
     def uses_adversarial(self) -> bool:
         """Whether this technique drives an adversarial chat during execution."""
         return self._uses_adversarial
+
+    @property
+    def uses_default_adversarial_target(self) -> bool:
+        """Whether this factory resolves the shared adversarial target."""
+        return self._adversarial_chat is None and (
+            self._uses_adversarial
+            or (self._seed_technique is not None and self._seed_technique.has_simulated_conversation)
+        )
 
     @property
     def supports_additional_request_converters(self) -> bool:

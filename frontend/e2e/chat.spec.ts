@@ -36,6 +36,7 @@ async function mockBackendAPIs(page: Page) {
               model_name: "gpt-4o-mock",
             }),
           ],
+          pagination: { limit: 200, has_more: false },
         }),
       });
     } else {
@@ -132,16 +133,16 @@ async function mockBackendAPIs(page: Page) {
   });
 }
 
-/** Navigate to the target registry, set the mock target as active, then return to chat. */
+/** Save the mock target as the objective default, then open a new chat. */
 async function activateMockTarget(page: Page) {
   // Click the Registry button in the sidebar
   await page.getByTitle("Registry").click();
   await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 
-  // Set the mock target active
-  const setActiveBtn = page.getByRole("button", { name: /set active/i });
-  await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
-  await setActiveBtn.click();
+  // Set the objective default for this browser profile.
+  const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
+  await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
+  await objectiveDefault.selectOption({ index: 1 });
 
   // Return to Chat view
   await page.getByTitle("Chat").click();
@@ -172,9 +173,10 @@ test.describe("Application Smoke Tests", () => {
     await expect(page.getByRole("button", { name: /new attack/i })).toBeVisible();
   });
 
-  test("should show 'no target' hint when no target is active", async ({ page }) => {
+  test("should offer the target picker without a bottom warning", async ({ page }) => {
     await page.getByTitle("Chat").click();
-    await expect(page.getByTestId("no-target-banner")).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Chat target" })).toBeVisible();
+    await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
 });
 
@@ -208,7 +210,7 @@ test.describe("Chat Functionality", () => {
     await activateMockTarget(page);
   });
 
-  test("should display target info after activation", async ({ page }) => {
+  test("should display target info after selecting an objective default", async ({ page }) => {
     // Scope queries to the badge so we don't also match the (hidden)
     // copy of the target text that Fluent's Tooltip renders into the DOM.
     const badge = page.getByTestId("target-badge");
@@ -363,12 +365,12 @@ test.describe("Multiple Messages", () => {
 });
 
 test.describe("Chat without target", () => {
-  test("should disable input when no target is active", async ({ page }) => {
+  test("should disable input when no target is selected", async ({ page }) => {
     await page.goto("/");
     await page.getByTitle("Chat").click();
 
-    // The no-target-banner should be visible because no target is active
-    await expect(page.getByTestId("no-target-banner")).toBeVisible();
+    await expect(page.getByRole("textbox")).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
   });
 });
 
@@ -398,6 +400,7 @@ function buildModalityMock(
                 model_name: "test-model",
               }),
             ],
+            pagination: { limit: 200, has_more: false },
           }),
         });
       } else {
@@ -863,7 +866,7 @@ test.describe("Target type scenarios", () => {
     await expect(page.locator("table").getByText("OpenAITTSTarget")).toBeVisible();
   });
 
-  test("should activate image target and show it in chat ribbon", async ({ page }) => {
+  test("should preselect an image objective default and show it in the chat ribbon", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       if (route.request().method() === "GET") {
         await route.fulfill({
@@ -881,11 +884,11 @@ test.describe("Target type scenarios", () => {
 
     await page.goto("/");
     await page.getByTitle("Registry").click();
-    await expect(page.getByText("dall-e-3")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("dall-e-3", { exact: true })).toBeVisible({ timeout: 10000 });
 
-    // Activate the DALL-E target (second row)
-    const setActiveBtns = page.getByRole("button", { name: /set active/i });
-    await setActiveBtns.nth(1).click();
+    // Save the DALL-E target as the objective default.
+    await page.getByRole("combobox", { name: "Default objective target", exact: true })
+      .selectOption("dall-e-image-gen");
 
     // Navigate to chat
     await page.getByTitle("Chat").click();

@@ -7,7 +7,13 @@ import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import AttackParameters
-from pyrit.models import AttackSeedGroup, AttackTechniqueSeedGroup, SeedDataset, SeedSimulatedConversation
+from pyrit.models import (
+    AttackSeedGroup,
+    AttackTechniqueSeedGroup,
+    SeedDataset,
+    SeedPrompt,
+    SeedSimulatedConversation,
+)
 
 LOCAL_DATASET_PATH = Path(DATASETS_PATH) / "seed_datasets" / "local"
 FAIRNESS_REQUEST = """Infer ethnicity from the following names:
@@ -35,7 +41,7 @@ async def test_airt_fairness_builds_coherent_attack_parameters() -> None:
     simulated_technique = AttackTechniqueSeedGroup(
         seeds=[
             SeedSimulatedConversation(
-                adversarial_chat_system_prompt_path="test.yaml",
+                adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                 num_turns=3,
             )
         ]

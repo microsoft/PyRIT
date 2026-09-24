@@ -9,6 +9,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -22,6 +23,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
@@ -29,9 +31,11 @@ from pyrit.scenario import (
     ScenarioResult,
 )
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.score import Scorer
+from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from tests.unit.mocks import make_scenario_identifier, make_scenario_result
 
 # Reusable test scorer identifier
@@ -218,6 +222,34 @@ def test_subclass_implementing_build_atomic_attacks_async_is_concrete():
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioInitialization:
     """Tests for Scenario class initialization."""
+
+    @pytest.mark.parametrize(
+        ("uses_adversarial", "explicit_target", "factory_name", "expected"),
+        [
+            (False, False, "test", False),
+            (True, False, "test", True),
+            (True, True, "test", False),
+            (True, False, "unrelated", False),
+        ],
+    )
+    def test_default_adversarial_usage_from_factories(
+        self, *, uses_adversarial: bool, explicit_target: bool, factory_name: str, expected: bool
+    ) -> None:
+        factory = AttackTechniqueFactory(
+            name=factory_name,
+            attack_class=RedTeamingAttack if uses_adversarial else PromptSendingAttack,
+            adversarial_chat=MagicMock(spec=PromptTarget) if explicit_target else None,
+        )
+        registry = MagicMock(spec=AttackTechniqueRegistry)
+        registry.get_factories.return_value = {factory_name: factory}
+        with patch.object(AttackTechniqueRegistry, "get_registry_singleton", return_value=registry):
+            scenario = ConcreteScenario(version=1)
+            assert scenario.uses_default_adversarial_target is expected
+
+    @pytest.mark.parametrize("uses_default", [False, True])
+    def test_scenario_can_declare_adversarial_usage(self, uses_default: bool) -> None:
+        scenario = ConcreteScenario(version=1, uses_default_adversarial_target=uses_default)
+        assert scenario.uses_default_adversarial_target is uses_default
 
     def test_init_with_valid_params(self, mock_objective_target):
         """Test successful initialization with valid parameters."""
@@ -1553,6 +1585,51 @@ class TestValidateStoredScenario:
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioResumption:
     """Tests for scenario resumption logic in initialize_async."""
+
+    @pytest.mark.parametrize("aggregator", [TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND])
+    @pytest.mark.parametrize("replacement_substrings", [["b", "a"], ["a", "c"], ["a", "b", "b"]])
+    async def test_resume_with_composite_scorer_async(
+        self,
+        mock_objective_target: PromptTarget,
+        aggregator: TrueFalseAggregatorFunc,
+        replacement_substrings: list[str],
+    ) -> None:
+        scorer = TrueFalseCompositeScorer(
+            aggregator=aggregator, scorers=[SubStringScorer(substring=value) for value in ("a", "b")]
+        )
+        dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        dataset_config.get_attack_groups_by_dataset_async.return_value = {
+            "default": [AttackSeedGroup(seeds=[SeedObjective(value="test objective")])]
+        }
+        args = {"objective_target": mock_objective_target, "dataset_config": dataset_config}
+        original = ConcreteScenarioWithTrueFalseScorer(name="Composite resume", version=1, objective_scorer=scorer)
+        original.set_params_from_args(args=args)
+        await original.initialize_async()
+        assert original.atomic_attack_count == 1
+        original_id = original._scenario_result_id
+        header = original._memory.get_scenario_result_header(scenario_result_id=original_id)
+        assert header is not None
+        stored_plan = header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
+
+        replacement = TrueFalseCompositeScorer(
+            aggregator=aggregator,
+            scorers=[SubStringScorer(substring=value) for value in replacement_substrings],
+        )
+        resumed = ConcreteScenarioWithTrueFalseScorer(
+            name="Composite resume", version=1, objective_scorer=replacement, scenario_result_id=original_id
+        )
+        resumed.set_params_from_args(args=args)
+        if replacement_substrings != ["b", "a"]:
+            with pytest.raises(ValueError, match="does not match the current"):
+                await resumed.initialize_async()
+            return
+
+        await resumed.initialize_async()
+        assert resumed._scenario_result_id == original_id
+        assert resumed._atomic_attacks[0].objectives == ["test objective"]
+        resumed_header = resumed._memory.get_scenario_result_header(scenario_result_id=original_id)
+        assert resumed_header is not None
+        assert resumed_header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY] == stored_plan
 
     async def test_resume_succeeds_when_stored_result_matches(self, mock_objective_target, mock_atomic_attacks):
         """When scenario_result_id finds a matching result, no new result is created."""

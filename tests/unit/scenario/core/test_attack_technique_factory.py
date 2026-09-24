@@ -4,6 +4,7 @@
 """Tests for the AttackTechniqueFactory class."""
 
 import typing
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -58,6 +59,19 @@ class _StubAttack:
 
 class TestFactoryInit:
     """Tests for AttackTechniqueFactory construction and validation."""
+
+    def test_plain_prompt_sending_does_not_use_default_adversarial_target(self) -> None:
+        factory = AttackTechniqueFactory(name="plain", attack_class=PromptSendingAttack)
+        assert factory.uses_default_adversarial_target is False
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("explicit_target", [False, True])
+    def test_simulated_conversation_adversarial_default_usage(self, explicit_target: bool) -> None:
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_journalist_interview",
+            adversarial_chat=MagicMock(spec=PromptTarget) if explicit_target else None,
+        )
+        assert factory.uses_default_adversarial_target is not explicit_target
 
     def test_init_defaults(self):
         factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
@@ -957,7 +971,7 @@ class TestResolveAdversarialChat:
 
         factory = AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_movie_script",
-            adversarial_chat_system_prompt_path=(
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(
                 EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_movie_script.yaml"
             ),
             num_turns=2,
@@ -1034,3 +1048,63 @@ class TestGetScoringConfigType:
         )
 
         assert factory._get_scoring_config_type() is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestWithSimulatedConversationPromptSources:
+    """Tests for the canonical prompt inputs on ``with_simulated_conversation``."""
+
+    def test_defaults_resolve_to_prompts_without_warning(self):
+        """The name-derived adversarial prompt and the default next message load silently."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            factory = AttackTechniqueFactory.with_simulated_conversation(name="crescendo_simulated")
+
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.adversarial_chat_system_prompt.name == "crescendo_simulated"
+        assert sim.simulated_target_system_prompt.name == "simulated_target_compliant"
+        assert sim.next_message_system_prompt is not None
+        assert sim.next_message_system_prompt.name == "direct_next_message_generator"
+
+    def test_canonical_prompt_is_used(self):
+        """An explicit prompt is carried straight through to the seed."""
+        prompt = SeedPrompt(value="custom adversarial", parameters=["objective"])
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_simulated",
+            adversarial_chat_system_prompt=prompt,
+        )
+
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.adversarial_chat_system_prompt.value == "custom adversarial"
+
+    def test_deprecated_path_input_warns(self, tmp_path):
+        """An explicit path input still works and warns."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: from path\ndata_type: text")
+
+        with pytest.warns(DeprecationWarning, match="adversarial_chat_system_prompt_path"):
+            factory = AttackTechniqueFactory.with_simulated_conversation(
+                name="crescendo_simulated",
+                adversarial_chat_system_prompt_path=adv_path,
+            )
+
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.adversarial_chat_system_prompt.value == "from path"
+
+    def test_final_user_message_disables_next_message_prompt(self):
+        """A fixed final message replaces the generated next message."""
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_simulated",
+            final_user_message="yes.",
+            num_turns=1,
+        )
+
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.next_message_system_prompt is None
+        prompts = list(factory.seed_technique.prompts)
+        assert prompts[0].value == "yes."
+        assert prompts[0].sequence == sim.sequence_range.stop

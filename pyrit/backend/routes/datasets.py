@@ -26,12 +26,15 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
         500: {"model": ProblemDetail, "description": "Internal server error"},
     },
 )
-async def list_datasets() -> DatasetListResponse:  # pyrit-async-suffix-exempt
+async def list_datasets(loaded_only: bool = False) -> DatasetListResponse:  # pyrit-async-suffix-exempt
     """
     List all available datasets.
+
+    Args:
+        loaded_only (bool): When True, return only datasets that have seeds in memory.
 
     Returns:
         DatasetListResponse: Available datasets.
     """
     service = get_dataset_service()
-    return await service.list_datasets_async()
+    return await service.list_datasets_async(loaded_only=loaded_only)

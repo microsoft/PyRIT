@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Button,
@@ -51,6 +51,14 @@ function getModalityLabel(converterType: ConverterTypeEntry): string {
     ? converterType.supported_output_types.map(formatDataType).join(', ')
     : 'Any'
   return `${inputs} to ${outputs}`
+}
+
+// Where a message came from decides whether it takes the keyboard: a failed
+// submission answers something the user just did, while a metadata-loading
+// failure arrives unprompted and must not pull focus out of the form.
+interface DialogError {
+  message: string
+  fromSubmit: boolean
 }
 
 interface CreateConverterDialogProps {
@@ -243,9 +251,16 @@ export default function CreateConverterDialog({
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<DialogError | null>(null)
+  const errorRef = useRef<HTMLDivElement>(null)
+  // The dialog instance is reused across openings, so a create response can
+  // land after the opening that started it has gone.
+  const openEpochRef = useRef(0)
 
   useEffect(() => {
+    // Every change of `open` ends the opening before it, so a response from the
+    // previous one leaves this opening's own state alone.
+    openEpochRef.current += 1
     if (!open) return
     let cancelled = false
     Promise.resolve()
@@ -253,6 +268,9 @@ export default function CreateConverterDialog({
         if (cancelled) return null
         setLoading(true)
         setError(null)
+        // A request from the previous opening keeps its own "Adding..." state, so
+        // clear it here rather than letting that response clear it for this one.
+        setSubmitting(false)
         return Promise.all([
           convertersApi.listConverterTypes(),
           targetsApi.listTargets(200),
@@ -275,7 +293,7 @@ export default function CreateConverterDialog({
           setConverterTypes([])
           setTargets([])
           setConverters([])
-          setError(toApiError(err).detail)
+          setError({ message: toApiError(err).detail, fromSubmit: false })
         }
       })
       .finally(() => {
@@ -283,6 +301,15 @@ export default function CreateConverterDialog({
       })
     return () => { cancelled = true }
   }, [open])
+
+  // Hand the keyboard to the failure once React has committed it. A frame
+  // callback can run before the render that adds the message bar, and focusing
+  // from there finds no node and silently does nothing, leaving the keyboard on
+  // the primary action where the request left it.
+  useEffect(() => {
+    if (!error?.fromSubmit) return
+    errorRef.current?.focus()
+  }, [error])
 
   const selectedConverterType = useMemo(
     () => converterTypes.find((item) => item.converter_type === selectedType),
@@ -389,13 +416,16 @@ export default function CreateConverterDialog({
       parameterValues,
     )
     if (!structured.ok) {
-      setError(structured.error)
+      // Not tagged as a submission failure: nothing was disabled, so the keyboard
+      // is still on the primary action and has nothing to be restored from.
+      setError({ message: structured.error, fromSubmit: false })
       return
     }
     if (structured.parameters) {
       Object.assign(params, structured.parameters)
     }
 
+    const epoch = openEpochRef.current
     setSubmitting(true)
     setError(null)
     try {
@@ -404,14 +434,32 @@ export default function CreateConverterDialog({
         type: selectedType,
         params,
       })
-      reset()
+      // Only the opening this request was submitted from is cleared: a response
+      // that outlived its opening must not wipe the form the user is filling in
+      // now. onCreated stays ungated so a late success still refreshes the list.
+      if (openEpochRef.current === epoch) {
+        reset()
+      }
       onCreated(response.converter_id)
     } catch (err) {
-      setError(toApiError(err).detail)
+      // A failure from an opening the user has already left stays out of the
+      // one in front of them, and out of its focus.
+      if (openEpochRef.current === epoch) {
+        setError({ message: toApiError(err).detail, fromSubmit: true })
+      }
     } finally {
-      setSubmitting(false)
+      if (openEpochRef.current === epoch) {
+        setSubmitting(false)
+      }
     }
   }
+
+  // Disabled, but still focusable: a browser runs the unfocusing steps when the
+  // primary action is disabled for the request, which drops focus to <body> and
+  // out of the open dialog, and Escape then stops dismissing it because Tabster
+  // handles that key on the dialog surface. aria-disabled still blocks a second
+  // submit, because Fluent drops the click and key handlers instead.
+  const submitDisabled = loading || submitting || converterTypes.length === 0
 
   return (
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) close() }}>
@@ -428,7 +476,7 @@ export default function CreateConverterDialog({
             >
               {error && (
                 <MessageBar intent="error">
-                  <MessageBarBody>{error}</MessageBarBody>
+                  <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error.message}</MessageBarBody>
                 </MessageBar>
               )}
               {loading && <Spinner label="Loading converter types..." />}
@@ -566,7 +614,8 @@ export default function CreateConverterDialog({
             <Button appearance="secondary" onClick={close}>Cancel</Button>
             <Button
               appearance="primary"
-              disabled={loading || submitting || converterTypes.length === 0}
+              disabled={submitDisabled}
+              disabledFocusable={submitDisabled}
               onClick={() => void submit()}
             >
               {submitting ? 'Adding...' : 'Add Converter'}

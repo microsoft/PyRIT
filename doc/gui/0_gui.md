@@ -51,11 +51,48 @@ and workspace background:
 | Blueprint | Deep blue with a subtle technical drawing grid |
 | Night Sky | Indigo with sparse stars and constellation lines |
 
-Theme choices are saved in your browser and do not change your conversations
+Theme choices are saved for your account in this browser and do not change your conversations
 or configuration. System follows your operating system's light/dark setting;
 the named presets keep their own palettes. High-contrast mode takes precedence
 and hides decorative backgrounds, restoring your chosen preset when it ends.
 Select System, Light, or Dark to return to an undecorated workspace.
+
+### User Preferences
+
+CoPyRIT stores these six preferences in one account-scoped browser record:
+
+| Preference | Use |
+| --- | --- |
+| Default objective target | Initial target for new chats and scanner runs |
+| Default adversarial target | Shared adversarial target for supported scanner scenarios |
+| Operation name (`operation`) | Label for new attacks and scanner runs |
+| Custom run labels | Additional labels for new attacks and scanner runs |
+| Theme | System, Light, Dark, or a named preset |
+| Chat display mode | Raw text or rendered Markdown |
+
+The GUI uses `operation` and `operator` as its label names, not `op_name` and `username`.
+For signed-in users, `operator` is the lowercase username before `@`. It is derived
+from the account, cannot be edited, and is not saved as a user preference. With
+authentication disabled, the local profile can save an operator label.
+
+All six preferences use `pyrit.userPreferences.v1.<tenant>:<homeAccountId>` in
+browser local storage. Authentication-disabled use has a separate `local` profile.
+These settings do not follow you to another browser or device. Changes to labels
+apply to future runs, not stored attacks. Backend label defaults still apply when
+there is no user override. Removing a custom default label is also saved.
+Open tabs synchronize preferences for the same account. Each edit is merged with
+the latest saved values. On HTTPS and localhost, browser locks also serialize
+concurrent saves so edits to different defaults do not overwrite each other.
+
+Old account-specific target defaults are imported for the same account. Old
+browser-wide labels, theme, and chat display settings are imported only into the
+local profile because their account owner is unknown. The next preference change
+saves the imported values in the new record. Old keys are not deleted.
+
+If saved data cannot be read, CoPyRIT shows a warning and uses defaults. If a save
+fails, changes remain available in the current session and a warning states that
+they could not be saved. History filters remain in the URL; they are not user
+preferences. Authentication cache data remains under MSAL control.
 
 ### Chat View
 
@@ -65,7 +102,56 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 #### Sending Messages
 
-Type a message and press Enter (or click Send) to send it to the active target. The response appears below. Shift+Enter inserts a newline without sending.
+For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside the label controls to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target; their badge does not change the target.
+
+Clicking **Chat** while already in a new chat keeps its target and draft. Starting
+a new attack resets both. Default changes in another tab apply to the next new
+chat, not the current draft.
+
+Type a message and press Enter (or click Send) to send it to the chat target. The response appears below. Shift+Enter inserts a newline without sending.
+
+When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
+
+#### Editing Converter Pipelines
+
+Open **Converters** and use the picker above the working input to add registered
+converters in the order you want them to run.
+The top text box is an editable working copy: changing it does not change the original
+chat message. The top **Convert** button runs the active tab's configured pipeline
+and any configured inputs that do not have results yet. After every configured input
+has a result, it reruns only the active tab. For attachment tabs, it converts every
+attachment shown on that tab.
+
+Each text stage output is also editable. After changing an intermediate output, use
+the **Convert** button below it to run **all remaining stages** from that value,
+without rerunning earlier stages. Empty and whitespace-only intermediate values can
+also be passed to the remaining stages. Editing a value invalidates its downstream results
+until you convert again. The final output has no Convert or selection-only button;
+you can edit it directly before applying it.
+
+To convert only part of a text value, select it and click **Convert selection only**.
+This wraps the selection in `⟪` and `⟫`. The next converter transforms only the marked
+regions and removes their markers, preserving everything outside them. Marked regions
+have a colored highlight while their markers stay visible. Later stages convert the
+whole result unless you select another region. Multiple and multiline
+regions are supported; unmatched and nested regions are rejected. Empty regions
+pass an empty string to the converter. Partial
+conversion requires text input and text output. Without markers, converters retain
+their normal whole-value behavior, including media conversions.
+
+Click **Add converted value** to apply the final result, then **Send**. The exact
+applied value is sent and stored alongside the unchanged original; the backend does
+not rerun the pipeline. The exact ordered list of applied converters is retained
+as provenance, including duplicates and converters that change the data type, and
+reloading the conversation shows the same original and converted values. You can
+also edit only the top working input and apply it as a manual conversion without
+adding or running a registered converter.
+
+API clients submit this list as `applied_converter_ids` on each preconverted
+message piece. The backend resolves the IDs through the registry. An empty list
+represents a manual conversion. `request_converter_configurations` controls
+conversion of pieces without a preconverted value; it does not describe which
+converters already ran.
 
 #### Attachments
 
@@ -89,7 +175,7 @@ Each assistant message has four action buttons:
 1. **Copy to input:** Copies the message content and attachments into the current input box.
 2. **Copy to new conversation:** Creates a new conversation within the same attack and copies the message to its input.
 3. **Branch conversation:** Clones the conversation up to the selected message into a new conversation within the same attack.
-4. **Branch into new attack:** Creates an entirely new attack with the conversation cloned up to the selected message.
+4. **Branch into new attack:** Opens a destination-target picker, then creates a new attack with the conversation cloned up to the selected message. This does not change the source chat or your defaults.
 
 <img width="1663" alt="Branching into a new conversation" src="images/chat_branch.png" />
 
@@ -117,7 +203,7 @@ Export stays available for read-only historical conversations, and is disabled w
 
 #### Labels
 
-The **New run labels** bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. You can add, edit, and remove labels without leaving the page. The `operator` and `operation` labels are required and cannot be removed.
+The labels bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. Click the labels icon to open **Default Labels** and add, edit, or remove custom labels. The required `operator` and `operation` controls remain in the bar, outside this popover, and cannot be removed. A signed-in operator is read-only.
 
 In Chat, the active target, Markdown toggle, export menu, conversations panel toggle, and **New Attack** button share the right side of this bar. They wrap below the labels on narrow screens.
 
@@ -131,10 +217,12 @@ Changing these labels does not relabel existing attacks or scenario runs. Histor
 
 CoPyRIT enforces several safety guards:
 
-- **No target selected:** When no target is configured, the input area shows a banner prompting you to configure a target.
+- **No target selected:** The composer is disabled without a warning banner. Click **Select a target** in the chat ribbon. If the registry is empty, add a target first.
 - **Single-turn targets:** Some targets (e.g., image generators) don't track conversation history. CoPyRIT shows a warning indicator and blocks additional messages after the first turn, offering a "New Conversation" button instead.
-- **Operator locking:** If you open a historical attack created by a different operator, the conversation is read-only. You can use "Continue with your target" to branch into a new attack with your own target.
-- **Cross-target locking:** If the active target differs from the target used in a historical attack, sending is blocked. Use "Continue with your target" to branch with your current target.
+- **Operator locking:** If you open a historical attack created by a different operator, the conversation is read-only. "Continue with your target" opens the same destination-target picker as "Branch into new attack", then copies the conversation into a new attack with your labels.
+- **Target identity:** A saved chat uses its original target, not your default. Sending is blocked while that target is being resolved, or if it is missing, changed, or ambiguous. Retry after restoring the target, or branch into a new attack and select a destination target.
+
+Human score changes do not require a registered objective target. The original operator can update or remove a human score even when the target is unavailable. The existing operator lock still applies.
 
 ### Attack History
 
@@ -179,6 +267,26 @@ Click any row to open the attack in the Chat view.
 
 Results are paginated (25 per page) with "First" and "Next" navigation buttons.
 
+### Resuming a Failed Scanner Run
+
+Select **Resume run** on a failed run's detail page or **Resume** in **Scanner
+History**. Resume keeps the same run ID and saved result, including previous
+results and errors. It retries unfinished and errored objectives, skipping
+completed non-error objectives. Recovery is at the objective level, not the last
+turn of an interrupted conversation.
+
+Resume restores the original scenario configuration, target, sampled execution
+plan, and labels, rather than using the current launch form or active chat target.
+Refreshing the GUI does not automatically resume a run.
+
+Resume requires a saved launch configuration. Runs created before that
+configuration was recorded cannot resume through the GUI; an error explains
+the limitation without changing their saved progress.
+
+If the saved configuration cannot be restored, Resume shows an error without
+discarding progress or starting a replacement run. Restore any missing target,
+technique, or dataset before trying again.
+
 ### Scenario Run Results
 
 In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.
@@ -193,7 +301,38 @@ The Configuration view manages the targets available for attacks.
 
 #### Target Table
 
-Lists all registered targets with their type, endpoint, and model name. Click "Set Active" to select a target for use in the Chat view. The active target is highlighted with an "Active" badge.
+Lists all registered targets with their type, endpoint, and model name. Two dropdowns above **Filter by type** select your defaults. Each option shows the registry name and model, when available:
+
+- **Default objective target:** Preselected for new chats and scanner runs.
+- **Default adversarial target:** Preselected for scanner runs that use the shared adversarial target. The target must support multi-turn conversations. Without a saved selection, the GUI preselects the registered `adversarial_chat` target, which the target initializer configures from `ADVERSARIAL_CHAT_*` environment variables. A saved user selection takes priority.
+
+The objective dropdown appears first, followed by the adversarial dropdown. Select **Not set** to clear the objective default. Select **Use server default** to remove a saved adversarial selection and return to the environment default. Small **Objective** and **Adversarial** badges identify the selected rows; the table has no separate defaults column. Filtering the table does not filter the default dropdowns or change your selections.
+
+Defaults are saved in this browser, separately for each signed-in account. They do not follow you to another browser or device. When authentication is disabled, the browser uses a separate local profile. Only target names and identity hashes are stored, not credentials or complete target configurations.
+
+A missing or changed default is shown as unavailable. Select a new default or clear it; CoPyRIT does not silently substitute a different target. If browser storage is unavailable, a warning states that the choice applies only in the current session.
+
+Scanner forms let you override either selection for one run. **Objective Target** is the target the scenario runs against. **Adversarial Target**, under **Parameters** above **Dataset override**, is the target used to generate attacks. The adversarial selector appears only for scenarios whose available techniques use the shared default; scenarios with no such use, including the explicit-target adversarial benchmark, do not show it or send an override. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique still take priority. Scorer targets are unchanged.
+
+#### Core Adversarial Default Override
+
+Framework users can use the same scoped override as the GUI:
+
+```python
+from pyrit.scenario.core import override_default_adversarial_target
+
+with override_default_adversarial_target(target):
+    # Construct the scenario here, then initialize and run it within this scope.
+    ...
+```
+
+The override changes `get_default_adversarial_target()` for the current execution scope. Apply it before constructing a scenario because some scenarios resolve the target in their constructor. It does not change already-built scenarios.
+
+Resolution order is: explicit scenario/technique target, scoped override, registered `adversarial_chat`, then the existing OpenAI fallback. Nested scopes restore the previous choice when they exit. Passing `None` leaves the current scope unchanged. The override does not modify the shared registry or scorer defaults.
+
+REST run and request-specific estimate payloads accept an optional `adversarial_target_name`. The backend resolves the registered target and applies the same core override during preparation and execution. Omitting the field preserves server behavior.
+
+New runs save the adversarial target selection with their launch configuration. Resuming a failed run uses this saved selection, not the current browser default.
 
 #### Creating Targets
 

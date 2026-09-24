@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import pathlib
 from dataclasses import dataclass
@@ -290,6 +291,27 @@ _DETERMINISTIC_CONVERTER_BUILDERS: dict[PsychosocialTechnique, Callable[[], Conv
 }
 
 
+def _build_simulated_base_factory(*, harm: _SubHarm, max_turns: int) -> AttackTechniqueFactory:
+    """
+    Build the simulated-conversation base factory for a sub-harm.
+
+    Reads the sub-harm's escalation prompt from disk, so async callers must run it through
+    ``asyncio.to_thread``.
+
+    Args:
+        harm: The sub-harm whose escalation prompt drives the simulated conversation.
+        max_turns: Number of simulated conversation turns.
+
+    Returns:
+        AttackTechniqueFactory: The base factory every converter technique layers onto.
+    """
+    return AttackTechniqueFactory.with_simulated_conversation(
+        name=f"psychosocial_{harm.name}",
+        adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(harm.escalation_prompt_path),
+        num_turns=max_turns,
+    )
+
+
 def _converter_for_technique(technique: PsychosocialTechnique, *, adversarial_chat: PromptTarget) -> Converter | None:
     """
     Map a converter technique to its converter instance.
@@ -417,6 +439,7 @@ class Psychosocial(Scenario):
 
         super().__init__(
             version=self.VERSION,
+            uses_default_adversarial_target=adversarial_chat is None,
             technique_class=PsychosocialTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=[harm.dataset_name for harm in _SUB_HARMS],
@@ -514,7 +537,7 @@ class Psychosocial(Scenario):
                     )
                 )
         return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(component.count for component in components),
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note="Each default sub-harm is planned independently; retries and internal turns are excluded.",
@@ -582,11 +605,9 @@ class Psychosocial(Scenario):
                     )
                 )
 
-            base_factory = AttackTechniqueFactory.with_simulated_conversation(
-                name=f"psychosocial_{harm.name}",
-                adversarial_chat_system_prompt_path=harm.escalation_prompt_path,
-                num_turns=max_turns,
-            )
+            # Building the base factory reads the sub-harm's escalation prompt from disk, so keep
+            # it off the event loop.
+            base_factory = await asyncio.to_thread(_build_simulated_base_factory, harm=harm, max_turns=max_turns)
 
             for technique in techniques:
                 if technique is PsychosocialTechnique.Crescendo:
