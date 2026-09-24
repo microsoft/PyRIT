@@ -523,7 +523,10 @@ export default function ChatWindow({
     forceLoadRef.current = false
     if (!force && (
       sendingConvIdsRef.current.has(activeConversationId)
-      || loadedConversationIdRef.current === activeConversationId
+      || (
+        loadedConversationIdRef.current === activeConversationId
+        && activeConversationLoadRequestRef.current === null
+      )
     )) { return }
     loadConversation(attackResultId, activeConversationId)
   }, [activeConversationId, attackResultId, loadConversation])

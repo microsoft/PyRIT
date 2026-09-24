@@ -1523,6 +1523,35 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByRole("button", { name: /send/i })).toBeEnabled();
   });
 
+  it("should reload when returning while another conversation load is still pending", async () => {
+    const history = makeTextResponse("Original history").messages;
+    let finishOtherLoad: (value: typeof history) => void = () => {};
+    mockedAttacksApi.getMessages
+      .mockResolvedValueOnce(history)
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOtherLoad = resolve; }))
+      .mockResolvedValueOnce(history);
+    mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
+    const props = {
+      ...defaultProps,
+      attackResultId: "ar-return",
+      conversationId: "conv-original",
+      activeConversationId: "conv-original",
+    };
+    const { rerender } = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+    expect(await screen.findByText("Original history")).toBeInTheDocument();
+
+    rerender(<TestWrapper><ChatWindow {...props} activeConversationId="conv-other" /></TestWrapper>);
+    expect(mockedAttacksApi.getMessages).toHaveBeenLastCalledWith("ar-return", "conv-other");
+    rerender(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+    expect(mockedAttacksApi.getMessages).toHaveBeenLastCalledWith("ar-return", "conv-original");
+    expect(await screen.findByText("Original history")).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBeEnabled();
+
+    await act(async () => { finishOtherLoad(makeTextResponse("Other history").messages); });
+    expect(screen.getByText("Original history")).toBeInTheDocument();
+    expect(screen.queryByText("Other history")).not.toBeInTheDocument();
+  });
+
   it("should extract plain string from axios-style error response", async () => {
     const user = userEvent.setup();
 
