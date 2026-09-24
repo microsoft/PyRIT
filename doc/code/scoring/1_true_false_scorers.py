@@ -236,6 +236,9 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 # - **`SelfAskQuestionAnswerScorer`** — checks whether a response correctly answers a known
 #   question (used with question-answering datasets). `QuestionAnswerScorer` is the fast,
 #   non-LLM variant that matches against the expected answer directly.
+#   Both require an `AnswerMatches` condition. Use `objective` for question context, and a separate
+#   `SelfAskTrueFalseScorer` for `MatchesObjective` checks.
+#   Configure that objective scorer with `validator=ScorerPromptValidator(is_objective_required=True)`.
 # - **`SelfAskGeneralTrueFalseScorer`** — bring your own system prompt and JSON schema when
 #   the built-in templates don't fit. See
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for how custom scorers slot in.

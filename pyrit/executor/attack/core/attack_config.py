@@ -78,8 +78,15 @@ class AttackAdversarialConfig:
     adversarial_prompt_template: str | SeedPrompt | None = DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE
 
     # System prompt for the adversarial chat target, as an inline Jinja template string or a
-    # SeedPrompt.
+    # SeedPrompt. When None, the attack's own built-in default system prompt is used instead.
     system_prompt: str | SeedPrompt | None = None
+
+    # Optional static guidance layered ahead of the resolved system prompt above (either
+    # ``system_prompt`` or, when that is None, the attack's built-in default). Lets callers add
+    # extra rules (e.g. "never use copy-through attacks") without hand-copying the base prompt
+    # into a full replacement string. An inline string must be static text (no Jinja syntax); a
+    # SeedPrompt is exempt and supports the same template variables as ``system_prompt``.
+    system_prompt_prefix: str | SeedPrompt | None = None
 
 
 def resolve_adversarial_system_prompt(
@@ -101,42 +108,51 @@ def resolve_adversarial_system_prompt(
     parameters are set to ``required_parameters``. Explicitly provided ``SeedPrompt`` objects
     and YAML files are validated against ``required_parameters``.
 
+    When ``config.system_prompt_prefix`` is also set, its resolved text is prepended ahead of
+    the base prompt resolved above (separated by a blank line) via ``SeedPrompt.compose_with_prefix``.
+    Prefix validation failures never reuse ``error_message`` (written for the base prompt's
+    specific contract) — the prefix always raises a generic message naming
+    ``system_prompt_prefix`` instead.
+
     Args:
         config: The adversarial configuration to resolve the system prompt from.
         default_system_prompt_path: Fallback YAML path when neither inline nor path is set.
         required_parameters: Parameter names the resolved template must support.
-        error_message: Optional custom error message for validation failures.
+        error_message: Optional custom error message for base-prompt validation failures.
 
     Returns:
         The resolved adversarial system-prompt SeedPrompt.
 
     Raises:
-        ValueError: If an explicitly provided SeedPrompt is missing required parameters.
+        ValueError: If ``config.system_prompt_prefix`` is an inline string containing Jinja
+            syntax, if an explicitly provided SeedPrompt (base or prefix) is missing required
+            parameters, or if both the base prompt and the prefix declare a
+            ``response_json_schema``.
     """
     system_prompt = config.system_prompt
     if system_prompt is not None:
-        if isinstance(system_prompt, SeedPrompt):
-            # Validate only explicitly provided SeedPrompts against the required parameters.
-            declared = system_prompt.parameters or []
-            missing = [param for param in required_parameters if param not in declared]
-            if missing:
-                raise ValueError(
-                    error_message or f"Adversarial system prompt is missing required parameters: {missing}"
-                )
-            return system_prompt
-
-        # Inline strings are trusted — declare all required params so Jinja rendering works.
-        return SeedPrompt(
-            value=system_prompt,
-            is_jinja_template=True,
-            parameters=list(required_parameters),
+        base_prompt = SeedPrompt.from_value_with_required_parameters(
+            system_prompt,
+            required_parameters=required_parameters,
+            error_message=error_message,
+            component_name="adversarial system prompt",
+        )
+    else:
+        base_prompt = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=default_system_prompt_path,
+            required_parameters=required_parameters,
+            error_message=error_message,
         )
 
-    template_path = default_system_prompt_path
-    return SeedPrompt.from_yaml_with_required_parameters(
-        template_path=template_path,
+    if config.system_prompt_prefix is None:
+        return base_prompt
+
+    return SeedPrompt.compose_with_prefix(
+        base_prompt=base_prompt,
+        prefix=config.system_prompt_prefix,
         required_parameters=required_parameters,
-        error_message=error_message,
+        base_component_name="resolved adversarial system prompt",
+        prefix_component_name="system_prompt_prefix",
     )
 
 
@@ -149,13 +165,13 @@ class AttackScoringConfig:
     detect refusals, and perform auxiliary scoring operations.
     """
 
-    # Primary scorer for evaluating attack effectiveness
+    # Primary scorer; its tree must cover all supplied execution conditions.
     objective_scorer: TrueFalseScorer | None = None
 
     # Refusal scorer for detecting refusals or non-compliance
     refusal_scorer: TrueFalseScorer | None = None
 
-    # Additional scorers for auxiliary metrics or custom evaluations
+    # Optional diagnostics; typed scorers without their required criteria are skipped.
     auxiliary_scorers: list[Scorer] = field(default_factory=list)
 
     # Whether to use scoring results as feedback for iterative attacks

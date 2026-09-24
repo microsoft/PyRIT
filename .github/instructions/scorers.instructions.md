@@ -38,6 +38,24 @@ Requirements:
   base class wires the validator and validates ``TARGET_REQUIREMENTS``
   against any provided ``chat_target``.
 
+## Condition contract
+
+- A condition-based leaf declares one `CONDITION_TYPE` subclass. The shared base requires exactly
+  one condition of that type and provides `_get_required_condition` for typed access.
+- A constructor-configured leaf leaves `CONDITION_TYPE = None`. It must not claim to consume a
+  per-execution condition. All leaves reject unsupported conditions, including direct calls.
+- Wrappers implement `_get_child_scorers()` and declare no criterion. The base derives coverage
+  through `get_condition_types()`. Wrappers must cover every input condition and pass each child
+  only its supported subset, preserving objective context. Shared validation checks every child
+  before scoring. Wrappers that transform context expose the same inputs through
+  `_get_child_expectations()` for preflight.
+- Do not override the derived capability API, add plural declarations, or repeat missing/duplicate
+  condition checks in leaves. Use shared selection helpers; leaves cannot read sibling conditions.
+- Objective-only defaults are resolved before routing. Do not infer missing conditions from a
+  filtered child input.
+- Objective scoring owns required coverage. Optional auxiliary selection is an orchestration
+  policy, not a permissive leaf mode. Generic flat helpers validate each root independently.
+
 ## Common pitfalls
 
 - Forgetting ``*`` after ``self`` — the new check will surface this at

@@ -29,6 +29,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "pyrit.models.question_answering",
     ),
     (
+        "pyrit.models",
+        "SeedDatasetSummary",
+        "pyrit.models.seeds.seed_dataset_summary",
+        "pyrit.memory",
+    ),
+    (
         "pyrit.models.catalog",
         "RegisteredInitializer",
         "pyrit.models.catalog.initializer",
@@ -63,6 +69,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "Seed",
         "pyrit.models.seeds.seed",
         "pyrit.models.seeds.yaml_seed_loader",
+    ),
+    (
+        "pyrit.models.seeds",
+        "SeedDatasetSummary",
+        "pyrit.models.seeds.seed_dataset_summary",
+        "pyrit.memory",
     ),
     (
         "pyrit.models.target",

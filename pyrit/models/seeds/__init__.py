@@ -14,6 +14,7 @@ This module provides the core seed types used throughout PyRIT:
 - AttackTechniqueSeedGroup: Technique-specific seed group where all seeds must be general strategies
 - SeedSimulatedConversation: Configuration for generating simulated conversations
 - SeedDataset: Container for managing collections of seeds
+- SeedDatasetSummary: Aggregate statistics and metadata for stored seeds
 """
 
 from typing import TYPE_CHECKING
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.attack_technique_seed_group import AttackTechniqueSeedGroup
     from pyrit.models.seeds.seed import Seed
     from pyrit.models.seeds.seed_dataset import SeedDataset
+    from pyrit.models.seeds.seed_dataset_summary import SeedDatasetSummary
     from pyrit.models.seeds.seed_group import SeedGroup, SeedUnion
     from pyrit.models.seeds.seed_grouping import group_seeds_into_attack_groups
     from pyrit.models.seeds.seed_objective import SeedObjective
@@ -58,6 +60,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AttackSeedGroup": "pyrit.models.seeds.attack_seed_group",
     "AttackTechniqueSeedGroup": "pyrit.models.seeds.attack_technique_seed_group",
     "SeedDataset": "pyrit.models.seeds.seed_dataset",
+    "SeedDatasetSummary": "pyrit.models.seeds.seed_dataset_summary",
     "SeedGroup": "pyrit.models.seeds.seed_group",
     "SeedObjective": "pyrit.models.seeds.seed_objective",
     "SeedPrompt": "pyrit.models.seeds.seed_prompt",

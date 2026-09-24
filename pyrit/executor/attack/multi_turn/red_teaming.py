@@ -20,6 +20,7 @@ from pyrit.executor.attack.component import (
 )
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -40,7 +41,6 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score import MessageScorer
 from pyrit.score.score_utils import score_is_true
 
 if TYPE_CHECKING:
@@ -540,7 +540,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             objective=context.objective,
         ):
             # score_async handles blocked, filtered, other errors
-            scoring_results = await MessageScorer.score_response_async(
+            scoring_results = await score_attack_response_async(
                 response=context.last_response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
