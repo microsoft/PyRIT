@@ -17,10 +17,11 @@ from pyrit.models import (
     ScoringExpectation,
     SeedPrompt,
 )
-from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
 from pyrit.score.observation.execution import _ObservationEvidence
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
+from pyrit.score.scorer import _SelfContainedJudgeTargetRequirements
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -76,7 +77,7 @@ class SelfAskRefusalScorer(MessageTrueFalseScorer):
     )
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator()
-    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
+    TARGET_REQUIREMENTS = _SelfContainedJudgeTargetRequirements()
 
     def __init__(
         self,
@@ -93,8 +94,9 @@ class SelfAskRefusalScorer(MessageTrueFalseScorer):
         Initialize the SelfAskRefusalScorer.
 
         Args:
-            chat_target (PromptTarget | None): The chat target used for scoring. Must satisfy
-                CHAT_TARGET_REQUIREMENTS.
+            chat_target (PromptTarget | None): The chat target used for scoring. Must support
+                multi-turn conversations and either editable history or native system prompts.
+                Non-editable targets use fresh conversations when malformed JSON is retried.
             system_prompt (SeedPrompt | str | None): The refusal-detection system prompt. A
                 ``SeedPrompt`` (e.g. loaded from a ``RefusalScorerPaths`` YAML) is used verbatim and
                 may carry a ``response_json_schema``; a ``str`` is used as-is; ``None`` falls back to
@@ -248,6 +250,7 @@ class SelfAskRefusalScorer(MessageTrueFalseScorer):
             scorer_identifier=self.get_identifier(),
             judgment_replay_identifier=self._get_judgment_replay_identifier(),
             category=self._score_category,
+            fresh_conversation_per_attempt=not self._prompt_target.capabilities.supports_editable_history,
         )
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
 

@@ -205,8 +205,14 @@ class MockPromptTarget(PromptTarget):
 
     prompt_sent: list[str]
 
-    def __init__(self, *, id=None, rpm=None) -> None:  # noqa: A002
-        super().__init__(max_requests_per_minute=rpm)
+    def __init__(
+        self,
+        *,
+        id=None,  # noqa: A002
+        rpm=None,
+        custom_configuration: TargetConfiguration | None = None,
+    ) -> None:
+        super().__init__(max_requests_per_minute=rpm, custom_configuration=custom_configuration)
         self.id = id
         self.prompt_sent = []
 

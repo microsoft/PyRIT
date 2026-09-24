@@ -20,7 +20,12 @@ from pyrit.models import (
     MessagePiece,
     SeedPrompt,
 )
-from pyrit.score import JsonSchemaResponseHandler, MessageScorable, RefusalScorerPaths, SelfAskRefusalScorer
+from pyrit.score import (
+    JsonSchemaResponseHandler,
+    MessageScorable,
+    RefusalScorerPaths,
+    SelfAskRefusalScorer,
+)
 
 
 @pytest.fixture

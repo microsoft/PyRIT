@@ -3,27 +3,35 @@
 
 import asyncio
 import uuid
+from dataclasses import replace
 from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_target_identifier, store_message
+from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message
 
+import pyrit.score.scorer as scorer_module
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    Acquisition,
     AnswerMatches,
     ChatMessageRole,
     ComponentIdentifier,
     ContentScorable,
     Message,
     MessagePiece,
+    PromptDataType,
     Scorable,
     Score,
+    ScorerTargetResponsePayload,
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target.common import target_requirements as target_requirements_module
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
@@ -34,7 +42,10 @@ from pyrit.score import (
     MessageTrueFalseScorer,
     Scorer,
     ScorerPromptValidator,
+    SelfAskRefusalScorer,
+    SelfAskTrueFalseScorer,
     TrueFalseInverterScorer,
+    TrueFalseQuestion,
     TrueFalseScorer,
 )
 from pyrit.score.llm_scoring import _run_llm_scoring_async
@@ -120,6 +131,269 @@ class MockScorer(MessageTrueFalseScorer):
 
     def validate_return_scores(self, scores: list[Score]):
         assert all(s.score_value in ["true", "false"] for s in scores if s.status != ScoreStatus.UNDETERMINED)
+
+
+def _make_mock_judge_target(*, editable_history: bool = False) -> MockPromptTarget:
+    return MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_multi_message_pieces=True,
+                supports_system_prompt=True,
+                supports_editable_history=editable_history,
+            )
+        )
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "scorer_type",
+    [
+        pytest.param(SelfAskRefusalScorer, id="refusal"),
+        pytest.param(SelfAskTrueFalseScorer, id="true-false"),
+    ],
+)
+@pytest.mark.parametrize(
+    (
+        "extra_required",
+        "extra_native_required",
+        "extra_input_modalities",
+        "extra_output_modalities",
+        "rejected_routes",
+        "error_fragments",
+    ),
+    [
+        pytest.param(
+            frozenset({CapabilityName.STREAMING_AUDIO}),
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            frozenset({"editable", "native"}),
+            ("supports_streaming_audio",),
+            id="additional-required-capability",
+        ),
+        pytest.param(
+            frozenset(),
+            frozenset({CapabilityName.EDITABLE_HISTORY}),
+            frozenset(),
+            frozenset(),
+            frozenset({"native"}),
+            ("natively support 'supports_editable_history'",),
+            id="native-required-editable-history",
+        ),
+        pytest.param(
+            frozenset(),
+            frozenset(),
+            frozenset({frozenset({"audio_path"})}),
+            frozenset({frozenset({"audio_path"})}),
+            frozenset({"editable", "native"}),
+            ("input modality {audio_path}", "output modality {audio_path}"),
+            id="additional-input-output-modalities",
+        ),
+    ],
+)
+def test_self_ask_scorers_preserve_shared_target_requirements(
+    *,
+    scorer_type: type[SelfAskRefusalScorer] | type[SelfAskTrueFalseScorer],
+    extra_required: frozenset[CapabilityName],
+    extra_native_required: frozenset[CapabilityName],
+    extra_input_modalities: frozenset[frozenset[PromptDataType]],
+    extra_output_modalities: frozenset[frozenset[PromptDataType]],
+    rejected_routes: frozenset[str],
+    error_fragments: tuple[str, ...],
+) -> None:
+    shared_requirements = target_requirements_module.CHAT_TARGET_REQUIREMENTS
+    shared_fields = (
+        shared_requirements.required,
+        shared_requirements.native_required,
+        shared_requirements.required_input_modalities,
+        shared_requirements.required_output_modalities,
+    )
+    targets = (
+        ("editable", _make_mock_judge_target(editable_history=True)),
+        ("native", _make_mock_judge_target()),
+    )
+
+    for _, target in targets:
+        scorer_type(chat_target=target)
+
+    future_requirements = replace(
+        shared_requirements,
+        required=shared_requirements.required | extra_required,
+        native_required=shared_requirements.native_required | extra_native_required,
+        required_input_modalities=shared_requirements.required_input_modalities | extra_input_modalities,
+        required_output_modalities=shared_requirements.required_output_modalities | extra_output_modalities,
+    )
+    with patch.object(scorer_module, "CHAT_TARGET_REQUIREMENTS", future_requirements):
+        for route, target in targets:
+            if route in rejected_routes:
+                with pytest.raises(ValueError) as exc_info:
+                    scorer_type(chat_target=target)
+                assert all(fragment in str(exc_info.value) for fragment in error_fragments)
+            else:
+                scorer_type(chat_target=target)
+
+    assert target_requirements_module.CHAT_TARGET_REQUIREMENTS is shared_requirements
+    assert (
+        shared_requirements.required,
+        shared_requirements.native_required,
+        shared_requirements.required_input_modalities,
+        shared_requirements.required_output_modalities,
+    ) == shared_fields
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    (
+        "scorer_kind",
+        "answer",
+        "judge_json",
+        "expected_score",
+        "expected_rationale",
+        "expected_judge_prompt",
+        "expected_system_prompt_fragment",
+    ),
+    [
+        pytest.param(
+            "refusal",
+            "I cannot answer that question.",
+            '{"score_value":"True","description":"Refusal detected","rationale":"The response explicitly refuses."}',
+            True,
+            "The response explicitly refuses.",
+            "conversation_objective: Name France's capital\nresponse_to_evaluate_input: I cannot answer that question.",
+            None,
+            id="refusal",
+        ),
+        pytest.param(
+            "refusal",
+            "France's capital is Paris.",
+            '{"score_value":"False","description":"No refusal detected",'
+            '"rationale":"The response answers the objective."}',
+            False,
+            "The response answers the objective.",
+            "conversation_objective: Name France's capital\nresponse_to_evaluate_input: France's capital is Paris.",
+            None,
+            id="answer",
+        ),
+        pytest.param(
+            "true_false",
+            "Paris is the capital of France.",
+            '{"score_value":true,"description":"Correct","rationale":"Paris is the capital of France."}',
+            True,
+            "Paris is the capital of France.",
+            "objective: Name France's capital\nresponse: Paris is the capital of France.",
+            "The response correctly identifies Paris as the capital of France.",
+            id="true-false",
+        ),
+    ],
+)
+async def test_self_ask_scorers_use_fresh_conversations_for_noneditable_text_judgments_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    scorer_kind: str,
+    answer: str,
+    judge_json: str,
+    expected_score: bool,
+    expected_rationale: str,
+    expected_judge_prompt: str,
+    expected_system_prompt_fragment: str | None,
+) -> None:
+    target = _make_mock_judge_target()
+    sent_conversations: list[list[Message]] = []
+    sent_conversation_ids: list[str] = []
+    reset_conversation_ids: list[str] = []
+    sent_response_piece_ids: list[uuid.UUID] = []
+
+    async def send_judge_reply_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        sent_conversations.append(normalized_conversation)
+        conversation_id = normalized_conversation[-1].get_piece().conversation_id
+        sent_conversation_ids.append(conversation_id)
+        if len(sent_conversation_ids) == 2:
+            assert reset_conversation_ids == [sent_conversation_ids[0]]
+        response_text = "malformed judge response" if len(sent_conversation_ids) == 1 else judge_json
+        response = MessagePiece(
+            role="assistant",
+            original_value=response_text,
+            conversation_id=conversation_id,
+        ).to_message()
+        sent_response_piece_ids.append(response.get_piece().id)
+        return [response]
+
+    async def reset_conversation_async(*, conversation_id: str) -> None:
+        reset_conversation_ids.append(conversation_id)
+
+    target_send = AsyncMock(side_effect=send_judge_reply_async)
+    reset = AsyncMock(side_effect=reset_conversation_async)
+    with (
+        patch.object(target, "_send_prompt_to_target_async", new=target_send),
+        patch.object(target, "reset_conversation_async", new=reset),
+    ):
+        saved_answer = store_message(
+            MessagePiece(
+                role="assistant",
+                conversation_id=str(uuid.uuid4()),
+                original_value=answer,
+            ).to_message()
+        )
+        input_piece = saved_answer.get_piece()
+        input_scorable = MessageScorable.from_message(saved_answer)
+
+        if scorer_kind == "refusal":
+            scorer = SelfAskRefusalScorer(chat_target=target)
+        else:
+            question = TrueFalseQuestion(
+                category="capital correctness",
+                true_description="The response correctly identifies Paris as the capital of France.",
+                false_description="The response does not correctly identify Paris as the capital of France.",
+            )
+            scorer = SelfAskTrueFalseScorer.from_question(chat_target=target, question=question)
+
+        expectation = ScoringExpectation(objective="Name France's capital")
+        scores = await scorer.score_async(scorable=input_scorable, expectation=expectation)
+
+    assert len(scores) == 1
+    assert scores[0].get_value() is expected_score
+    assert scores[0].score_rationale == expected_rationale
+    assert scores[0].message_piece_id == input_piece.id
+    assert scores[0].scorable == input_scorable
+    assert len(scores[0].observation_ids) == 1
+    observation = sqlite_instance.get_observations(observation_ids=scores[0].observation_ids)[0]
+    assert observation.acquisition is Acquisition.COMPLETE
+    assert isinstance(observation.payload, ScorerTargetResponsePayload)
+    assert observation.payload.message_piece_ids == (sent_response_piece_ids[1],)
+    assert target_send.await_count == 2
+    assert len(set(sent_conversation_ids)) == 2
+    assert reset_conversation_ids == [sent_conversation_ids[0]]
+
+    user_pieces = [conversation[-1].get_piece() for conversation in sent_conversations]
+    assert all(piece.original_value == expected_judge_prompt for piece in user_pieces)
+    assert user_pieces[0].converted_value == user_pieces[1].converted_value
+    assert "The response should conform to the following JSON schema:" in user_pieces[0].converted_value
+    assert '"score_value"' in user_pieces[0].converted_value
+    assert '"rationale"' in user_pieces[0].converted_value
+
+    memory_pieces = sqlite_instance.get_message_pieces()
+    system_pieces = [
+        piece for piece in memory_pieces if piece.role == "system" and piece.conversation_id in sent_conversation_ids
+    ]
+    assert len(system_pieces) == 2
+    assert system_pieces[0].original_value == system_pieces[1].original_value
+    if expected_system_prompt_fragment is not None:
+        assert expected_system_prompt_fragment in system_pieces[0].original_value
+    assert any(
+        piece.role == "assistant"
+        and piece.original_value == "malformed judge response"
+        and piece.conversation_id == sent_conversation_ids[0]
+        for piece in memory_pieces
+    )
+    stored_answer = sqlite_instance.get_message_pieces(prompt_ids=[input_piece.id])
+    assert len(stored_answer) == 1
+    assert stored_answer[0].original_value == answer
+    replayed_scores = await scorer.score_observation_async(observation=observation, expectation=expectation)
+    assert len(replayed_scores) == 1
+    assert replayed_scores[0].get_value() is expected_score
+    assert target_send.await_count == 2
 
 
 class SelectiveValidator(ScorerPromptValidator):
@@ -239,6 +513,101 @@ async def test_scorer_score_value_with_llm_exception_display_prompt_id(patch_cen
             category="category",
             objective="task",
         )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_fresh_llm_scoring_bounds_invalid_json_retries_and_resets_each_attempt(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    target = _make_mock_judge_target()
+    attempted_conversation_ids: list[str] = []
+    reset_conversation_ids: list[str] = []
+
+    async def send_invalid_json_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        conversation_id = normalized_conversation[-1].get_piece().conversation_id
+        attempted_conversation_ids.append(conversation_id)
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value=BAD_JSON,
+                conversation_id=conversation_id,
+            ).to_message()
+        ]
+
+    async def reset_async(*, conversation_id: str) -> None:
+        reset_conversation_ids.append(conversation_id)
+
+    target_send = AsyncMock(side_effect=send_invalid_json_async)
+    reset = AsyncMock(side_effect=reset_async)
+    scorer = MockScorer()
+    with (
+        patch.object(target, "_send_prompt_to_target_async", new=target_send),
+        patch.object(target, "reset_conversation_async", new=reset),
+        pytest.raises(InvalidJsonException),
+    ):
+        await _run_llm_scoring_async(
+            chat_target=target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="Judge this answer.",
+            value="The answer to judge.",
+            data_type="text",
+            scored_prompt_id="saved-answer-id",
+            objective="Name France's capital",
+            fresh_conversation_per_attempt=True,
+        )
+
+    assert target_send.await_count == 2
+    assert len(set(attempted_conversation_ids)) == 2
+    assert reset_conversation_ids == attempted_conversation_ids
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_fresh_llm_scoring_does_not_retry_when_conversation_reset_fails(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    target = _make_mock_judge_target()
+    reset_failure = RuntimeError("native session release failed")
+
+    async def send_invalid_json_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        conversation_id = normalized_conversation[-1].get_piece().conversation_id
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value=BAD_JSON,
+                conversation_id=conversation_id,
+            ).to_message()
+        ]
+
+    async def fail_reset_async(*, conversation_id: str) -> None:
+        raise reset_failure
+
+    target_send = AsyncMock(side_effect=send_invalid_json_async)
+    reset = AsyncMock(side_effect=fail_reset_async)
+    scorer = MockScorer()
+    with (
+        patch.object(target, "_send_prompt_to_target_async", new=target_send),
+        patch.object(target, "reset_conversation_async", new=reset),
+        pytest.raises(Exception, match="Error scoring prompt with original prompt ID: saved-answer-id") as exc_info,
+    ):
+        await _run_llm_scoring_async(
+            chat_target=target,
+            response_handler=JsonSchemaResponseHandler(),
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="Judge this answer.",
+            value="The answer to judge.",
+            data_type="text",
+            scored_prompt_id="saved-answer-id",
+            objective="Name France's capital",
+            fresh_conversation_per_attempt=True,
+        )
+
+    reset_error = exc_info.value.__cause__
+    assert isinstance(reset_error, RuntimeError)
+    assert "Could not release the malformed judge session" in str(reset_error)
+    assert reset_error.__cause__ is reset_failure
+    target_send.assert_awaited_once()
+    reset.assert_awaited_once()
 
 
 async def test_scorer_send_chat_target_async_good_response(good_json, patch_central_database):

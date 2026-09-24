@@ -13,6 +13,7 @@ from pyrit.exceptions import (
     EmptyResponseException,
     InvalidJsonException,
     ScorerLLMResponseBlockedException,
+    pyrit_json_retry,
 )
 from pyrit.models import (
     Acquisition,
@@ -83,6 +84,7 @@ async def _run_llm_scoring_async(
     category: Sequence[str] | str | None = None,
     objective: str | None = None,
     normalizer: PromptNormalizer | None = None,
+    fresh_conversation_per_attempt: bool = False,
     observation_metadata: Mapping[str, str] | None = None,
     requires_message_piece_evidence: bool = False,
     judgment_replay_identifier: Mapping[str, object] | None = None,
@@ -93,13 +95,13 @@ async def _run_llm_scoring_async(
     This is the shared LLM evaluation mechanism: it optionally sets a system prompt on the target, sends
     the value to be scored (forwarding ``response_handler.json_response_config`` so targets that
     support structured output can enforce it), and delegates parsing and validation to
-    ``response_handler``. The round-trip is routed through a ``PromptNormalizer`` via
-    ``send_json_with_retry_async`` so the scorer's question and the target's answer are persisted
-    to memory (a full audit trail, and a real conversation an attack can link as a SCORE-type
-    related conversation) and so JSON retries roll memory back to a clean baseline between attempts
-    instead of replaying the target's own malformed reply. It is intentionally stateless and
-    independent of any particular ``Scorer`` so that scorers can compose it without inheriting LLM
-    machinery.
+    ``response_handler``. The round-trip uses a ``PromptNormalizer`` so the scorer's question and
+    the target's answer are persisted to memory (a full audit trail, and a real conversation an
+    attack can link as a SCORE-type related conversation). The default editable-history path rolls
+    memory back between JSON attempts; ``fresh_conversation_per_attempt`` keeps malformed judge
+    exchanges in separate conversations instead of replaying native history. It is intentionally
+    stateless and independent of any particular ``Scorer`` so scorers can compose it without
+    inheriting LLM machinery.
 
     The round-trip owns only the transport; the ``ResponseHandler`` owns the response contract —
     the optional response schema and turning raw text into a validated ``UnvalidatedScore``.
@@ -127,8 +129,10 @@ async def _run_llm_scoring_async(
         objective (str | None): Transitional objective context for direct helper callers.
             Defaults to None.
         normalizer (PromptNormalizer | None): Normalizer used to send the scoring round-trip
-            and whose memory is rolled back between JSON retries. Injectable for testing;
-            defaults to a fresh ``PromptNormalizer()`` when not supplied.
+            and resolve scorer evidence. Injectable for testing; defaults to a fresh
+            ``PromptNormalizer()`` when not supplied.
+        fresh_conversation_per_attempt (bool): Use a new conversation for each JSON retry when
+            target history cannot be rolled back. Defaults to False.
         observation_metadata (Mapping[str, str] | None): Scorer-specific state required to
             reconstruct the response parser during replay. Defaults to None.
         requires_message_piece_evidence (bool): Whether the rendered request reads fields that a
@@ -193,7 +197,7 @@ async def _run_llm_scoring_async(
         observation_scorable is not None and scored_evidence_digest is not None and has_required_evidence
     )
 
-    if system_prompt is not None:
+    if system_prompt is not None and not fresh_conversation_per_attempt:
         chat_target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
@@ -273,17 +277,51 @@ async def _run_llm_scoring_async(
             objective=expectation.objective if expectation else None,
         )
 
-    # Route the round-trip through the normalizer so the scorer Q&A is persisted and JSON retries
-    # replay on a clean history.
+    # Editable targets retry on a rolled-back conversation; non-editable judges opt into fresh sessions.
     try:
-        unvalidated_score = await send_json_with_retry_async(
-            normalizer=resolved_normalizer,
-            target=chat_target,
-            message=scorer_llm_request,
-            conversation_id=conversation_id,
-            parse=_parse,
-            on_response=_capture_response,
-        )
+        if fresh_conversation_per_attempt:
+            first_attempt = True
+
+            @pyrit_json_retry
+            async def _fresh_attempt_async() -> UnvalidatedScore:
+                nonlocal first_attempt
+                attempt_conversation_id = conversation_id if first_attempt else str(uuid.uuid4())
+                attempt_message = scorer_llm_request if first_attempt else scorer_llm_request.duplicate()
+                if system_prompt is not None:
+                    chat_target.set_system_prompt(
+                        system_prompt=system_prompt,
+                        conversation_id=attempt_conversation_id,
+                    )
+                first_attempt = False
+                response = await resolved_normalizer.send_prompt_async(
+                    message=attempt_message,
+                    conversation_id=attempt_conversation_id,
+                    target=chat_target,
+                )
+                if not response:
+                    raise ValueError(f"No response received for conversation ID: {attempt_conversation_id}")
+                _capture_response(response)
+                try:
+                    return _parse(response)
+                except InvalidJsonException:
+                    try:
+                        await chat_target.reset_conversation_async(conversation_id=attempt_conversation_id)
+                    except Exception as reset_error:
+                        raise RuntimeError(
+                            "Could not release the malformed judge session; refusing another retry."
+                        ) from reset_error
+                    raise
+
+            unvalidated_score: UnvalidatedScore = await _fresh_attempt_async()
+        else:
+            unvalidated_score = await send_json_with_retry_async(
+                normalizer=resolved_normalizer,
+                target=chat_target,
+                message=scorer_llm_request,
+                conversation_id=conversation_id,
+                parse=_parse,
+                on_response=_capture_response,
+            )
     except ScorerLLMResponseBlockedException as error:
         if terminal_response is not None and can_collect_observation and _has_observation_collection():
             observation = _build_judgment_observation(

@@ -1,16 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pathlib import Path
 from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.models import Message, MessagePiece, MessageScorable, ScoringExpectation, SeedPrompt
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import (
     SelfAskTrueFalseScorer,
     TrueFalseQuestion,
@@ -414,3 +417,50 @@ async def test_from_question_scores_end_to_end(patch_central_database, scorer_tr
 
     assert len(scores) == 1
     assert scores[0].get_value() is True
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_self_ask_true_false_rejects_nontext_for_noneditable_target_async(tmp_path: Path) -> None:
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    target = MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_multi_message_pieces=True,
+                supports_system_prompt=True,
+                input_modalities=frozenset(
+                    {frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "image_path"})}
+                ),
+            )
+        )
+    )
+    scorer = SelfAskTrueFalseScorer.from_question(
+        chat_target=target,
+        question=TrueFalseQuestion(
+            category="image content",
+            true_description="The image contains visible content.",
+            false_description="The image does not contain visible content.",
+        ),
+    )
+    image_message = store_message(
+        MessagePiece(
+            role="assistant",
+            conversation_id="image-judgment",
+            original_value=str(image_path),
+            converted_value=str(image_path),
+            original_value_data_type="image_path",
+            converted_value_data_type="image_path",
+        ).to_message()
+    )
+
+    with pytest.raises(RuntimeError, match="Error in scorer SelfAskTrueFalseScorer") as exc_info:
+        await scorer.score_async(
+            scorable=MessageScorable.from_message(image_message),
+            expectation=ScoringExpectation(objective="Describe this image"),
+        )
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert "non-text" in str(exc_info.value.__cause__)
+    assert "editable history" in str(exc_info.value.__cause__)
+    assert target.prompt_sent == []

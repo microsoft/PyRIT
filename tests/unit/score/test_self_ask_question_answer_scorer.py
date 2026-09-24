@@ -4,7 +4,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import store_message
+from unit.mocks import MockPromptTarget, store_message
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -19,6 +19,8 @@ from pyrit.models import (
     UnvalidatedScore,
 )
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import (
     MessageScorable,
     NonReplayableObservationError,
@@ -72,6 +74,21 @@ async def test_score_async_returns_score_from_unvalidated(mock_chat_target):
     assert isinstance(scores[0], Score)
     assert scores[0].score_type == "true_false"
     assert scores[0].get_value() is True
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_question_answer_scorer_keeps_editable_history_requirement() -> None:
+    target = MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_system_prompt=True,
+            )
+        )
+    )
+
+    with pytest.raises(ValueError, match="supports_editable_history"):
+        SelfAskQuestionAnswerScorer(chat_target=target)
 
 
 @pytest.mark.parametrize("objective", [None, "What is the capital of France?"])
