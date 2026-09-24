@@ -238,7 +238,7 @@ test.describe("Converter Registry", () => {
 
   test("adds and removes a named converter without an active action", async ({ page }) => {
     await expect(page.getByRole("heading", { name: "Converter Registry" })).toBeVisible();
-    await expect(page.getByRole("button", { name: /set active/i })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Target defaults" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "New Converter" }).click();
     await page.getByRole("combobox", { name: "Converter type" }).click();

@@ -7,6 +7,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { ThemeProvider, useTheme } from "@/hooks/useTheme";
+import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
 import MainLayout from "./MainLayout";
 
 // Mock the api module
@@ -281,7 +282,7 @@ describe("MainLayout", () => {
       );
     }
 
-    render(<ThemeProvider><Workspace /></ThemeProvider>);
+    render(<UserPreferencesProvider accountKey="local"><ThemeProvider><Workspace /></ThemeProvider></UserPreferencesProvider>);
     await screen.findByText("Co-PyRIT 1.0.0");
     const draft = screen.getByRole("textbox", { name: "Draft" });
     const labels = screen.getByRole("region", { name: "Default Labels" });

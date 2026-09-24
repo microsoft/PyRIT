@@ -271,6 +271,7 @@ class TestFoundryInitialization:
         )
 
         assert scenario._adversarial_chat == mock_adversarial_target
+        assert scenario.uses_default_adversarial_target is False
 
     def test_init_with_custom_scorer(self, mock_objective_target, mock_objective_scorer):
         """Test initialization with custom objective scorer."""

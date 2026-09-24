@@ -3,12 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { ThemeProvider } from '@/hooks/useTheme'
 import { attacksApi, labelsApi, scenariosApi, targetsApi, versionApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { RegisteredScenario } from '@/types'
 import { exportConversation } from '@/utils/conversationExport'
 import { INITIAL_SCENARIO_RUN_PROGRESS_STATE } from '@/utils/scenarioRunProgress'
+import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
 
@@ -73,6 +73,7 @@ const SCENARIO: RegisteredScenario = {
   baseline_policy: 'forbidden',
   include_baseline_by_default: false,
   supported_parameters: [],
+  uses_default_adversarial_target: false,
   default_run_size: { estimated_attack_count: 1, components: [], datasets: [], note: null },
 }
 const TARGET = makeTarget({ target_registry_name: 'test_target', identifier_hash: 'test_hash' })
@@ -80,17 +81,11 @@ const DEFAULT_LABELS = { operator: 'config_user', operation: 'config_op', team: 
 const SAVED_LABELS = { operator: 'original_user', operation: 'original_op', team: 'original_team' }
 const SCENARIO_PATH = '/scanner/test.scenario'
 
-function TestWrapper({ children }: { children: React.ReactNode }) {
-  return <ThemeProvider>{children}</ThemeProvider>
-}
-
 function renderApp(path = SCENARIO_PATH) {
   return render(
-    <TestWrapper>
-      <MemoryRouter initialEntries={[path]}>
-        <App />
-      </MemoryRouter>
-    </TestWrapper>,
+    <MemoryRouter initialEntries={[path]}>
+      <App />
+    </MemoryRouter>,
   )
 }
 
@@ -109,7 +104,7 @@ async function chooseOperation(user: ReturnType<typeof userEvent.setup>, operati
 }
 
 async function launchScenario(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Target' }), 'test_target')
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Objective Target' }), 'test_target')
   await user.click(screen.getByRole('button', { name: 'Launch scan' }))
   const dialog = await screen.findByRole('dialog')
   await user.click(within(dialog).getByRole('button', { name: 'Launch scan' }))
@@ -203,9 +198,9 @@ describe('Shared new run labels', () => {
       expect(within(bar).getByRole('button', { name: /currently remembered_op$/ })).toBeInTheDocument()
     }
     await user.click(await screen.findByRole('link', { name: 'test.scenario' }))
-    await screen.findByRole('combobox', { name: 'Target' })
+    await screen.findByRole('combobox', { name: 'Objective Target' })
     expect(currentLabels()).toBe(bar)
-    expect(JSON.parse(window.localStorage.getItem('pyrit.globalLabels') ?? '{}'))
+    expect(readUserPreferences('local').labels)
       .toEqual({ operation: 'remembered_op' })
 
     app.unmount()
@@ -219,10 +214,18 @@ describe('Shared new run labels', () => {
 
   it('uses the signed-in alias ahead of stored and backend operators when launching', async () => {
     const user = userEvent.setup()
-    window.localStorage.setItem('pyrit.globalLabels', JSON.stringify({ operator: 'remembered_user', operation: 'remembered_op' }))
-    mockGetActiveAccount.mockReturnValue({ username: 'Signed.In@contoso.com' })
+    writeUserPreferences('tenant:signed-in', {
+      ...DEFAULT_USER_PREFERENCES,
+      labels: { operator: 'remembered_user', operation: 'remembered_op' },
+    })
+    mockGetActiveAccount.mockReturnValue({
+      username: 'Signed.In@contoso.com', tenantId: 'tenant', homeAccountId: 'signed-in',
+    })
     renderApp()
-    await screen.findByRole('button', { name: 'Edit operator, currently signed.in' })
+    const operator = await screen.findByRole('button', { name: 'Signed-in operator: signed.in' })
+    expect(operator).toHaveAttribute('aria-disabled', 'true')
+    await user.click(operator)
+    expect(screen.queryByRole('textbox', { name: 'Value for operator label' })).not.toBeInTheDocument()
     await chooseOperation(user, 'signed_in_op')
     await launchScenario(user)
     expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
@@ -235,6 +238,10 @@ describe('Shared new run labels', () => {
     const user = userEvent.setup()
     renderApp('/chat')
     const toolbar = within(currentLabels()).getByRole('group', { name: 'Chat controls' })
+    const targetPicker = await within(toolbar).findByRole('combobox', { name: 'Chat target' })
+    await waitFor(() => expect(targetPicker).toBeEnabled())
+    await user.selectOptions(targetPicker, 'test_target')
+    expect(targetPicker).toHaveValue('test_target')
     expect(within(screen.getByTestId('chat-area')).queryByRole('group', { name: 'Chat controls' }))
       .not.toBeInTheDocument()
     expect(within(toolbar).getByRole('button', { name: 'Export conversation' })).toBeDisabled()
@@ -242,7 +249,7 @@ describe('Shared new run labels', () => {
     expect(within(toolbar).getByRole('button', { name: 'New Attack' })).toBeDisabled()
     const markdown = within(toolbar).getByRole('switch')
     await user.click(markdown)
-    expect(window.localStorage.getItem('pyrit.chatMarkdownMode')).toBe('markdown')
+    expect(readUserPreferences('local').chatMarkdown).toBe(true)
 
     await user.click(screen.getByRole('button', { name: 'Home', exact: true }))
     expect(screen.queryByRole('group', { name: 'Chat controls' })).not.toBeInTheDocument()

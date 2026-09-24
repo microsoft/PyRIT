@@ -161,7 +161,7 @@ export default function Home({
           <section className={styles.card} data-testid="home-target-card" data-tour="target-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TargetRegular /></span>
-              <Text as="h2" size={500} weight="semibold">Target</Text>
+              <Text as="h2" size={500} weight="semibold">Default objective target</Text>
             </div>
             <div className={styles.cardBody}>
               {activeTarget ? (
@@ -174,7 +174,7 @@ export default function Home({
                 </div>
               ) : (
                 <Text size={300} className={styles.emptyHint} data-testid="home-target-empty">
-                  No target selected. Pick one to send prompts.
+                  No default objective target selected. Choose a target in Chat or set a default in the registry.
                 </Text>
               )}
             </div>
@@ -220,7 +220,7 @@ export default function Home({
             <div className={styles.emptyOperations} data-testid="home-empty">
               <Text size={400}>No attacks yet</Text>
               <Text size={200}>
-                Configure a target and start a new attack from the Chat tab.
+                Select a target and start a new attack from the Chat tab.
               </Text>
               <Button
                 className={styles.touchTarget}

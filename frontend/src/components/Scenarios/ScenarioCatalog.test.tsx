@@ -64,6 +64,7 @@ function makeScenario(overrides: Partial<RegisteredScenario> & { scenario_name: 
     },
     baseline_policy: 'enabled',
     include_baseline_by_default: true,
+    uses_default_adversarial_target: true,
     supported_parameters: [],
     default_run_size: {
       estimated_attack_count: null,

@@ -23,6 +23,7 @@ interface MainLayoutProps {
   canManageConfiguration: boolean
   labels: Record<string, string>
   onLabelsChange: (labels: Record<string, string>) => void
+  operatorReadOnly?: boolean
   toolbarRef?: React.Ref<HTMLDivElement>
   onStartTour?: () => void
 }
@@ -35,6 +36,7 @@ export default function MainLayout({
   canManageConfiguration,
   labels,
   onLabelsChange,
+  operatorReadOnly,
   toolbarRef,
   onStartTour,
 }: MainLayoutProps) {
@@ -133,7 +135,7 @@ export default function MainLayout({
           >
             <div className={styles.labelsRow}>
               <div className={styles.labelsControls}>
-                <LabelsBar labels={labels} onLabelsChange={onLabelsChange} />
+                <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly} />
               </div>
               <div ref={toolbarRef} className={styles.toolbarSlot} />
             </div>

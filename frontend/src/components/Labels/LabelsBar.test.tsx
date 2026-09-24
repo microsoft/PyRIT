@@ -50,6 +50,26 @@ describe('LabelsBar', () => {
     expect(screen.getByTestId('labels-warning')).toBeInTheDocument()
   })
 
+  it('should keep the signed-in operator read-only in the ribbon and absent from the popover', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={{ operator: 'alice', operation: 'op_demo' }} onLabelsChange={onChange} operatorReadOnly />
+      </TestWrapper>,
+    )
+    const operator = screen.getByRole('button', { name: 'Signed-in operator: alice' })
+    expect(operator).toHaveAttribute('aria-disabled', 'true')
+    await user.click(operator)
+    expect(screen.queryByTestId('edit-label-operator')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('labels-icon-btn'))
+    expect(await screen.findByRole('heading', { name: 'Default Labels' })).toBeInTheDocument()
+    expect(screen.queryByTestId('popover-metadata-operator')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('popover-label-operator')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('edit-label-operator')).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('should not show warning when values are customized', () => {
     render(
       <TestWrapper>

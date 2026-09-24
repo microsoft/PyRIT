@@ -93,6 +93,7 @@ from pyrit.models import (
     ScoreStatus,
     Seed,
     SeedDataset,
+    SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
     SeedType,
@@ -3601,6 +3602,126 @@ class MemoryInterface(abc.ABC):
         """
         for dataset in datasets:
             await self.add_seeds_to_memory_async(seeds=dataset.seeds, added_by=added_by)
+
+    def get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
+        """
+        Return aggregate metadata for datasets already loaded in memory.
+
+        The queries intentionally project only dataset metadata and counts. Seed values and
+        media are never hydrated, so callers can build dataset cards without materializing
+        every prompt or fetching providers.
+
+        Named dataset grouping and metadata matching stay on the original collated
+        dataset_name column. NULL and empty names are aggregated separately into the
+        unnamed population so their shared logical groups are counted exactly once.
+
+        Returns:
+            Sequence[SeedDatasetSummary]: One summary for each stored dataset, including
+            a single deterministic entry for seeds without a dataset name.
+        """
+        try:
+            logical_example_id = func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id)
+            named_condition = and_(SeedEntry.dataset_name.is_not(None), SeedEntry.dataset_name != "")
+            unnamed_condition = or_(SeedEntry.dataset_name.is_(None), SeedEntry.dataset_name == "")
+
+            named_aggregate = (
+                select(
+                    SeedEntry.dataset_name.label("dataset_name"),
+                    func.count().label("seed_pieces"),
+                    func.count(func.distinct(logical_example_id)).label("logical_examples"),
+                    func.sum(case((SeedEntry.seed_type == "objective", 1), else_=0)).label("objectives"),
+                )
+                .where(named_condition)
+                .group_by(SeedEntry.dataset_name)
+                .subquery()
+            )
+            named_metadata = (
+                select(
+                    SeedEntry.dataset_name.label("dataset_name"),
+                    SeedEntry.data_type,
+                    SeedEntry.harm_categories,
+                )
+                .where(named_condition)
+                .distinct()
+                .subquery()
+            )
+            named_statement = select(
+                named_aggregate.c.dataset_name,
+                named_aggregate.c.seed_pieces,
+                named_aggregate.c.logical_examples,
+                named_aggregate.c.objectives,
+                named_metadata.c.data_type,
+                named_metadata.c.harm_categories,
+            ).join(
+                named_metadata,
+                named_aggregate.c.dataset_name == named_metadata.c.dataset_name,
+            )
+
+            unnamed_aggregate = (
+                select(
+                    literal(None, type_=SeedEntry.dataset_name.type).label("dataset_name"),
+                    func.count().label("seed_pieces"),
+                    func.count(func.distinct(logical_example_id)).label("logical_examples"),
+                    func.sum(case((SeedEntry.seed_type == "objective", 1), else_=0)).label("objectives"),
+                )
+                .where(unnamed_condition)
+                .subquery()
+            )
+            unnamed_metadata = (
+                select(SeedEntry.data_type, SeedEntry.harm_categories).where(unnamed_condition).distinct().subquery()
+            )
+            unnamed_statement = select(
+                unnamed_aggregate.c.dataset_name,
+                unnamed_aggregate.c.seed_pieces,
+                unnamed_aggregate.c.logical_examples,
+                unnamed_aggregate.c.objectives,
+                unnamed_metadata.c.data_type,
+                unnamed_metadata.c.harm_categories,
+            ).select_from(unnamed_aggregate.join(unnamed_metadata, literal(True)))
+
+            combined_statement = named_statement.union_all(unnamed_statement)
+
+            with closing(self.get_session()) as session:
+                rows = session.execute(combined_statement).all()
+
+            summaries_by_dataset: dict[str | None, dict[str, Any]] = {}
+            dataset_order: list[str | None] = []
+            for row in rows:
+                dataset_name = row.dataset_name
+                if dataset_name not in summaries_by_dataset:
+                    summaries_by_dataset[dataset_name] = {
+                        "seed_pieces": int(row.seed_pieces or 0),
+                        "logical_examples": int(row.logical_examples or 0),
+                        "objectives": int(row.objectives or 0),
+                        "modalities": set(),
+                        "harm_categories": set(),
+                        "has_unlabeled_harm_categories": False,
+                    }
+                    dataset_order.append(dataset_name)
+                summary = summaries_by_dataset[dataset_name]
+                if row.data_type:
+                    summary["modalities"].add(row.data_type)
+                categories = row.harm_categories or []
+                if categories:
+                    summary["harm_categories"].update(categories)
+                else:
+                    summary["has_unlabeled_harm_categories"] = True
+
+            return [
+                SeedDatasetSummary(
+                    dataset_name=dataset_name,
+                    logical_examples=summaries_by_dataset[dataset_name]["logical_examples"],
+                    seed_pieces=summaries_by_dataset[dataset_name]["seed_pieces"],
+                    objectives=summaries_by_dataset[dataset_name]["objectives"],
+                    modalities=tuple(sorted(summaries_by_dataset[dataset_name]["modalities"])),
+                    harm_categories=tuple(sorted(summaries_by_dataset[dataset_name]["harm_categories"])),
+                    has_unlabeled_harm_categories=summaries_by_dataset[dataset_name]["has_unlabeled_harm_categories"],
+                )
+                for dataset_name in dataset_order
+            ]
+        except Exception as e:
+            logger.exception(f"Failed to retrieve dataset summaries with error {e}")
+            raise
 
     def get_seed_dataset_names(self) -> Sequence[str]:
         """

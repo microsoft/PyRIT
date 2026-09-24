@@ -3,16 +3,32 @@
  * Licensed under the MIT license.
  */
 
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router";
 import App from "./App";
-import { ThemeProvider } from "./hooks/useTheme";
 
 import { attacksApi, targetsApi } from "./services/api";
 import { makeTarget } from "./test-utils/targetFixtures";
+import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "./utils/userPreferences";
 
 const mockGetActiveAccount = jest.fn();
+
+jest.mock("./hooks/useTargetRegistry", () => ({
+  useTargetRegistry: () => {
+    const { useState } = jest.requireActual<typeof import("react")>("react");
+    const [targets, setTargets] = useState<import("./types").TargetInstance[]>([]);
+    return {
+      targets,
+      loading: false,
+      error: null,
+      refresh: jest.fn(),
+      rememberTarget: (target: import("./types").TargetInstance) => {
+        setTargets((current) => [...current, target]);
+      },
+    };
+  },
+}));
 
 // Mock react-joyride to prevent the guided tour from interfering with App tests.
 // The Joyride component is rendered as a no-op div, avoiding uncontrolled state
@@ -101,15 +117,29 @@ jest.mock("./components/Layout/MainLayout", () => {
     currentView,
     onNavigate,
     labels,
+    onLabelsChange,
+    operatorReadOnly,
   }: {
     children: React.ReactNode;
     currentView: string;
     onNavigate: (view: string) => void;
     labels: Record<string, string>;
+    onLabelsChange: (labels: Record<string, string>) => void;
+    operatorReadOnly: boolean;
   }) => {
     return (
       <div data-testid="main-layout" data-current-view={currentView}>
         <span data-testid="global-labels-json">{JSON.stringify(labels)}</span>
+        <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
+        <span data-testid="operator-read-only">{String(operatorReadOnly)}</span>
+        <button onClick={() => onLabelsChange({ ...labels, operation: "op_edited", team: "red" })}>
+          Change run labels
+        </button>
+        <button onClick={() => onLabelsChange(Object.fromEntries(
+          Object.entries(labels).filter(([key]: [string, string]) => key !== "custom"),
+        ))}>
+          Remove custom label
+        </button>
         <button onClick={() => onNavigate("home")} data-testid="nav-home">
           Home
         </button>
@@ -220,20 +250,20 @@ jest.mock("./components/Chat/ChatWindow", () => {
 jest.mock("./components/Config/TargetConfig", () => {
   const { makeTarget } = jest.requireActual("@/test-utils/targetFixtures") as typeof import("@/test-utils/targetFixtures");
   const MockTargetConfig = ({
-    activeTarget,
-    onSetActiveTarget,
+    defaultObjectiveTarget,
+    onSetDefaultObjectiveTarget,
   }: {
-    activeTarget: unknown;
-    onSetActiveTarget: (t: unknown) => void;
+    defaultObjectiveTarget: unknown;
+    onSetDefaultObjectiveTarget: (t: unknown) => void;
   }) => {
     return (
       <div data-testid="target-config">
         <span data-testid="active-target-name">
-          {(activeTarget as { target_registry_name?: string })?.target_registry_name ?? "none"}
+          {(defaultObjectiveTarget as { target_registry_name?: string })?.target_registry_name ?? "none"}
         </span>
         <button
           onClick={() =>
-            onSetActiveTarget(makeTarget({
+            onSetDefaultObjectiveTarget(makeTarget({
               target_registry_name: "test_target",
               target_type: "OpenAIChatTarget",
               identifier_hash: "test-target-hash",
@@ -356,17 +386,17 @@ jest.mock("./components/Scenarios/ScenarioCatalog", () => {
 
 jest.mock("./components/Scenarios/ScenarioDetail", () => {
   const MockScenarioDetail = ({
-    activeTarget,
+    defaultObjectiveTarget,
     labels,
     onNavigate,
   }: {
-    activeTarget: unknown;
+    defaultObjectiveTarget: unknown;
     labels: Record<string, string>;
     onNavigate: (view: string) => void;
   }) => {
     return (
       <div data-testid="scenario-detail">
-        <span data-testid="scenario-detail-has-target">{activeTarget ? "yes" : "no"}</span>
+        <span data-testid="scenario-detail-has-target">{defaultObjectiveTarget ? "yes" : "no"}</span>
         <span data-testid="scenario-detail-labels-json">{JSON.stringify(labels)}</span>
         <button onClick={() => onNavigate("registry")} data-testid="scenario-detail-go-config">
           Configure target
@@ -424,17 +454,16 @@ describe("App", () => {
   // initialPath lets a test deep-link straight to a view.
   function renderApp(initialPath = "/") {
     return render(
-      <ThemeProvider>
-        <MemoryRouter initialEntries={[initialPath]}>
-          <App />
-        </MemoryRouter>
-      </ThemeProvider>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <App />
+      </MemoryRouter>
     );
   }
 
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetActiveAccount.mockReturnValue(null);
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
     mockListTargets.mockResolvedValue({
       items: [],
       pagination: { limit: 200, has_more: false, next_cursor: null },
@@ -447,6 +476,68 @@ describe("App", () => {
     renderApp();
     expect(screen.getByTestId("main-layout")).toBeInTheDocument();
     expect(screen.getByTestId("home-view")).toBeInTheDocument();
+  });
+
+  it("keeps run labels account-scoped and derives the operator without saving it", async () => {
+    const user = userEvent.setup();
+    const alice = { homeAccountId: "alice-id", tenantId: "tenant", username: "Alice@example.com" };
+    const bob = { homeAccountId: "bob-id", tenantId: "tenant", username: "Bob@example.com" };
+    mockGetActiveAccount.mockReturnValue(alice);
+    const { rerender } = renderApp();
+    await user.click(screen.getByRole("button", { name: "Change run labels" }));
+    expect(readUserPreferences("tenant:alice-id").labels).toEqual({ operation: "op_edited", team: "red" });
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operator":"alice"');
+    expect(screen.getByTestId("operator-read-only")).toHaveTextContent("true");
+
+    mockGetActiveAccount.mockReturnValue(bob);
+    rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operator":"bob"');
+    expect(screen.getByTestId("home-labels-json")).not.toHaveTextContent("op_edited");
+    mockGetActiveAccount.mockReturnValue(alice);
+    rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operation":"op_edited"');
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"team":"red"');
+  });
+
+  it("keeps edits and removed labels when backend defaults arrive after a reload", async () => {
+    const user = userEvent.setup();
+    mockedVersionApi.getVersion.mockResolvedValue({
+      version: "1.0.0",
+      default_labels: { custom: "backend", operation: "op_backend" },
+    });
+    const first = renderApp();
+    await waitFor(() => expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"custom":"backend"'));
+    await user.click(screen.getByRole("button", { name: "Remove custom label" }));
+    expect(readUserPreferences("local").labels).toEqual({ custom: null });
+    first.unmount();
+
+    let completeVersion!: (value: { version: string; default_labels: Record<string, string> }) => void;
+    mockedVersionApi.getVersion.mockReturnValue(new Promise((resolve) => { completeVersion = resolve; }));
+    renderApp();
+    await user.click(screen.getByRole("button", { name: "Change run labels" }));
+    await act(async () => {
+      completeVersion({ version: "1.0.0", default_labels: { custom: "backend", operation: "op_backend" } });
+    });
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operation":"op_edited"');
+    expect(screen.getByTestId("home-labels-json")).not.toHaveTextContent('"custom"');
+    expect(readUserPreferences("local").labels).toEqual({ operation: "op_edited", team: "red", custom: null });
+  });
+
+  it("restores saved labels ahead of backend defaults for an authenticated account", async () => {
+    mockGetActiveAccount.mockReturnValue({
+      homeAccountId: "alice-id", tenantId: "tenant", username: "Alice@example.com",
+    });
+    writeUserPreferences("tenant:alice-id", {
+      ...DEFAULT_USER_PREFERENCES,
+      labels: { operation: "op_saved", team: "red" },
+    });
+    mockedVersionApi.getVersion.mockResolvedValue({
+      version: "1.0.0", default_labels: { operator: "backend_user", operation: "op_backend", custom: "backend" },
+    });
+    renderApp();
+    await waitFor(() => expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"custom":"backend"'));
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operation":"op_saved"');
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operator":"alice"');
   });
 
   it("starts in home view", () => {
@@ -482,12 +573,10 @@ describe("App", () => {
   it("redirects legacy /targets to the target registry without adding a history entry", async () => {
     const user = userEvent.setup();
     render(
-      <ThemeProvider>
-        <MemoryRouter initialEntries={["/chat", "/targets"]}>
-          <App />
-          <RouterProbe />
-        </MemoryRouter>
-      </ThemeProvider>
+      <MemoryRouter initialEntries={["/chat", "/targets"]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
     );
 
     expect(await screen.findByTestId("target-config")).toBeInTheDocument();
@@ -1726,7 +1815,15 @@ describe("App", () => {
     expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
   });
 
-  it("preserves an explicitly selected different target and reports a cross-target state", async () => {
+  it("selects the history target instead of the objective default and preserves that default", async () => {
+    const historyTarget = makeTarget({
+      target_registry_name: "history-target",
+      identifier_hash: "other-target-hash",
+    });
+    mockListTargets.mockResolvedValue({
+      items: [historyTarget],
+      pagination: { limit: 200, has_more: false },
+    });
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-other-target",
       conversation_id: "conv-other-target",
@@ -1746,10 +1843,13 @@ describe("App", () => {
     await user.click(screen.getByTestId("open-attack"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("explicit-mismatch")
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
     );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("history-target");
+    await user.click(screen.getByTestId("new-attack"));
     expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
-    expect(mockListTargets).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId("nav-config"));
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
   });
 
   it("hash-validates an explicitly selected matching target against the registry", async () => {
@@ -1787,7 +1887,7 @@ describe("App", () => {
     expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
   });
 
-  it("preserves an explicitly selected alias with the same canonical hash", async () => {
+  it("selects the persisted alias rather than a default with the same hash", async () => {
     const persistedAliasTarget = makeTarget({
       target_registry_name: "persisted-alias",
       target_type: "OpenAIChatTarget",
@@ -1816,7 +1916,7 @@ describe("App", () => {
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
     );
-    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("persisted-alias");
     expect(mockGetTarget).toHaveBeenCalledWith("persisted-alias");
     expect(mockListTargets).not.toHaveBeenCalled();
   });

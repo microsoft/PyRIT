@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { makeTarget } from "./_targets";
 
 test.describe("Onboarding tour", () => {
-  test("guides a user with no active target through the visible prerequisite", async ({
+  test("guides a user with no objective default through target selection", async ({
     page,
   }) => {
     await page.goto("/");
@@ -14,10 +14,10 @@ test.describe("Onboarding tour", () => {
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
     await expect(dialog).toContainText(
-      "target selection happens in the Target Registry"
+      "Select a target from the Chat dropdown"
     );
-    await expect(dialog).toContainText("choose Configure a target");
-    await expect(dialog).toContainText("use Set Active there");
+    await expect(dialog).toContainText("save objective and adversarial defaults");
+    await expect(dialog).toContainText("for your account in this browser");
     await expect(page.locator('[data-tour="target-card"]')).toBeVisible();
 
     await page
@@ -29,7 +29,7 @@ test.describe("Onboarding tour", () => {
     ).toBeVisible();
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText(
-      "target selection happens in the Target Registry"
+      "Select a target from the Chat dropdown"
     );
 
     await dialog.getByRole("button", { name: "Back", exact: true }).click();
@@ -52,21 +52,21 @@ test.describe("Onboarding tour", () => {
 
     await expect(page).toHaveURL(/\/chat$/);
     await expect(dialog).toContainText(
-      "Chat needs an active target before the message composer is available"
+      "Click Select a target in the chat ribbon to enable the message composer"
     );
     await expect(dialog).toContainText(
-      "After the tour, choose Configure a target"
+      "open the Target Registry to create one"
     );
     await expect(dialog).toContainText(
-      "The message input and converter control appear once a target is active"
+      "Saved chats automatically select their original registered target"
     );
     await expect(
-      page.locator('[data-tour="chat-prerequisite"]')
-    ).toHaveAttribute("data-testid", "no-target-banner");
-    await expect(page.locator('[data-tour="converter-toggle"]')).toHaveCount(0);
+      page.locator('[data-tour="chat-prerequisite"]').getByRole("combobox", { name: "Chat target" })
+    ).toBeVisible();
+    await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
 
-  test("guides a user with an active target to the visible converter control", async ({
+  test("guides a user with an objective default to the visible converter control", async ({
     page,
   }) => {
     await page.route(/\/api\/targets(?:\?.*)?$/, async (route) => {
@@ -99,7 +99,7 @@ test.describe("Onboarding tour", () => {
     await expect(
       page.getByRole("heading", { name: "Target Registry" })
     ).toBeVisible();
-    await page.getByRole("button", { name: "Set Active", exact: true }).click();
+    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption("tour-target");
     await page.getByRole("button", { name: "Home", exact: true }).click();
     await expect(page.getByTestId("home-target-active")).toContainText("gpt-4o");
 
@@ -108,8 +108,8 @@ test.describe("Onboarding tour", () => {
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
-    await expect(dialog).toContainText("target currently active for Chat");
-    await expect(dialog).toContainText("use Set Active in the Target Registry");
+    await expect(dialog).toContainText("default objective target for new chats and scanner runs");
+    await expect(dialog).toContainText("change your objective or adversarial defaults");
     await expect(page.locator('[data-tour="target-card"]')).toBeVisible();
 
     await page
@@ -120,7 +120,7 @@ test.describe("Onboarding tour", () => {
       page.getByRole("heading", { name: "Target Registry" })
     ).toBeVisible();
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("target currently active for Chat");
+    await expect(dialog).toContainText("default objective target for new chats and scanner runs");
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
@@ -135,7 +135,7 @@ test.describe("Onboarding tour", () => {
     await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
 
-  test("adapts step 4 when a target is activated during step 3", async ({
+  test("adapts step 4 when an objective default is saved during step 3", async ({
     page,
   }) => {
     await page.route(/\/api\/targets(?:\?.*)?$/, async (route) => {
@@ -173,9 +173,9 @@ test.describe("Onboarding tour", () => {
 
     await expect(page).toHaveURL(/\/registry\/targets$/);
     await expect(dialog).toBeVisible();
-    await page.getByRole("button", { name: "Set Active", exact: true }).click();
-    await expect(page.getByText("Active", { exact: true }).first()).toBeVisible();
-    await expect(dialog).toContainText("target currently active for Chat");
+    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption("tour-target");
+    await expect(page.locator("table").getByText("Objective", { exact: true })).toBeVisible();
+    await expect(dialog).toContainText("default objective target for new chats and scanner runs");
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 

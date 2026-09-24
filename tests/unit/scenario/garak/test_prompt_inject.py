@@ -152,7 +152,7 @@ class TestPromptInjectAtomicAttacks:
         goals = ["goal A", "goal B", "goal C"]
         config = PromptInjectDatasetConfiguration(dataset_names=PromptInject.required_datasets(), max_dataset_size=cap)
 
-        with patch("pyrit.scenario.scenarios.garak.prompt_inject.random", random.Random(seed)):
+        with patch("pyrit.scenario.scenarios.garak._prompt_injection.random", random.Random(seed)):
             await _initialize_async(scenario, target=mock_objective_target, goal_texts=goals, dataset_config=config)
 
         assert len(scenario._atomic_attacks) == 15
@@ -458,7 +458,7 @@ class TestPromptInjectDatasetSampling:
         config = PromptInjectDatasetConfiguration(
             dataset_names=PromptInject.required_datasets(), goal_texts=goals, max_dataset_size=3
         )
-        with patch("pyrit.scenario.scenarios.garak.prompt_inject.random", random.Random(0)):
+        with patch("pyrit.scenario.scenarios.garak._prompt_injection.random", random.Random(0)):
             if grouped:
                 by_dataset = await config.get_attack_groups_by_dataset_async()
                 groups = [group for values in by_dataset.values() for group in values]

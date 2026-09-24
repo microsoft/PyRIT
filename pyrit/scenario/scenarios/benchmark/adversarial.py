@@ -216,6 +216,7 @@ class AdversarialBenchmark(Scenario):
 
         super().__init__(
             version=self.VERSION,
+            uses_default_adversarial_target=False,
             objective_scorer=self._objective_scorer,
             technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
