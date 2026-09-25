@@ -34,7 +34,8 @@ from pyrit.converter import (
 )
 from pyrit.converter.converter import get_converter_modalities
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier
+from pyrit.models import ComponentIdentifier, PromptDataType
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
 
 _TOKEN_BIJECTION_VOCAB = (
@@ -852,6 +853,7 @@ class TestConverterServiceCleanup:
         assert upload_service._upload_path.is_dir()
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestPreviewConversion:
     """Tests for ConverterService.preview_conversion method."""
 
@@ -876,7 +878,7 @@ class TestPreviewConversion:
         mock_result = MagicMock()
         mock_result.output_text = "encoded_value"
         mock_result.output_type = "text"
-        mock_converter.convert_async = AsyncMock(return_value=mock_result)
+        mock_converter.convert_tokens_async = AsyncMock(return_value=mock_result)
         service._registry.instances.register(mock_converter, name="conv-1")
 
         request = ConverterPreviewRequest(
@@ -925,13 +927,13 @@ class TestPreviewConversion:
         mock_result1 = MagicMock()
         mock_result1.output_text = "step1_output"
         mock_result1.output_type = "text"
-        mock_converter1.convert_async = AsyncMock(return_value=mock_result1)
+        mock_converter1.convert_tokens_async = AsyncMock(return_value=mock_result1)
 
         mock_converter2 = MagicMock(spec=converter.Converter)
         mock_result2 = MagicMock()
         mock_result2.output_text = "step2_output"
         mock_result2.output_type = "text"
-        mock_converter2.convert_async = AsyncMock(return_value=mock_result2)
+        mock_converter2.convert_tokens_async = AsyncMock(return_value=mock_result2)
 
         service._registry.instances.register(mock_converter1, name="conv-1")
         service._registry.instances.register(mock_converter2, name="conv-2")
@@ -946,7 +948,155 @@ class TestPreviewConversion:
 
         assert result.converted_value == "step2_output"
         assert len(result.steps) == 2
-        mock_converter2.convert_async.assert_called_with(prompt="step1_output", input_type="text")
+        mock_converter2.convert_tokens_async.assert_awaited_once_with(
+            prompt="step1_output", input_type="text", start_token="⟪", end_token="⟫"
+        )
+
+    @pytest.mark.parametrize(
+        ("original", "initial_type", "intermediate", "intermediate_type", "final", "final_type"),
+        [
+            (" source \n", "text", "", "text", " transformed \n", "text"),
+            (" source \n", "text", "generated.png", "image_path", "edited.png", "image_path"),
+            ("https://example.test/image.png", "image_path", "converted.wav", "audio_path", "caption", "text"),
+        ],
+    )
+    async def test_preview_uses_normalizer_without_sending_or_storing_async(
+        self,
+        *,
+        upload_service: ConverterService,
+        original: str,
+        initial_type: PromptDataType,
+        intermediate: str,
+        intermediate_type: PromptDataType,
+        final: str,
+        final_type: PromptDataType,
+    ) -> None:
+        first, second = Base64Converter(), Base64Converter()
+        upload_service._registry.instances.register(first, name="first")
+        upload_service._registry.instances.register(second, name="second")
+        memory = MagicMock(spec=MemoryInterface)
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+            normalizer = PromptNormalizer()
+        request = ConverterPreviewRequest(
+            original_value=original,
+            original_value_data_type=initial_type,
+            converter_ids=["first", "second"],
+        )
+
+        with (
+            patch("pyrit.backend.services.converter_service.PromptNormalizer", return_value=normalizer),
+            patch.object(normalizer, "convert_values_async", wraps=normalizer.convert_values_async) as convert,
+            patch.object(normalizer, "send_prompt_async", new_callable=AsyncMock) as send,
+            patch.object(
+                first,
+                "convert_async",
+                new_callable=AsyncMock,
+                return_value=converter.ConverterResult(output_text=intermediate, output_type=intermediate_type),
+            ),
+            patch.object(
+                second,
+                "convert_async",
+                new_callable=AsyncMock,
+                return_value=converter.ConverterResult(output_text=final, output_type=final_type),
+            ) as convert_second,
+        ):
+            result = await upload_service.preview_conversion_async(request=request)
+
+        assert convert.await_count == 2
+        first_call, second_call = convert.await_args_list
+        assert first_call.kwargs["converter_configurations"][0].converters == [first]
+        assert second_call.kwargs["converter_configurations"][0].converters == [second]
+        assert first_call.kwargs["message"] is second_call.kwargs["message"]
+        piece = first_call.kwargs["message"].message_pieces[0]
+        assert piece.not_in_memory
+        assert piece.original_value == original
+        assert piece.original_value_data_type == initial_type
+        assert [step.converter_id for step in result.steps] == ["first", "second"]
+        assert [(step.input_value, step.input_data_type) for step in result.steps] == [
+            (original, initial_type),
+            (intermediate, intermediate_type),
+        ]
+        assert [(step.output_value, step.output_data_type) for step in result.steps] == [
+            (intermediate, intermediate_type),
+            (final, final_type),
+        ]
+        assert result.original_value == original
+        assert result.original_value_data_type == initial_type
+        assert result.converted_value == final
+        assert result.converted_value_data_type == final_type
+        convert_second.assert_awaited_once_with(prompt=intermediate, input_type=intermediate_type)
+        send.assert_not_awaited()
+        assert memory.mock_calls == []
+
+    async def test_preview_conversion_consumes_selection_in_first_step_async(
+        self, upload_service: ConverterService
+    ) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="first")
+        upload_service._registry.instances.register(Base64Converter(), name="second")
+        original = " keep ⟪test⟫\nthen ⟪test2⟫ "
+        partial = " keep dGVzdA==\nthen dGVzdDI= "
+        request = ConverterPreviewRequest(
+            original_value=original,
+            original_value_data_type="text",
+            converter_ids=["first", "second"],
+        )
+
+        result = await upload_service.preview_conversion_async(request=request)
+
+        assert result.original_value == original
+        assert result.steps[0].input_value == original
+        assert result.steps[0].output_value == partial
+        assert result.steps[1].input_value == partial
+        assert result.converted_value == base64.b64encode(partial.encode()).decode()
+        assert result.converted_value_data_type == "text"
+
+    async def test_preview_conversion_accepts_empty_marked_region_async(
+        self, *, upload_service: ConverterService
+    ) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="selected")
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value="before ⟪⟫ after",
+                original_value_data_type="text",
+                converter_ids=["selected"],
+            )
+        )
+        assert result.converted_value == "before  after"
+
+    @pytest.mark.parametrize("prompt", ["⟪unclosed", "⟫reversed⟪", "⟪outer⟪inner⟫⟫"])
+    async def test_preview_conversion_rejects_invalid_selection_before_conversion_async(
+        self, *, upload_service: ConverterService, prompt: str
+    ) -> None:
+        instance = Base64Converter()
+        upload_service._registry.instances.register(instance, name="selected")
+        request = ConverterPreviewRequest(
+            original_value=prompt,
+            original_value_data_type="text",
+            converter_ids=["selected"],
+        )
+        with patch.object(instance, "convert_async", new_callable=AsyncMock) as convert:
+            with pytest.raises(ValueError):
+                await upload_service.preview_conversion_async(request=request)
+        convert.assert_not_awaited()
+
+    async def test_preview_conversion_unmarked_media_retains_result_type_async(
+        self, upload_service: ConverterService
+    ) -> None:
+        instance = Base64Converter()
+        upload_service._registry.instances.register(instance, name="media")
+        request = ConverterPreviewRequest(
+            original_value="https://example.test/image.png",
+            original_value_data_type="image_path",
+            converter_ids=["media"],
+        )
+        with patch.object(instance, "convert_async", new_callable=AsyncMock) as convert:
+            convert.return_value = converter.ConverterResult(output_text="converted.wav", output_type="audio_path")
+            result = await upload_service.preview_conversion_async(request=request)
+        convert.assert_awaited_once_with(prompt=request.original_value, input_type="image_path")
+        assert result.converted_value == "converted.wav"
+        assert result.converted_value_data_type == "audio_path"
+        assert result.steps[0].input_data_type == "image_path"
+        assert result.steps[0].output_data_type == "audio_path"
 
     async def test_preview_conversion_persists_data_uri_for_image_path(self) -> None:
         """Data URIs on *_path types are decoded via the DEFAULT_MEDIA_EXTENSIONS map and persisted."""
@@ -956,7 +1106,7 @@ class TestPreviewConversion:
         mock_result = MagicMock()
         mock_result.output_text = "/tmp/persisted.png"
         mock_result.output_type = "image_path"
-        mock_converter.convert_async = AsyncMock(return_value=mock_result)
+        mock_converter.convert_tokens_async = AsyncMock(return_value=mock_result)
         service._registry.instances.register(mock_converter, name="conv-1")
 
         mock_serializer = MagicMock()
@@ -989,7 +1139,7 @@ class TestPreviewConversion:
         mock_result = MagicMock()
         mock_result.output_text = "/tmp/persisted.wav"
         mock_result.output_type = "audio_path"
-        mock_converter.convert_async = AsyncMock(return_value=mock_result)
+        mock_converter.convert_tokens_async = AsyncMock(return_value=mock_result)
         service._registry.instances.register(mock_converter, name="conv-1")
 
         mock_serializer = MagicMock()

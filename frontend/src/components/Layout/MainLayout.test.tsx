@@ -7,12 +7,16 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { ThemeProvider, useTheme } from "@/hooks/useTheme";
+import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
 import MainLayout from "./MainLayout";
 
 // Mock the api module
 jest.mock("../../services/api", () => ({
   versionApi: {
     getVersion: jest.fn(),
+  },
+  labelsApi: {
+    getLabels: jest.fn().mockResolvedValue({ labels: {} }),
   },
 }));
 
@@ -57,6 +61,8 @@ describe("MainLayout", () => {
     onNavigate: jest.fn(),
     onOpenFeedback: jest.fn(),
     canManageConfiguration: true,
+    labels: { operator: 'alice', operation: 'test_op' },
+    onLabelsChange: jest.fn(),
   };
 
   it("renders the header with title and subtitle", async () => {
@@ -261,7 +267,7 @@ describe("MainLayout", () => {
     });
   });
 
-  it("changes decoration without remounting workspace content", async () => {
+  it("changes decoration without remounting workspace content or the shared labels editor", async () => {
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
     const user = userEvent.setup();
 
@@ -276,9 +282,13 @@ describe("MainLayout", () => {
       );
     }
 
-    render(<ThemeProvider><Workspace /></ThemeProvider>);
+    render(<UserPreferencesProvider accountKey="local"><ThemeProvider><Workspace /></ThemeProvider></UserPreferencesProvider>);
     await screen.findByText("Co-PyRIT 1.0.0");
     const draft = screen.getByRole("textbox", { name: "Draft" });
+    const labels = screen.getByRole("region", { name: "Default Labels" });
+    expect(screen.queryByText("New run labels")).not.toBeInTheDocument();
+    expect(screen.queryByText("Used for new attacks and scans. Existing runs keep their original labels."))
+      .not.toBeInTheDocument();
     await user.type(draft, "draft");
     expect(screen.queryByTestId("workspace-background")).not.toBeInTheDocument();
 
@@ -286,9 +296,13 @@ describe("MainLayout", () => {
     expect(screen.getByTestId("workspace-background")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByRole("textbox", { name: "Draft" })).toBe(draft);
     expect(draft).toHaveValue("draft");
+    expect(screen.getByRole("region", { name: "Default Labels" })).toBe(labels);
+    expect(screen.getAllByTestId("labels-bar")).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: "Use Dark" }));
     expect(screen.queryByTestId("workspace-background")).not.toBeInTheDocument();
     expect(draft).toHaveValue("draft");
+    expect(screen.getByRole("region", { name: "Default Labels" })).toBe(labels);
+    expect(screen.getAllByTestId("labels-bar")).toHaveLength(1);
   });
 });

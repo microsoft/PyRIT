@@ -6,8 +6,9 @@ Tests for backend scenario service and routes.
 """
 
 import asyncio
+import threading
 from collections import OrderedDict
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +22,7 @@ from pyrit.backend.routes.scenarios import estimate_scenario_run_size
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_service import (
     ScenarioService,
+    _metadata_to_registered_scenario,
     get_scenario_service,
 )
 from pyrit.models import (
@@ -33,8 +35,20 @@ from pyrit.models import (
     ScenarioTechniqueSummary,
 )
 from pyrit.models.catalog.scenario import RegisteredScenario
-from pyrit.registry import ScenarioMetadata
-from pyrit.scenario.core import DatasetAttackConfiguration, ScenarioTechnique
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.registry import ScenarioMetadata, ScenarioRegistry, TargetRegistry
+from pyrit.scenario import Scenario
+from pyrit.scenario.core import (
+    DatasetAttackConfiguration,
+    ScenarioTechnique,
+    get_default_adversarial_target,
+    override_default_adversarial_target,
+)
+from pyrit.scenario.scenarios.airt.scam import Scam
+from unit.mocks import MockPromptTarget
+
+if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
 
 
 class _EstimateTechnique(ScenarioTechnique):
@@ -96,6 +110,7 @@ def _make_scenario_metadata(
     default_datasets: tuple[str, ...] = ("test_dataset",),
     baseline_policy: str = "enabled",
     include_baseline_by_default: bool = True,
+    uses_default_adversarial_target: bool = False,
 ) -> ScenarioMetadata:
     """Create a ScenarioMetadata instance for testing."""
     return ScenarioMetadata(
@@ -114,12 +129,204 @@ def _make_scenario_metadata(
         default_datasets=default_datasets,
         baseline_policy=baseline_policy,
         include_baseline_by_default=include_baseline_by_default,
+        uses_default_adversarial_target=uses_default_adversarial_target,
     )
+
+
+@pytest.mark.parametrize("uses_default", [False, True])
+def test_catalog_preserves_adversarial_default_usage(uses_default: bool) -> None:
+    """The public catalog exposes usage from real registry metadata."""
+    metadata = _make_scenario_metadata(uses_default_adversarial_target=uses_default)
+    summary = _metadata_to_registered_scenario(metadata=metadata)
+    assert summary.model_dump()["uses_default_adversarial_target"] is uses_default
 
 
 # ============================================================================
 # ScenarioService Unit Tests
 # ============================================================================
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAdversarialEstimateScope:
+    async def test_cold_registry_estimate_uses_selected_target_without_global_fallback_async(self) -> None:
+        registry = ScenarioRegistry()
+        selected = MockPromptTarget()
+        targets = {
+            "objective": MockPromptTarget(),
+            "selected": selected,
+            "objective_scorer_chat": MockPromptTarget(),
+        }
+        target_registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        target_registry.instances.get.side_effect = targets.get
+
+        async def estimate_async(scenario: Scam, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
+            assert scenario._adversarial_chat is selected
+            assert get_default_adversarial_target() is selected
+            return ScenarioRunSizeEstimate(estimated_attack_count=0)
+
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
+            patch.object(Scam, "get_run_size_estimate_async", autospec=True, side_effect=estimate_async),
+            patch(
+                "pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget",
+                side_effect=AssertionError("The request must not construct the server fallback."),
+            ),
+        ):
+            assert registry._metadata_cache is None
+            service = ScenarioService()
+            result = await service.estimate_scenario_run_size_async(
+                scenario_name="airt.scam",
+                request=ScenarioRunSizeEstimateRequest(
+                    target_name="objective",
+                    adversarial_target_name="selected",
+                    max_dataset_size=1,
+                ),
+            )
+            assert result is not None
+            assert result.estimated_attack_count == 0
+            assert registry._metadata_cache is None
+            assert not service._estimate_cache
+
+    async def test_unknown_scenario_returns_none_without_metadata_construction_async(self) -> None:
+        registry = MagicMock(spec=ScenarioRegistry)
+        registry.get_class.side_effect = KeyError("missing")
+        with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry):
+            result = await ScenarioService().estimate_scenario_run_size_async(
+                scenario_name="missing",
+                request=ScenarioRunSizeEstimateRequest(),
+            )
+        assert result is None
+        registry.get_registered_class_metadata.assert_not_called()
+        registry.create_and_estimate_async.assert_not_called()
+
+    async def test_omitted_adversarial_selection_preserves_outer_scope_async(self) -> None:
+        outer = MockPromptTarget()
+        registry = MagicMock(spec=ScenarioRegistry)
+        registry.get_registered_class_metadata.return_value = _make_scenario_metadata()
+
+        async def estimate_async(**kwargs: object) -> ScenarioRunSizeEstimate:
+            assert get_default_adversarial_target() is outer
+            await asyncio.sleep(0)
+            assert get_default_adversarial_target() is outer
+            return ScenarioRunSizeEstimate(estimated_attack_count=0)
+
+        registry.create_and_estimate_async = AsyncMock(side_effect=estimate_async)
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            override_default_adversarial_target(outer),
+        ):
+            result = await ScenarioService().estimate_scenario_run_size_async(
+                scenario_name="test.scenario",
+                request=ScenarioRunSizeEstimateRequest(),
+            )
+            assert result.estimated_attack_count == 0
+            assert get_default_adversarial_target() is outer
+
+    async def test_concurrent_estimates_scope_introspection_and_preserve_default_cache_async(self) -> None:
+        first, second, fallback = (MockPromptTarget() for _ in range(3))
+        targets = {"first": first, "second": second, "adversarial_chat": fallback}
+        target_registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        target_registry.instances.get.side_effect = targets.get
+        registry = MagicMock(spec=ScenarioRegistry)
+        metadata = _make_scenario_metadata()
+        registry.get_registered_class_metadata.return_value = metadata
+        introspected: list[PromptTarget] = []
+        estimated: list[PromptTarget] = []
+        default_estimate = ScenarioRunSizeEstimate(estimated_attack_count=0)
+        arrived = asyncio.Event()
+
+        def construct() -> MagicMock:
+            introspected.append(get_default_adversarial_target())
+            scenario = MagicMock(spec=Scenario)
+            scenario._default_dataset_config = DatasetAttackConfiguration(dataset_names=["test_dataset"])
+            return scenario
+
+        async def estimate_async(**kwargs: object) -> ScenarioRunSizeEstimate:
+            target = get_default_adversarial_target()
+            estimated.append(target)
+            if len(estimated) == 2:
+                arrived.set()
+            await asyncio.wait_for(arrived.wait(), timeout=5)
+            assert get_default_adversarial_target() is target
+            return ScenarioRunSizeEstimate.unavailable(note="request-specific")
+
+        default_scenario = MagicMock(spec=Scenario)
+        default_scenario.get_default_run_size_estimate_async = AsyncMock(return_value=default_estimate)
+        registry.create_instance.return_value = default_scenario
+        registry.get_class.return_value = construct
+        registry.create_and_estimate_async = AsyncMock(side_effect=estimate_async)
+        with (
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        ):
+            service = ScenarioService()
+            service._estimate_semaphore = asyncio.Semaphore(2)
+            before = await service.get_scenario_async(scenario_name=metadata.registry_name)
+            cache_before = dict(service._estimate_cache)
+            await asyncio.gather(
+                *(
+                    service.estimate_scenario_run_size_async(
+                        scenario_name=metadata.registry_name,
+                        request=ScenarioRunSizeEstimateRequest(adversarial_target_name=name, max_dataset_size=1),
+                    )
+                    for name in ("first", "second")
+                )
+            )
+            assert introspected == estimated == [first, second]
+            assert get_default_adversarial_target() is fallback
+            assert dict(service._estimate_cache) == cache_before
+            assert await service.get_scenario_async(scenario_name=metadata.registry_name) == before
+            registry.create_instance.assert_called_once()
+
+    @pytest.mark.parametrize("error", [ValueError, asyncio.CancelledError])
+    async def test_estimate_scope_resets_on_failure_async(self, error: type[BaseException]) -> None:
+        selected, fallback = MockPromptTarget(), MockPromptTarget()
+        registry = MagicMock(spec=ScenarioRegistry)
+        registry.get_registered_class_metadata.return_value = _make_scenario_metadata()
+        target_registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        target_registry.instances.get.side_effect = {"selected": selected, "adversarial_chat": fallback}.get
+
+        async def fail_async(**kwargs: object) -> ScenarioRunSizeEstimate:
+            assert get_default_adversarial_target() is selected
+            raise error("estimate stopped")
+
+        registry.create_and_estimate_async = AsyncMock(side_effect=fail_async)
+        with (
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        ):
+            service = ScenarioService()
+            with pytest.raises(error, match="estimate stopped"):
+                await service.estimate_scenario_run_size_async(
+                    scenario_name="test.scenario",
+                    request=ScenarioRunSizeEstimateRequest(adversarial_target_name="selected"),
+                )
+            assert get_default_adversarial_target() is fallback
+            assert not service._estimate_cache
+
+    @pytest.mark.parametrize("selection", ["missing", "wrong_type", "single_turn"])
+    async def test_estimate_rejects_invalid_explicit_target_async(self, selection: str) -> None:
+        single_turn = MockPromptTarget()
+        single_turn.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=False))
+        targets = {"wrong_type": object(), "single_turn": single_turn}
+        target_registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        target_registry.instances.get.side_effect = targets.get
+        target_registry.instances.get_names.return_value = list(targets)
+        registry = MagicMock(spec=ScenarioRegistry)
+        registry.get_registered_class_metadata.return_value = _make_scenario_metadata()
+        with (
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=target_registry),
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        ):
+            service = ScenarioService()
+            with pytest.raises(ValueError, match="not found|must be a PromptTarget|must support multi_turn"):
+                await service.estimate_scenario_run_size_async(
+                    scenario_name="test.scenario",
+                    request=ScenarioRunSizeEstimateRequest(adversarial_target_name=selection),
+                )
+            registry.create_and_estimate_async.assert_not_called()
+            assert ScenarioConfigurationResolver.resolve_adversarial_target(target_name=None) is None
 
 
 class TestScenarioServiceListScenarios:
@@ -331,6 +538,59 @@ class TestScenarioServiceListScenarios:
         assert service._registry.create_instance.call_count == 1
         assert service._estimate_tasks == {}
 
+    async def test_failed_estimate_task_is_removed_and_retryable(self) -> None:
+        """A failed single-flight task is removed so the next caller can retry."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        service = ScenarioService()
+        service._compute_default_run_size_estimate_async = AsyncMock(side_effect=RuntimeError("estimate failed"))
+
+        with pytest.raises(RuntimeError, match="estimate failed"):
+            await service._get_default_run_size_estimate_async(metadata=metadata)
+        await asyncio.sleep(0)
+
+        assert service._estimate_tasks == {}
+        service._compute_default_run_size_estimate_async = AsyncMock(return_value=estimate)
+        assert await service._get_default_run_size_estimate_async(metadata=metadata) == estimate
+
+    async def test_cancelled_estimate_task_is_removed_and_retryable(self) -> None:
+        """A cancelled single-flight task is removed so the next caller can retry."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        started = asyncio.Event()
+        blocked = asyncio.Event()
+
+        async def cancelled_estimate_async(
+            *,
+            scenario_name: str,
+            cache_key: tuple[str, int],
+        ) -> ScenarioRunSizeEstimate:
+            assert scenario_name == metadata.registry_name
+            assert cache_key == (metadata.registry_name, metadata.scenario_version)
+            started.set()
+            await blocked.wait()
+            raise AssertionError("The estimate task should have been cancelled.")
+
+        service = ScenarioService()
+        service._compute_default_run_size_estimate_async = AsyncMock(side_effect=cancelled_estimate_async)
+        waiter = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        service._estimate_tasks[(metadata.registry_name, metadata.scenario_version)].cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        await asyncio.sleep(0)
+
+        assert service._estimate_tasks == {}
+        service._compute_default_run_size_estimate_async = AsyncMock(return_value=estimate)
+        assert await service._get_default_run_size_estimate_async(metadata=metadata) == estimate
+
     async def test_completed_stale_task_cannot_block_inflight_capacity(self) -> None:
         """A done task is pruned before the bounded inflight capacity check."""
         metadata = _make_scenario_metadata()
@@ -385,6 +645,581 @@ class TestScenarioServiceListScenarios:
 
             result = await service.list_scenarios_async()
         assert "RuntimeError" in result.items[1].default_run_size.note
+
+    async def test_catalog_estimates_use_bounded_parallelism(self) -> None:
+        """Catalog estimates run concurrently without exceeding their configured bound."""
+        metadata = [_make_scenario_metadata(registry_name=f"test.scenario_{index}") for index in range(3)]
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        two_started = asyncio.Event()
+        release = asyncio.Event()
+        active = 0
+        maximum_active = 0
+
+        async def estimate_async(
+            *,
+            scenario_name: str,
+            construction_complete: asyncio.Event,
+            execution_timed_out: asyncio.Event,
+        ) -> ScenarioRunSizeEstimate:
+            nonlocal active, maximum_active
+            assert scenario_name.startswith("test.scenario_")
+            assert not execution_timed_out.is_set()
+            construction_complete.set()
+            active += 1
+            maximum_active = max(maximum_active, active)
+            if active == 2:
+                two_started.set()
+            await release.wait()
+            active -= 1
+            return estimate
+
+        service = ScenarioService()
+        service._registry = MagicMock()
+        service._registry.get_all_registered_class_metadata.return_value = metadata
+        service._estimate_semaphore = asyncio.Semaphore(2)
+        service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
+
+        catalog_task = asyncio.create_task(service.list_scenarios_async())
+        await asyncio.wait_for(two_started.wait(), timeout=2)
+        await asyncio.sleep(0)
+
+        assert service._run_default_estimate_async.await_count == 2
+        release.set()
+        result = await catalog_task
+
+        assert maximum_active == 2
+        assert service._run_default_estimate_async.await_count == 3
+        assert all(item.default_run_size == estimate for item in result.items)
+
+    async def test_catalog_queue_wait_does_not_start_execution_timeout(self) -> None:
+        """A queued catalog estimate starts its timeout only after acquiring capacity."""
+        metadata = [_make_scenario_metadata(registry_name=f"test.scenario_{index}") for index in range(2)]
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        first_estimate_started = asyncio.Event()
+        release_first_estimate = asyncio.Event()
+        second_timeout_started = asyncio.Event()
+        estimate_count = 0
+        timeout_count = 0
+
+        async def estimate_async(
+            *,
+            scenario_name: str,
+            construction_complete: asyncio.Event,
+            execution_timed_out: asyncio.Event,
+        ) -> ScenarioRunSizeEstimate:
+            nonlocal estimate_count
+            assert scenario_name.startswith("test.scenario_")
+            assert not execution_timed_out.is_set()
+            construction_complete.set()
+            estimate_count += 1
+            if estimate_count == 1:
+                first_estimate_started.set()
+                await release_first_estimate.wait()
+            return estimate
+
+        original_wait = asyncio.wait
+
+        async def wait_async(
+            tasks: set[asyncio.Task[ScenarioRunSizeEstimate]],
+            *,
+            timeout: float,
+        ) -> tuple[set[asyncio.Task[ScenarioRunSizeEstimate]], set[asyncio.Task[ScenarioRunSizeEstimate]]]:
+            nonlocal timeout_count
+            assert timeout > 0
+            timeout_count += 1
+            if timeout_count == 2:
+                second_timeout_started.set()
+            return await original_wait(tasks, timeout=timeout)
+
+        service = ScenarioService()
+        service._registry = MagicMock()
+        service._registry.get_all_registered_class_metadata.return_value = metadata
+        service._estimate_semaphore = asyncio.Semaphore(1)
+        service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
+
+        with patch("pyrit.backend.services.scenario_service.asyncio.wait", side_effect=wait_async):
+            catalog_task = asyncio.create_task(service.list_scenarios_async())
+            async with asyncio.timeout(1):
+                await first_estimate_started.wait()
+            await asyncio.sleep(0)
+            assert not second_timeout_started.is_set()
+
+            release_first_estimate.set()
+            result = await catalog_task
+
+        assert second_timeout_started.is_set()
+        assert timeout_count == 2
+        assert all(item.default_run_size == estimate for item in result.items)
+
+    async def test_catalog_execution_timeout_is_unavailable_and_cached(self) -> None:
+        """A genuine estimate execution timeout is unavailable and reused from cache."""
+        metadata = _make_scenario_metadata()
+        estimate_cancelled = asyncio.Event()
+        block_estimate = asyncio.Event()
+
+        async def slow_estimate_async(
+            *,
+            scenario_name: str,
+            construction_complete: asyncio.Event,
+            execution_timed_out: asyncio.Event,
+        ) -> ScenarioRunSizeEstimate:
+            assert scenario_name == metadata.registry_name
+            assert not execution_timed_out.is_set()
+            construction_complete.set()
+            try:
+                await block_estimate.wait()
+            except asyncio.CancelledError:
+                estimate_cancelled.set()
+                raise
+            raise AssertionError("The blocked estimate should be cancelled by its execution timeout.")
+
+        service = ScenarioService()
+
+        with (
+            patch.object(
+                service,
+                "_run_default_estimate_async",
+                new_callable=AsyncMock,
+                side_effect=slow_estimate_async,
+            ) as run_default_estimate,
+            patch("pyrit.backend.services.scenario_service._DEFAULT_ESTIMATE_TIMEOUT_SECONDS", 0.01),
+        ):
+            result = await service._get_default_run_size_estimate_async(metadata=metadata)
+            cached = await service._get_default_run_size_estimate_async(metadata=metadata)
+            await asyncio.sleep(0)
+
+        assert result.estimated_attack_count is None
+        assert result.note is not None and "timed out" in result.note
+        assert cached is result
+        assert estimate_cancelled.is_set()
+        assert service._timed_out_estimate_workers == set()
+        assert run_default_estimate.await_count == 1
+        assert run_default_estimate.await_args.kwargs["scenario_name"] == metadata.registry_name
+        assert service._estimate_tasks == {}
+
+    async def test_cancelled_catalog_compute_tracks_worker_until_exit(self) -> None:
+        """Cancelling a catalog compute retains its capacity until the worker exits."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+        release = asyncio.Event()
+
+        async def estimate_async(
+            *,
+            scenario_name: str,
+            construction_complete: asyncio.Event,
+            execution_timed_out: asyncio.Event,
+        ) -> ScenarioRunSizeEstimate:
+            assert scenario_name == metadata.registry_name
+            construction_complete.set()
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                await release.wait()
+            assert execution_timed_out.is_set()
+            return estimate
+
+        service = ScenarioService()
+        service._estimate_semaphore = asyncio.Semaphore(1)
+        service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
+        compute_task = asyncio.create_task(
+            service._compute_default_run_size_estimate_async(
+                scenario_name=metadata.registry_name,
+                cache_key=(metadata.registry_name, metadata.scenario_version),
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        compute_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await compute_task
+
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        assert service._estimate_semaphore.locked()
+        assert len(service._timed_out_estimate_workers) == 1
+
+        release.set()
+        async with asyncio.timeout(1):
+            while service._timed_out_estimate_workers:
+                await asyncio.sleep(0)
+
+        assert not service._estimate_semaphore.locked()
+
+    async def test_catalog_timeout_holds_capacity_until_blocking_constructor_exits(self) -> None:
+        """A timed-out constructor retains its slot until the underlying thread exits."""
+        first_metadata = _make_scenario_metadata(registry_name="test.first")
+        second_metadata = _make_scenario_metadata(registry_name="test.second")
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        loop = asyncio.get_running_loop()
+        first_started = asyncio.Event()
+        second_waiting = asyncio.Event()
+        second_started = threading.Event()
+        release_first = threading.Event()
+        active_lock = threading.Lock()
+        active = 0
+        maximum_active = 0
+
+        def create_instance(name: str) -> MagicMock:
+            nonlocal active, maximum_active
+            with active_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            if name == first_metadata.registry_name:
+                loop.call_soon_threadsafe(first_started.set)
+                release_first.wait()
+            else:
+                second_started.set()
+            with active_lock:
+                active -= 1
+            scenario = MagicMock()
+            scenario.get_default_run_size_estimate_async = AsyncMock(return_value=estimate)
+            return scenario
+
+        service = ScenarioService()
+        service._registry = MagicMock()
+        service._registry.create_instance.side_effect = create_instance
+        service._estimate_semaphore = asyncio.Semaphore(1)
+        acquire = service._estimate_semaphore.acquire
+
+        async def acquire_second_async() -> bool:
+            second_waiting.set()
+            return await acquire()
+
+        second_task = None
+        with patch("pyrit.backend.services.scenario_service._DEFAULT_ESTIMATE_TIMEOUT_SECONDS", 10):
+            try:
+                with patch("pyrit.backend.services.scenario_service._DEFAULT_ESTIMATE_TIMEOUT_SECONDS", 0.02):
+                    first_result = await service._get_default_run_size_estimate_async(metadata=first_metadata)
+                await asyncio.wait_for(first_started.wait(), timeout=10)
+
+                with patch.object(service._estimate_semaphore, "acquire", side_effect=acquire_second_async):
+                    second_task = asyncio.create_task(
+                        service._get_default_run_size_estimate_async(metadata=second_metadata)
+                    )
+                    await asyncio.wait_for(second_waiting.wait(), timeout=10)
+
+                    assert first_started.is_set()
+                    assert service._estimate_semaphore.locked()
+                    assert not second_started.is_set()
+                    assert not second_task.done()
+
+                    release_first.set()
+                    second_result = await asyncio.wait_for(second_task, timeout=10)
+            finally:
+                release_first.set()
+                tasks = [*service._estimate_tasks.values(), *service._timed_out_estimate_workers]
+                if second_task is not None:
+                    tasks.append(second_task)
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10)
+
+        assert first_result.estimated_attack_count is None
+        assert first_result.note is not None and "timed out" in first_result.note
+        assert second_result == estimate
+        assert maximum_active == 1
+
+    async def test_configured_estimate_does_not_wait_for_catalog_estimate(self) -> None:
+        """Configured estimates use separate capacity from default catalog estimates."""
+        metadata = _make_scenario_metadata()
+        default_estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        configured_estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=2,
+            components=[ScenarioRunSizeComponent(label="Configured sweep", count=2)],
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def default_estimate_async(
+            *,
+            scenario_name: str,
+            construction_complete: asyncio.Event,
+            execution_timed_out: asyncio.Event,
+        ) -> ScenarioRunSizeEstimate:
+            assert scenario_name == metadata.registry_name
+            assert not execution_timed_out.is_set()
+            construction_complete.set()
+            started.set()
+            await release.wait()
+            return default_estimate
+
+        service = ScenarioService()
+        service._registry = MagicMock()
+        service._registry.get_registered_class_metadata.return_value = metadata
+        service._estimate_semaphore = asyncio.Semaphore(1)
+        service._run_default_estimate_async = AsyncMock(side_effect=default_estimate_async)
+        service._estimate_configured_run_size_async = AsyncMock(return_value=configured_estimate)
+
+        catalog_task = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        interactive = await asyncio.wait_for(
+            service.estimate_scenario_run_size_async(
+                scenario_name=metadata.registry_name,
+                request=ScenarioRunSizeEstimateRequest(),
+            ),
+            timeout=1,
+        )
+        release.set()
+
+        assert interactive == configured_estimate
+        assert await catalog_task == default_estimate
+
+    async def test_concurrent_configured_estimates_share_one_task(self) -> None:
+        """Equivalent configured requests share one cancellation-safe execution task."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Configured sweep", count=1)],
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def estimate_async(
+            *,
+            scenario_name: str,
+            request: ScenarioRunSizeEstimateRequest,
+        ) -> ScenarioRunSizeEstimate:
+            assert scenario_name == metadata.registry_name
+            assert request.scenario_params == {"first": 1, "second": 2}
+            started.set()
+            await release.wait()
+            return estimate
+
+        service = ScenarioService()
+        service._registry = MagicMock()
+        service._registry.get_registered_class_metadata.return_value = metadata
+        service._estimate_configured_run_size_async = AsyncMock(side_effect=estimate_async)
+        first = asyncio.create_task(
+            service.estimate_scenario_run_size_async(
+                scenario_name=metadata.registry_name,
+                request=ScenarioRunSizeEstimateRequest(scenario_params={"first": 1, "second": 2}),
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        second = asyncio.create_task(
+            service.estimate_scenario_run_size_async(
+                scenario_name=metadata.registry_name,
+                request=ScenarioRunSizeEstimateRequest(scenario_params={"second": 2, "first": 1}),
+            )
+        )
+        await asyncio.sleep(0)
+
+        assert service._estimate_configured_run_size_async.await_count == 1
+        release.set()
+        assert await asyncio.gather(first, second) == [estimate, estimate]
+        await asyncio.sleep(0)
+        assert service._configured_estimate_tasks == {}
+
+    async def test_cancelled_configured_waiter_does_not_cancel_shared_task(self) -> None:
+        """Cancelling one configured waiter leaves the shared estimate available."""
+        metadata = _make_scenario_metadata()
+        request = ScenarioRunSizeEstimateRequest()
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Configured sweep", count=1)],
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def estimate_async(
+            *,
+            scenario_name: str,
+            request: ScenarioRunSizeEstimateRequest,
+        ) -> ScenarioRunSizeEstimate:
+            assert scenario_name == metadata.registry_name
+            started.set()
+            await release.wait()
+            return estimate
+
+        service = ScenarioService()
+        service._registry = MagicMock()
+        service._registry.get_registered_class_metadata.return_value = metadata
+        service._estimate_configured_run_size_async = AsyncMock(side_effect=estimate_async)
+        cancelled_waiter = asyncio.create_task(
+            service.estimate_scenario_run_size_async(
+                scenario_name=metadata.registry_name,
+                request=request,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        cancelled_waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled_waiter
+
+        surviving_waiter = asyncio.create_task(
+            service.estimate_scenario_run_size_async(
+                scenario_name=metadata.registry_name,
+                request=request,
+            )
+        )
+        release.set()
+        assert await surviving_waiter == estimate
+        await asyncio.sleep(0)
+
+        assert service._estimate_configured_run_size_async.await_count == 1
+        assert service._configured_estimate_tasks == {}
+
+    async def test_failed_configured_estimate_is_removed_and_retryable(self) -> None:
+        """A failed configured task is removed so a later request can retry."""
+        metadata = _make_scenario_metadata()
+        request = ScenarioRunSizeEstimateRequest()
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Configured sweep", count=1)],
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def failed_estimate_async(
+            *,
+            scenario_name: str,
+            request: ScenarioRunSizeEstimateRequest,
+        ) -> ScenarioRunSizeEstimate:
+            assert scenario_name == metadata.registry_name
+            started.set()
+            await release.wait()
+            raise RuntimeError("estimate failed")
+
+        service = ScenarioService()
+        service._registry = MagicMock()
+        service._registry.get_registered_class_metadata.return_value = metadata
+        service._estimate_configured_run_size_async = AsyncMock(side_effect=failed_estimate_async)
+        first = asyncio.create_task(
+            service.estimate_scenario_run_size_async(
+                scenario_name=metadata.registry_name,
+                request=request,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        second = asyncio.create_task(
+            service.estimate_scenario_run_size_async(
+                scenario_name=metadata.registry_name,
+                request=request,
+            )
+        )
+        release.set()
+
+        for waiter in (first, second):
+            with pytest.raises(RuntimeError, match="estimate failed"):
+                await waiter
+        await asyncio.sleep(0)
+        assert service._configured_estimate_tasks == {}
+
+        service._estimate_configured_run_size_async = AsyncMock(return_value=estimate)
+        assert (
+            await service.estimate_scenario_run_size_async(
+                scenario_name=metadata.registry_name,
+                request=request,
+            )
+            == estimate
+        )
+
+    async def test_configured_estimates_use_bounded_parallelism(self) -> None:
+        """Configured estimates run concurrently without exceeding their configured bound."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Configured sweep", count=1)],
+        )
+        two_started = asyncio.Event()
+        release = asyncio.Event()
+        active = 0
+        maximum_active = 0
+
+        async def estimate_async(
+            *,
+            scenario_name: str,
+            request: ScenarioRunSizeEstimateRequest,
+        ) -> ScenarioRunSizeEstimate:
+            nonlocal active, maximum_active
+            assert scenario_name == metadata.registry_name
+            assert request.scenario_params is not None
+            active += 1
+            maximum_active = max(maximum_active, active)
+            if active == 2:
+                two_started.set()
+            await release.wait()
+            active -= 1
+            return estimate
+
+        service = ScenarioService()
+        service._registry = MagicMock()
+        service._registry.get_registered_class_metadata.return_value = metadata
+        service._configured_estimate_semaphore = asyncio.Semaphore(2)
+        service._estimate_configured_run_size_async = AsyncMock(side_effect=estimate_async)
+
+        tasks = [
+            asyncio.create_task(
+                service.estimate_scenario_run_size_async(
+                    scenario_name=metadata.registry_name,
+                    request=ScenarioRunSizeEstimateRequest(scenario_params={"request_index": index}),
+                )
+            )
+            for index in range(3)
+        ]
+        await asyncio.wait_for(two_started.wait(), timeout=1)
+        await asyncio.sleep(0)
+
+        assert service._estimate_configured_run_size_async.await_count == 2
+        release.set()
+        assert await asyncio.gather(*tasks) == [estimate, estimate, estimate]
+        assert maximum_active == 2
+
+    async def test_metadata_catalog_remains_responsive_during_estimate(self) -> None:
+        """Metadata-only catalog requests do not wait for running estimates."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def estimate_async(
+            *,
+            scenario_name: str,
+            construction_complete: asyncio.Event,
+            execution_timed_out: asyncio.Event,
+        ) -> ScenarioRunSizeEstimate:
+            assert scenario_name == metadata.registry_name
+            assert not execution_timed_out.is_set()
+            construction_complete.set()
+            started.set()
+            await release.wait()
+            return estimate
+
+        service = ScenarioService()
+        service._registry = MagicMock()
+        service._registry.get_all_registered_class_metadata.return_value = [metadata]
+        service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
+
+        estimate_task = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        catalog = await asyncio.wait_for(
+            service.list_scenarios_async(include_estimates=False),
+            timeout=1,
+        )
+        assert not estimate_task.done()
+
+        release.set()
+        assert await estimate_task == estimate
+        assert catalog.items[0].scenario_name == metadata.registry_name
 
     async def test_unavailable_estimate_cache_expires(self) -> None:
         """A transient estimate failure is retried after the unavailable-result TTL."""
@@ -470,7 +1305,7 @@ class TestScenarioServiceListScenarios:
             assert len(result.items) == 3
             assert result.pagination.has_more is True
             assert result.pagination.next_cursor == "test.scenario_2"
-            assert [call.args[0] for call in service._registry.create_instance.call_args_list] == [
+            assert [item.scenario_name for item in result.items] == [
                 "test.scenario_0",
                 "test.scenario_1",
                 "test.scenario_2",
@@ -859,7 +1694,13 @@ class TestScenarioRoutes:
             )
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.json()["estimated_attack_count"] == 12
+        payload = response.json()
+        assert payload["status"] == "exact"
+        assert payload["total_attack_count"] == 12
+        assert payload["estimated_attack_count"] == 12
+        assert payload["minimum_attack_count"] == 12
+        assert payload["maximum_attack_count"] == 12
+        assert payload["components"][0]["factors"] == []
         request = mock_service.estimate_scenario_run_size_async.await_args.kwargs["request"]
         assert request.techniques == ["prompt_sending"]
         assert request.include_baseline is False

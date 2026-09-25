@@ -131,9 +131,10 @@ print(df.to_string(index=False))
 # `Score.objective` remains a read-only compatibility view. `score_observation_async()` can
 # parse that stored judgment again without calling the target. Replay requires unchanged scored
 # evidence and response content, plus the exact original expectation, scorer configuration, and
-# response-handler contract. The payload is a `JudgmentObservationPayload` with kind `judgment`;
-# the target need not be a language model. Media, tool-call observations, and coverage are deferred
-# until their evidence can be snapshotted before judgment.
+# response-handler contract. `ScorerTargetResponsePayload` references the scorer's target response;
+# the target need not be a language model. Its kind is `scorer_target_response`.
+# Media observation capture remains deferred until its evidence can be snapshotted.
+# Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb).
 #
 # Replaying a judgment is different from evaluating a stored run against a new expectation.
 # A retained target judgment answers the original expectation; changing that expectation
@@ -159,12 +160,19 @@ print(df.to_string(index=False))
 # Bulk SQL deletes do not use this ORM cleanup path.
 #
 # Response helpers accept `expectation=`; their bare `objective=` input is deprecated until 2.0.
-# Objective and auxiliary scorers receive the complete expectation, with condition routing checked
-# across the group. Each scorer root keeps its own score/observation persistence boundary.
-# Direct scorers check required and duplicate criteria but ignore condition types they do not use.
-# Empty conditions retain legacy objective-only behavior and skip required-condition checks.
-# Data-bearing required conditions will need explicit validation before their scorer types are added.
-# Use a group helper, even with one scorer, when every condition must have a consumer.
+# Each scorer tree must support every condition it receives. Typed leaves require exactly one
+# condition of their declared type; constructor-configured leaves accept no conditions.
+# Composites validate coverage and send each child only its supported conditions, preserving
+# objective context. The child judgment records that subset; the composite verdict records the
+# complete expectation. Leaves cannot read sibling conditions.
+# Objective-only calls default to `MatchesObjective` when the scorer tree needs it. Other typed
+# criteria are never defaulted, and explicit nonempty condition lists are not extended.
+# In `MessageScorer.score_response_async`, the objective scorer alone owns required coverage.
+# Auxiliary scorers receive supported subsets; a typed auxiliary missing a required condition
+# is skipped as a whole. Constructor-configured diagnostics still run with objective context.
+# Errors from selected auxiliaries remain visible. Each root persists its own scores/observations.
+# Generic flat helpers require each root to accept the complete expectation independently.
+# Use an explicit composite when different judges jointly evaluate the supplied conditions.
 # `Scorer.score_with_scorers_async` accepts optional `scorer_roles`, one per scorer, for execution
 # context. Its result lists follow scorer input order, including empty lists.
 #

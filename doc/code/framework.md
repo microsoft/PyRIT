@@ -145,6 +145,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Datasets should never be retrieved from SeedDatasetProviders; SeedDatasetProviders should load into memory, and then components retrieve from memory
 - Most components should always work with seeds passed directly in (except scenarios which may package them from memory). Never use SeedDatasetProviders, file paths, etc. Either pass the seed as an argument or retrieve from memory.
 - There is a Seed hierarchy and the right types should be used (SeedObjective, SeedPrompt, SimulatedSeedPrompt, AttackSeedGroup, ...)
+- `SeedObjective.conditions` holds typed criteria beside its objective text. Seed storage and
+  identity retain those criteria; `SeedGroup.scoring_expectation` exposes them for execution.
 - **Does not own**: a dataset defines and holds seeds; it doesn't package them for an attack. Specifically not:
   - selecting or combining which seeds an attack uses (that's a scenario / attack technique)
   - rendering or parameterizing prompts at send time (converters / normalizers)
@@ -202,6 +204,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Executors should use scoring and target capabilities implicitly. Executors should support multi-modal.
 - Seeds author goals and criteria; execution parameters carry an optional `ScoringExpectation`
   beside the attack objective. Attacks forward its conditions; scorers interpret them.
+- The attack assigns scorer roles. Its objective scorer must cover every condition. Auxiliary
+  scorers are optional diagnostics: the attack gives each one its supported conditions and skips
+  it when a required condition is absent.
 - Compound attacks are possible, combining different attacks in different ways.
 - **Does not own**: packaging the attack. Those are passed in as configuration by the **attack technique**, not assembled here:
   - prepended / system prompts, role-play framing, the converter stack, or dataset selection (e.g. if an executor assembles its own prompt scaffolding for a simulated conversation, that is attack-technique work bleeding into the executor)
@@ -239,6 +244,11 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A target may observe an internal, caller-owned send context at the provider-invocation boundary,
   after target-side waits and immediately before irreversible provider I/O, but the caller owns any
   bootstrap-history identity, replay, or branching state.
+- HTTP targets can propagate a separate trace context for each send. `TargetTraceConfig` controls this
+  behavior, is off by default, and can use a caller-owned tracer. Enable it only for an endpoint that
+  is known to accept W3C trace context. Targets record request trace metadata; the prompt normalizer
+  persists it. Outbound request metadata is separate from chat role, so missing trace
+  links remain detectable on tool and assistant continuations.
 - Because targets are so varied, it is reasonable to return multiple tool calls, or none at all.
 - One attack can have many targets (and in fact, converters and scorers can also use targets to convert/score the prompt).
 - **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), apply attack logic, or persist prompts and responses to memory (the `prompt_normalizer` owns that). Its retries stay at the target layer (e.g. `RateLimitException`).
@@ -258,19 +268,40 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 **Responsibility**: Scorers give feedback to the attack on what happened with the prompt. This could be as simple as "Was this prompt blocked?" or "Was our objective achieved?"
 
 - Any decision an attack makes should be based on a scorer result
+- Scorers with input limits use shared chunking to cover the scored content; each scorer owns context formatting, result aggregation, and uncertainty handling without changing the attack conversation.
 - A scorer is not limited to a message, it could be anything (e.g. was this tool called or was this file written). It receives a `Scorable`, which identifies that evidence, and an optional `ScoringExpectation`.
 - `TrueFalseScorer` and `FloatScaleScorer` define result families. `MessageScorer` adds message resolution and message-only policy on top of them.
 - A scorer declares which evidence it reads, rather than the caller filtering evidence for it. A `MessageScorer` states the conversation roles and data types it reads on its `ScorerPromptValidator`.
 - Target-backed scorers over text evidence persist an `Observation` that references and hashes the retained SCORE-conversation response. The observation and its first score are committed atomically.
+- Trace sources acquire and normalize execution evidence for
+  `TraceScorable` IDs through an injected `TraceClient`. `OtelToolCallScorer`
+  matches tool names against the saved snapshot; incomplete absence is
+  undetermined, not false. For a `MessageScorable`, the scoring layer resolves
+  outbound request trace links, regardless of chat role, through the scored response.
+  Attacks pass message evidence and route expectations according to scorer support.
+- `pyrit.score.observation` owns acquisition and replay support, not evaluation.
+  `ObservationSource` is typed by the scorable it accepts; sources acquire evidence
+  and matchers decide whether it meets a condition. Its local SDK exporter
+  supports caller-owned, in-process capture, not a remote collector or durable store.
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.
-- `score_observation_async` coordinates replay of stored evidence without calling the target. The judgment replay path owns the checks for the exact original expectation, scorer configuration, and response-handler contract; evidence resolution checks that scored evidence and response content are unchanged.
+- Scorer trees check that all conditions have a matching leaf. Wrappers route supported subsets
+  to their children; leaves reject unsupported conditions. Typed message scorers receive criteria
+  through `_score_piece_with_expectation_async`; old objective-only hooks must not discard
+  conditions they claim to match. Subclasses of a migrated scorer must use its typed hook.
+- A condition-based leaf declares one `CONDITION_TYPE` and requires exactly one condition of that
+  type. Constructor-configured leaves declare none. Shared validation rejects missing and duplicate
+  conditions before scoring. Wrappers expose their children; `get_condition_types()` derives their
+  combined coverage. Use separate leaves and a composite for independent checks.
+- `score_observation_async` coordinates replay of stored evidence without calling the target. Scorer target response replay owns the checks for the exact original expectation, scorer configuration, and response-handler contract; evidence resolution checks that scored evidence and response content are unchanged.
+- Tool-event observations can be matched against new tool-name expectations
+  without querying the trace client again. This does not relax scorer target response replay rules.
 - **Does not own**: acting on its own result. A scorer evaluates a response and returns a score; branching on that score is the attack's job, and aggregating scores across runs is analytics'. It may call a target to evaluate, but it doesn't send the attack's objective prompt or manage the conversation.
 
 **Framework Plans**:
 
 - Loose file evidence is copied into managed results storage. Media already stored in `PromptMemoryEntries` is not yet normalized that way, which is memory retention work.
-- Media, tool-call observations, coverage, and trace acquisition are deferred until their evidence can be snapshotted before judgment.
+- Media observation capture remains deferred until its evidence can be snapshotted before judgment.
 
 **Contributing (difficulty low)**:
 
@@ -289,6 +320,8 @@ The below talks about responsibilities of most modules in the PyRIT library
 - This is where cross-run analysis belongs: e.g. "which attack performed best for this objective?", "how often did a technique succeed?", or "which responses match known content?".
 - **Does not own**: live, in-attack decisions — any decision made *during* an attack is a scorer's job. Analytics only operates on stored results, after the fact.
 - Today it includes `ConversationAnalytics` (inspecting conversation history), `analyze_results` / `AttackStats` (aggregating outcomes across techniques), and text-matching strategies (`ExactTextMatching`, `ApproximateTextMatching`).
+- Shared analytics contracts (filters, dimensions, typed values, reports, facets, result pages, and `AttackStats`) live in `pyrit.models.analytics`. They validate data without querying memory or calculating statistics. `AttackResultSelection` defines selection modes without changing existing callers.
+- Filter-bound cursor and label-normalization helpers live in `pyrit.common.pagination`. The backend pagination module retains compatibility exports, including History's invalid-cursor first-page fallback.
 
 ## Auth
 
@@ -312,6 +345,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 - One important thing to remember about this architecture is its swappable nature. Seeds, targets, converters, attacks, and scorers should all be swappable. But sometimes one of these components needs additional information. If the target is an LLM, we need a way to look up previous messages sent to that session so we can properly construct the new message. If the target is a blob store, we need to know the URL to use for a future attack.
 - Components should access memory through `CentralMemory` rather than passing state directly between each other.
 - Memory backends are swappable too (e.g. SQLite or Azure SQL) without changing the components that use them.
+- Memory loads and locks observation evidence for model-owned validation, and owns atomic writes and reference cleanup.
 - **Does not own**: business logic or decisions. Memory stores and retrieves state; it doesn't decide what to send, how to score, or when to branch — components do that and persist results here.
 
 ## [Models](../contributing/11_memory_models)
@@ -321,6 +355,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 - If you are creating a class that has a lot of overlap with another class, or using a dict to serialize across boundaries, consider if you can use/move pyrit.models
 - Models includes `identifiers` which are descriptions of the core components. And along with the registry, can often recreate those components.
 - Models includes types passed around between components, and should be prefered in REST
+- Score and observation models own their validation rules. Persistence and replay share observation evidence checks; models do no I/O.
 - models should never depend on anything except lightweight Python (the standard library and pydantic) and pyrit.common
 - Store metadata on the narrowest model that owns it (for example, request or response data belongs on `MessagePiece`, not `Message`). Use explicit typed fields for stable, core, or independently queried data.
 - For shared metadata, define a lightweight value object in `pyrit.models` that owns its keys and provides symmetric `to_metadata()` and `from_metadata()` methods. Use `JsonResponseConfig` as the pattern for data stored in `MessagePiece.prompt_metadata`.

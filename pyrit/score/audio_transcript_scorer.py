@@ -12,7 +12,7 @@ import av
 from pyrit.converter import AzureSpeechAudioToTextConverter
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, MessageScorable, Score, ScoringExpectation
-from pyrit.score.observation import _get_current_scoring_expectation, _suppress_observation_collection
+from pyrit.score.observation.execution import _suppress_observation_collection
 from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)
@@ -137,13 +137,15 @@ class AudioTranscriptHelper:
                 f"Supported types: {scorer._validator._supported_data_types}"
             )
 
-    async def _score_audio_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
+    async def _score_audio_async(
+        self, *, message_piece: MessagePiece, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Transcribe audio and score the transcript.
 
         Args:
             message_piece (MessagePiece): The message piece containing the audio file path.
-            objective (str | None): Optional objective description for scoring.
+            expectation (ScoringExpectation | None): Criteria forwarded to the transcript scorer.
 
         Returns:
             List of scores for the transcribed audio.
@@ -185,16 +187,10 @@ class AudioTranscriptHelper:
         memory = CentralMemory.get_memory_instance()
         memory.add_message_to_memory(request=text_message)
 
-        effective_expectation = _get_current_scoring_expectation()
-        transcript_expectation = (
-            effective_expectation.model_copy(update={"objective": objective})
-            if effective_expectation is not None
-            else ScoringExpectation(objective=objective)
-        )
         with _suppress_observation_collection():
             transcript_scores = await self.text_scorer._score_nested_async(
                 scorable=MessageScorable.from_message(text_message),
-                expectation=transcript_expectation,
+                expectation=self.text_scorer._select_expectation(expectation=expectation),
             )
 
         # Add context to indicate this was scored from audio transcription

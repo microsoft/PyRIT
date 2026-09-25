@@ -16,6 +16,7 @@ comparison and is excluded from the adaptive technique pool.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import abstractmethod
 from typing import TYPE_CHECKING, ClassVar
@@ -112,6 +113,16 @@ class AdaptiveScenario(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
+    @property
+    def uses_default_adversarial_target(self) -> bool:
+        """Whether the adaptive pool includes a technique that uses the shared target."""
+        factories = self._get_attack_technique_factories()
+        return any(
+            factory.uses_default_adversarial_target
+            for technique in self._technique_class.get_all_techniques()
+            if (factory := factories.get(technique.value)) is not None
+        )
+
     def _get_attack_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
         """
         Build factories from the canonical scenario-techniques catalog,
@@ -177,7 +188,9 @@ class AdaptiveScenario(Scenario):
         Raises:
             ValueError: If ``_build_techniques_dict`` finds no usable techniques.
         """
-        techniques = self._build_techniques_dict(objective_target=context.objective_target)
+        # Building the technique catalog reads each technique's prompt YAML, so keep the
+        # synchronous builder off the event loop.
+        techniques = await asyncio.to_thread(self._build_techniques_dict, objective_target=context.objective_target)
 
         atomic_attacks: list[AtomicAttack] = []
         if context.include_baseline:
@@ -243,7 +256,9 @@ class AdaptiveScenario(Scenario):
             )
 
         assert self._objective_target is not None
-        techniques = self._build_techniques_dict(objective_target=self._objective_target)
+        # Building the technique catalog reads each technique's prompt YAML, so keep the
+        # synchronous builder off the event loop.
+        techniques = await asyncio.to_thread(self._build_techniques_dict, objective_target=self._objective_target)
         dispatcher = AdaptiveTechniqueDispatcher(
             objective_target=self._objective_target,
             techniques=techniques,
@@ -284,7 +299,7 @@ class AdaptiveScenario(Scenario):
                 "selected seed group."
             )
         return ScenarioRunSizeEstimate(
-            estimated_attack_count=estimated_attack_count,
+            total_attack_count=estimated_attack_count,
             minimum_attack_count=minimum_attack_count,
             maximum_attack_count=maximum_attack_count,
             components=components,

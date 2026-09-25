@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import Message, Score, ScoreStatus, UndeterminedScoreError
+from pyrit.models import Message, Score, ScoreStatus, ScoringExpectation, UndeterminedScoreError
 from pyrit.score.message_scorer import MessageScorer
-from pyrit.score.observation import _merge_observation_ids
+from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
@@ -169,7 +169,9 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
         """
         return self._build_neutral_fallback_score(message=message, objective=objective, neutral_value="false")
 
-    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+    async def _score_async(
+        self, message: Message, *, objective: str | None = None, expectation: ScoringExpectation | None = None
+    ) -> list[Score]:
         """
         Score the given request response asynchronously.
 
@@ -182,13 +184,14 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
         Args:
             message (Message): The message to score.
             objective (str | None): The objective to evaluate against. Defaults to None.
+            expectation (ScoringExpectation | None): Complete criteria passed to each piece.
 
         Returns:
             list[Score]: ``[]`` when no applicable piece produces a score; otherwise, a list
                 containing one completed or undetermined aggregate score.
         """
         # Get individual scores for all supported pieces using base implementation logic
-        score_list = await MessageScorer._score_async(self, message, objective=objective)
+        score_list = await MessageScorer._score_async(self, message, objective=objective, expectation=expectation)
 
         if not score_list:
             return []

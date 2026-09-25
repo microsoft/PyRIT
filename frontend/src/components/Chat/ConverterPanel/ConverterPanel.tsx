@@ -20,7 +20,9 @@ import {
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ChatConverterController, ConverterInputPiece, ConverterInstance, ConverterPipelineStage } from '@/types'
+import type {
+  ChatConverterController, ConverterInputPiece, ConverterInstance, ConverterPipelineStage, ConverterStageResult,
+} from '@/types'
 
 import {
   PIECE_TYPE_TO_DATA_TYPE,
@@ -30,6 +32,7 @@ import {
   isPathDataType,
 } from '../converterTypes'
 import { useConverterPanelStyles } from './ConverterPanel.styles'
+import ConversionTextEditor from './ConversionTextEditor'
 import SelectConverterInput from './SelectConverterInput'
 
 const PIECE_TYPE_LABELS: Record<string, string> = {
@@ -53,6 +56,10 @@ interface ValuePreviewProps {
   sectionTestId?: string
   testId?: string
   value?: string
+  editorLabel?: string
+  allowSelection?: boolean
+  edited?: boolean
+  onChange?: (value: string) => void
 }
 
 interface ConverterPanelProps {
@@ -71,7 +78,6 @@ function formatDataType(dataType: string): string {
     .replace(/\b\w/g, (character: string) => character.toUpperCase())
 }
 
-/** Read-only rendering of a value, using a media player whenever the type allows. */
 function ValuePreview({
   dataType,
   emptyText,
@@ -79,12 +85,24 @@ function ValuePreview({
   sectionTestId,
   testId,
   value = '',
+  editorLabel,
+  allowSelection = false,
+  edited = false,
+  onChange,
 }: ValuePreviewProps) {
   const styles = useConverterPanelStyles()
   const accessibleLabel = label ?? 'Converted output'
 
   let content: ReactNode
-  if (!value) {
+  if (dataType === 'text' && onChange) {
+    content = <ConversionTextEditor
+      value={value}
+      label={editorLabel ?? accessibleLabel}
+      placeholder={emptyText}
+      allowSelection={allowSelection}
+      onChange={onChange}
+    />
+  } else if (!value) {
     content = <Text className={styles.emptyPreview}>{emptyText}</Text>
   } else if (!isPathDataType(dataType)) {
     content = <pre className={styles.previewPre}>{value}</pre>
@@ -128,6 +146,7 @@ function ValuePreview({
           {label}
         </Text>
       )}
+      {edited && <Text size={200} className={styles.hintText}>Edited</Text>}
       <div className={styles.outputBox} data-testid={testId}>
         {content}
       </div>
@@ -142,7 +161,10 @@ export default function ConverterPanel({
   const styles = useConverterPanelStyles()
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const [activeTab, setActiveTab] = useState('text')
-  const { inputs, pipelines, results, errors, isConverting, addConverter, setPipeline, retainConverters } = controller
+  const {
+    inputs, workingInputs, pipelines, stageResults, results, errors, isConverting,
+    addConverter, setPipeline, retainConverters,
+  } = controller
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -250,11 +272,9 @@ export default function ConverterPanel({
     .filter((type: string) => groups[type]?.length)
     .map((type: string) => ({ type, converters: groups[type] }))
 
-  const configuredPieceTypes = tabs.filter(
-    (pieceType: string) => (pipelines[pieceType]?.length ?? 0) > 0,
-  )
-  const convertibleInputs = inputs.filter(
-    (input: ConverterInputPiece) => input.value.trim() && pipelines[input.pieceType]?.length,
+  const activePipelineConfigured = selectedStages.length > 0
+  const convertibleInputs = activeInputs.filter(
+    (input: ConverterInputPiece) => (workingInputs[input.id] ?? input.value).trim(),
   )
 
   const handleConverterSelect = useCallback((converterId: string): void => {
@@ -383,6 +403,13 @@ export default function ConverterPanel({
           </TabList>
         )}
         <div className={styles.body}>
+          {!isLoading && !error && (
+            <SelectConverterInput
+              groupedConverters={groupedConverters}
+              onOptionSelect={handleConverterSelect}
+              onCreateNew={() => setCreateDialogOpen(true)}
+            />
+          )}
           {activeInputs.map((input: ConverterInputPiece) => <ValuePreview
             key={input.id}
             dataType={input.dataType}
@@ -392,8 +419,14 @@ export default function ConverterPanel({
                 : `Attach a ${effectiveActiveTab} file in the chat input.`
             }
             label={input.pieceType === 'text' ? 'Input - Text' : `Input - ${input.name}`}
+            editorLabel={`Working input - ${input.name}`}
+            allowSelection={selectedConverters.length > 0}
+            edited={workingInputs[input.id] !== undefined && workingInputs[input.id] !== input.value}
+            onChange={input.dataType === 'text'
+              ? (value: string) => controller.editInput(input.id, value)
+              : undefined}
             testId="converter-input-value"
-            value={input.value}
+            value={workingInputs[input.id] ?? input.value}
           />)}
           {isLoading && (
             <div className={styles.loading} data-testid="converter-panel-loading">
@@ -407,19 +440,17 @@ export default function ConverterPanel({
           )}
           {!isLoading && !error && (
             <div className={styles.converterList} data-testid="converter-panel-list">
-              <SelectConverterInput
-                groupedConverters={groupedConverters}
-                onOptionSelect={handleConverterSelect}
-                onCreateNew={() => setCreateDialogOpen(true)}
-              />
-              {configuredPieceTypes.length > 0 && (
+              {activePipelineConfigured && (
                 <Button
                   appearance="primary"
                   size="small"
                   icon={isConverting ? <Spinner size="tiny" /> : <PlayRegular />}
-                  onClick={() => void controller.convert()}
+                  onClick={() => void controller.convert(effectiveActiveTab)}
                   disabled={isConverting || convertibleInputs.length === 0}
                   className={styles.previewButton}
+                  title={`Convert the configured ${
+                    PIECE_TYPE_LABELS[effectiveActiveTab] ?? effectiveActiveTab
+                  } chain and any configured inputs without results.`}
                   data-testid="converter-preview-btn"
                 >
                   {isConverting ? 'Converting...' : 'Convert'}
@@ -499,21 +530,45 @@ export default function ConverterPanel({
                       {converter.description || 'No description is available.'}
                     </Text>
                     {activeInputs.map((input: ConverterInputPiece) => {
-                      const response = results[input.id]
-                      const stage = response?.steps[index]
-                      return <ValuePreview
-                        key={input.id}
-                        label={activeInputs.length > 1 ? input.name : undefined}
-                        dataType={stage?.output_data_type ?? converter.identifier.supported_output_types?.[0] ?? 'text'}
-                        emptyText={response
-                          ? 'This stage returned an empty value.'
-                          : 'Choose Convert to see this stage output.'}
-                        sectionTestId={`converter-stage-output-${index}`}
-                        testId={response && index === selectedConverters.length - 1
-                          ? 'converter-preview-result'
-                          : undefined}
-                        value={stage?.output_value}
-                      />
+                      const stage = stageResults[input.id]?.find(
+                        (result: ConverterStageResult) => result.stageId === converter.stageId,
+                      )
+                      const hasRemaining = index < selectedConverters.length - 1
+                      const outputType = stage?.generated.output_data_type
+                        ?? converter.identifier.supported_output_types?.[0] ?? 'text'
+                      return (
+                        <div key={input.id} className={styles.valueSection}>
+                          <ValuePreview
+                            label={activeInputs.length > 1 ? input.name : undefined}
+                            editorLabel={`Stage ${index + 1} output - ${input.name}`}
+                            dataType={outputType}
+                            emptyText={stage
+                              ? 'This stage returned an empty value.'
+                              : 'Choose Convert above to see this stage output.'}
+                            sectionTestId={`converter-stage-output-${index}`}
+                            testId={results[input.id] && !hasRemaining ? 'converter-preview-result' : undefined}
+                            value={stage?.value}
+                            edited={stage !== undefined && stage.value !== stage.generated.output_value}
+                            allowSelection={hasRemaining}
+                            onChange={stage && outputType === 'text'
+                              ? (value: string) => controller.editStageOutput(input.id, converter.stageId, value)
+                              : undefined}
+                          />
+                          {hasRemaining && (
+                            <Button
+                              size="small"
+                              icon={<PlayRegular />}
+                              className={styles.previewButton}
+                              disabled={isConverting || stage === undefined}
+                              aria-label={`Convert ${input.name} from stage ${index + 2} to end`}
+                              title="Convert all remaining stages from this value."
+                              onClick={() => void controller.convertRemaining(input.id, converter.stageId)}
+                            >
+                              Convert
+                            </Button>
+                          )}
+                        </div>
+                      )
                     })}
                   </div>
                 )

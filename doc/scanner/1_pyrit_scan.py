@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -249,23 +249,23 @@ MyCustomScenario()
 # pyrit_scan scenario-history 25       # last 25
 # ```
 #
-# Then inspect a run with `scenario-results` at the granularity you want via `--view`:
+# Then inspect a run with `scenario-results` at the granularity you want via `--view`, the output format (e.g., pretty, json, or html) via `--format`, and the output file via `--output`:
 #
 # ```shell
-# # Aggregate stats + per-group success rates (the default; same as the run summary)
+# # Aggregate stats + per-group success rates pretty printed (the default; same as the run summary)
 # pyrit_scan scenario-results <scenario_result_id>
 #
-# # One row per attack: id, technique, objective, outcome, turns, score
-# pyrit_scan scenario-results <scenario_result_id> --view attacks
+# # One row per attack: id, technique, objective, outcome, turns, score; saved down as a json file
+# pyrit_scan scenario-results <scenario_result_id> --view attacks --format json --output test_attack_results.json
 #
-# # Full message transcripts with the objective score per turn
-# pyrit_scan scenario-results <scenario_result_id> --view conversations
+# # `attacks` view + full message transcripts with the objective score per turn
+# pyrit_scan scenario-results <scenario_result_id> --view conversations --format pretty
 #
-# # Both: the attacks table followed by the transcripts
-# pyrit_scan scenario-results <scenario_result_id> --view full
+# # Both: the overview followed by the transcripts, saved down as a html report (html only supports full view)
+# pyrit_scan scenario-results <scenario_result_id> --view full --format html --output reports/html_report.html
 # ```
 #
-# `--view` picks *how much* detail per attack; `--attack-result-ids` picks *which* attacks (ids come from the `attacks` view); the two combine. Use `--limit` to cap how many attacks are shown; the `conversations` and `full` views default to 5 when you scope neither:
+# `--view` picks *how much* detail per attack; `--attack-result-ids` picks *which* attacks (ids come from the `attacks` view); the two combine. Use `--limit` to cap how many attacks are shown; the `conversations` and `full` views default to 5 when you scope neither. (`--limit` is not applicable to `--format html` report.)
 #
 # ```shell
 # pyrit_scan scenario-results <id> --view conversations --attack-result-ids <attack_id> <attack_id>

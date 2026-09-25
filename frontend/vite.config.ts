@@ -34,10 +34,10 @@ export default defineConfig({
     // Improve HMR performance for devcontainer
     hmr: {
       overlay: false,
-      clientPort: 3000,
+      clientPort: Number.parseInt(process.env.E2E_FRONTEND_PORT ?? '3000', 10),
     },
-    // Reduce request overhead
-    cors: true,
+    // Same-origin API requests do not need CORS. Do not bypass backend preflights.
+    cors: false,
     proxy: {
       '/api': {
         // Use 127.0.0.1 to avoid Node.js 17+ resolving localhost to IPv6 ::1

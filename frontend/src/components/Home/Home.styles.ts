@@ -63,12 +63,6 @@ export const useHomeStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalS,
   },
-  labelsRow: {
-    display: 'flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: '32px',
-  },
   cardFooter: {
     display: 'flex',
     justifyContent: 'flex-end',

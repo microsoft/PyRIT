@@ -15,6 +15,7 @@ from pyrit.executor.attack.component import ConversationManager, PrependedConver
 from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -41,7 +42,6 @@ from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     MessageScorable,
-    MessageScorer,
     NumericRubric,
     SelfAskRefusalScorer,
     SelfAskScaleScorer,
@@ -707,7 +707,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
-            scoring_results = await MessageScorer.score_response_async(
+            scoring_results = await score_attack_response_async(
                 response=context.last_response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,

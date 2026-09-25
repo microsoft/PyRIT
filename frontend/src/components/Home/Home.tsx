@@ -17,7 +17,6 @@ import {
   TagMultipleRegular,
   TargetRegular,
 } from '@fluentui/react-icons'
-import LabelsBar from '../Labels/LabelsBar'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { AttackSummary, TargetInstance } from '../../types'
@@ -38,8 +37,6 @@ const OUTCOME_ICONS: Record<string, React.ReactElement> = {
 }
 
 interface HomeProps {
-  labels: Record<string, string>
-  onLabelsChange: (labels: Record<string, string>) => void
   activeTarget: TargetInstance | null
   onNavigate: (view: ViewName) => void
   onOpenAttack: (attackResultId: string) => void
@@ -100,8 +97,6 @@ function targetDisplayName(target: TargetInstance): string {
 }
 
 export default function Home({
-  labels,
-  onLabelsChange,
   activeTarget,
   onNavigate,
   onOpenAttack,
@@ -149,26 +144,24 @@ export default function Home({
         </div>
 
         <div className={styles.setupGrid}>
-          <section className={styles.card} data-testid="home-labels-card" data-tour="labels-card">
+          <section className={styles.card} data-testid="home-labels-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TagMultipleRegular /></span>
               <Text as="h2" size={500} weight="semibold">Labels</Text>
             </div>
             <div className={styles.cardBody}>
               <Text size={200} className={styles.heroSubtitle}>
-                Labels (especially <strong>operator</strong> and <strong>operation</strong>) are stored on
-                every attack so you can find them later. Update the placeholders before you run anything real.
+                Use the bar above to set your <strong>operator</strong>,
+                {' '}<strong>operation</strong>, and other labels before starting an attack or scan.
+                Your choices stay with you as you navigate. Existing runs keep their original labels.
               </Text>
-              <div className={styles.labelsRow}>
-                <LabelsBar labels={labels} onLabelsChange={onLabelsChange} />
-              </div>
             </div>
           </section>
 
           <section className={styles.card} data-testid="home-target-card" data-tour="target-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TargetRegular /></span>
-              <Text as="h2" size={500} weight="semibold">Target</Text>
+              <Text as="h2" size={500} weight="semibold">Default objective target</Text>
             </div>
             <div className={styles.cardBody}>
               {activeTarget ? (
@@ -181,7 +174,7 @@ export default function Home({
                 </div>
               ) : (
                 <Text size={300} className={styles.emptyHint} data-testid="home-target-empty">
-                  No target selected. Pick one to send prompts.
+                  No default objective target selected. Choose a target in Chat or set a default in the registry.
                 </Text>
               )}
             </div>
@@ -227,7 +220,7 @@ export default function Home({
             <div className={styles.emptyOperations} data-testid="home-empty">
               <Text size={400}>No attacks yet</Text>
               <Text size={200}>
-                Configure a target and start a new attack from the Chat tab.
+                Select a target and start a new attack from the Chat tab.
               </Text>
               <Button
                 className={styles.touchTarget}

@@ -23,8 +23,26 @@ export const useTargetTableStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     zIndex: 1,
   },
-  activeRow: {
+  defaultRow: {
     backgroundColor: tokens.colorBrandBackground2,
+  },
+  defaultsSummary: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    width: '100%',
+    maxWidth: '32rem',
+    minWidth: 0,
+  },
+  defaultsDivider: {
+    marginTop: tokens.spacingVerticalXL,
+    marginBottom: tokens.spacingVerticalXL,
+  },
+  defaultIndicators: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalXS,
+    marginTop: tokens.spacingVerticalXXS,
   },
   registryNameCell: {
     minWidth: 0,

@@ -85,6 +85,7 @@ const catalogScenario = {
   default_dataset_summaries: [datasetSummary],
   baseline_policy: "enabled",
   include_baseline_by_default: false,
+  uses_default_adversarial_target: false,
   supported_parameters: [
     {
       name: "num_jailbreaks",
@@ -495,6 +496,7 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
 }
 
 async function configurePromptSendingRun(page: Page): Promise<void> {
+  await page.getByTestId("scenario-target-select").selectOption("test-target");
   await expect(page.getByTestId("scenario-target-select")).toHaveValue("test-target");
   await page.getByTestId("technique-prompt_sending").check();
   await page.getByTestId("technique-jailbreak_system_prompt").uncheck();
@@ -650,7 +652,12 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await page.reload();
     await expect(page).toHaveURL(`/scanner-history/${RUN_ID}`);
     await expect(page.getByRole("heading", { name: SCENARIO_NAME })).toBeVisible();
-    await page.getByRole("button", { name: "Expand attacks in Prompt sending" }).click();
+    const atomicGroupsToggle = page.getByRole("button", { name: /atomic attack groups$/ });
+    await expect(atomicGroupsToggle).toHaveAttribute("aria-expanded", "true");
+    const groupToggle = page.getByRole("button", { name: "Expand attacks in Prompt sending" });
+    await expect(groupToggle).toBeVisible();
+    await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
+    await groupToggle.click();
     const attemptRow = page.getByRole("row", { name: "View details for prompt_sending" });
     await attemptRow.click();
     await expect(page).toHaveURL(`/scanner-history/${RUN_ID}/${ATTACK_ID}`);

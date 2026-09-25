@@ -84,6 +84,37 @@ async function openOperationPicker(page: Page) {
 }
 
 test.describe("operation picker placement", () => {
+  test("keeps metadata editable in a narrow bar without duplicating it in Default Labels", async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 800 });
+    await setupMocks(page, ["op_alpha", "op_beta"]);
+    await page.goto("/");
+
+    const bar = page.getByRole("region", { name: "Default Labels" });
+    await expect(bar.getByText("New run labels", { exact: true })).toHaveCount(0);
+    await expect(bar.getByText("Used for new attacks and scans.", { exact: false })).toHaveCount(0);
+
+    await bar.getByRole("button", { name: /^Edit operation, currently / }).click();
+    await page.getByRole("option", { name: "op_beta", exact: true }).click();
+    await expect(bar.getByRole("button", { name: "Edit operation, currently op_beta" })).toBeVisible();
+
+    await bar.getByRole("button", { name: /^Edit operator, currently / }).click();
+    await page.getByRole("textbox", { name: "Value for operator label" }).fill("alice");
+    await page.getByRole("textbox", { name: "Value for operator label" }).press("Enter");
+    await expect(bar.getByRole("button", { name: "Edit operator, currently alice" })).toBeVisible();
+
+    await bar.getByTestId("labels-icon-btn").click();
+    const popover = page.getByRole("group").filter({
+      has: page.getByRole("heading", { name: "Default Labels" }),
+    });
+    await expect(popover.getByRole("heading", { name: "Default Labels" })).toBeVisible();
+    await expect(popover.getByText("added to new attacks and scans", { exact: true })).toBeVisible();
+    await expect(popover.getByText("Run metadata", { exact: true })).toHaveCount(0);
+    await expect(popover.getByText("Add Label", { exact: true })).toHaveCount(0);
+    await expect(popover.getByRole("button", { name: /^Edit (operator|operation),/ })).toHaveCount(0);
+    await expect(popover.getByRole("textbox", { name: "Label key" })).toBeVisible();
+    await expect(popover.getByRole("button", { name: "Add", exact: true })).toBeVisible();
+  });
+
   test("caps the list height and anchors it to the input", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await setupMocks(page, operations(60));
@@ -110,10 +141,18 @@ test.describe("operation picker placement", () => {
   test("keeps the list on screen when it opens above the input", async ({
     page,
   }) => {
-    // Too little room below the labels bar, so Fluent flips the list upwards.
+    // The shared bar is normally near the top. Move it down to exercise
+    // upward collision handling independently of the Home page layout.
     await page.setViewportSize({ width: 1280, height: 420 });
     await setupMocks(page, operations(60));
-    const listbox = await openOperationPicker(page);
+    await page.goto("/");
+    await page.getByRole("region", { name: "Default Labels" }).evaluate(
+      (bar: HTMLElement) => { bar.style.marginTop = "240px"; },
+    );
+    await page.getByTestId("label-operation").click();
+
+    const listbox = page.getByRole("listbox");
+    await expect(listbox).toBeVisible();
 
     const box = (await listbox.boundingBox())!;
     const input = (await page
@@ -121,7 +160,11 @@ test.describe("operation picker placement", () => {
       .boundingBox())!;
     const viewport = page.viewportSize()!;
 
+    expect(input.y).toBeGreaterThanOrEqual(LIST_MAX_HEIGHT);
+    expect(viewport.height - (input.y + input.height)).toBeLessThan(LIST_MAX_HEIGHT);
     expect(box.y).toBeLessThan(input.y);
+    expect(box.y + box.height).toBeLessThanOrEqual(input.y);
+    expect(input.y - (box.y + box.height)).toBeLessThan(16);
     expect(box.y).toBeGreaterThanOrEqual(0);
     expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
   });
@@ -351,7 +394,7 @@ test.describe("operation picker persistence", () => {
     // What is on screen is also what a refresh would restore.
     expect(
       await page.evaluate(() =>
-        window.localStorage.getItem("pyrit.globalLabels"),
+        window.localStorage.getItem("pyrit.userPreferences.v1.local"),
       ),
     ).toContain("op_picked_early");
   });

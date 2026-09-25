@@ -3,12 +3,12 @@
 
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    AttackStats,
     IdentifierFilter,
     IdentifierType,
     ObjectiveTargetEvaluationIdentifier,
@@ -16,18 +16,6 @@ from pyrit.models import (
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_interface import MemoryInterface
-
-
-@dataclass
-class AttackStats:
-    """Statistics for attack analysis results."""
-
-    success_rate: float | None
-    total_decided: int
-    successes: int
-    failures: int
-    undetermined: int
-    errors: int
 
 
 def _compute_stats(successes: int, failures: int, undetermined: int, errors: int) -> AttackStats:

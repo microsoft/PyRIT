@@ -14,9 +14,11 @@ canonical models.
 """
 
 from datetime import datetime
+from enum import Enum
+from math import prod
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, computed_field, field_validator, model_validator
 
 from pyrit.models.parameter import Parameter
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -57,13 +59,56 @@ def _validate_dataset_filter_mapping(
     return value
 
 
+class ScenarioRunSizeEstimateStatus(str, Enum):
+    """Confidence level for a scenario run-size estimate."""
+
+    Exact = "exact"
+    Conditional = "conditional"
+    Unavailable = "unavailable"
+
+
+class ScenarioRunSizeEstimateCondition(str, Enum):
+    """Reason an estimate remains conditional until launch."""
+
+    TargetCapabilities = "target_capabilities"
+    LaunchConfiguration = "launch_configuration"
+    PriorExecutionResults = "prior_execution_results"
+
+
+class ScenarioRunSizeFactor(BaseModel):
+    """One labeled multiplicative factor in a run-size component."""
+
+    label: str = Field(..., min_length=1)
+    count: int = Field(..., ge=0)
+
+
 class ScenarioRunSizeComponent(BaseModel):
     """One additive component of a default-run size estimate."""
 
     label: str = Field(..., min_length=1)
     count: int = Field(..., ge=0)
+    factors: list[ScenarioRunSizeFactor] = Field(default_factory=list)
     is_baseline: bool = False
     note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_factor_product(self) -> "ScenarioRunSizeComponent":
+        """
+        Require known component totals to equal their ordered factor product.
+
+        Returns:
+            ScenarioRunSizeComponent: The validated component.
+
+        Raises:
+            ValueError: If a component with factors has an inconsistent count.
+        """
+        if self.factors:
+            factor_product = prod(factor.count for factor in self.factors)
+            if self.count != factor_product:
+                raise ValueError(
+                    f"Component '{self.label}' count ({self.count}) must equal its factor product ({factor_product})"
+                )
+        return self
 
 
 class ScenarioDatasetSizeCap(BaseModel):
@@ -106,40 +151,124 @@ class ScenarioRunSizeEstimate(BaseModel):
     logical-seed-group pair. Retries and internal attack turns are excluded.
     """
 
-    estimated_attack_count: int | None = Field(default=None, ge=0)
+    status: ScenarioRunSizeEstimateStatus = ScenarioRunSizeEstimateStatus.Conditional
+    total_attack_count: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("total_attack_count", "estimated_attack_count", "total"),
+    )
     minimum_attack_count: int | None = Field(default=None, ge=0)
     maximum_attack_count: int | None = Field(default=None, ge=0)
+    condition: ScenarioRunSizeEstimateCondition | None = None
     components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
     datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
     effective_parameters: dict[str, bool | int | float | str | list[str]] = Field(
         default_factory=dict,
         description="Scenario parameter values used by this estimate, including implicit runtime defaults.",
     )
-    note: str | None = None
+    note: str | None = Field(default=None, validation_alias=AliasChoices("note", "caveat"))
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def estimated_attack_count(self) -> int | None:
+        """Compatibility projection of ``total_attack_count``."""
+        return self.total_attack_count
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_estimate(cls, data: Any) -> Any:
+        """
+        Infer status for callers using the original additive estimate fields.
+
+        Returns:
+            Any: The normalized estimate input.
+
+        Raises:
+            ValueError: If duplicate total fields disagree.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        total_field_names = ("total_attack_count", "estimated_attack_count", "total")
+        present_total_fields = [key for key in total_field_names if key in normalized]
+        total_values = [normalized[key] for key in present_total_fields if normalized[key] is not None]
+        if total_values and any(value != total_values[0] for value in total_values[1:]):
+            raise ValueError("total_attack_count and compatibility total fields must match")
+        if present_total_fields:
+            normalized["total_attack_count"] = total_values[0] if total_values else None
+            normalized.pop("estimated_attack_count", None)
+            normalized.pop("total", None)
+        if "status" not in normalized:
+            normalized["status"] = (
+                ScenarioRunSizeEstimateStatus.Exact if total_values else ScenarioRunSizeEstimateStatus.Conditional
+            )
+        status = normalized["status"]
+        if total_values and (
+            status == ScenarioRunSizeEstimateStatus.Exact or status == ScenarioRunSizeEstimateStatus.Exact.value
+        ):
+            total = total_values[0]
+            if normalized.get("minimum_attack_count") is None:
+                normalized["minimum_attack_count"] = total
+            if normalized.get("maximum_attack_count") is None:
+                normalized["maximum_attack_count"] = total
+        return normalized
 
     @model_validator(mode="after")
-    def validate_estimated_attack_count(self) -> "ScenarioRunSizeEstimate":
+    def validate_estimate(self) -> "ScenarioRunSizeEstimate":
         """
-        Ensure available estimates expose a complete additive total.
+        Ensure status, bounds, and additive components describe one estimate.
 
         Returns:
             ScenarioRunSizeEstimate: The validated estimate.
 
         Raises:
-            ValueError: If an available estimate misstates its total.
+            ValueError: If the estimate contains contradictory values.
         """
+        component_total = sum(component.count for component in self.components)
+        if self.status is not ScenarioRunSizeEstimateStatus.Conditional and self.condition is not None:
+            raise ValueError(f"{self.status.value.capitalize()} run-size estimates cannot include condition")
+
+        if self.status is ScenarioRunSizeEstimateStatus.Exact:
+            if self.total_attack_count is None:
+                raise ValueError("Exact run-size estimates require total_attack_count")
+            for field_name, bound in (
+                ("minimum_attack_count", self.minimum_attack_count),
+                ("maximum_attack_count", self.maximum_attack_count),
+            ):
+                if bound is not None and bound != self.total_attack_count:
+                    raise ValueError(f"Exact run-size estimates require {field_name} to equal total_attack_count")
+            if component_total != self.total_attack_count:
+                raise ValueError(f"Run-size estimate components total {component_total}, not {self.total_attack_count}")
+            return self
+
         if (
             self.minimum_attack_count is not None
             and self.maximum_attack_count is not None
             and self.minimum_attack_count > self.maximum_attack_count
         ):
-            raise ValueError("Minimum attack count cannot exceed maximum attack count")
+            raise ValueError("minimum_attack_count must be less than or equal to maximum_attack_count")
 
-        if self.estimated_attack_count is not None:
-            component_total = sum(component.count for component in self.components)
-            if component_total != self.estimated_attack_count:
+        if self.total_attack_count is not None:
+            raise ValueError(f"{self.status.value.capitalize()} run-size estimates cannot include total_attack_count")
+
+        if self.status is ScenarioRunSizeEstimateStatus.Unavailable:
+            if self.minimum_attack_count is not None or self.maximum_attack_count is not None:
+                raise ValueError("Unavailable run-size estimates cannot include numeric bounds")
+            if self.components:
+                raise ValueError("Unavailable run-size estimates cannot include numeric components")
+            return self
+
+        if self.components:
+            if self.minimum_attack_count is not None and component_total < self.minimum_attack_count:
                 raise ValueError(
-                    f"Default-run estimate components total {component_total}, not {self.estimated_attack_count}"
+                    f"Run-size estimate components total {component_total}, below minimum_attack_count "
+                    f"{self.minimum_attack_count}"
+                )
+            if self.maximum_attack_count is not None and component_total > self.maximum_attack_count:
+                raise ValueError(
+                    f"Run-size estimate components total {component_total}, above maximum_attack_count "
+                    f"{self.maximum_attack_count}"
                 )
         return self
 
@@ -151,7 +280,10 @@ class ScenarioRunSizeEstimate(BaseModel):
         Returns:
             ScenarioRunSizeEstimate: An unavailable estimate.
         """
-        return cls(note=note)
+        return cls(status=ScenarioRunSizeEstimateStatus.Unavailable, note=note)
+
+
+ScenarioDefaultRunSizeEstimate = ScenarioRunSizeEstimate
 
 
 class RegisteredScenario(BaseModel):
@@ -190,6 +322,9 @@ class RegisteredScenario(BaseModel):
         "enabled", description="Whether baseline execution is enabled, disabled, or forbidden"
     )
     include_baseline_by_default: bool = Field(True, description="Whether an omitted baseline flag includes it")
+    uses_default_adversarial_target: bool = Field(
+        False, description="Whether any available technique uses the shared adversarial target"
+    )
     supported_parameters: list[Parameter] = Field(
         default_factory=list, description="Scenario-declared custom parameters"
     )
@@ -202,6 +337,11 @@ class RegisteredScenario(BaseModel):
 class ScenarioRunSizeEstimateRequest(BaseModel):
     """Request-specific scenario run-size configuration."""
 
+    adversarial_target_name: str | None = Field(
+        None,
+        min_length=1,
+        description="Registered multi-turn target overriding only the adversarial fallback for this request",
+    )
     target_name: str | None = Field(
         None,
         description="Optional registered objective target used to resolve target-capability-dependent estimates",
@@ -243,6 +383,11 @@ class RunScenarioRequest(BaseModel):
 
     scenario_name: str = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
     target_name: str = Field(..., description="Name of a registered target from the TargetRegistry")
+    adversarial_target_name: str | None = Field(
+        None,
+        min_length=1,
+        description="Registered multi-turn target overriding only the adversarial fallback for this run",
+    )
     initializers: list[str] | None = Field(
         None, description="Initializer names to run before scenario (e.g., ['target', 'load_default_datasets'])"
     )

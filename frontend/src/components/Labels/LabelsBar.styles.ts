@@ -1,5 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { mobileTouchTarget } from '../../styles/touchTargets'
+import { mobileTouchTarget, NARROW_VIEWPORT_QUERY } from '../../styles/touchTargets'
 
 export const useLabelsBarStyles = makeStyles({
   root: {
@@ -28,7 +28,8 @@ export const useLabelsBarStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
     flexWrap: 'nowrap',
-    overflow: 'hidden',
+    // Metadata has no popover fallback, so keep it reachable on narrow bars.
+    overflowX: 'auto',
     flex: '1 1 0',
     minWidth: 0,
   },
@@ -82,12 +83,22 @@ export const useLabelsBarStyles = makeStyles({
     height: '16px',
     padding: 0,
   },
+  popover: {
+    [NARROW_VIEWPORT_QUERY]: {
+      boxSizing: 'border-box',
+      width: `calc(100vw - ${tokens.spacingHorizontalM} * 2)`,
+      maxWidth: `calc(100vw - ${tokens.spacingHorizontalM} * 2)`,
+    },
+  },
   popoverSurface: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalS,
     padding: tokens.spacingVerticalM,
     minWidth: '250px',
+    [NARROW_VIEWPORT_QUERY]: {
+      minWidth: 0,
+    },
   },
   popoverDivider: {
     height: '1px',
@@ -103,6 +114,10 @@ export const useLabelsBarStyles = makeStyles({
   inputField: {
     flex: 1,
     minWidth: '80px',
+    '& input': {
+      minWidth: 0,
+      width: '100%',
+    },
   },
   suggestions: {
     display: 'flex',
@@ -169,5 +184,6 @@ export const useLabelsBarStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     flexShrink: 0,
+    ...mobileTouchTarget,
   },
 })

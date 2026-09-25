@@ -80,6 +80,8 @@ export function scenarioRunProgressReducer(
         scenario_registry_name: action.run.scenario_registry_name,
         scenario_version: action.run.scenario_version,
         status: action.run.status,
+        error: action.run.error,
+        error_type: action.run.error_type,
         created_at: action.run.created_at,
         started_at: action.run.started_at,
         completed_at: action.run.completed_at,

@@ -50,9 +50,9 @@ async def test_substring_scorer_score(sub_string: str, patch_central_database):
 async def test_substring_scorer_does_not_match_objective(patch_central_database):
     scorer = SubStringScorer(substring="needle")
 
-    assert scorer.matched_conditions() == frozenset()
-    assert scorer.required_conditions() == frozenset()
-    with pytest.raises(ValueError, match="does not match the condition"):
+    assert scorer.condition_type is None
+    assert scorer.get_condition_types() == frozenset()
+    with pytest.raises(ValueError, match="does not support"):
         await Scorer.score_with_scorers_async(
             scorable=ContentScorable(value="needle"),
             scorers=[scorer],
