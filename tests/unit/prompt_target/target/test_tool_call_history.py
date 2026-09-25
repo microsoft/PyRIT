@@ -11,6 +11,7 @@ from openai.types.chat import ChatCompletionMessage
 
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.models import Conversation, JsonResponseConfig, Message, MessagePiece
+from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
     CapabilityName,
@@ -86,6 +87,7 @@ async def test_tool_history_provider_payload(target_type: type[PromptTarget], ch
     call = _call_piece(chat_shape=chat_shape)
     output = _output_piece()
     conversation = [call.to_message(), output.to_message(), Message.from_prompt(prompt="Continue.", role="user")]
+    target.validate_tool_history(conversation)
     target._validate_request(normalized_conversation=conversation)
     if isinstance(target, OpenAIResponseTarget):
         body = await target._construct_request_body_async(
@@ -233,7 +235,7 @@ def test_call_requires_structured_fields(payload: dict[str, object]) -> None:
 def test_missing_tool_output_rejected() -> None:
     piece = _output_piece()
     piece.converted_value = '{"type":"function_call_output","call_id":"c"}'
-    with pytest.raises(ValueError, match="output field"):
+    with pytest.raises(ValueError, match="output"):
         parse_function_call_output(piece)
 
 
@@ -250,3 +252,115 @@ async def test_tool_result_cannot_be_mixed_with_plain_text() -> None:
     text = MessagePiece(role="simulated_tool", original_value="extra", conversation_id="history")
     with pytest.raises(ValueError, match="only function_call_output"):
         await build_multimodal_chat_messages_async([Message(message_pieces=[result, text])])
+
+
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, LiteLLMChatTarget, OpenAIResponseTarget])
+async def test_tool_history_without_type_discriminators(target_type: type[PromptTarget]) -> None:
+    target = _target(target_type)
+    call = _call_piece()
+    output = _output_piece()
+    for piece in (call, output):
+        payload = json.loads(piece.converted_value)
+        payload.pop("type")
+        piece.converted_value = json.dumps(payload)
+    history = [call.to_message(), output.to_message()]
+    target.validate_tool_history(history)
+    if isinstance(target, OpenAIResponseTarget):
+        serialized = await target._build_input_for_multi_modal_async(history)
+        assert serialized[0]["call_id"] == serialized[1]["call_id"] == "call_1"
+    else:
+        serialized = await build_multimodal_chat_messages_async(history)
+        assert serialized[0]["tool_calls"][0]["id"] == serialized[1]["tool_call_id"] == "call_1"
+
+
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, LiteLLMChatTarget, OpenAIResponseTarget])
+def test_tool_preflight_does_not_send_normalize_or_load_history(target_type: type[PromptTarget]) -> None:
+    target = _target(target_type)
+    history = [
+        MessagePiece(role="user", original_value="missing.png", original_value_data_type="image_path").to_message(),
+        _call_piece().to_message(),
+        _output_piece().to_message(),
+        _call_piece(call_id="pending").to_message(),
+    ]
+    original = [message.model_dump() for message in history]
+    with (
+        patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send,
+        patch.object(target, "_get_normalized_conversation_async", new_callable=AsyncMock) as normalize,
+        patch.object(target._memory, "get_conversation_messages") as load,
+    ):
+        target.validate_tool_history([])
+        target.validate_tool_history(history)
+    send.assert_not_called()
+    normalize.assert_not_called()
+    load.assert_not_called()
+    assert [message.model_dump() for message in history] == original
+
+
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, LiteLLMChatTarget])
+def test_chat_preflight_rejects_mixed_tool_results(target_type: type[PromptTarget]) -> None:
+    target = _target(target_type)
+    text = MessagePiece(role="simulated_tool", original_value="extra", conversation_id="history")
+    history = [_call_piece().to_message(), Message(message_pieces=[_output_piece(), text])]
+    with pytest.raises(ValueError, match="only function_call_output"):
+        target.validate_tool_history(history)
+
+
+@pytest.mark.parametrize(
+    "payload", [{}, {"type": ""}, {"type": " "}, {"type": 1}, {"type": "web_search_call", "query": []}]
+)
+def test_responses_preflight_and_serializer_reject_invalid_tool_fields(payload: dict[str, object]) -> None:
+    target = _target(OpenAIResponseTarget)
+    assert isinstance(target, OpenAIResponseTarget)
+    piece = MessagePiece(
+        role="simulated_assistant", original_value_data_type="tool_call", original_value=json.dumps(payload)
+    )
+    validate_tool_conversation([piece.to_message()])
+    with pytest.raises(ValueError):
+        target.validate_tool_history([piece.to_message()])
+    with pytest.raises(ValueError):
+        target._serialize_tool_call(piece)
+
+
+def test_responses_preflight_retains_provider_extensions_and_uses_converted_values() -> None:
+    target = _target(OpenAIResponseTarget)
+    assert isinstance(target, OpenAIResponseTarget)
+    payload = '{"type":"web_search_call","call_id":"web-1","query":"edited","extension":{"key":"value"}}'
+    piece = MessagePiece(
+        role="simulated_assistant",
+        original_value_data_type="tool_call",
+        original_value="not used",
+        converted_value=payload,
+    )
+    target.validate_tool_history([piece.to_message()])
+    assert piece.converted_value == payload
+    assert target._serialize_tool_call(piece) == {"type": "web_search_call", "call_id": "web-1", "query": "edited"}
+
+
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, LiteLLMChatTarget])
+async def test_chat_preflight_and_serializer_reject_provider_tool_calls(target_type: type[PromptTarget]) -> None:
+    target = _target(target_type)
+    history = [
+        MessagePiece(
+            role="simulated_assistant",
+            original_value_data_type="tool_call",
+            original_value='{"type":"web_search_call"}',
+        ).to_message()
+    ]
+    with pytest.raises(ValueError, match="not supported by Chat Completions"):
+        target.validate_tool_history(history)
+    with pytest.raises(ValueError, match="not supported by Chat Completions"):
+        await build_multimodal_chat_messages_async(history)
+
+
+def test_provider_tool_history_requires_declared_modality() -> None:
+    target = _target(OpenAIResponseTarget)
+    history = [
+        MessagePiece(
+            role="simulated_assistant",
+            original_value_data_type="tool_call",
+            original_value='{"type":"web_search_call"}',
+        ).to_message(),
+        Message.from_prompt(prompt="Continue.", role="user"),
+    ]
+    with pytest.raises(ValueError, match="does not support tool-history modality 'tool_call'"):
+        target._validate_request(normalized_conversation=history)

@@ -3,7 +3,7 @@
 
 import abc
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Literal, final
 
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -18,6 +18,7 @@ from pyrit.models import (
     RequestTraceContext,
     TargetIdentifier,
 )
+from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
@@ -157,6 +158,22 @@ class PromptTarget(Identifiable):
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
 
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """
+        Check stored tool history without sending, normalizing, or retrieving media.
+
+        Empty histories and histories ending with an unanswered call are permitted.
+        Targets extend this check with provider-specific payload constraints.
+        Callers check capability requirements separately before replaying a draft.
+
+        Args:
+            messages: Complete ordered history, including calls for any results.
+
+        Raises:
+            ValueError: Tool content, roles, or call/result links are invalid.
+        """
+        validate_tool_conversation(messages)
+
     @final
     async def send_prompt_async(
         self,
@@ -271,7 +288,10 @@ class PromptTarget(Identifiable):
         for turn in normalized_conversation:
             for piece in turn.message_pieces:
                 piece_type = piece.converted_value_data_type
-                if piece_type in {"function_call", "function_call_output"} and piece_type not in supported_types_flat:
+                if (
+                    piece_type in {"function_call", "function_call_output", "tool_call"}
+                    and piece_type not in supported_types_flat
+                ):
                     raise ValueError(
                         f"This target does not support tool-history modality '{piece_type}'. "
                         f"{custom_configuration_message}"

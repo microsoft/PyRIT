@@ -145,6 +145,22 @@ roles for fake calls and results. Default message scorers exclude both; a scorer
 can explicitly opt in to inspect injected content. Neither artifact proves execution.
 `OtelToolCallScorer` requires execution traces, not message claims.
 
+For a conversation editor or another caller that saves complete history, use
+`validate_tool_conversation(messages)` from `pyrit.models.messages.tool_content`
+to check payloads, roles, duplicate call IDs, and call/result links. When a target
+is selected, call `target.validate_tool_history(messages)` for its additional
+provider-specific checks. These checks do not send requests, execute tools, load
+media, normalize messages, or change stored values. Empty history and unanswered
+calls are allowed so a draft can end at an assistant turn. Results must reference
+a preceding, unanswered call in the supplied history.
+
+Check target capabilities separately with `TargetRequirements` before replaying
+a draft. Preflight is not a promise that the provider will accept a request, and
+it does not replace send-time normalization. The shared tool-content models also
+back the serializers: they accept Chat and Responses calls, require serialized
+JSON-object arguments, and allow omitted type fields when the piece data type
+already identifies the payload.
+
 Targets validate the normalized request. With an ADAPT policy, history normalization
 can replace tool artifacts with text placeholders while memory retains the originals.
 Use the native requirements above when that loss of structure would change the attack.

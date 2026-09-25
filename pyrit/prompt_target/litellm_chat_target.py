@@ -4,7 +4,7 @@
 import itertools
 import logging
 import os
-from collections.abc import Awaitable, Callable, MutableSequence
+from collections.abc import Awaitable, Callable, MutableSequence, Sequence
 from typing import Any, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider
@@ -27,6 +27,7 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_response_format,
     build_text_chat_messages,
     is_text_only_conversation,
+    validate_chat_tool_message,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_content_filter_message,
@@ -327,6 +328,12 @@ class LiteLLMChatTarget(PromptTarget):
             | (TOOL_CALL_INPUT_MODALITIES if _supports("supports_function_calling") else frozenset()),
             output_modalities=_build_output_modalities(audio=supports_audio_output),
         )
+
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """Check stored tool history and Chat Completions tool-message constraints."""
+        super().validate_tool_history(messages)
+        for message in messages:
+            validate_chat_tool_message(message)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

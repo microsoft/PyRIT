@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from collections.abc import MutableSequence
+from collections.abc import MutableSequence, Sequence
 from typing import Any
 
 from openai.types.chat import ChatCompletion
@@ -24,6 +24,7 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_text_chat_messages,
     is_text_only_conversation,
     should_skip_audio_piece,
+    validate_chat_tool_message,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_response_pieces_async,
@@ -175,6 +176,12 @@ class OpenAIChatTarget(OpenAITarget):
             extra_body_parameters = {**audio_params, **extra_body_parameters} if extra_body_parameters else audio_params
 
         self._extra_body_parameters = extra_body_parameters
+
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """Check stored tool history and Chat Completions tool-message constraints."""
+        super().validate_tool_history(messages)
+        for message in messages:
+            validate_chat_tool_message(message)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

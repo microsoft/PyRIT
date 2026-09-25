@@ -15,6 +15,7 @@ from typing import (
 
 from openai.types.responses import Response, ResponseOutputRefusal, ResponseOutputText
 from openai.types.shared import ReasoningEffort
+from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
@@ -77,6 +78,15 @@ class MessagePieceType(str, Enum):
     MCP_CALL = "mcp_call"
     MCP_LIST_TOOLS = "mcp_list_tools"
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
+
+
+class _ResponseToolCallContent(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    type: str = Field(min_length=1, pattern=r"\S")
+    call_id: str | None = None
+    query: str | None = None
+    name: str | None = None
+    arguments: str | None = None
 
 
 class OpenAIResponseTarget(OpenAITarget):
@@ -213,6 +223,18 @@ class OpenAIResponseTarget(OpenAITarget):
                     logger.debug("Detected grammar tool: %s", tool_name)
                     self._grammar_name = tool_name
 
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """Check stored tool history through the pure serializers used for sending."""
+        super().validate_tool_history(messages)
+        for message in messages:
+            for piece in message.message_pieces:
+                if piece.converted_value_data_type == "tool_call":
+                    self._serialize_tool_call(piece)
+                elif piece.converted_value_data_type == "function_call":
+                    self._serialize_function_call(piece)
+                elif piece.converted_value_data_type == "function_call_output":
+                    self._serialize_function_call_output(piece)
+
     def _build_identifier(self) -> ComponentIdentifier:
         """
         Build the identifier with OpenAI response-specific parameters.
@@ -300,7 +322,7 @@ class OpenAIResponseTarget(OpenAITarget):
         }
 
     def _serialize_tool_call(self, piece: MessagePiece) -> dict[str, Any]:
-        stored = json.loads(piece.converted_value)
+        stored = _ResponseToolCallContent.model_validate_json(piece.converted_value).model_dump(exclude_unset=True)
         if stored.get("type") == "web_search_call":
             return {
                 "type": stored["type"],

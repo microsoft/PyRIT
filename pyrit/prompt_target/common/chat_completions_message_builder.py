@@ -182,6 +182,20 @@ def should_skip_audio_piece(
     )
 
 
+def validate_chat_tool_message(message: Message) -> None:
+    """
+    Check Chat Completions tool-message structure without loading other content.
+
+    Raises:
+        ValueError: Tool results are mixed with other pieces or a provider tool is unsupported.
+    """
+    data_types = {piece.converted_value_data_type for piece in message.message_pieces}
+    if "function_call_output" in data_types and data_types != {"function_call_output"}:
+        raise ValueError("Tool result messages must contain only function_call_output pieces.")
+    if "tool_call" in data_types:
+        raise ValueError("Provider tool_call pieces are not supported by Chat Completions.")
+
+
 async def build_multimodal_chat_messages_async(
     conversation: MutableSequence[Message],
     *,
@@ -205,6 +219,7 @@ async def build_multimodal_chat_messages_async(
     last_message_index = len(conversation) - 1
 
     for message_index, message in enumerate(conversation):
+        validate_chat_tool_message(message)
         message_pieces = message.message_pieces
         is_last_message = message_index == last_message_index
         has_text_piece = any(mp.converted_value_data_type == "text" for mp in message_pieces)
@@ -212,8 +227,6 @@ async def build_multimodal_chat_messages_async(
         content: list[dict[str, Any]] = []
         tool_calls: list[ToolCall] = []
         if any(piece.converted_value_data_type == "function_call_output" for piece in message_pieces):
-            if any(piece.converted_value_data_type != "function_call_output" for piece in message_pieces):
-                raise ValueError("Tool result messages must contain only function_call_output pieces.")
             for piece in message_pieces:
                 if piece.api_role != "tool":
                     raise ValueError("Function call outputs must have the tool role.")
