@@ -93,8 +93,10 @@ from pyrit.models import (
     ScoreStatus,
     Seed,
     SeedDataset,
+    SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
+    SeedObjective,
     SeedType,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
@@ -106,6 +108,9 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+#: Canonical criteria key of a seed that carries no conditions.
+_NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
 
 
 Model = TypeVar("Model")
@@ -3507,8 +3512,12 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Seeds already present in storage are skipped. Duplicates *within* ``seeds`` are all
-        inserted, because the check looks at what storage held when the call started.
+        Seeds with the same value hash, dataset, and canonical conditions already present
+        in storage are skipped. Duplicates *within* ``seeds`` are all inserted, because the
+        check looks at what storage held when the call started.
+        Groups introducing new objective criteria retain the other seeds in the same group
+        even when their content is already stored in another group. When a stored seed is
+        copied to a new group, its caller-visible ID is updated after successful insertion.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -3522,25 +3531,101 @@ class MemoryInterface(abc.ABC):
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
         existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
+        new_condition_group_ids = self._get_new_condition_group_ids(
+            seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
+        )
+        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in new_condition_group_ids]
+        stored_groups = (
+            {
+                entry.id: entry.prompt_group_id
+                for entry in self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.id, batch_values=retained_seed_ids
+                )
+            }
+            if retained_seed_ids
+            else {}
+        )
 
         entries: MutableSequence[SeedEntry] = []
+        copied_seed_ids: list[tuple[Seed, uuid.UUID]] = []
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
+            conditions_key = self._seed_conditions_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
-            if prompt.dataset_name:
-                if (prompt.value_sha256, prompt.dataset_name) in existing_pairs:
+            if prompt.prompt_group_id in new_condition_group_ids:
+                if prompt.id in stored_groups and stored_groups[prompt.id] == prompt.prompt_group_id:
                     continue
-            elif prompt.value_sha256 in existing_hashes:
+                entry = SeedEntry(entry=prompt)
+                if prompt.id in stored_groups:
+                    entry.id = uuid.uuid4()
+                    copied_seed_ids.append((prompt, entry.id))
+                entries.append(entry)
+                continue
+            if prompt.dataset_name:
+                if (prompt.value_sha256, prompt.dataset_name, conditions_key) in existing_pairs:
+                    continue
+            elif (prompt.value_sha256, conditions_key) in existing_hashes:
                 continue
             entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
+        for prompt, new_id in copied_seed_ids:
+            prompt.id = new_id
 
-    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed]) -> tuple[set[tuple[str, str]], set[str]]:
+    @staticmethod
+    def _seed_conditions_key(seed: Seed) -> str:
         """
-        Look up which of these seeds' hashes are already stored.
+        Serialize criteria canonically, preserving condition order.
+
+        Returns:
+            str: Canonical JSON used for criteria identity.
+        """
+        conditions = seed.model_dump(mode="json", include={"conditions"}).get("conditions", [])
+        if not conditions:
+            return _NO_CONDITIONS_KEY
+        return json.dumps(conditions, sort_keys=True, separators=(",", ":"))
+
+    def _get_new_condition_group_ids(
+        self,
+        *,
+        seeds: Sequence[Seed],
+        existing_pairs: set[tuple[str, str, str]],
+        existing_hashes: set[tuple[str, str]],
+    ) -> set[uuid.UUID]:
+        """
+        Identify groups whose newly authored criteria require retaining all input seeds.
+
+        Other seeds in the same group do not own conditions. Their ordinary content
+        deduplication must not strip them from a new condition-bearing group, or from a group that
+        removes previously stored criteria. Purely condition-free loading is unchanged.
+
+        Returns:
+            set[uuid.UUID]: Group IDs whose complete input membership must be retained.
+        """
+        conditions_by_value: dict[tuple[str, str | None], set[str]] = {}
+        for value_hash, dataset, conditions in existing_pairs:
+            conditions_by_value.setdefault((value_hash, dataset), set()).add(conditions)
+        for value_hash, conditions in existing_hashes:
+            conditions_by_value.setdefault((value_hash, None), set()).add(conditions)
+
+        group_ids: set[uuid.UUID] = set()
+        for seed in seeds:
+            if not isinstance(seed, SeedObjective) or seed.prompt_group_id is None or not seed.value_sha256:
+                continue
+            stored_conditions = conditions_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
+            if self._seed_conditions_key(seed) in stored_conditions:
+                continue
+            if seed.conditions or stored_conditions - {_NO_CONDITIONS_KEY}:
+                group_ids.add(seed.prompt_group_id)
+        return group_ids
+
+    def _get_existing_seed_keys(
+        self, *, seeds: Sequence[Seed]
+    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
+        """
+        Look up which value hashes and canonical conditions are already stored.
 
         Queries in chunks rather than once per seed, which otherwise dominates the cost of
         loading a large dataset. ``get_seeds`` issues the statement directly instead of going
@@ -3557,9 +3642,9 @@ class MemoryInterface(abc.ABC):
             seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
 
         Returns:
-            tuple[set[tuple[str, str]], set[str]]: The stored (value_sha256, dataset_name)
-                pairs keyed by the requested dataset name, and the stored hashes irrespective
-                of dataset.
+            tuple[set[tuple[str, str, str]], set[tuple[str, str]]]: The stored
+                (value_sha256, dataset_name, conditions) keys, using the requested
+                dataset name, and (value_sha256, conditions) keys irrespective of dataset.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
         for prompt in seeds:
@@ -3569,8 +3654,8 @@ class MemoryInterface(abc.ABC):
                 # cannot disagree.
                 hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
 
-        existing_pairs: set[tuple[str, str]] = set()
-        existing_hashes: set[str] = set()
+        existing_pairs: set[tuple[str, str, str]] = set()
+        existing_hashes: set[tuple[str, str]] = set()
         for dataset_name, dataset_hashes in hashes_by_dataset.items():
             hashes = sorted(dataset_hashes)
             # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
@@ -3581,13 +3666,14 @@ class MemoryInterface(abc.ABC):
                 for existing in self.get_seeds(value_sha256=chunk, dataset_name=dataset_name):
                     if not existing.value_sha256:
                         continue
+                    conditions_key = self._seed_conditions_key(existing)
                     if dataset_name:
                         # The database decided the name matched, so record the name that was
                         # asked for; the stored spelling can differ under a case-insensitive
                         # collation.
-                        existing_pairs.add((existing.value_sha256, dataset_name))
+                        existing_pairs.add((existing.value_sha256, dataset_name, conditions_key))
                     else:
-                        existing_hashes.add(existing.value_sha256)
+                        existing_hashes.add((existing.value_sha256, conditions_key))
 
         return existing_pairs, existing_hashes
 
@@ -3601,6 +3687,126 @@ class MemoryInterface(abc.ABC):
         """
         for dataset in datasets:
             await self.add_seeds_to_memory_async(seeds=dataset.seeds, added_by=added_by)
+
+    def get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
+        """
+        Return aggregate metadata for datasets already loaded in memory.
+
+        The queries intentionally project only dataset metadata and counts. Seed values and
+        media are never hydrated, so callers can build dataset cards without materializing
+        every prompt or fetching providers.
+
+        Named dataset grouping and metadata matching stay on the original collated
+        dataset_name column. NULL and empty names are aggregated separately into the
+        unnamed population so their shared logical groups are counted exactly once.
+
+        Returns:
+            Sequence[SeedDatasetSummary]: One summary for each stored dataset, including
+            a single deterministic entry for seeds without a dataset name.
+        """
+        try:
+            logical_example_id = func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id)
+            named_condition = and_(SeedEntry.dataset_name.is_not(None), SeedEntry.dataset_name != "")
+            unnamed_condition = or_(SeedEntry.dataset_name.is_(None), SeedEntry.dataset_name == "")
+
+            named_aggregate = (
+                select(
+                    SeedEntry.dataset_name.label("dataset_name"),
+                    func.count().label("seed_pieces"),
+                    func.count(func.distinct(logical_example_id)).label("logical_examples"),
+                    func.sum(case((SeedEntry.seed_type == "objective", 1), else_=0)).label("objectives"),
+                )
+                .where(named_condition)
+                .group_by(SeedEntry.dataset_name)
+                .subquery()
+            )
+            named_metadata = (
+                select(
+                    SeedEntry.dataset_name.label("dataset_name"),
+                    SeedEntry.data_type,
+                    SeedEntry.harm_categories,
+                )
+                .where(named_condition)
+                .distinct()
+                .subquery()
+            )
+            named_statement = select(
+                named_aggregate.c.dataset_name,
+                named_aggregate.c.seed_pieces,
+                named_aggregate.c.logical_examples,
+                named_aggregate.c.objectives,
+                named_metadata.c.data_type,
+                named_metadata.c.harm_categories,
+            ).join(
+                named_metadata,
+                named_aggregate.c.dataset_name == named_metadata.c.dataset_name,
+            )
+
+            unnamed_aggregate = (
+                select(
+                    literal(None, type_=SeedEntry.dataset_name.type).label("dataset_name"),
+                    func.count().label("seed_pieces"),
+                    func.count(func.distinct(logical_example_id)).label("logical_examples"),
+                    func.sum(case((SeedEntry.seed_type == "objective", 1), else_=0)).label("objectives"),
+                )
+                .where(unnamed_condition)
+                .subquery()
+            )
+            unnamed_metadata = (
+                select(SeedEntry.data_type, SeedEntry.harm_categories).where(unnamed_condition).distinct().subquery()
+            )
+            unnamed_statement = select(
+                unnamed_aggregate.c.dataset_name,
+                unnamed_aggregate.c.seed_pieces,
+                unnamed_aggregate.c.logical_examples,
+                unnamed_aggregate.c.objectives,
+                unnamed_metadata.c.data_type,
+                unnamed_metadata.c.harm_categories,
+            ).select_from(unnamed_aggregate.join(unnamed_metadata, literal(True)))
+
+            combined_statement = named_statement.union_all(unnamed_statement)
+
+            with closing(self.get_session()) as session:
+                rows = session.execute(combined_statement).all()
+
+            summaries_by_dataset: dict[str | None, dict[str, Any]] = {}
+            dataset_order: list[str | None] = []
+            for row in rows:
+                dataset_name = row.dataset_name
+                if dataset_name not in summaries_by_dataset:
+                    summaries_by_dataset[dataset_name] = {
+                        "seed_pieces": int(row.seed_pieces or 0),
+                        "logical_examples": int(row.logical_examples or 0),
+                        "objectives": int(row.objectives or 0),
+                        "modalities": set(),
+                        "harm_categories": set(),
+                        "has_unlabeled_harm_categories": False,
+                    }
+                    dataset_order.append(dataset_name)
+                summary = summaries_by_dataset[dataset_name]
+                if row.data_type:
+                    summary["modalities"].add(row.data_type)
+                categories = row.harm_categories or []
+                if categories:
+                    summary["harm_categories"].update(categories)
+                else:
+                    summary["has_unlabeled_harm_categories"] = True
+
+            return [
+                SeedDatasetSummary(
+                    dataset_name=dataset_name,
+                    logical_examples=summaries_by_dataset[dataset_name]["logical_examples"],
+                    seed_pieces=summaries_by_dataset[dataset_name]["seed_pieces"],
+                    objectives=summaries_by_dataset[dataset_name]["objectives"],
+                    modalities=tuple(sorted(summaries_by_dataset[dataset_name]["modalities"])),
+                    harm_categories=tuple(sorted(summaries_by_dataset[dataset_name]["harm_categories"])),
+                    has_unlabeled_harm_categories=summaries_by_dataset[dataset_name]["has_unlabeled_harm_categories"],
+                )
+                for dataset_name in dataset_order
+            ]
+        except Exception as e:
+            logger.exception(f"Failed to retrieve dataset summaries with error {e}")
+            raise
 
     def get_seed_dataset_names(self) -> Sequence[str]:
         """
@@ -4875,106 +5081,23 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the limit, cursor ID, or label keys are invalid.
         """
-        if limit < 1 or limit > 100:
-            raise ValueError("Scenario history limit must be between 1 and 100.")
+        from pyrit.memory._scenario_history import _ScenarioHistoryQueries
 
-        conditions: list[Any] = []
-        effective_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
-        if effective_names:
-            conditions.append(
-                or_(
-                    ScenarioResultEntry.scenario_name.in_(effective_names),
-                    self._get_scenario_registry_name_condition(scenario_names=effective_names),
-                )
-            )
-        effective_statuses = sorted({status.strip().upper() for status in statuses or [] if status.strip()})
-        if effective_statuses:
-            conditions.append(ScenarioResultEntry.scenario_run_state.in_(effective_statuses))
-        effective_labels = {
-            key: value
-            for key, value in (labels or {}).items()
-            if (isinstance(value, str) and value) or (not isinstance(value, str) and len(value) > 0)
-        }
-        invalid_keys = sorted(key for key in effective_labels if not self._LABEL_KEY_PATTERN.fullmatch(key))
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
-            )
-        if effective_labels:
-            conditions.append(self._get_scenario_result_labels_condition(labels=effective_labels))
-        if cursor is not None:
-            cursor_id = uuid.UUID(cursor.scenario_result_id)
-            conditions.append(
-                or_(
-                    ScenarioResultEntry.timestamp < cursor.timestamp,
-                    and_(
-                        ScenarioResultEntry.timestamp == cursor.timestamp,
-                        ScenarioResultEntry.id < cursor_id,
-                    ),
-                )
-            )
-
-        statement = select(
-            ScenarioResultEntry.id,
-            ScenarioResultEntry.scenario_name,
-            ScenarioResultEntry.scenario_version,
-            ScenarioResultEntry.pyrit_version,
-            ScenarioResultEntry.scenario_identifier,
-            ScenarioResultEntry.objective_target_identifier,
-            ScenarioResultEntry.scenario_run_state,
-            ScenarioResultEntry.labels,
-            ScenarioResultEntry.timestamp,
-            self._get_scenario_started_at_expression().label("started_at"),
-            ScenarioResultEntry.completion_time,
-            ScenarioResultEntry.error_message,
-            ScenarioResultEntry.error_type,
-            *(
-                expression.label(label)
-                for expression, label in zip(
-                    self._get_scenario_history_plan_expressions(),
-                    ("scenario_registry_name", "plan_atomic_groups", "plan_seed_id_map"),
-                    strict=True,
-                )
-            ),
+        queries = _ScenarioHistoryQueries(memory=self)
+        records, has_more = queries.get_page(
+            scenario_names=scenario_names,
+            statuses=statuses,
+            labels=labels,
+            cursor=cursor,
+            limit=limit,
         )
-        if conditions:
-            statement = statement.where(and_(*conditions))
-        statement = statement.order_by(
-            ScenarioResultEntry.timestamp.desc(),
-            ScenarioResultEntry.id.desc(),
-        ).limit(limit + 1)
-        with closing(self.get_session()) as session:
-            rows = session.execute(statement).all()
-        page_rows = rows[:limit]
-
-        records = [
-            ScenarioHistoryRunRecord(
-                scenario_result_id=str(row.id),
-                scenario_name=row.scenario_name,
-                scenario_version=row.scenario_version,
-                pyrit_version=row.pyrit_version,
-                scenario_identifier=row.scenario_identifier or {},
-                objective_target_identifier=row.objective_target_identifier or {},
-                status=row.scenario_run_state,
-                labels=row.labels or {},
-                created_at=row.timestamp,
-                started_at=self._parse_scenario_started_at(raw_value=row.started_at),
-                completed_at=row.completion_time,
-                error_message=row.error_message,
-                error_type=row.error_type,
-                scenario_registry_name=row.scenario_registry_name,
-                plan_atomic_groups=row.plan_atomic_groups,
-                plan_seed_id_map=row.plan_seed_id_map,
-            )
-            for row in page_rows
-        ]
         aggregates = self.get_scenario_history_aggregates(
             scenario_result_ids=[record.scenario_result_id for record in records],
             plan_scenario_ids=[
                 record.scenario_result_id for record in records if record.plan_atomic_groups is not None
             ],
         )
-        return records, aggregates, len(rows) > limit
+        return records, aggregates, has_more
 
     def get_scenario_history_aggregates(
         self,
@@ -5235,13 +5358,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             datetime | None: Aware start timestamp, or None for legacy or malformed values.
         """
-        if not isinstance(raw_value, str):
-            return None
-        try:
-            value = datetime.fromisoformat(raw_value)
-        except ValueError:
-            return None
-        return value if value.tzinfo is not None else None
+        from pyrit.memory._scenario_history import _parse_scenario_started_at
+
+        return _parse_scenario_started_at(raw_value=raw_value)
 
     def get_unique_scenario_labels(self) -> dict[str, list[str]]:
         """Return all unique label values across scenario results."""

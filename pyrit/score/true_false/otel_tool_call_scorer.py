@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from pyrit.models import (
     Acquisition,
+    MessageScorable,
     Observation,
     Score,
     ScoreStatus,
@@ -17,12 +18,18 @@ from pyrit.models import (
     TraceScorable,
 )
 from pyrit.score.observation.execution import NonReplayableObservationError, _collect_observation
+from pyrit.score.observation.message_trace_resolver import resolve_message_trace_scope
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier, Scorable, ScoringExpectation
     from pyrit.score.observation.execution import _ObservationEvidence
     from pyrit.score.observation.observation_source import ObservationSource
+
+_UNLINKED_REQUESTS_REASON = (
+    "One or more requests in this conversation carry no trace link, so tool calls outside the "
+    "correlated traces cannot be ruled out."
+)
 
 
 def match_tools_called(
@@ -45,8 +52,7 @@ def match_tools_called(
 class OtelToolCallScorer(TrueFalseScorer):
     """Score actual tool invocations, not requested calls or response claims."""
 
-    MATCHED_CONDITIONS = frozenset({ToolsCalled})
-    REQUIRED_CONDITIONS = frozenset({ToolsCalled})
+    CONDITION_TYPE = ToolsCalled
 
     def __init__(self, *, source: ObservationSource[TraceScorable]) -> None:
         """Initialize with a condition-independent, caller-configured trace source."""
@@ -55,24 +61,41 @@ class OtelToolCallScorer(TrueFalseScorer):
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
-            params={"matching_version": 1},
+            params={"matching_version": 1, "message_scope_version": 1},
             children={"source": self._source.get_identifier()},
         )
 
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        super()._validate_expectation(expectation=expectation)
-        self._condition(expectation)
-
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
-        if not isinstance(scorable, TraceScorable):
-            raise TypeError("OtelToolCallScorer requires an explicit TraceScorable.")
-        observation = await self._source.acquire_async(scorable=scorable)
-        if observation.scorable != scorable:
+        if not isinstance(scorable, (MessageScorable, TraceScorable)):
+            raise TypeError("OtelToolCallScorer requires a MessageScorable or an explicit TraceScorable.")
+        scope, correlation_complete = (
+            resolve_message_trace_scope(scorable=scorable, memory=self._memory)
+            if isinstance(scorable, MessageScorable)
+            else (scorable, True)
+        )
+        if scope is None:
+            return [
+                self._build_undetermined_score(
+                    rationale="Trace evidence is unavailable: no request trace links were found.",
+                    scorable=scorable,
+                    message_piece_id=self._piece_id_from_scorable(scorable),
+                )
+            ]
+        observation = await self._source.acquire_async(scorable=scope)
+        if observation.scorable != scope:
             raise ValueError("Trace source changed the caller's evidence anchor.")
-        if not isinstance(observation.payload, ToolEventsObservationPayload) or observation.payload.scope != scorable:
+        if not isinstance(observation.payload, ToolEventsObservationPayload) or observation.payload.scope != scope:
             raise ValueError("Trace source returned incompatible evidence or scope.")
         _collect_observation(observation)
-        return self._score_observation(observation=observation, evidence=observation.payload, expectation=expectation)
+        scores = self._score_observation(observation=observation, evidence=observation.payload, expectation=expectation)
+        for score in scores:
+            score.scorable = scorable
+            score.message_piece_id = self._piece_id_from_scorable(scorable)
+            if not correlation_complete and score.score_value == "false":
+                score.score_value = None
+                score.status = ScoreStatus.UNDETERMINED
+                score.score_rationale = f"{score.score_rationale} {_UNLINKED_REQUESTS_REASON}"
+        return scores
 
     def _score_observation(
         self,
@@ -83,7 +106,7 @@ class OtelToolCallScorer(TrueFalseScorer):
     ) -> list[Score]:
         if not isinstance(evidence, ToolEventsObservationPayload):
             raise NonReplayableObservationError("Tool-call scoring requires a stored tool-event observation.")
-        condition = self._condition(expectation)
+        condition = self._get_required_condition(expectation=expectation, condition_type=ToolsCalled)
         value = match_tools_called(condition=condition, payload=evidence, acquisition=observation.acquisition)
         names = ", ".join(tool.name for tool in condition.tools)
         rationale = (
@@ -106,14 +129,3 @@ class OtelToolCallScorer(TrueFalseScorer):
                 observation_ids=[observation.id],
             )
         ]
-
-    @staticmethod
-    def _condition(expectation: ScoringExpectation | None) -> ToolsCalled:
-        conditions = (
-            [condition for condition in expectation.conditions if isinstance(condition, ToolsCalled)]
-            if expectation
-            else []
-        )
-        if len(conditions) != 1:
-            raise ValueError("OtelToolCallScorer requires exactly one ToolsCalled condition.")
-        return conditions[0]

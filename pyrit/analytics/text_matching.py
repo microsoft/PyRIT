@@ -8,6 +8,7 @@ This module provides various text matching algorithms including exact substring 
 and n-gram based approximate matching through a unified TextMatching interface.
 """
 
+import math
 from typing import Protocol
 
 
@@ -90,7 +91,12 @@ class ApproximateTextMatching(TextMatching):
                 Defaults to 0.5 (50% overlap).
             n (int): The length of character n-grams to use. Defaults to 3.
             case_sensitive (bool): Whether to perform case-sensitive matching. Defaults to False.
+
+        Raises:
+            ValueError: If ``threshold`` is not finite or is outside [0.0, 1.0].
         """
+        if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+            raise ValueError(f"threshold must be finite and between 0.0 and 1.0, got {threshold}")
         self._threshold = threshold
         self._n = n
         self._case_sensitive = case_sensitive

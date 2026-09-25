@@ -36,6 +36,9 @@ export const useObjectiveHeaderStyles = makeStyles({
       padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     },
   },
+  emptyHeaderSection: {
+    alignItems: 'center',
+  },
   label: {
     flexShrink: 0,
   },

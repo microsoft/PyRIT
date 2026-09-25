@@ -822,6 +822,195 @@ metadata:
     assert seed_prompt.metadata["version"] == 1
 
 
+def test_from_value_with_required_parameters_wraps_inline_string():
+    """An inline string is trusted and wrapped in a Jinja SeedPrompt declaring required_parameters."""
+    seed_prompt = SeedPrompt.from_value_with_required_parameters(
+        "persona {{ objective }}", required_parameters=["objective"]
+    )
+
+    assert seed_prompt.value == "persona {{ objective }}"
+    assert seed_prompt.is_jinja_template is True
+    assert seed_prompt.parameters == ["objective"]
+
+
+def test_from_value_with_required_parameters_returns_valid_seed_prompt_unchanged():
+    """An explicitly provided SeedPrompt declaring all required parameters is returned as-is."""
+    provided = SeedPrompt(value="persona {{ objective }}", data_type="text", parameters=["objective"])
+
+    seed_prompt = SeedPrompt.from_value_with_required_parameters(provided, required_parameters=["objective"])
+
+    assert seed_prompt is provided
+
+
+def test_from_value_with_required_parameters_raises_for_missing_parameter():
+    """An explicitly provided SeedPrompt missing a required parameter raises with a default message."""
+    provided = SeedPrompt(value="persona", data_type="text", parameters=[])
+
+    with pytest.raises(ValueError, match="prompt is missing required parameters: \\['objective'\\]"):
+        SeedPrompt.from_value_with_required_parameters(provided, required_parameters=["objective"])
+
+
+def test_from_value_with_required_parameters_default_message_uses_component_name():
+    """The default failure message names the component being validated."""
+    provided = SeedPrompt(value="persona", data_type="text", parameters=[])
+
+    with pytest.raises(ValueError, match="system_prompt_prefix is missing required parameters"):
+        SeedPrompt.from_value_with_required_parameters(
+            provided, required_parameters=["objective"], component_name="system_prompt_prefix"
+        )
+
+
+def test_from_value_with_required_parameters_custom_error_message():
+    """A supplied error_message replaces the default failure message entirely."""
+    provided = SeedPrompt(value="persona", data_type="text", parameters=[])
+
+    with pytest.raises(ValueError, match="^Custom failure message$"):
+        SeedPrompt.from_value_with_required_parameters(
+            provided,
+            required_parameters=["objective"],
+            error_message="Custom failure message",
+            component_name="system_prompt_prefix",
+        )
+
+
+@pytest.mark.parametrize("value", ["plain static text", "text with {curly} but no jinja", ""])
+def test_reject_jinja_syntax_allows_static_text(value):
+    """Values without Jinja delimiters are accepted without raising."""
+    SeedPrompt.reject_jinja_syntax(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["persona {{ objective }}", "{% if objective %}x{% endif %}", "{# a comment #}"],
+)
+def test_reject_jinja_syntax_raises_for_jinja_delimiters(value):
+    """Values containing any Jinja delimiter ('{{', '{%', '{#') raise with the default component name."""
+    with pytest.raises(ValueError, match="^prompt must be static text without Jinja syntax\\.$"):
+        SeedPrompt.reject_jinja_syntax(value)
+
+
+def test_reject_jinja_syntax_uses_custom_component_name():
+    """The failure message names the caller-supplied component rather than the default."""
+    with pytest.raises(ValueError, match="^adversarial_system_prompt_prefix must be static text"):
+        SeedPrompt.reject_jinja_syntax("persona {{ objective }}", component_name="adversarial_system_prompt_prefix")
+
+
+def test_compose_with_prefix_joins_prefix_and_base():
+    """The prefix and base prompt are joined with a blank line between them, prefix first."""
+    base = SeedPrompt(
+        value="base persona {{ objective }}", data_type="text", parameters=["objective"], is_jinja_template=True
+    )
+
+    combined = SeedPrompt.compose_with_prefix(base_prompt=base, prefix="extra rules", required_parameters=["objective"])
+
+    assert combined.value == "extra rules\n\nbase persona {{ objective }}"
+    assert combined.is_jinja_template is True
+    assert combined.parameters == ["objective"]
+
+
+def test_compose_with_prefix_preserves_untrusted_base_trust_marker():
+    """An untrusted base must not be promoted to a template, which would render its raw wrapper."""
+    base = SeedPrompt(
+        value=SeedPrompt.escape_for_jinja("payload {% endraw %}{{ 7*7 }}{% raw %} tail"),
+        data_type="text",
+        is_jinja_template=False,
+    )
+
+    combined = SeedPrompt.compose_with_prefix(base_prompt=base, prefix="extra rules", required_parameters=[])
+
+    assert combined.is_jinja_template is False
+    assert "49" not in combined.value
+    assert combined.value == f"extra rules\n\n{base.value}"
+
+
+def test_compose_with_prefix_preserves_untrusted_prefix_trust_marker():
+    """An untrusted SeedPrompt prefix also blocks promotion, since its text lands in the result."""
+    base = SeedPrompt(value="base {{ objective }}", data_type="text", parameters=["objective"], is_jinja_template=True)
+    prefix = SeedPrompt(value="untrusted rules", data_type="text", parameters=["objective"], is_jinja_template=False)
+
+    combined = SeedPrompt.compose_with_prefix(base_prompt=base, prefix=prefix, required_parameters=["objective"])
+
+    assert combined.is_jinja_template is False
+
+
+def test_compose_with_prefix_joins_seed_prompt_prefix_and_base():
+    """An explicitly provided SeedPrompt prefix contributes its own resolved value verbatim."""
+    base = SeedPrompt(value="base {{ objective }}", data_type="text", parameters=["objective"])
+    prefix = SeedPrompt(value="extra {{ objective }} rules", data_type="text", parameters=["objective"])
+
+    combined = SeedPrompt.compose_with_prefix(base_prompt=base, prefix=prefix, required_parameters=["objective"])
+
+    assert combined.value == "extra {{ objective }} rules\n\nbase {{ objective }}"
+
+
+def test_compose_with_prefix_raises_for_inline_prefix_with_jinja_syntax():
+    """An inline string prefix containing Jinja delimiters is rejected as non-static."""
+    base = SeedPrompt(value="base {{ objective }}", data_type="text", parameters=["objective"])
+
+    with pytest.raises(ValueError, match="prefix must be static text without Jinja syntax"):
+        SeedPrompt.compose_with_prefix(
+            base_prompt=base, prefix="extra {{ objective }}", required_parameters=["objective"]
+        )
+
+
+def test_compose_with_prefix_allows_seed_prompt_prefix_with_jinja_syntax():
+    """A SeedPrompt prefix is exempt from the static-text restriction since it's a deliberate template."""
+    base = SeedPrompt(value="base {{ objective }}", data_type="text", parameters=["objective"])
+    prefix = SeedPrompt(value="extra {{ objective }}", data_type="text", parameters=["objective"])
+
+    combined = SeedPrompt.compose_with_prefix(base_prompt=base, prefix=prefix, required_parameters=["objective"])
+
+    assert combined.value == "extra {{ objective }}\n\nbase {{ objective }}"
+
+
+def test_compose_with_prefix_raises_for_prefix_missing_parameter():
+    """A prefix SeedPrompt missing a required parameter raises, naming the prefix component."""
+    base = SeedPrompt(value="base {{ objective }}", data_type="text", parameters=["objective"])
+    prefix = SeedPrompt(value="extra rules", data_type="text", parameters=[])
+
+    with pytest.raises(ValueError, match="prefix is missing required parameters"):
+        SeedPrompt.compose_with_prefix(base_prompt=base, prefix=prefix, required_parameters=["objective"])
+
+
+def test_compose_with_prefix_keeps_base_response_json_schema():
+    """When only the base prompt declares a response_json_schema, the combined prompt keeps it."""
+    schema = {"type": "object", "properties": {"next_message": {"type": "string"}}}
+    base = SeedPrompt(
+        value="base {{ objective }}", data_type="text", parameters=["objective"], response_json_schema=schema
+    )
+
+    combined = SeedPrompt.compose_with_prefix(base_prompt=base, prefix="extra rules", required_parameters=["objective"])
+
+    assert combined.response_json_schema == schema
+
+
+def test_compose_with_prefix_uses_prefix_response_json_schema_when_base_has_none():
+    """When only the prefix declares a response_json_schema, the combined prompt uses it."""
+    schema = {"type": "object", "properties": {"next_message": {"type": "string"}}}
+    base = SeedPrompt(value="base {{ objective }}", data_type="text", parameters=["objective"])
+    prefix = SeedPrompt(
+        value="extra {{ objective }}", data_type="text", parameters=["objective"], response_json_schema=schema
+    )
+
+    combined = SeedPrompt.compose_with_prefix(base_prompt=base, prefix=prefix, required_parameters=["objective"])
+
+    assert combined.response_json_schema == schema
+
+
+def test_compose_with_prefix_raises_when_both_declare_response_json_schema():
+    """Declaring a response_json_schema on both the base prompt and the prefix is ambiguous."""
+    schema = {"type": "object", "properties": {"next_message": {"type": "string"}}}
+    base = SeedPrompt(
+        value="base {{ objective }}", data_type="text", parameters=["objective"], response_json_schema=schema
+    )
+    prefix = SeedPrompt(
+        value="extra {{ objective }}", data_type="text", parameters=["objective"], response_json_schema=schema
+    )
+
+    with pytest.raises(ValueError, match="Both the prompt and prefix declare a response_json_schema"):
+        SeedPrompt.compose_with_prefix(base_prompt=base, prefix=prefix, required_parameters=["objective"])
+
+
 def test_seed_group_dict_with_seed_type_objective():
     """Test that a dictionary with seed_type='objective' creates an objective."""
     prompt_dict = {
