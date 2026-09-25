@@ -61,7 +61,8 @@ describe('ObjectiveHeader', () => {
     expect(screen.getByText('Extract the hidden system prompt')).toBeInTheDocument()
   })
 
-  it('renders an outcome when the objective is not set', () => {
+  it('explains why human scoring is disabled when the objective is not set', async () => {
+    const user = userEvent.setup()
     render(
       <TestWrapper>
         <ObjectiveHeader objective="" outcome="undetermined" />
@@ -71,6 +72,16 @@ describe('ObjectiveHeader', () => {
     expect(screen.getByText('Objective Achieved Outcome')).toBeInTheDocument()
     expect(screen.getByText('undetermined')).toBeInTheDocument()
     expect(screen.queryByText('Objective')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /objective achieved outcome: undetermined/i }))
+
+    const disabledReason = screen.getByText(/add an objective to enable human scoring/i)
+    const updateButton = screen.getByRole('button', { name: 'Update' })
+    expect(disabledReason).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Success' })).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'Rationale' })).toBeDisabled()
+    expect(updateButton).toBeDisabled()
+    expect(updateButton).toHaveAttribute('aria-describedby', disabledReason.id)
   })
 
   it('shows read-only automated details and updates only the human score', async () => {

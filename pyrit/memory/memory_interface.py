@@ -5101,106 +5101,23 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the limit, cursor ID, or label keys are invalid.
         """
-        if limit < 1 or limit > 100:
-            raise ValueError("Scenario history limit must be between 1 and 100.")
+        from pyrit.memory._scenario_history import _ScenarioHistoryQueries
 
-        conditions: list[Any] = []
-        effective_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
-        if effective_names:
-            conditions.append(
-                or_(
-                    ScenarioResultEntry.scenario_name.in_(effective_names),
-                    self._get_scenario_registry_name_condition(scenario_names=effective_names),
-                )
-            )
-        effective_statuses = sorted({status.strip().upper() for status in statuses or [] if status.strip()})
-        if effective_statuses:
-            conditions.append(ScenarioResultEntry.scenario_run_state.in_(effective_statuses))
-        effective_labels = {
-            key: value
-            for key, value in (labels or {}).items()
-            if (isinstance(value, str) and value) or (not isinstance(value, str) and len(value) > 0)
-        }
-        invalid_keys = sorted(key for key in effective_labels if not self._LABEL_KEY_PATTERN.fullmatch(key))
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
-            )
-        if effective_labels:
-            conditions.append(self._get_scenario_result_labels_condition(labels=effective_labels))
-        if cursor is not None:
-            cursor_id = uuid.UUID(cursor.scenario_result_id)
-            conditions.append(
-                or_(
-                    ScenarioResultEntry.timestamp < cursor.timestamp,
-                    and_(
-                        ScenarioResultEntry.timestamp == cursor.timestamp,
-                        ScenarioResultEntry.id < cursor_id,
-                    ),
-                )
-            )
-
-        statement = select(
-            ScenarioResultEntry.id,
-            ScenarioResultEntry.scenario_name,
-            ScenarioResultEntry.scenario_version,
-            ScenarioResultEntry.pyrit_version,
-            ScenarioResultEntry.scenario_identifier,
-            ScenarioResultEntry.objective_target_identifier,
-            ScenarioResultEntry.scenario_run_state,
-            ScenarioResultEntry.labels,
-            ScenarioResultEntry.timestamp,
-            self._get_scenario_started_at_expression().label("started_at"),
-            ScenarioResultEntry.completion_time,
-            ScenarioResultEntry.error_message,
-            ScenarioResultEntry.error_type,
-            *(
-                expression.label(label)
-                for expression, label in zip(
-                    self._get_scenario_history_plan_expressions(),
-                    ("scenario_registry_name", "plan_atomic_groups", "plan_seed_id_map"),
-                    strict=True,
-                )
-            ),
+        queries = _ScenarioHistoryQueries(memory=self)
+        records, has_more = queries.get_page(
+            scenario_names=scenario_names,
+            statuses=statuses,
+            labels=labels,
+            cursor=cursor,
+            limit=limit,
         )
-        if conditions:
-            statement = statement.where(and_(*conditions))
-        statement = statement.order_by(
-            ScenarioResultEntry.timestamp.desc(),
-            ScenarioResultEntry.id.desc(),
-        ).limit(limit + 1)
-        with closing(self.get_session()) as session:
-            rows = session.execute(statement).all()
-        page_rows = rows[:limit]
-
-        records = [
-            ScenarioHistoryRunRecord(
-                scenario_result_id=str(row.id),
-                scenario_name=row.scenario_name,
-                scenario_version=row.scenario_version,
-                pyrit_version=row.pyrit_version,
-                scenario_identifier=row.scenario_identifier or {},
-                objective_target_identifier=row.objective_target_identifier or {},
-                status=row.scenario_run_state,
-                labels=row.labels or {},
-                created_at=row.timestamp,
-                started_at=self._parse_scenario_started_at(raw_value=row.started_at),
-                completed_at=row.completion_time,
-                error_message=row.error_message,
-                error_type=row.error_type,
-                scenario_registry_name=row.scenario_registry_name,
-                plan_atomic_groups=row.plan_atomic_groups,
-                plan_seed_id_map=row.plan_seed_id_map,
-            )
-            for row in page_rows
-        ]
         aggregates = self.get_scenario_history_aggregates(
             scenario_result_ids=[record.scenario_result_id for record in records],
             plan_scenario_ids=[
                 record.scenario_result_id for record in records if record.plan_atomic_groups is not None
             ],
         )
-        return records, aggregates, len(rows) > limit
+        return records, aggregates, has_more
 
     def get_scenario_history_aggregates(
         self,
@@ -5461,13 +5378,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             datetime | None: Aware start timestamp, or None for legacy or malformed values.
         """
-        if not isinstance(raw_value, str):
-            return None
-        try:
-            value = datetime.fromisoformat(raw_value)
-        except ValueError:
-            return None
-        return value if value.tzinfo is not None else None
+        from pyrit.memory._scenario_history import _parse_scenario_started_at
+
+        return _parse_scenario_started_at(raw_value=raw_value)
 
     def get_unique_scenario_labels(self) -> dict[str, list[str]]:
         """Return all unique label values across scenario results."""
