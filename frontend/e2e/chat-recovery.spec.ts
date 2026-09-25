@@ -191,8 +191,8 @@ test.describe("Chat processing recovery @seeded", () => {
   test.beforeEach(async ({ page, localTarget }) => {
     await page.goto("/");
     await page.getByTitle("Registry", { exact: true }).click();
-    await page.getByTestId(`target-row-${localTarget.registryName}`)
-      .getByRole("button", { name: "Set Active", exact: true }).click();
+    await page.getByRole("combobox", { name: "Default objective target", exact: true })
+      .selectOption(localTarget.registryName);
     await page.getByTitle("Chat", { exact: true }).click();
   });
 

@@ -6,6 +6,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, useTheme } from "../../hooks/useTheme";
+import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
+import { readUserPreferences } from "@/utils/userPreferences";
 import { THEME_PRESETS } from "@/themes/themePresets";
 import type { ThemePreset } from "@/types";
 import Navigation from "./Navigation";
@@ -13,7 +15,7 @@ import Navigation from "./Navigation";
 const STORAGE_KEY = "pyrit.themeMode";
 
 const renderWithProvider = (ui: React.ReactElement) =>
-  render(<ThemeProvider>{ui}</ThemeProvider>);
+  render(<UserPreferencesProvider accountKey="local"><ThemeProvider>{ui}</ThemeProvider></UserPreferencesProvider>);
 
 describe("Navigation", () => {
   const defaultProps = {
@@ -251,11 +253,11 @@ describe("Navigation", () => {
       return <span data-testid="mode">{mode}</span>;
     }
 
-    render(
-      <ThemeProvider>
+    renderWithProvider(
+      <>
         <Navigation {...defaultProps} />
         <Reader />
-      </ThemeProvider>
+      </>
     );
 
     expect(screen.getByTestId("mode")).toHaveTextContent("system");
@@ -264,7 +266,7 @@ describe("Navigation", () => {
     await user.click(screen.getByRole("menuitemradio", { name: "Dark" }));
 
     expect(screen.getByTestId("mode")).toHaveTextContent("dark");
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("dark");
+    expect(readUserPreferences('local').theme).toBe("dark");
   });
 
   it("reflects the persisted mode in the trigger label", () => {
@@ -286,7 +288,7 @@ describe("Navigation", () => {
 
       await user.click(screen.getByRole("button", { name: "Theme: System" }));
       await user.click(screen.getByRole("menuitemradio", { name: preset.label }));
-      expect(window.localStorage.getItem(STORAGE_KEY)).toBe(id);
+      expect(readUserPreferences('local').theme).toBe(id);
       expect(onNavigate).not.toHaveBeenCalled();
 
       await user.click(screen.getByRole("button", { name: `Theme: ${preset.label}` }));

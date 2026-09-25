@@ -19,6 +19,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class HTTPTarget(PromptTarget):
         model_name: str = "",
         follow_redirects: bool = True,
         custom_configuration: TargetConfiguration | None = None,
+        trace_config: TargetTraceConfig | None = None,
         **httpx_client_kwargs: Any,
     ) -> None:
         """
@@ -64,6 +66,9 @@ class HTTPTarget(PromptTarget):
                 set to False when redirects are unnecessary or the destination must remain fixed.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            trace_config: Request tracing configuration. Tracing is disabled by default because an
+                arbitrary HTTP endpoint is not known to support W3C trace context. Pass
+                ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint.
             **httpx_client_kwargs: Additional keyword arguments for httpx.AsyncClient.
 
         Raises:
@@ -83,6 +88,7 @@ class HTTPTarget(PromptTarget):
             endpoint=endpoint,
             model_name=model_name,
             custom_configuration=custom_configuration,
+            trace_config=trace_config,
         )
         self.http_request = http_request
         self.callback_function = callback_function
@@ -118,6 +124,8 @@ class HTTPTarget(PromptTarget):
         callback_function: Callable[..., Any] | None = None,
         max_requests_per_minute: int | None = None,
         follow_redirects: bool = True,
+        *,
+        trace_config: TargetTraceConfig | None = None,
     ) -> "HTTPTarget":
         """
         Alternative constructor that accepts a pre-configured httpx client.
@@ -130,6 +138,7 @@ class HTTPTarget(PromptTarget):
             max_requests_per_minute: Optional rate limiting
             follow_redirects: Whether to follow HTTP redirects. Defaults to True for backward compatibility; set to
                 False when redirects are unnecessary or the destination must remain fixed.
+            trace_config: Request tracing configuration.
 
         Returns:
             HTTPTarget: an instance of HTTPTarget
@@ -141,6 +150,7 @@ class HTTPTarget(PromptTarget):
             max_requests_per_minute=max_requests_per_minute,
             client=client,
             follow_redirects=follow_redirects,
+            trace_config=trace_config,
         )
 
     def _inject_prompt_into_request(self, request: MessagePiece) -> str:
@@ -201,6 +211,7 @@ class HTTPTarget(PromptTarget):
             cleanup_client = True
 
         try:
+            header_dict = request_trace_headers(request=message, headers=header_dict, default_headers=client.headers)
             if isinstance(http_body, dict):
                 response = await client.request(
                     method=http_method,

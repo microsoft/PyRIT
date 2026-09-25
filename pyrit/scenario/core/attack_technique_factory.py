@@ -17,6 +17,7 @@ initializers register additional factories by calling
 
 from __future__ import annotations
 
+import copy
 import inspect
 import logging
 import sys
@@ -27,7 +28,11 @@ from typing import TYPE_CHECKING, Any, Union
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_config import (
+    AttackAdversarialConfig,
+    AttackConverterConfig,
+    AttackScoringConfig,
+)
 from pyrit.models import (
     AttackTechniqueSeedGroup,
     ComponentIdentifier,
@@ -152,6 +157,7 @@ class AttackTechniqueFactory(Identifiable):
         self._has_custom_adversarial_prompt = (
             adversarial_system_prompt is not None or adversarial_seed_prompt is not None
         )
+        self._adversarial_system_prompt_prefix: str | None = None
         self._seed_technique = seed_technique
         self._supports_additional_request_converters = supports_additional_request_converters
         self._scorer_override_policy = scorer_override_policy
@@ -248,6 +254,7 @@ class AttackTechniqueFactory(Identifiable):
         Returns:
             AttackTechniqueFactory: A new factory whose ``seed_technique`` is the
                 wrapped simulated conversation.
+
         """
         if attack_class is None:
             attack_class = PromptSendingAttack
@@ -546,6 +553,14 @@ class AttackTechniqueFactory(Identifiable):
         return self._uses_adversarial
 
     @property
+    def uses_default_adversarial_target(self) -> bool:
+        """Whether this factory resolves the shared adversarial target."""
+        return self._adversarial_chat is None and (
+            self._uses_adversarial
+            or (self._seed_technique is not None and self._seed_technique.has_simulated_conversation)
+        )
+
+    @property
     def supports_additional_request_converters(self) -> bool:
         """Whether callers may safely append request converters to this technique."""
         return self._supports_additional_request_converters
@@ -554,6 +569,52 @@ class AttackTechniqueFactory(Identifiable):
     def scoring_config_type(self) -> type | None:
         """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
         return self._get_scoring_config_type()
+
+    def with_adversarial_system_prompt_prefix(self, prefix: str) -> AttackTechniqueFactory:
+        """
+        Return a copy of this factory with static guidance layered onto its adversarial prompt.
+
+        Lets a caller explicitly derive a modified technique (e.g. layering shared
+        cross-technique guidance ahead of a technique's native adversarial system
+        prompt) without threading the prefix through ``create()`` or a generic
+        builder parameter. This factory is left unchanged; the prefix is baked
+        into the returned copy only.
+
+        Calling this again on the result layers the new prefix ahead of the previous
+        one, matching ``SeedSimulatedConversation.with_layered_prefix``.
+
+        Args:
+            prefix: Static guidance to prepend. Must not contain Jinja syntax.
+
+        Returns:
+            AttackTechniqueFactory: A new factory with the prefix baked in.
+
+        Raises:
+            ValueError: If ``prefix`` contains Jinja syntax, or this technique has
+                no supported adversarial prompt surface (neither
+                ``attack_adversarial_config`` nor a ``SeedSimulatedConversation``
+                seed technique).
+        """
+        SeedPrompt.reject_jinja_syntax(prefix, component_name="adversarial_system_prompt_prefix")
+        seed_technique, supports_simulated = self._copy_seed_technique_with_prefix(prefix=prefix)
+        accepts_adversarial_config = "attack_adversarial_config" in self._get_accepted_params()
+        if not accepts_adversarial_config and not supports_simulated:
+            raise ValueError(
+                f"Factory '{self._name}' cannot accept an adversarial system prompt prefix. "
+                "Its attack must accept attack_adversarial_config or its seed technique must contain "
+                "a SeedSimulatedConversation."
+            )
+
+        new_factory = copy.copy(self)
+        new_factory._identifier = None
+        new_factory._technique_tags = list(self._technique_tags)
+        new_factory._seed_technique = seed_technique
+        if accepts_adversarial_config:
+            existing_prefix = self._adversarial_system_prompt_prefix
+            new_factory._adversarial_system_prompt_prefix = (
+                f"{prefix}\n\n{existing_prefix}" if existing_prefix else prefix
+            )
+        return new_factory
 
     def create(
         self,
@@ -651,6 +712,7 @@ class AttackTechniqueFactory(Identifiable):
             create_time_target is not None
             or adversarial_system_prompt is not None
             or adversarial_seed_prompt is not None
+            or self._adversarial_system_prompt_prefix is not None
             or self._uses_adversarial
         ):
             kwargs["attack_adversarial_config"] = self._build_adversarial_config(
@@ -708,12 +770,45 @@ class AttackTechniqueFactory(Identifiable):
         system_prompt = self._adversarial_system_prompt or create_time_system_prompt
         seed_prompt = self._adversarial_seed_prompt or create_time_seed_prompt
 
-        config_kwargs: dict[str, Any] = {"target": target}
+        config_kwargs: dict[str, Any] = {
+            "target": target,
+            "system_prompt_prefix": self._adversarial_system_prompt_prefix,
+        }
         if system_prompt is not None:
             config_kwargs["system_prompt"] = system_prompt
         if seed_prompt is not None:
             config_kwargs["first_message"] = seed_prompt
         return AttackAdversarialConfig(**config_kwargs)
+
+    def _copy_seed_technique_with_prefix(
+        self,
+        *,
+        prefix: str,
+    ) -> tuple[AttackTechniqueSeedGroup | None, bool]:
+        """
+        Copy the seed technique, layering guidance onto each simulated conversation.
+
+        Delegates the per-seed copy/combine work to
+        ``SeedSimulatedConversation.with_layered_prefix``.
+
+        Returns:
+            tuple[AttackTechniqueSeedGroup | None, bool]: The copied seed technique and
+                whether it contained a simulated conversation.
+        """
+        if self._seed_technique is None:
+            return None, False
+
+        supports_simulated = False
+        seeds: list[Any] = []
+        for seed in self._seed_technique.seeds:
+            if not isinstance(seed, SeedSimulatedConversation):
+                seeds.append(seed)
+                continue
+            supports_simulated = True
+            seeds.append(seed.with_layered_prefix(prefix))
+        if not supports_simulated:
+            return self._seed_technique, False
+        return self._seed_technique.model_copy(update={"seeds": seeds}, deep=True), True
 
     def _get_accepted_params(self) -> set[str]:
         """Return the set of keyword parameter names accepted by the attack class constructor."""
@@ -880,10 +975,10 @@ class AttackTechniqueFactory(Identifiable):
         """
         Build the behavioral identity for this factory.
 
-        Includes the factory name, attack class, kwargs, adversarial chat,
-        and the adversarial-flag booleans so factories with different
-        configurations produce different hashes. When a seed technique is
-        present, its seeds are added as ``children["technique_seeds"]``.
+        Includes the factory name, attack class, kwargs, adversarial chat, the
+        adversarial system-prompt prefix, and the adversarial-flag booleans so
+        factories with different configurations produce different hashes. When a
+        seed technique is present, its seeds are added as ``children["technique_seeds"]``.
 
         Returns:
             ComponentIdentifier: The frozen identity snapshot.
@@ -904,6 +999,8 @@ class AttackTechniqueFactory(Identifiable):
             params["adversarial_system_prompt"] = self._serialize_value(self._adversarial_system_prompt)
         if self._adversarial_seed_prompt is not None:
             params["adversarial_seed_prompt"] = self._serialize_value(self._adversarial_seed_prompt)
+        if self._adversarial_system_prompt_prefix is not None:
+            params["adversarial_system_prompt_prefix"] = self._adversarial_system_prompt_prefix
 
         children: dict[str, Any] = {}
         if self._seed_technique is not None:

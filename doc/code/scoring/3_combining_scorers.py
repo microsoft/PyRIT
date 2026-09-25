@@ -20,6 +20,12 @@
 # exactly like the leaf scorers on the [True/False](1_true_false_scorers.ipynb) and
 # [Float-scale](2_float_scale_scorers.ipynb) pages.
 #
+# A wrapper must support every input condition through its children. Before scoring, it
+# validates the whole tree and gives each child only its supported conditions, retaining
+# objective context. For example, a Q&A/objective composite sends `AnswerMatches` to the
+# Q&A judge and `MatchesObjective` to the objective judge. Direct leaves reject extra
+# conditions. Missing criteria are errors, not skipped branches, even under `OR`.
+#
 # The [class hierarchy](0_scoring.ipynb#the-class-hierarchy) explains what each wrapper
 # *is*. This diagram instead shows runtime composition: what each wrapper may contain.
 # Solid arrows pass a scorer through `scorer=` or `scorers=`, while dashed arrows show

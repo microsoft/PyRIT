@@ -1,10 +1,14 @@
+import type { ReactNode } from 'react'
+
 import { Badge, Text, Tooltip } from '@fluentui/react-components'
 import type { TargetInstance } from '../../types'
 import { targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
 import { useTargetBadgeStyles } from './TargetBadge.styles'
 
 interface TargetBadgeProps {
-  target: TargetInstance
+  target: TargetInstance | null
+  picker?: ReactNode
+  emptyLabel?: string
 }
 
 const CAPABILITY_LABELS: Array<{ key: keyof NonNullable<TargetInstance['capabilities']>; label: string }> = [
@@ -32,15 +36,15 @@ function formatParams(params?: Record<string, unknown> | null): string {
   return lines.join('\n')
 }
 
-export default function TargetBadge({ target }: TargetBadgeProps) {
+export default function TargetBadge({ target, picker, emptyLabel = 'No target selected' }: TargetBadgeProps) {
   const styles = useTargetBadgeStyles()
-  const innerTargets = target.inner_targets ?? []
+  const innerTargets = target?.inner_targets ?? []
   const isRoundRobin = innerTargets.length > 0
 
-  const targetTypeName = targetType(target)
-  const modelName = targetModelName(target)
-  const underlyingModelName = targetUnderlyingModelName(target)
-  const endpoint = targetEndpoint(target)
+  const targetTypeName = target ? targetType(target) : ''
+  const modelName = target ? targetModelName(target) : null
+  const underlyingModelName = target ? targetUnderlyingModelName(target) : null
+  const endpoint = target ? targetEndpoint(target) : null
 
   // For RoundRobinTarget, prefer underlying_model_name because inner targets share
   // the same underlying model but may have different deployment names (model_name).
@@ -60,20 +64,20 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
     underlyingModelName &&
     modelName &&
     underlyingModelName !== modelName
-  const supportedCaps = target.capabilities
-    ? CAPABILITY_LABELS.filter(c => target.capabilities?.[c.key]).map(c => c.label)
+  const supportedCaps = target?.capabilities
+    ? CAPABILITY_LABELS.filter(c => target?.capabilities?.[c.key]).map(c => c.label)
     : []
-  const inputModalities = target.capabilities?.supported_input_modalities ?? []
-  const outputModalities = target.capabilities?.supported_output_modalities ?? []
-  const params = formatParams(target.target_specific_params)
+  const inputModalities = target?.capabilities?.supported_input_modalities ?? []
+  const outputModalities = target?.capabilities?.supported_output_modalities ?? []
+  const params = formatParams(target?.target_specific_params)
 
   // Extract weights from params so we can show them next to each inner target
-  const weights = target.target_specific_params?.weights as number[] | undefined
+  const weights = target?.target_specific_params?.weights as number[] | undefined
 
   const tooltipContent = (
     <div className={styles.tooltipBody}>
       <div className={styles.tooltipHeader}>
-        <Text weight="semibold">{target.target_registry_name}</Text>
+        <Text weight="semibold">{target?.target_registry_name}</Text>
         <Text size={200}>{displayName}</Text>
         {showUnderlying && (
           <Text size={200} italic>
@@ -98,7 +102,7 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
           )}
         </div>
       )}
-      {target.capabilities && (
+      {target?.capabilities && (
         <div className={styles.tooltipSection}>
           <span className={styles.sectionLabel}>Capabilities</span>
           <div className={styles.flagsRow}>
@@ -147,20 +151,21 @@ export default function TargetBadge({ target }: TargetBadgeProps) {
 
   return (
     <Tooltip
-      content={{ children: tooltipContent, className: styles.tooltipSurface }}
+      content={{ children: target ? tooltipContent : emptyLabel, className: target ? styles.tooltipSurface : undefined }}
       relationship="description"
       withArrow
       positioning="below-start"
     >
       <span
         className={styles.badge}
-        data-testid="target-badge"
-        aria-label={`Active target: ${target.target_registry_name}`}
-        tabIndex={0}
+        data-testid={target ? 'target-badge' : undefined}
+        aria-label={target ? `Active target: ${target.target_registry_name}` : undefined}
+        tabIndex={picker ? undefined : 0}
       >
         <Text className={styles.badgeText} size={200} weight="semibold">
-          {displayName}
+          {target ? displayName : emptyLabel}
         </Text>
+        {picker}
       </span>
     </Tooltip>
   )

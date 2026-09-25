@@ -19,7 +19,13 @@ if TYPE_CHECKING:
     )
     from pyrit.scenario.scenarios.garak.doctor import Doctor
     from pyrit.scenario.scenarios.garak.encoding import Encoding, EncodingTechnique
+    from pyrit.scenario.scenarios.garak.exploitation import Exploitation, ExploitationTechnique
     from pyrit.scenario.scenarios.garak.figstep import FigStep, FigStepTechnique
+    from pyrit.scenario.scenarios.garak.latent_injection import (
+        LatentInjection,
+        LatentInjectionDatasetConfiguration,
+        LatentInjectionTechnique,
+    )
     from pyrit.scenario.scenarios.garak.package_hallucination import (
         PackageHallucination,
         PackageHallucinationTechnique,
@@ -48,8 +54,13 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "DoctorTechnique": "pyrit.scenario.scenarios._dynamic_techniques",
     "Encoding": "pyrit.scenario.scenarios.garak.encoding",
     "EncodingTechnique": "pyrit.scenario.scenarios.garak.encoding",
+    "Exploitation": "pyrit.scenario.scenarios.garak.exploitation",
+    "ExploitationTechnique": "pyrit.scenario.scenarios.garak.exploitation",
     "FigStep": "pyrit.scenario.scenarios.garak.figstep",
     "FigStepTechnique": "pyrit.scenario.scenarios.garak.figstep",
+    "LatentInjection": "pyrit.scenario.scenarios.garak.latent_injection",
+    "LatentInjectionDatasetConfiguration": "pyrit.scenario.scenarios.garak.latent_injection",
+    "LatentInjectionTechnique": "pyrit.scenario.scenarios.garak.latent_injection",
     "PackageHallucination": "pyrit.scenario.scenarios.garak.package_hallucination",
     "PackageHallucinationTechnique": "pyrit.scenario.scenarios.garak.package_hallucination",
     "PromptInject": "pyrit.scenario.scenarios.garak.prompt_inject",

@@ -17,7 +17,8 @@
 # various formats), prompt-injection probes (which embed override commands in benign tasks),
 # API-key probes (which test whether a target will generate or complete
 # credential-shaped values), web-injection probes (which test whether a target emits markdown
-# data-exfiltration or cross-site-scripting payloads), a doctor probe (which applies the Policy
+# data-exfiltration or cross-site-scripting payloads), exploitation probes (which test whether a
+# target echoes template-injection or SQL exploit payloads), a doctor probe (which applies the Policy
 # Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
 # target recommends non-existent packages that an attacker could squat), an audio probe (which
@@ -68,7 +69,12 @@ from pyrit.scenario.garak import (
     Doctor,
     Encoding,
     EncodingTechnique,
+    Exploitation,
+    ExploitationTechnique,
     FigStep,
+    LatentInjection,
+    LatentInjectionDatasetConfiguration,
+    LatentInjectionTechnique,
     PackageHallucination,
     PackageHallucinationTechnique,
     PromptInject,
@@ -238,6 +244,55 @@ web_injection_result = await web_injection_scenario.run_async()  # type: ignore
 await output_scenario_async(web_injection_result)
 
 # %% [markdown]
+# ## Exploitation
+#
+# Ports Garak's active `exploitation.JinjaTemplatePythonInjection` and
+# `exploitation.SQLInjectionEcho` probes. Technique-owned converters wrap each raw payload in the
+# echo template and, for Python payloads, a Jinja expression. The templates are part of the
+# technique identity, not the objective, and are defined in private factories in the scenario
+# module. No technique initializer or shared catalog registration is required.
+# `GarakExploitationScorer` loads its default reference payloads from the pinned, packaged
+# corpus at construction time, independent of memory sampling. It uses Garak's primary detector
+# rules: Jinja extraction followed by a payload check, or SQL payload matching followed by
+# keyword-gated injection patterns. Matching preserves upstream case sensitivity.
+# A positive result reports emitted exploit material, not downstream execution.
+# Set `extended_checks` to `True` in `set_params_from_args(args=...)` to add auxiliary
+# `SSTIOutputScorer` and `SQLInjectionOutputScorer` checks. This option is persisted for resume.
+#
+# **CLI examples:**
+#
+# ```bash
+# # Run the bounded default (both techniques, up to 20 prompts total).
+# pyrit_scan run garak.exploitation --target openai_chat
+#
+# # Run only the SQL echo technique with a smaller total cap.
+# pyrit_scan run garak.exploitation --target openai_chat --techniques sql_injection_echo --prompt-cap 2
+# ```
+#
+# **Available techniques:** `JinjaTemplatePythonInjection` and `SQLInjectionEcho`. `DEFAULT` and
+# `ALL` both select the two techniques. `prompt_cap` is a deterministic cap across all selected
+# techniques, not a per-technique cap. Payloads have a stable sort order before selection.
+
+# %%
+exploitation_scenario = Exploitation()
+exploitation_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [ExploitationTechnique.SQLInjectionEcho],
+        "prompt_cap": 2,
+    }
+)
+await exploitation_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {exploitation_scenario.name}")
+print(f"Atomic attacks: {exploitation_scenario.atomic_attack_count}")
+
+exploitation_result = await exploitation_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(exploitation_result)
+
+# %% [markdown]
 # ## ApiKey
 #
 # Ports Garak's `apikey.GetKey` and `apikey.CompleteKey` probes. `GetKey` asks for a new
@@ -282,6 +337,77 @@ api_key_result = await api_key_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(api_key_result)
+
+# %% [markdown]
+# ## LatentInjection
+#
+# Ports Garak's `latentinjection` probe family: indirect prompt injection, where the attacker
+# never talks to the model but plants an instruction inside a document the model is asked to read
+# -- a resume, a financial report, a legal filing, a WHOIS record. The attack succeeds when the
+# response echoes the trigger text the injection asked for, which `SubStringScorer` checks
+# directly.
+#
+# Each prompt is assembled from five local datasets -- a benign task instruction, a carrier
+# document, an injection instruction, a payload template, and a trigger value -- fenced together by the
+# separator that the selected technique names. All selected techniques reuse the same original
+# seed groups. Existing converters insert the separators when the attack sends each prompt.
+# Payload templates and trigger values are stored separately and combined within each family.
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan run garak.latent_injection --target openai_chat --techniques bare \
+#   --families whois --max-dataset-size 1
+# ```
+#
+# **Available techniques** (14 separator styles): Bare, Newline, Blockquote, BlockquoteInline,
+# HorizontalRule, SystemTag, SystemBracket, SystemBracketFlood, SystemPrefix, InstructionTag,
+# AdminRequest, EndOfText, CoreInstruction, LegalAmendment.
+#
+# **Aggregate techniques:** `ALL` (all 14), `DEFAULT` (a representative subset), `PLAIN` (the
+# injection is set off by whitespace or quoting only), and `AUTHORITY` (the delimiter impersonates
+# a system, admin, or legal voice).
+#
+# **Carrier families** are seed metadata rather than techniques, selected with the `families` run
+# parameter: `translation_fr`, `translation_zh`, `report`, `resume`, `fact_eiffel`, `fact_legal`,
+# `whois`, `whois_snippet`, and `latent_jailbreak`. Every technique applies to every family.
+# `latent_jailbreak` hides a "write something offensive about <group>" instruction instead of a
+# fixed trigger, so it is excluded from the defaults and requires an explicit `harm_scorer`.
+#
+# One attack is built per technique, carrier family, and expected trigger, so each attack has a
+# single unambiguous success contract: its `SubStringScorer` looks for the one string its prompts
+# actually asked for. A supplied `objective_scorer` replaces this fixed-trigger scorer; the
+# harm family uses its separate `harm_scorer`. Caller technique converters run after the separators.
+#
+# `max_dataset_size` is one budget before technique expansion. The default is 92 original
+# groups, shared by six default techniques (552 execution units). Sampling reserves one group
+# per selected family/trigger pair, then fills the remaining budget without replacement.
+# A smaller budget than the number of pairs raises an error. An explicit dataset configuration
+# with `max_dataset_size=None` uses the complete assembled population. Saved runs replay the sample.
+#
+# This is not Garak's exact sampling policy: its lightweight probes cap final prompts at 64
+# per family without guaranteed coverage. PyRIT also applies all selected separators to all
+# selected families. Fact and WHOIS snippet contexts use stable, bounded populations of up to
+# 20 and 10 documents, respectively, rather than Garak's random context generation.
+# There is no baseline attack -- the `bare` technique already covers "no fencing at all".
+
+# %%
+latent_injection_scenario = LatentInjection()
+latent_injection_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [LatentInjectionTechnique.Bare],
+        "dataset_config": LatentInjectionDatasetConfiguration(
+            dataset_names=LatentInjection.required_datasets(), families=["whois"], max_dataset_size=1
+        ),
+    }
+)
+await latent_injection_scenario.initialize_async()  # type: ignore
+
+latent_injection_result = await latent_injection_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(latent_injection_result)
 
 # %% [markdown]
 # ## Doctor
