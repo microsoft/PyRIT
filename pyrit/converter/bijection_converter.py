@@ -7,7 +7,7 @@ import re
 import string
 from typing import Protocol
 
-from pyrit.common.random_context import get_random_generator
+from pyrit.common.random_context import get_random_seed
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
 
@@ -55,12 +55,13 @@ class BijectionConverter(Converter, abc.ABC):
         """
         super().__init__()
         self._seed = seed
-        # The mapping is drawn at construction time, outside any conversion execution, so the
-        # namespace and seed are passed explicitly rather than via ``_get_random_generator``.
-        rng = get_random_generator(
-            namespace=f"{type(self).__module__}.{type(self).__qualname__}",
-            stream="mapping",
-            seed=seed,
+        # Each mapping needs a private generator, even inside an active random execution.
+        rng = random.Random(
+            get_random_seed(
+                namespace=f"{type(self).__module__}.{type(self).__qualname__}",
+                stream="mapping",
+                seed=seed,
+            )
         )
         self._mapping = mapping if mapping is not None else self._generate_mapping(rng)
         self._inverse_mapping = {v: k for k, v in self._mapping.items()}
