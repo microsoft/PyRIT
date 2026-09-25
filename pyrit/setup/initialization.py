@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import pathlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pyrit.common.apply_defaults import reset_default_values
@@ -265,7 +265,7 @@ async def initialize_pyrit_async(
 async def reinitialize_pyrit_async(
     *,
     memory: MemoryInterface,
-    initializers: Sequence["PyRITInitializer"],
+    initializer_factory: Callable[[], Sequence["PyRITInitializer"]],
     environment_values: dict[str, str],
     seed: int | None,
 ) -> None:
@@ -274,4 +274,5 @@ async def reinitialize_pyrit_async(
     configure_random_seed(seed=seed)
     reset_default_values()
     CentralMemory.set_memory_instance(memory)
+    initializers = await asyncio.to_thread(initializer_factory)
     await _execute_initializers_async(initializers=initializers, raise_on_initializer_error=True)

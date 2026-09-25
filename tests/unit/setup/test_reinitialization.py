@@ -5,7 +5,6 @@
 
 import os
 import uuid
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -33,10 +32,50 @@ async def test_preflight_uses_isolated_registry_without_changing_live_state() ->
 
     assert prepared.initializer_registry is not live_registry
     assert InitializerRegistry.get_registry_singleton() is live_registry
-    assert [type(initializer).__name__ for initializer in prepared.initializers] == [
-        "TechniqueInitializer",
-        "TargetInitializer",
-    ]
+    assert prepared.script_initializer_types == ()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("source", ["script", "configured"])
+async def test_apply_reconstructs_initializers_after_environment_change(tmp_path: Path, source: str) -> None:
+    script = tmp_path / "capture.py"
+    script.write_text(
+        """
+import os
+from pyrit.setup.pyrit_initializer import PyRITInitializer
+
+class CaptureInitializer(PyRITInitializer):
+    def __init__(self):
+        super().__init__()
+        self.captured = os.environ.get("PYRIT_REINIT_TEST_VALUE")
+
+    @property
+    def name(self): return "capture"
+    @property
+    def description(self): return "captures the environment at construction"
+    @property
+    def required_env_vars(self): return []
+
+    async def initialize_async(self):
+        os.environ["PYRIT_REINIT_TEST_CAPTURED"] = self.captured
+""",
+        encoding="utf-8",
+    )
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        initialization_scripts=[str(script)] if source == "script" else [],
+        initializers=["capture"] if source == "configured" else [],
+        allow_custom_initializers=source == "configured",
+        custom_initializers_source=str(tmp_path) if source == "configured" else None,
+    )
+    with patch.dict(os.environ, {"PYRIT_REINIT_TEST_VALUE": "old"}):
+        prepared = await config.preflight_reinitialization_async(environment_values={"PYRIT_REINIT_TEST_VALUE": "new"})
+        assert os.environ["PYRIT_REINIT_TEST_VALUE"] == "old"
+        assert os.environ.get("PYRIT_REINIT_TEST_CAPTURED") is None
+        await config.apply_prepared_reinitialization_async(prepared=prepared)
+        assert os.environ["PYRIT_REINIT_TEST_CAPTURED"] == "new"
+    reset_setup_registries()
 
 
 async def test_replacement_precedence_interpolation_empty_and_omission(tmp_path: Path) -> None:
@@ -54,7 +93,6 @@ async def test_replacement_precedence_interpolation_empty_and_omission(tmp_path:
         ):
             config = ConfigurationLoader(memory_db_type="in_memory", initialization_scripts=[], env_files=[])
             prepared = await config.preflight_reinitialization_async(environment_values=values)
-            prepared = replace(prepared, initializers=())
             await config.apply_prepared_reinitialization_async(prepared=prepared)
         assert os.environ["VALUE"] == "local"
         assert os.environ["EMPTY"] == ""

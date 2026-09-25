@@ -62,7 +62,7 @@ class PreparedReinitialization:
 
     environment_values: dict[str, str]
     initializer_registry: "InitializerRegistry"
-    initializers: tuple["PyRITInitializer", ...]
+    script_initializer_types: tuple[type["PyRITInitializer"], ...]
 
 
 @dataclass
@@ -665,20 +665,21 @@ class ConfigurationLoader(YamlLoadable):
             await asyncio.to_thread(registry.register_stored_initializers, strict=True)
 
         initializers = list(
-            self.resolve_initializers(
+            await asyncio.to_thread(
+                self.resolve_initializers,
                 raise_on_initializer_error=True,
                 registry=registry,
             )
         )
         script_paths = self.resolve_initialization_scripts()
+        script_initializers: list[PyRITInitializer] = []
         if script_paths:
-            initializers.extend(
-                await asyncio.to_thread(
-                    registry.create_from_script_paths,
-                    script_paths=script_paths,
-                    strict=True,
-                )
+            script_initializers = await asyncio.to_thread(
+                registry.create_from_script_paths,
+                script_paths=script_paths,
+                strict=True,
             )
+            initializers.extend(script_initializers)
         if not initializers:
             initializers = [TechniqueInitializer(), TargetInitializer()]
 
@@ -694,8 +695,24 @@ class ConfigurationLoader(YamlLoadable):
         return PreparedReinitialization(
             environment_values=dict(environment_values),
             initializer_registry=registry,
-            initializers=tuple(initializers),
+            script_initializer_types=tuple(type(item) for item in script_initializers),
         )
+
+    def _construct_prepared_initializers(self, *, prepared: PreparedReinitialization) -> tuple["PyRITInitializer", ...]:
+        """
+        Construct fresh initializers from preflighted classes after applying the new environment.
+
+        Returns:
+            Initializers constructed under the replacement environment.
+        """
+        from pyrit.setup.initializers.targets import TargetInitializer
+        from pyrit.setup.initializers.techniques import TechniqueInitializer
+
+        initializers = list(self.resolve_initializers(registry=prepared.initializer_registry))
+        initializers.extend(initializer_type() for initializer_type in prepared.script_initializer_types)
+        if not initializers:
+            initializers = [TechniqueInitializer(), TargetInitializer()]
+        return tuple(initializers)
 
     async def apply_prepared_reinitialization_async(self, *, prepared: PreparedReinitialization) -> None:
         """
@@ -717,7 +734,7 @@ class ConfigurationLoader(YamlLoadable):
         InitializerRegistry.set_registry_singleton(prepared.initializer_registry)
         await reinitialize_pyrit_async(
             memory=memory,
-            initializers=prepared.initializers,
+            initializer_factory=lambda: self._construct_prepared_initializers(prepared=prepared),
             environment_values=prepared.environment_values,
             seed=self.seed,
         )
