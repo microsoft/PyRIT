@@ -195,7 +195,8 @@ class OpenAIResponseTarget(OpenAITarget):
         self._extra_body_parameters = extra_body_parameters
 
         self._custom_functions: dict[str, ToolExecutor] = custom_functions or {}
-        self._tools = list(tools or [])
+        self._direct_tools = tuple(tools or ())
+        self._tools = list(self._direct_tools)
         self._tool_providers = list(tool_providers or [])
         self._tools_initialized = False
         self._tool_initialization_lock = asyncio.Lock()
@@ -231,7 +232,7 @@ class OpenAIResponseTarget(OpenAITarget):
                 "reasoning_summary": self._reasoning_summary,
                 "extra_body_parameters": self._extra_body_parameters,
                 "tools": sorted(
-                    (self._to_openai_function_tool(tool=tool) for tool in self._tools),
+                    (self._to_openai_function_tool(tool=tool) for tool in self._direct_tools),
                     key=lambda tool: tool["name"],
                 )
                 or None,
@@ -443,8 +444,23 @@ class OpenAIResponseTarget(OpenAITarget):
         async with self._tool_initialization_lock:
             if self._tools_initialized:
                 return
-            self._tools = await collect_tools_async(tools=self._tools, providers=self._tool_providers)
+            tools = await collect_tools_async(tools=self._direct_tools, providers=self._tool_providers)
+            self._validate_tool_registrations(tools)
+            self._tools = tools
             self._tools_initialized = True
+
+    def _validate_tool_registrations(self, tools: Sequence[Tool]) -> None:
+        declared_functions = {
+            definition["name"]
+            for definition in (self._extra_body_parameters or {}).get("tools", [])
+            if definition.get("type") == "function" and isinstance(definition.get("name"), str)
+        }
+        conflicts = {tool.name for tool in tools} & (set(self._custom_functions) | declared_functions)
+        if conflicts:
+            raise ValueError(
+                "Tools conflict with custom_functions or extra_body_parameters function declarations: "
+                f"{sorted(conflicts)}"
+            )
 
     @staticmethod
     def _to_openai_function_tool(*, tool: Tool) -> FunctionToolParam:
@@ -557,7 +573,6 @@ class OpenAIResponseTarget(OpenAITarget):
 
         return Message(message_pieces=extracted_response_pieces)
 
-    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send prompt, handle agentic tool calls (function_call), return all messages.
@@ -623,6 +638,7 @@ class OpenAIResponseTarget(OpenAITarget):
         return responses_to_return
 
     @pyrit_target_retry
+    @limit_requests_per_minute
     async def _send_model_request_async(self, *, body: dict[str, Any], request: Message) -> Message:
         return await self._handle_openai_request_async(
             api_call=lambda: self._client.responses.create(**body),

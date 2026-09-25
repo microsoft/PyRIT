@@ -221,6 +221,12 @@ jsonschema.validate(instance=response_json, schema=person_schema)
 # information retrieval. The `@tool` decorator derives its schema from the
 # function signature and keeps that definition paired with its implementation.
 #
+# Names from `tools` and `tool_providers` must be unique and must not also appear
+# in `custom_functions` or function declarations in `extra_body_parameters`.
+# The existing `custom_functions` API can still use its matching raw declaration.
+# Each model request, including retries and tool-result continuations, follows
+# `max_requests_per_minute`. A model-request retry does not repeat completed tools.
+#
 # The user prompt explicitly asks the model to use the `get_current_weather` function. Once the model responds with a `function_call`, PyRIT executes the function, wraps the output, and the conversation continues until a final answer is produced.
 #
 # This showcases how agentic function execution works with PyRIT + OpenAI Responses API.

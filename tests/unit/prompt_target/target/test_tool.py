@@ -1,12 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import AsyncMock, MagicMock
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from tenacity import wait_none
 
-from pyrit.models import JsonResponseConfig, Message
+from pyrit.exceptions import RateLimitException
+from pyrit.models import JsonResponseConfig, Message, MessagePiece
 from pyrit.prompt_target import (
     FunctionTool,
     OpenAIResponseTarget,
@@ -133,6 +136,135 @@ def test_openai_response_target_identifier_includes_advertised_tool_definition(p
             "strict": False,
         }
     ]
+
+
+async def test_identifier_does_not_depend_on_tool_discovery(patch_central_database) -> None:
+    provider = MagicMock(spec=ToolProvider)
+    provider.identifier = {"type": "test"}
+    provider.get_tools_async = AsyncMock(return_value=[add])
+    targets = [
+        OpenAIResponseTarget(
+            model_name="gpt-4",
+            endpoint="https://mock.azure.com",
+            api_key="mock-key",
+            tool_providers=[provider],
+        )
+        for _ in range(2)
+    ]
+    before = targets[0].get_identifier()
+    for target in targets:
+        await target._initialize_tools_async()
+
+    assert before.hash == targets[0]._build_identifier().hash == targets[1].get_identifier().hash
+    assert targets[1]._tools == [add]
+    assert "tools" not in targets[1].get_identifier().params
+
+
+@pytest.mark.parametrize("from_provider", [False, True])
+@pytest.mark.parametrize("legacy_registration", ["callback", "declaration"])
+async def test_send_rejects_conflicting_tool_registrations(
+    patch_central_database, from_provider: bool, legacy_registration: str
+) -> None:
+    provider = MagicMock(spec=ToolProvider)
+    provider.identifier = {"type": "test"}
+    provider.get_tools_async = AsyncMock(return_value=[add])
+    callback = AsyncMock()
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tools=[] if from_provider else [add],
+        tool_providers=[provider] if from_provider else [],
+        custom_functions={"add": callback} if legacy_registration == "callback" else None,
+        extra_body_parameters=(
+            {"tools": [{"type": "function", "name": "add", "parameters": add.parameters}]}
+            if legacy_registration == "declaration"
+            else None
+        ),
+    )
+    with patch.object(target, "_handle_openai_request_async", new_callable=AsyncMock) as send:
+        for _ in range(2):
+            with pytest.raises(ValueError, match="Tools conflict.*add"):
+                await target.send_prompt_async(message=Message.from_prompt(prompt="Add", role="user"))
+        send.assert_not_awaited()
+    callback.assert_not_awaited()
+    assert not target._tools_initialized
+
+
+async def test_legacy_declaration_and_callback_remain_compatible(patch_central_database) -> None:
+    callback = AsyncMock(return_value={"value": 3})
+    declaration = {"type": "function", "name": "legacy_add", "parameters": add.parameters}
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tools=[add],
+        custom_functions={"legacy_add": callback},
+        extra_body_parameters={"tools": [declaration]},
+    )
+    body = await target._construct_request_body_async(
+        conversation=[Message.from_prompt(prompt="Add", role="user")],
+        json_config=JsonResponseConfig(enabled=False),
+    )
+    result = await target._execute_call_section_async({"name": "legacy_add", "arguments": '{"x": 2}'})
+    assert body["tools"][0] == declaration
+    assert len(body["tools"]) == 2
+    assert result == {"value": 3}
+    callback.assert_awaited_once_with({"x": 2})
+
+
+async def test_model_retries_pace_each_request_without_repeating_tools(patch_central_database) -> None:
+    executed: list[int] = []
+
+    async def record_async(*, value: int) -> int:
+        executed.append(value)
+        return value
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tools=[FunctionTool(function=record_async)],
+        max_requests_per_minute=30,
+    )
+    calls = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value=json.dumps(
+                    {
+                        "type": "function_call",
+                        "call_id": f"call-{value}",
+                        "name": "record_async",
+                        "arguments": json.dumps({"value": value}),
+                    }
+                ),
+                original_value_data_type="function_call",
+            )
+            for value in (1, 2)
+        ]
+    )
+    final = Message.from_prompt(prompt="Done", role="assistant")
+    with (
+        patch("pyrit.prompt_target.common.utils.asyncio.sleep", new_callable=AsyncMock) as sleep,
+        patch.object(target._send_model_request_async.retry, "wait", wait_none()),
+        patch.object(
+            target,
+            "_handle_openai_request_async",
+            new_callable=AsyncMock,
+            side_effect=[calls, RateLimitException(message="retry continuation"), final],
+        ) as send,
+    ):
+        result = await target.send_prompt_async(message=Message.from_prompt(prompt="Record both", role="user"))
+
+    assert executed == [1, 2]
+    assert [message.api_role for message in result] == ["assistant", "tool", "tool", "assistant"]
+    assert [json.loads(message.get_piece().original_value)["call_id"] for message in result[1:3]] == [
+        "call-1",
+        "call-2",
+    ]
+    assert send.await_count == 3
+    assert sum(call.args == (2,) for call in sleep.await_args_list) == 3
 
 
 async def test_collect_tools_async_preserves_direct_and_provider_order() -> None:
