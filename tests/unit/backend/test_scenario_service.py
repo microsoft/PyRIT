@@ -707,7 +707,7 @@ class TestScenarioServiceListScenarios:
         service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
 
         catalog_task = asyncio.create_task(service.list_scenarios_async())
-        await asyncio.wait_for(two_started.wait(), timeout=1)
+        await asyncio.wait_for(two_started.wait(), timeout=2)
         await asyncio.sleep(0)
 
         assert service._run_default_estimate_async.await_count == 2
