@@ -295,6 +295,13 @@ The estimate includes scenario-specific templates, attempts, technique expansion
 and enabled baselines. The dataset column shows configured limits, not the actual
 number of available objectives.
 
+For generated prompts, estimates use the limit that the scenario applies:
+`PackageHallucination` uses its per-language prompt cap, and
+`SystemPromptExtraction` uses one prompt cap across the selected categories.
+`WebInjection` can estimate capped techniques, but reports an unavailable estimate
+if a selected technique uses an uncapped source population. A dataset size limit
+does not bound these generated populations.
+
 The default dataset limit is **5** when no limit is supplied. Existing explicit
 scenario limits still apply. During initialization, PyRIT loads and selects the
 real seed groups. The running view then uses the exact planned count from the run

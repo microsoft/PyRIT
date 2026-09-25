@@ -484,6 +484,35 @@ class TestPsychosocialCrossProduct:
             "licensed_therapist_baseline",
         }
 
+    async def test_unlimited_dataset_size_keeps_all_seeds_async(self, mock_objective_target: PromptTarget) -> None:
+        seeds_by_dataset = {
+            harm.dataset_name: [
+                SeedObjective(value=f"{harm.name} {index}", harm_categories=[harm.name]) for index in range(6)
+            ]
+            for harm in _SUB_HARMS
+        }
+
+        def get_seeds(*, dataset_name: str, **_: object) -> list[SeedObjective]:
+            return list(seeds_by_dataset[dataset_name])
+
+        scenario = _scenario_with_mock_scorers()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_techniques": [PsychosocialTechnique.NoConverter],
+                "dataset_config": DatasetAttackConfiguration(dataset_names=["ignored"], max_dataset_size=None),
+            }
+        )
+        with patch.object(CentralMemory.get_memory_instance(), "get_seeds", side_effect=get_seeds):
+            await scenario.initialize_async()
+
+        assert scenario._dataset_config.max_dataset_size is None
+        assert len(scenario._atomic_attacks) == 4
+        assert all(len(attack.seed_groups) == 6 for attack in scenario._atomic_attacks)
+        plan = scenario._build_run_plan()
+        assert len(plan.seed_groups) == 12
+        assert sum(len(group.seed_group_ids) for group in plan.atomic_groups) == 24
+
     async def test_display_group_matches_sub_harm(self, mock_objective_target):
         scenario = _scenario_with_mock_scorers()
         with _patch_base_seed_groups(_make_seed_groups()):

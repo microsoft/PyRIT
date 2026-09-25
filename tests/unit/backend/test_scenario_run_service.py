@@ -785,16 +785,18 @@ class TestScenarioRunServiceStartRun:
         assert default_config.dataset_names == ["original"]
         assert default_config.max_dataset_size == 100
 
+    @pytest.mark.parametrize("default_limit", [5, 100, None])
     async def test_start_run_dataset_names_without_max_dataset_size_preserves_subclass(
-        self, mock_all_registries
+        self, *, mock_all_registries: dict[str, Any], default_limit: int | None
     ) -> None:
-        """``dataset_names`` alone (no ``max_dataset_size``) still preserves the subclass type."""
+        """Changing only dataset names preserves the subclass and its existing size limit."""
 
         class _MarkerDatasetConfiguration(DatasetConfiguration):
             pass
 
         scenario_instance = mock_all_registries["scenario_instance"]
-        scenario_instance._default_dataset_config = _MarkerDatasetConfiguration(dataset_names=["original"])
+        default_config = _MarkerDatasetConfiguration(dataset_names=["original"], max_dataset_size=default_limit)
+        scenario_instance._default_dataset_config = default_config
 
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(dataset_names=["only_this"]))
@@ -803,7 +805,9 @@ class TestScenarioRunServiceStartRun:
         built_config = init_call.kwargs["dataset_config"]
         assert type(built_config) is _MarkerDatasetConfiguration
         assert built_config.dataset_names == ["only_this"]
-        assert built_config.max_dataset_size is None
+        assert built_config.max_dataset_size == default_limit
+        assert default_config.dataset_names == ["original"]
+        assert default_config.max_dataset_size == default_limit
 
     async def test_start_run_dataset_names_rejects_incompatible_subclass_constructor(self, mock_all_registries) -> None:
         """Reject overrides that cannot preserve scenario-specific dataset configuration."""

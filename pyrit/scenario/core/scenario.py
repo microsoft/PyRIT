@@ -607,14 +607,19 @@ class Scenario(ABC):
         budget = self._get_run_size_budget()
         if budget is None:
             return ScenarioRunSizeEstimate.unavailable(
-                note="No size limit is configured. Set a dataset size limit to estimate the run before launch."
+                note=(
+                    "No size limit is configured for at least one selected population. "
+                    "An estimate requires a limit that the scenario applies during execution."
+                )
             )
         estimate = await self._estimate_run_size_async()
         values = estimate.model_dump(exclude={"estimated_attack_count"})
         values["configured_dataset_size"] = (
             estimate.configured_dataset_size if estimate.configured_dataset_size is not None else budget
         )
-        if self._dataset_config.max_dataset_size is not None:
+        if self._dataset_config.max_dataset_size is not None and any(
+            dataset.kind == "dataset" for dataset in estimate.datasets
+        ):
             values["effective_parameters"]["max_dataset_size"] = self._dataset_config.max_dataset_size
         if estimate.status is ScenarioRunSizeEstimateStatus.Exact:
             values["status"] = ScenarioRunSizeEstimateStatus.Approximate

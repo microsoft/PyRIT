@@ -8,12 +8,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pyrit.backend.services.scenario_progress_read_model import ScenarioProgressReadModel
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackSeedGroup,
     ComponentIdentifier,
+    ScenarioRunPlan,
     ScenarioRunSizeEstimateCondition,
     ScenarioRunSizeEstimateStatus,
     SeedObjective,
@@ -36,7 +38,12 @@ from pyrit.scenario.scenarios.foundry.red_team_agent import FoundryComposite, Fo
 from pyrit.scenario.scenarios.garak.api_key import ApiKey
 from pyrit.scenario.scenarios.garak.encoding import Encoding
 from pyrit.scenario.scenarios.garak.exploitation import Exploitation
-from pyrit.scenario.scenarios.garak.web_injection import WebInjection
+from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination, PackageHallucinationTechnique
+from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
+    SystemPromptExtraction,
+    SystemPromptExtractionTechnique,
+)
+from pyrit.scenario.scenarios.garak.web_injection import WebInjection, WebInjectionTechnique
 from pyrit.score import TrueFalseScorer
 from tests.unit.mocks import MockPromptTarget
 
@@ -208,6 +215,16 @@ async def test_preview_five_becomes_exact_three_in_persisted_run_plan_async() ->
     plan = stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
     assert sum(len(group["seed_group_ids"]) for group in plan["atomic_groups"]) == 9
     assert len(plan["seed_groups"]) == 3
+    snapshot = ScenarioProgressReadModel(memory=scenario._memory).get_snapshot(
+        scenario_result_id=scenario._scenario_result_id,
+        plan=ScenarioRunPlan.model_validate(plan),
+        plan_complete=True,
+        active_group_ids=(),
+        terminal=False,
+        objective_scorer_identifier=None,
+    )
+    assert snapshot.summary.overall.planned == 9
+    assert snapshot.summary.overall.completed == 0
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -308,11 +325,107 @@ async def test_web_injection_estimate_does_not_load_or_synthesize_populations_as
         patch.object(scenario, "_build_synthesized_seed_groups", side_effect=AssertionError("Synthesized seeds")),
     ):
         estimate = await scenario.get_default_run_size_estimate_async()
-    counts = {component.label: component.count for component in estimate.components}
-    assert counts["markdown_image_exfil synthesized prompts"] == 5 * len(scenario.MARKDOWN_IMAGE_EXFIL_ENCODINGS)
-    assert counts["task_xss synthesized prompts"] == 12
-    assert counts["string_assembly_data_exfil synthesized prompts"] == len(scenario.STRING_ASSEMBLY_SEEDS)
-    assert estimate.estimated_attack_count == counts["Baseline"] * 2
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+    assert estimate.estimated_attack_count is None
+    assert estimate.configured_dataset_size is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "technique",
+    [
+        WebInjectionTechnique.MarkdownImageExfil,
+        WebInjectionTechnique.ColabAIDataLeakage,
+        WebInjectionTechnique.PlaygroundMarkdownExfil,
+        WebInjectionTechnique.MarkdownXSS,
+    ],
+)
+async def test_web_injection_uncapped_sources_ignore_dataset_limit_async(technique: WebInjectionTechnique) -> None:
+    scenario = WebInjection()
+    scenario.set_params_from_args(
+        args={
+            "scenario_techniques": [technique, WebInjectionTechnique.TaskXSS],
+            "dataset_config": DatasetAttackConfiguration(dataset_names=["missing"], max_dataset_size=1),
+        }
+    )
+    estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("baseline", [False, True])
+@pytest.mark.parametrize("dataset_limit", [1, None])
+async def test_web_injection_capped_techniques_use_generation_limits_async(
+    *, baseline: bool, dataset_limit: int | None
+) -> None:
+    scenario = WebInjection(max_prompts_per_technique=7)
+    scenario.set_params_from_args(
+        args={
+            "scenario_techniques": [
+                WebInjectionTechnique.StringAssemblyDataExfil,
+                WebInjectionTechnique.MarkdownURIImageExfilExtended,
+                WebInjectionTechnique.MarkdownURINonImageExfilExtended,
+                WebInjectionTechnique.TaskXSS,
+            ],
+            "include_baseline": baseline,
+            "dataset_config": DatasetAttackConfiguration(dataset_names=["missing"], max_dataset_size=dataset_limit),
+        }
+    )
+    estimate = await scenario.get_run_size_estimate_async()
+    budget = len(scenario.STRING_ASSEMBLY_SEEDS) + 3 * 7
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+    assert estimate.estimated_attack_count == budget * (2 if baseline else 1)
+    assert estimate.configured_dataset_size == budget
+    assert estimate.effective_parameters == {"max_prompts_per_technique": 7}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("prompt_cap", [None, 3])
+@pytest.mark.parametrize("technique", [PackageHallucinationTechnique.DEFAULT, PackageHallucinationTechnique.ALL])
+@pytest.mark.parametrize("dataset_limit", [1, None])
+async def test_package_hallucination_uses_per_language_generation_cap_async(
+    *, prompt_cap: int | None, technique: PackageHallucinationTechnique, dataset_limit: int | None
+) -> None:
+    scenario = PackageHallucination(objective_scorer=_scorer(), max_prompts_per_language=prompt_cap)
+    scenario.set_params_from_args(
+        args={
+            "scenario_techniques": [technique],
+            "dataset_config": DatasetAttackConfiguration(dataset_names=["missing"], max_dataset_size=dataset_limit),
+        }
+    )
+    estimate = await scenario.get_run_size_estimate_async()
+    cap = 12 if prompt_cap is None else prompt_cap
+    language_count = len(PackageHallucinationTechnique.expand({technique}))
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+    assert estimate.estimated_attack_count == cap * language_count
+    assert estimate.configured_dataset_size == cap * language_count
+    assert estimate.effective_parameters == {"max_prompts_per_language": cap}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("prompt_cap", [256, 7, None])
+@pytest.mark.parametrize(
+    "technique", [SystemPromptExtractionTechnique.ALL, SystemPromptExtractionTechnique.DirectRequests]
+)
+@pytest.mark.parametrize("dataset_limit", [1, None])
+async def test_system_prompt_extraction_uses_one_shared_generation_cap_async(
+    *, prompt_cap: int | None, technique: SystemPromptExtractionTechnique, dataset_limit: int | None
+) -> None:
+    scenario = SystemPromptExtraction(objective_scorer=_scorer(), prompt_cap=prompt_cap)
+    scenario.set_params_from_args(
+        args={
+            "scenario_techniques": [technique],
+            "dataset_config": DatasetAttackConfiguration(dataset_names=["missing"], max_dataset_size=dataset_limit),
+        }
+    )
+    estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.estimated_attack_count == prompt_cap
+    assert estimate.configured_dataset_size == prompt_cap
+    if prompt_cap is None:
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+    else:
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+        assert estimate.effective_parameters == {"prompt_cap": prompt_cap}
 
 
 @pytest.mark.usefixtures("patch_central_database")

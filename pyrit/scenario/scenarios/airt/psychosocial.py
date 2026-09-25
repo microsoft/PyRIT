@@ -499,7 +499,9 @@ class Psychosocial(Scenario):
         per_subharm_cap = self._dataset_config.max_dataset_size
         filters = self._dataset_config.filters
         if per_subharm_cap is None:
-            self._dataset_config = DatasetAttackConfiguration(dataset_names=dataset_names, filters=filters)
+            self._dataset_config = DatasetAttackConfiguration(
+                dataset_names=dataset_names, max_dataset_size=None, filters=filters
+            )
         else:
             rebuilt = CompoundDatasetAttackConfiguration.per_dataset(
                 dataset_names=dataset_names, max_dataset_size=per_subharm_cap, filters=filters

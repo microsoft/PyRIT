@@ -10,7 +10,14 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    ScenarioDatasetSummary,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -146,6 +153,27 @@ class SystemPromptExtraction(Scenario):
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
+        )
+
+    def _get_run_size_budget(self) -> int | None:
+        """Return the shared cap on system-prompt and template combinations."""
+        return self._prompt_cap
+
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+        """
+        Estimate the combined prompt budget without multiplying it by category count.
+
+        Returns:
+            ScenarioRunSizeEstimate: Shared prompt cap, or unavailable when uncapped.
+        """
+        if self._prompt_cap is None:
+            return ScenarioRunSizeEstimate.unavailable(note="No prompt_cap is configured.")
+        return ScenarioRunSizeEstimate(
+            total_attack_count=self._prompt_cap,
+            components=[ScenarioRunSizeComponent(label="System-prompt/template combinations", count=self._prompt_cap)],
+            datasets=[ScenarioDatasetSummary(name="System-prompt/template combinations", kind="synthesized")],
+            effective_parameters={"prompt_cap": self._prompt_cap},
+            note="The prompt cap is shared across all selected categories. Dataset size limits do not apply.",
         )
 
     def _load_system_prompts(self) -> list[str]:

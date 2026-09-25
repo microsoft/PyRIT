@@ -14,7 +14,14 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    ScenarioDatasetSummary,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConfiguration
@@ -199,6 +206,31 @@ class PackageHallucination(Scenario):
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
+        )
+
+    def _get_run_size_budget(self) -> int:
+        """Return the combined generated-prompt cap for the selected languages."""
+        return self._max_prompts_per_language * len(self._scenario_techniques)
+
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+        """
+        Estimate generated prompts from the per-language cap without loading the corpus.
+
+        Returns:
+            ScenarioRunSizeEstimate: Combined budget for the selected languages.
+        """
+        return ScenarioRunSizeEstimate(
+            total_attack_count=self._get_run_size_budget(),
+            components=[
+                ScenarioRunSizeComponent(label=technique.value, count=self._max_prompts_per_language)
+                for technique in self._scenario_techniques
+            ],
+            datasets=[
+                ScenarioDatasetSummary(name=technique.value, kind="synthesized")
+                for technique in self._scenario_techniques
+            ],
+            effective_parameters={"max_prompts_per_language": self._max_prompts_per_language},
+            note="The generated-prompt cap applies per language. Dataset size limits do not apply.",
         )
 
     @staticmethod
