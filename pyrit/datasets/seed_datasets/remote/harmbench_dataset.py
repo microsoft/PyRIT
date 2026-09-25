@@ -102,6 +102,9 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
 
             # Extract data
             category = example["SemanticCategory"]
+            context = example.get("ContextString", "")
+            behavior = example["Behavior"]
+            value = f"{context}\n\n---\n\n{behavior}" if context else behavior
 
             # Standardize harm categories
             standardized_categories = self._standardize_harm_categories(

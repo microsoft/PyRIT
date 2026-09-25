@@ -583,6 +583,9 @@ test.describe("Mobile touch targets", () => {
     await expect(scoreMenuItems).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(scoreStack).toHaveAttribute("aria-expanded", "false");
+    // Leave the restored trigger focus so its tooltip cannot cover the next control.
+    await scoreStack.press("Tab");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
 
     await expectMinimumTouchTargets(
       page.locator(
