@@ -610,8 +610,9 @@ function ScenarioLaunchForm({
     return ''
   })
   const [selectedTechniques, setSelectedTechniques] = useState<string[]>(() => defaultTechniques)
-  const unavailableSelection = !targets.some((target) => target.target_registry_name === targetName)
-    || selectedTechniques.some((name) => !techniqueOptions.some((technique) => technique.name === name))
+  const unavailableSelection = (
+    targetName !== '' && !targets.some((target) => target.target_registry_name === targetName)
+  ) || selectedTechniques.some((name) => !techniqueOptions.some((technique) => technique.name === name))
   const [baselineChecked, setBaselineChecked] = useState(
     () => !isBaselineForbidden && scenario.include_baseline_by_default,
   )
