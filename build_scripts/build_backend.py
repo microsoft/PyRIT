@@ -40,7 +40,7 @@ def build_sdist(
     sdist_directory: str,
     config_settings: Mapping[str, str | list[str] | None] | None = None,
 ) -> str:
-    """Build an sdist containing sealed assets usable without Git or Node."""
+    """Build an sdist containing prepared assets usable without Git or Node."""
     _prepare()
     return build_meta.build_sdist(sdist_directory, config_settings)
 

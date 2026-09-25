@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from build_scripts.stamp_compatibility import seal_frontend, stamp_source
+from build_scripts.stamp_compatibility import stamp_source, verify_frontend
 
 
 def _configure_utf8_stdio() -> None:
@@ -176,7 +176,7 @@ def main(*, development: bool = False) -> int:
     final_stamp = stamp_source(root, development=development)
     if final_stamp != stamp:
         raise ValueError("Source provenance changed while building the frontend; rebuild from one source snapshot")
-    seal_frontend(root, stamp)
+    verify_frontend(root, stamp)
 
     print("\n" + "=" * 60)
     print("✅ Package preparation complete!")
