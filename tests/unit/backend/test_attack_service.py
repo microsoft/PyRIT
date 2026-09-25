@@ -1505,11 +1505,6 @@ class TestAddMessage:
 
         result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
         assert result.attack is not None
-        chats = attack_service.recent_chat_activity()
-        assert len(chats) == 1
-        assert chats[0]["conversation_id"] == "test-id"
-        assert chats[0]["operator"] == "alice"
-        assert chats[0]["operation"] == "nightly"
 
     async def test_add_message_with_send_sends_via_normalizer(self, attack_service, mock_memory) -> None:
         """Test that add_message with send=True sends message via normalizer."""

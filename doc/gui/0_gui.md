@@ -365,35 +365,33 @@ Custom initializer scripts execute under the backend service identity, so only t
 
 ### Reinitializing without a process restart
 
-This capability is available to administrators without a configuration opt-in.
-It is limited to **one backend process and one replica**.
+Set `enable_live_reinitialization: true` in the saved `.pyrit_conf` to enable this administrator action. This setting
+is an explicit operator acknowledgement that the deployment has **one backend process and one replica**.
 It is disabled when `WEB_CONCURRENCY`, `UVICORN_WORKERS`, `PYRIT_API_WORKERS`, or `PYRIT_REPLICAS` specifies anything
 other than `1`. Do not use it behind a multi-worker server or across multiple replicas; it is not a distributed
 configuration update. External scaling settings cannot be discovered from within a process.
 
+Before replacement, PyRIT validates the saved configuration, environment sources, scripts, initializer parameters,
+and required environment values. Custom initializer scripts are trusted code. Importing a script or constructing its
+initializer can have side effects during validation.
+
 Reinitialization resets setup-owned component registries and recreates backend services. Components created only
 through the GUI must be recreated. The same memory object and persisted history are retained, including an in-memory
 database. Changing the memory type, Azure SQL connection, or Azure results storage configuration requires a backend
-restart and is rejected before stopping work.
+restart and is rejected before replacement.
 
-If work is active, review the displayed scenario IDs, preparation count, and in-flight sends, then explicitly choose
-**Stop scenarios and reinitialize**. New runtime requests are rejected while stopping or initializing. Scenario tasks
-are cancelled and their cleanup is awaited. Preparation threads cannot be killed; queued preparations are cancelled
-where possible, and running or abandoned preparations must finish without launching a scenario. Chat sends and
-background estimates finish before any runtime reset. Completed history remains; cancelled runs never restart
-automatically. External provider calls already sent may still complete and incur charges.
+Live apply does not stop or drain work. It rejects the request if a scenario, preparation, send, estimate, or other
+runtime operation is active. Wait for the work to finish, or cancel it with its existing control, and then retry.
+When the runtime is idle, PyRIT closes admission and checks again before it changes runtime state. This second check
+prevents newly admitted work from overlapping replacement.
 
-After the bounded drain deadline expires, the runtime remains blocked. **Retry reinitialization** checks the saved
-sources again and waits again, or **Cancel pending apply** reopens the unchanged runtime without resuming cancelled
-scenarios. A drain timeout does not apply environment assignments, reset registries, or run initializers.
 Operation status survives a browser disconnect or navigation; other connected clients detect runtime generation
 changes and refresh catalogs without discarding chat or configuration drafts.
 
-If parsing or initialization fails at startup or during apply, the server and administration UI remain available,
-but runtime operations are unavailable. Repair the saved YAML, environment source, or custom initializer and retry.
-For a broken custom script, inspect its source, remove it, and upload corrected source. Malformed startup YAML does
-not enable custom code management or assume environment paths. Authentication and authorization retain their
-process-start settings; reinitialization does not recreate them.
+If validation fails, PyRIT does not change the live runtime. Repair the saved source and retry. If startup fails, or
+if live initialization fails after replacement starts, runtime operations stay unavailable until you restart the
+backend. The administration UI stays available for configuration repair. Authentication and authorization retain
+their process-start settings; reinitialization does not recreate them.
 
 Selected environment assignments replace existing process values, **including deployment-provided values**.
 Omitted variables remain unchanged; empty assignments set an empty value. Key Vault source selection and
@@ -404,10 +402,10 @@ Listener and authentication settings remain process-start-only. This does not ru
 container, or make local source files durable when a container is replaced.
 
 API clients can use administrator-only `GET /api/config/runtime`, `POST /api/config/runtime/apply`
-(`version`, `stop_scenarios`, `work_revision`), and `POST /api/config/runtime/cancel`. Obtain the configuration version
-from `GET /api/config` and the work revision from status. A newly admitted operation returns HTTP 202 and is tracked
-in status; outcomes distinguish busy, confirmation-required, version-conflict, invalid-configuration, stop-timeout,
-and initialization-failed. Authenticated non-admin clients can read readiness and generation only at `GET /api/runtime`.
+(`version`). Obtain the configuration version and opt-in state from `GET /api/config`. A newly admitted operation
+returns HTTP 202 and is tracked in status. Outcomes distinguish busy, unsupported, version-conflict,
+invalid-configuration, and restart-required. Authenticated non-admin clients can read readiness and generation only
+at `GET /api/runtime`.
 `GET /api/health` reports server responsiveness, not runtime readiness.
 
 ---

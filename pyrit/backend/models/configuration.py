@@ -12,6 +12,10 @@ class ConfigurationFileContent(BaseModel):
     content: str = Field(..., description="Raw YAML configuration file contents")
     source: str = Field(..., description="Configuration file path or credential-free blob URI")
     version: str = Field(..., description="Opaque version token for optimistic concurrency")
+    live_reinitialization_enabled: bool = Field(
+        False,
+        description="Whether the saved configuration explicitly enables live runtime replacement",
+    )
 
 
 class UpdateConfigurationFileRequest(BaseModel):
@@ -48,8 +52,6 @@ class UpdateEnvironmentFileRequest(BaseModel):
 
 
 class ReinitializeRequest(BaseModel):
-    """Apply saved sources, optionally confirming the currently displayed work."""
+    """Apply saved sources to an idle single-process runtime."""
 
     version: str
-    stop_scenarios: bool = False
-    work_revision: int | None = None

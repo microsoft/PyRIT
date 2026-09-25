@@ -7,20 +7,4 @@ export const useReinitializeStyles = makeStyles({
     alignItems: 'flex-start',
     gap: tokens.spacingVerticalS,
   },
-  workTable: {
-    marginTop: tokens.spacingVerticalM,
-    marginBottom: tokens.spacingVerticalM,
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
-    borderRadius: tokens.borderRadiusMedium,
-    overflow: 'hidden',
-    '& thead': {
-      backgroundColor: tokens.colorNeutralBackground3,
-    },
-    '& tr:not(:last-child)': {
-      borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-    },
-  },
-  identifier: {
-    overflowWrap: 'anywhere',
-  },
 })

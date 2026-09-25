@@ -182,6 +182,7 @@ export interface ConfigurationFileContent {
   content: string
   source: string
   version: string
+  live_reinitialization_enabled: boolean
 }
 
 export interface UpdateConfigurationFileRequest {
@@ -1145,20 +1146,6 @@ export interface RuntimeStatus {
   applying: boolean
   outcome: string
   message: string
-  work_revision: number
-  scenario_queue: Array<{
-    scenario_result_id?: string | null
-    scenario_name: string
-    state: string
-    operator?: string | null
-    operation?: string | null
-  }>
-  active_chats: Array<{
-    conversation_id: string
-    operator?: string | null
-    operation?: string | null
-    last_activity: string
-  }>
   active_work: {
     scenario_ids: string[]
     preparing: number

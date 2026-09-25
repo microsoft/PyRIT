@@ -107,6 +107,7 @@ describe('Configuration failed environment reload guard', () => {
       content: 'operator: alice\n',
       source: 'C:/Users/test/.pyrit/config.yaml',
       version: 'config-v1',
+      live_reinitialization_enabled: false,
     })
     mockedConfigurationApi.listEnvironmentFiles.mockResolvedValueOnce({
       items: [

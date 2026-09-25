@@ -72,6 +72,9 @@ export function useAttackTargetResolution({
   createdTargetGeneration,
 }: UseAttackTargetResolutionOptions): UseAttackTargetResolutionResult {
   const { generation, ready } = useRuntime()
+  const useCreatedTarget = attackTargetSource === 'created'
+    && createdTargetGeneration === generation
+    && Boolean(createdTarget)
   const [registryResolution, setRegistryResolution] = useState<RegistryResolution>({
     attackId: null,
     attackLoadSequence: 0,
@@ -81,7 +84,7 @@ export function useAttackTargetResolution({
 
   useEffect(() => {
     if (!ready || !attackId || !hasCompleteIdentifier(attackTarget)) return
-    if (attackTargetSource === 'created') return
+    if (useCreatedTarget) return
 
     let cancelled = false
     const resolveTarget = async (): Promise<void> => {
@@ -109,16 +112,15 @@ export function useAttackTargetResolution({
     return () => {
       cancelled = true
     }
-  }, [attackId, attackLoadSequence, attackTarget, attackTargetSource, resolutionAttempt, generation, ready])
+  }, [attackId, attackLoadSequence, attackTarget, resolutionAttempt, generation, ready, useCreatedTarget])
 
   const getResolutionStatus = (): AttackTargetResolutionStatus => {
     if (!attackId) return 'idle'
     if (!hasCompleteIdentifier(attackTarget)) return 'legacy'
-    if (attackTargetSource === 'created') {
-      return createdTargetGeneration === generation
-        && createdTarget
-        && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
-        ? 'resolved' : 'unavailable'
+    if (useCreatedTarget) {
+      return createdTarget && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
+        ? 'resolved'
+        : 'unavailable'
     }
     if (
       registryResolution.attackId !== attackId
@@ -128,7 +130,7 @@ export function useAttackTargetResolution({
   }
   const resolutionStatus = getResolutionStatus()
   const activeTarget = resolutionStatus === 'resolved'
-    ? (attackTargetSource === 'created' ? createdTarget : registryResolution.target) ?? null
+    ? (useCreatedTarget ? createdTarget : registryResolution.target) ?? null
     : null
 
   const retryResolution = useCallback((): void => {

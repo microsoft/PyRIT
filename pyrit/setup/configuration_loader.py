@@ -28,6 +28,7 @@ from pyrit.setup.environment_loading import validate_env_akv_strict
 from pyrit.setup.initialization import AZURE_SQL, IN_MEMORY, SQLITE, initialize_pyrit_async
 
 if TYPE_CHECKING:
+    from pyrit.registry import InitializerRegistry
     from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
@@ -53,6 +54,15 @@ class InitializerConfig:
 
     name: str
     args: dict[str, YamlValue] | None = None
+
+
+@dataclass(frozen=True)
+class PreparedReinitialization:
+    """Validated replacement inputs that do not reference live setup registries."""
+
+    environment_values: dict[str, str]
+    initializer_registry: "InitializerRegistry"
+    initializers: tuple["PyRITInitializer", ...]
 
 
 @dataclass
@@ -105,6 +115,8 @@ class ConfigurationLoader(YamlLoadable):
         seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
         operation: Name for the current operation.
+        enable_live_reinitialization: Whether administrators may replace the live
+            single-process backend runtime from the GUI.
 
     Example YAML configuration:
         memory_db_type: sqlite
@@ -147,6 +159,7 @@ class ConfigurationLoader(YamlLoadable):
     operator: str | None = None
     operation: str | None = None
     max_concurrent_scenario_runs: int = 3
+    enable_live_reinitialization: bool = False
     allow_custom_initializers: bool = False
     custom_initializers_source: str | None = None
     server: dict[str, Any] | None = None
@@ -158,6 +171,7 @@ class ConfigurationLoader(YamlLoadable):
 
         Raises:
             ValueError: If concurrency or source paths are invalid.
+            TypeError: If a boolean configuration option has the wrong type.
         """
         if type(self.max_concurrent_scenario_runs) is not int or self.max_concurrent_scenario_runs < 1:
             raise ValueError("max_concurrent_scenario_runs must be a positive integer.")
@@ -167,6 +181,8 @@ class ConfigurationLoader(YamlLoadable):
             ):
                 raise ValueError("Environment files and initialization scripts must be lists of non-empty paths.")
         validate_env_akv_strict(env_akv_strict=self.env_akv_strict)
+        if not isinstance(self.enable_live_reinitialization, bool):
+            raise TypeError("enable_live_reinitialization must be a bool.")
         self._validate_allow_custom_initializers()
         self._normalize_memory_db_type()
         self._normalize_initializers()
@@ -567,7 +583,12 @@ class ConfigurationLoader(YamlLoadable):
         """
         return DEFAULT_CONFIG_PATH
 
-    def resolve_initializers(self, *, raise_on_initializer_error: bool = True) -> Sequence["PyRITInitializer"]:
+    def resolve_initializers(
+        self,
+        *,
+        raise_on_initializer_error: bool = True,
+        registry: "InitializerRegistry | None" = None,
+    ) -> Sequence["PyRITInitializer"]:
         """
         Resolve initializer names to PyRITInitializer instances.
 
@@ -577,6 +598,7 @@ class ConfigurationLoader(YamlLoadable):
         Args:
             raise_on_initializer_error: Whether to raise when an initializer cannot be resolved. If False,
                 log the failure and continue resolving the remaining initializers.
+            registry: Isolated initializer registry to use instead of the live singleton.
 
         Returns:
             Sequence of PyRITInitializer instances.
@@ -593,7 +615,7 @@ class ConfigurationLoader(YamlLoadable):
         if not configs:
             return resolved
 
-        registry = InitializerRegistry.get_registry_singleton()
+        registry = registry or InitializerRegistry.get_registry_singleton()
 
         logging.getLogger(__name__).info("Running %d initializer(s)...", len(configs))
 
@@ -618,6 +640,88 @@ class ConfigurationLoader(YamlLoadable):
             resolved.append(instance)
 
         return resolved
+
+    async def preflight_reinitialization_async(
+        self,
+        *,
+        environment_values: dict[str, str],
+    ) -> PreparedReinitialization:
+        """
+        Validate replacement scripts and initializer configuration without changing live PyRIT state.
+
+        Returns:
+            PreparedReinitialization: Immutable inputs ready for the mutation phase.
+
+        Raises:
+            ValueError: If an initializer is invalid or a required environment value is missing.
+        """
+        from pyrit.registry import InitializerRegistry
+        from pyrit.setup.initializers.targets import TargetInitializer
+        from pyrit.setup.initializers.techniques import TechniqueInitializer
+
+        registry = await asyncio.to_thread(InitializerRegistry)
+        registry.configure_custom_scripts_source(self.custom_initializers_source)
+        if self.allow_custom_initializers:
+            await asyncio.to_thread(registry.register_stored_initializers, strict=True)
+
+        initializers = list(
+            self.resolve_initializers(
+                raise_on_initializer_error=True,
+                registry=registry,
+            )
+        )
+        script_paths = self.resolve_initialization_scripts()
+        if script_paths:
+            initializers.extend(
+                await asyncio.to_thread(
+                    registry.create_from_script_paths,
+                    script_paths=script_paths,
+                    strict=True,
+                )
+            )
+        if not initializers:
+            initializers = [TechniqueInitializer(), TargetInitializer()]
+
+        effective_environment = {**os.environ, **environment_values}
+        for initializer in initializers:
+            initializer.validate_params()
+            missing = [name for name in initializer.required_env_vars if not effective_environment.get(name)]
+            if missing:
+                raise ValueError(
+                    f"Initializer '{type(initializer).__name__}' has missing required environment variables."
+                )
+
+        return PreparedReinitialization(
+            environment_values=dict(environment_values),
+            initializer_registry=registry,
+            initializers=tuple(initializers),
+        )
+
+    async def apply_prepared_reinitialization_async(self, *, prepared: PreparedReinitialization) -> None:
+        """Apply a preflighted replacement while preserving the current memory instance."""
+        from pyrit.registry import InitializerRegistry
+        from pyrit.setup.initialization import reset_setup_registries, validate_reinitialization_memory
+
+        validate_reinitialization_memory(
+            memory_db_type=self._MEMORY_DB_TYPE_MAP[self.memory_db_type],
+            environment=prepared.environment_values,
+        )
+        reset_setup_registries()
+        InitializerRegistry.set_registry_singleton(prepared.initializer_registry)
+        await initialize_pyrit_async(
+            memory_db_type=self._MEMORY_DB_TYPE_MAP[self.memory_db_type],
+            initialization_scripts=[],
+            initializers=prepared.initializers,
+            load_defaults=False,
+            env_files=[],
+            env_akv_ref=None,
+            env_akv_strict=self.env_akv_strict,
+            silent=self.silent,
+            seed=self.seed,
+            raise_on_initializer_error=True,
+            reinitialize=True,
+            environment_values=prepared.environment_values,
+        )
 
     def resolve_initialization_scripts(self) -> Sequence[pathlib.Path] | None:
         """

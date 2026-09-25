@@ -44,16 +44,11 @@ class RuntimeAdmissionMiddleware:
         management = path == "/api/config" or path.startswith(("/api/config/", "/api/initializers"))
         apply_route = path.startswith("/api/config/runtime")
         write = management and scope["method"] not in ("GET", "HEAD", "OPTIONS") and not apply_route
-        cancel = path.startswith("/api/scenarios/runs/") and path.endswith("/cancel")
         if (
             (write and (runtime.edit_lock.locked() or (runtime.apply_task and not runtime.apply_task.done())))
             or (path.startswith("/api/initializers") and runtime.edit_lock.locked())
             or (path.startswith("/api/initializers") and runtime.state == "initializing")
-            or (
-                not management
-                and runtime.state != "ready"
-                and not (cancel and runtime.state in ("stopping", "blocked"))
-            )
+            or (not management and runtime.state != "ready")
         ):
             await JSONResponse(
                 {"detail": "PyRIT runtime is unavailable; inspect runtime status or repair configuration."},
@@ -63,7 +58,6 @@ class RuntimeAdmissionMiddleware:
         if apply_route:
             await self.app(scope, receive, send)
             return
-        scope.setdefault("state", {})["runtime_admission_epoch"] = runtime.admission_epoch
 
         async def execute_async() -> None:
             try:
@@ -83,7 +77,5 @@ class RuntimeAdmissionMiddleware:
             runtime.management_operations.add(task)
         else:
             runtime.operations[task] = f"{scope['method']} {path}"
-            if scope["method"] not in ("GET", "HEAD", "OPTIONS"):
-                runtime.work_revision += 1
         # Strong ownership plus shield ensures sends/threads finish even when an HTTP task is cancelled.
         await asyncio.shield(task)

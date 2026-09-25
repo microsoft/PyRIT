@@ -116,7 +116,6 @@ def _make_request(
     dataset_filters: dict[str, list[str]] | None = None,
     include_baseline: bool | None = None,
     scenario_params: dict[str, Any] | None = None,
-    labels: dict[str, str] | None = None,
 ) -> RunScenarioRequest:
     """Create a RunScenarioRequest for testing."""
     return RunScenarioRequest(
@@ -130,7 +129,6 @@ def _make_request(
         dataset_filters=dataset_filters,
         include_baseline=include_baseline,
         scenario_params=scenario_params,
-        labels=labels,
     )
 
 
@@ -425,65 +423,6 @@ class TestAdversarialRunScope:
 
 class TestScenarioRunServiceStartRun:
     """Tests for ScenarioRunService.start_run_async."""
-
-    async def test_request_stop_drains_preparation_and_preserves_queue_metadata(
-        self, mock_all_registries: dict[str, Any]
-    ) -> None:
-        service = ScenarioRunService()
-        entered, release = threading.Event(), threading.Event()
-        scenario = mock_all_registries["scenario_instance"]
-        request = _make_request()
-        request.labels = {"operator": "alice", "operation": "nightly"}
-
-        def prepare(*, request: RunScenarioRequest) -> _svc_mod._PreparedRun:
-            entered.set()
-            assert release.wait(5)
-            return _svc_mod._PreparedRun(scenario=scenario)
-
-        with patch.object(service, "_prepare_run_blocking", side_effect=prepare):
-            task = asyncio.create_task(service.start_run_async(request=request))
-            try:
-                assert await asyncio.to_thread(entered.wait, 5)
-                assert service.scenario_queue() == [
-                    {
-                        "scenario_result_id": None,
-                        "scenario_name": request.scenario_name,
-                        "operator": "alice",
-                        "operation": "nightly",
-                        "state": "Preparing",
-                    }
-                ]
-                service.request_stop()
-            finally:
-                release.set()
-
-            with pytest.raises(RuntimeError, match="stopped for PyRIT reinitialization"):
-                await task
-
-        assert service.active_work() == ([], 0)
-        cancellation = mock_all_registries["memory"].try_update_scenario_run_state.call_args
-        assert cancellation.kwargs["scenario_run_state"] == ScenarioRunState.CANCELLED
-        await service.close_async()
-
-    async def test_request_stop_cancels_queued_scenario(self, mock_all_registries: dict[str, Any]) -> None:
-        service = ScenarioRunService()
-        queued = _svc_mod._ActiveTask(
-            scenario_result_id="queued-id",
-            scenario_name="queued-scenario",
-            operator="alice",
-            operation="nightly",
-        )
-        service._queued_runs.append(queued)
-
-        service.request_stop()
-        await asyncio.gather(*tuple(service._stop_tasks))
-
-        assert service.scenario_queue() == []
-        assert service.active_work() == ([], 0)
-        cancellation = mock_all_registries["memory"].try_update_scenario_run_state.call_args
-        assert cancellation.kwargs["scenario_result_id"] == "queued-id"
-        assert cancellation.kwargs["scenario_run_state"] == ScenarioRunState.CANCELLED
-        await service.close_async()
 
     def test_init_rejects_nonpositive_max_concurrent_runs(self, mock_memory) -> None:
         with pytest.raises(ValueError, match="at least 1"):

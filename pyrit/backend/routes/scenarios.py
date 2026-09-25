@@ -171,10 +171,7 @@ async def start_scenario_run(  # pyrit-async-suffix-exempt
         ScenarioRunSummary: Run metadata with PENDING status.
     """
     runtime = getattr(http_request.app.state, "runtime_lifecycle", None)
-    if runtime is not None and (
-        runtime.state != "ready"
-        or getattr(http_request.state, "runtime_admission_epoch", None) != runtime.admission_epoch
-    ):
+    if runtime is not None and runtime.state != "ready":
         raise HTTPException(status_code=503, detail="Scenario start was interrupted by runtime reinitialization.")
     service = get_scenario_run_service()
     try:

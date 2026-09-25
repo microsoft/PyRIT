@@ -119,6 +119,7 @@ describe('Configuration', () => {
       content: 'operator: alice\n',
       source: 'C:/Users/test/.pyrit/config.yaml',
       version: 'config-v1',
+      live_reinitialization_enabled: false,
     })
     mockedConfigurationApi.listEnvironmentFiles.mockResolvedValue({
       items: [
@@ -179,6 +180,7 @@ describe('Configuration', () => {
       content: 'operator: bob\n',
       source: 'C:/Users/test/.pyrit/config.yaml',
       version: 'config-v2',
+      live_reinitialization_enabled: true,
     })
     renderPage()
 

@@ -332,6 +332,30 @@ class TestAdversarialEstimateScope:
 class TestScenarioServiceListScenarios:
     """Tests for ScenarioService.list_scenarios_async."""
 
+    async def test_shutdown_tracks_all_owned_estimate_workers(self) -> None:
+        service = ScenarioService()
+        release = asyncio.Event()
+
+        async def wait_for_release() -> ScenarioRunSizeEstimate:
+            await release.wait()
+            return ScenarioRunSizeEstimate.unavailable()
+
+        default_task = asyncio.create_task(wait_for_release())
+        configured_task = asyncio.create_task(wait_for_release())
+        timed_out_task = asyncio.create_task(wait_for_release())
+        service._estimate_tasks[("default", 1)] = default_task
+        service._configured_estimate_tasks[("configured", Scenario, "request")] = configured_task
+        service._timed_out_estimate_workers.add(timed_out_task)
+
+        assert service.outstanding_estimates() == 3
+        close_task = asyncio.create_task(service.close_async())
+        await asyncio.sleep(0)
+        assert not close_task.done()
+
+        release.set()
+        await close_task
+        assert service.outstanding_estimates() == 0
+
     async def test_list_scenarios_returns_empty_when_no_scenarios(self) -> None:
         """Test that list returns empty list when no scenarios are registered."""
         with patch.object(ScenarioService, "__init__", lambda self: None):

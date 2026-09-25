@@ -73,6 +73,9 @@ def reset_setup_registries() -> None:
         ScorerRegistry,
         TargetRegistry,
     )
+    from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
+
+    reset_dynamic_technique_caches()
 
     for registry in (
         AttackTechniqueRegistry,

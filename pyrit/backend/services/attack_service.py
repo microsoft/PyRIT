@@ -60,7 +60,6 @@ from pyrit.backend.services.pagination import (
     fingerprint_filters,
     normalize_label_filters,
 )
-from pyrit.backend.services.runtime_activity import RuntimeActivityTracker
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
@@ -118,7 +117,6 @@ class AttackService:
     def __init__(self) -> None:
         """Initialize the attack service."""
         self._memory = CentralMemory.get_memory_instance()
-        self._activity_tracker = RuntimeActivityTracker()
 
     # ========================================================================
     # Public API Methods
@@ -733,12 +731,6 @@ class AttackService:
         if msg_conversation_id not in ar.get_active_conversation_ids():
             raise ValueError(f"Conversation '{msg_conversation_id}' is not part of attack '{attack_result_id}'")
 
-        self._activity_tracker.record_chat(
-            conversation_id=msg_conversation_id,
-            operator=ar.operator,
-            operation=ar.operation,
-        )
-
         target_registry_name = request.target_registry_name
         if request.send and not target_registry_name:
             raise ValueError("target_registry_name is required when send=True")
@@ -833,16 +825,7 @@ class AttackService:
         if attack_messages is None:
             raise ValueError(f"Attack '{attack_result_id}' messages not found after update")
 
-        self._activity_tracker.record_chat(
-            conversation_id=msg_conversation_id,
-            operator=ar.operator,
-            operation=ar.operation,
-        )
         return AddMessageResponse(attack=attack_detail, messages=attack_messages)
-
-    def recent_chat_activity(self) -> list[dict[str, Any]]:
-        """Return chat activity from the last ten minutes."""
-        return self._activity_tracker.recent_chats()
 
     def _validate_target_match(
         self, *, attack_identifier: ComponentIdentifier | None, request: AddMessageRequest

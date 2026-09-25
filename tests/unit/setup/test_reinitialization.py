@@ -11,10 +11,31 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
-from pyrit.registry import TargetRegistry
+from pyrit.registry import InitializerRegistry, TargetRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import initialize_pyrit_async, reset_setup_registries, validate_reinitialization_memory
+
+
+async def test_preflight_uses_isolated_registry_without_changing_live_state() -> None:
+    live_registry = InitializerRegistry.get_registry_singleton()
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        initialization_scripts=[],
+        enable_live_reinitialization=True,
+    )
+
+    with patch.dict(os.environ, {"EXISTING": "value"}, clear=True):
+        prepared = await config.preflight_reinitialization_async(environment_values={"REPLACEMENT": "new"})
+        assert dict(os.environ) == {"EXISTING": "value"}
+
+    assert prepared.initializer_registry is not live_registry
+    assert InitializerRegistry.get_registry_singleton() is live_registry
+    assert [type(initializer).__name__ for initializer in prepared.initializers] == [
+        "TechniqueInitializer",
+        "TargetInitializer",
+    ]
 
 
 async def test_replacement_precedence_interpolation_empty_and_omission(tmp_path: Path) -> None:

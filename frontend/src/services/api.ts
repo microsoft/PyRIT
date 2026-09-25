@@ -163,13 +163,8 @@ export const configurationApi = {
   getRuntimeStatus: async (): Promise<RuntimeStatus> => {
     return (await apiClient.get('/config/runtime')).data
   },
-  reinitialize: async (version: string, stopScenarios = false, workRevision?: number): Promise<RuntimeStatus> => {
-    return (await apiClient.post('/config/runtime/apply', {
-      version, stop_scenarios: stopScenarios, work_revision: workRevision,
-    })).data
-  },
-  cancelPendingApply: async (): Promise<RuntimeStatus> => {
-    return (await apiClient.post('/config/runtime/cancel')).data
+  reinitialize: async (version: string): Promise<RuntimeStatus> => {
+    return (await apiClient.post('/config/runtime/apply', { version })).data
   },
   getContent: async (): Promise<ConfigurationFileContent> => {
     const response = await apiClient.get('/config')

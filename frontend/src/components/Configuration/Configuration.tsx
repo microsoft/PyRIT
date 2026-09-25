@@ -54,6 +54,7 @@ export default function Configuration() {
   const [savedContent, setSavedContent] = useState('')
   const [source, setSource] = useState('')
   const [version, setVersion] = useState('')
+  const [liveReinitializationEnabled, setLiveReinitializationEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
@@ -91,6 +92,7 @@ export default function Configuration() {
           setSavedContent(response.content)
           setSource(response.source)
           setVersion(response.version)
+          setLiveReinitializationEnabled(response.live_reinitialization_enabled)
         }
       } catch (error) {
         if (!cancelled) {
@@ -131,6 +133,7 @@ export default function Configuration() {
       setSavedContent(response.content)
       setSource(response.source)
       setVersion(response.version)
+      setLiveReinitializationEnabled(response.live_reinitialization_enabled)
       setStatusMessage({
         intent: 'success',
         text: 'Configuration saved. Reinitialize PyRIT to apply these changes.',
@@ -179,7 +182,11 @@ export default function Configuration() {
       <div className={styles.header}>
         <Text as="h1" size={600} weight="semibold">Configuration</Text>
       </div>
-      <Reinitialize version={version} hasUnsavedChanges={configurationHasUnsavedChanges || environmentHasUnsavedChanges || saving} />
+      <Reinitialize
+        version={version}
+        hasUnsavedChanges={configurationHasUnsavedChanges || environmentHasUnsavedChanges || saving}
+        liveReinitializationEnabled={liveReinitializationEnabled}
+      />
 
       <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>
         <Tab value="configuration">PyRIT Configuration</Tab>
