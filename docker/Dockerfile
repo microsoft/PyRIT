@@ -20,7 +20,7 @@ LABEL description="Docker container for PyRIT with Jupyter Notebook and GUI supp
 ARG PYRIT_SOURCE=pypi
 ARG PYRIT_VERSION=""
 ARG GIT_COMMIT=""
-ARG GIT_MODIFIED=false
+ARG GIT_MODIFIED=""
 
 # Production environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -55,17 +55,26 @@ COPY --chown=vscode:vscode doc/ /app/doc/
 # (lines 43-47) one-to-one, except /app/doc which is intentionally retained
 # because the later RUN block copies it into /app/notebooks/ for Jupyter mode.
 # Note: We use 'uv pip' because the devcontainer creates venv with uv (no pip by default)
-RUN if [ "$PYRIT_SOURCE" = "pypi" ]; then \
+RUN set -eu; if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         echo "Installing PyRIT from PyPI version: $PYRIT_VERSION"; \
         uv pip install --python /opt/venv/bin/python pyrit[speech,opencv,fairness_bias,fastapi,playwright]==$PYRIT_VERSION; \
         echo "Removing local source so the installed PyPI package isn't shadowed"; \
         rm -rf /app/pyrit /app/frontend /app/build_scripts /app/pyproject.toml /app/MANIFEST.in /app/README.md /app/LICENSE; \
     elif [ "$PYRIT_SOURCE" = "local" ]; then \
         echo "Installing PyRIT from local source"; \
+        export PYRIT_SOURCE_COMMIT="$GIT_COMMIT" PYRIT_SOURCE_DIRTY="$GIT_MODIFIED"; \
         uv pip install --python /opt/venv/bin/python -e .[speech,opencv,fairness_bias,fastapi,playwright]; \
         echo "Building frontend..."; \
-        /opt/venv/bin/python -m build_scripts.prepare_package; \
+        if [ "$GIT_MODIFIED" = "true" ]; then \
+            /opt/venv/bin/python -m build_scripts.prepare_package --development; \
+        else \
+            /opt/venv/bin/python -m build_scripts.prepare_package; \
+        fi; \
+    else \
+        echo "Invalid PYRIT_SOURCE"; exit 1; \
     fi && \
+    cd /tmp && \
+    /opt/venv/bin/python -c "from pyrit._compatibility import get_compatibility_id; print(get_compatibility_id())" && \
     echo "Creating build info..." && \
     /opt/venv/bin/python -c "import json; import pyrit; \
 info = { \

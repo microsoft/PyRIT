@@ -15,6 +15,7 @@ import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
 
 from pyrit.cli import _server_launcher
@@ -112,27 +113,47 @@ def test_unix_pid_lookup_rejects_ambiguous_lsof_listener():
 # ---------------------------------------------------------------------------
 
 
-async def test_probe_health_returns_true_when_client_healthy():
-    fake_client = MagicMock()
-    fake_client.health_check_async = AsyncMock(return_value=True)
-    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
-    fake_client.__aexit__ = AsyncMock(return_value=None)
+@pytest.mark.parametrize(
+    ("status", "payload", "healthy"),
+    [
+        (200, {"status": "healthy", "service": "pyrit-backend"}, True),
+        (503, {"status": "healthy", "service": "pyrit-backend"}, False),
+        (200, {"status": "healthy", "service": "other"}, False),
+        (200, [], False),
+    ],
+)
+async def test_probe_health_is_independent_of_compatibility(status, payload, healthy):
+    requests = []
 
-    with patch("pyrit.cli._server_launcher.PyRITApiClient", return_value=fake_client):
-        result = await ServerLauncher.probe_health_async(base_url="http://localhost:8000")
-    assert result is True
-    fake_client.health_check_async.assert_awaited_once()
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(status, json=payload)
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(base_url="http://localhost:8000", transport=transport)
+    with (
+        patch("httpx.AsyncClient", return_value=http_client),
+        patch("pyrit.cli.api_client.PyRITApiClient", side_effect=AssertionError("must not open API client")),
+        patch("pyrit._compatibility.get_compatibility_id", side_effect=ValueError("missing stamp")),
+    ):
+        assert await ServerLauncher.probe_health_async(base_url="http://localhost:8000") is healthy
+    assert http_client.is_closed
+    assert [request.url.path for request in requests] == ["/api/health"]
+    assert "PyRIT-Compatibility-ID" not in requests[0].headers
 
 
-async def test_probe_health_returns_false_when_client_unhealthy():
-    fake_client = MagicMock()
-    fake_client.health_check_async = AsyncMock(return_value=False)
-    fake_client.__aenter__ = AsyncMock(return_value=fake_client)
-    fake_client.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("pyrit.cli._server_launcher.PyRITApiClient", return_value=fake_client):
-        result = await ServerLauncher.probe_health_async(base_url="http://localhost:8000")
-    assert result is False
+@pytest.mark.parametrize("failure", [httpx.ConnectError("offline"), ValueError("bad JSON"), asyncio.CancelledError()])
+async def test_probe_health_closes_on_failure(failure):
+    http_client = AsyncMock()
+    http_client.__aenter__.return_value = http_client
+    http_client.get.side_effect = failure
+    with patch("httpx.AsyncClient", return_value=http_client):
+        if isinstance(failure, asyncio.CancelledError):
+            with pytest.raises(asyncio.CancelledError):
+                await ServerLauncher.probe_health_async(base_url="http://localhost:8000")
+        else:
+            assert await ServerLauncher.probe_health_async(base_url="http://localhost:8000") is False
+    http_client.__aexit__.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

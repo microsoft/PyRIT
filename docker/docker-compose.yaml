@@ -12,6 +12,8 @@ services:
       args:
         BASE_IMAGE: pyrit-devcontainer
         PYRIT_SOURCE: local
+        GIT_COMMIT: ${PYRIT_SOURCE_COMMIT:?Set PYRIT_SOURCE_COMMIT to the full source HEAD}
+        GIT_MODIFIED: ${PYRIT_SOURCE_DIRTY:?Set PYRIT_SOURCE_DIRTY from git status}
     image: pyrit:latest
     container_name: pyrit-jupyter
     ports:
@@ -41,6 +43,8 @@ services:
       args:
         BASE_IMAGE: pyrit-devcontainer
         PYRIT_SOURCE: local
+        GIT_COMMIT: ${PYRIT_SOURCE_COMMIT:?Set PYRIT_SOURCE_COMMIT to the full source HEAD}
+        GIT_MODIFIED: ${PYRIT_SOURCE_DIRTY:?Set PYRIT_SOURCE_DIRTY from git status}
     image: pyrit:latest
     container_name: pyrit-gui
     ports:

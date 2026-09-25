@@ -1,4 +1,5 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./_fixtures";
+import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -219,7 +220,7 @@ test.describe("Accessibility", () => {
       if (path === "/auth/config") {
         return json({ clientId: "", tenantId: "", allowedGroupIds: "" });
       }
-      if (path === "/version") return json({ version: "a11y-test", display: "a11y-test" });
+      if (path === "/version") return json(mockVersion({ display: "a11y-test" }));
       if (path === "/labels") {
         return json({ source: "attacks", labels: { operator: ["roakey"], operation: [] } });
       }

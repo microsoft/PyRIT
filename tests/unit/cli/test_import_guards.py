@@ -133,6 +133,11 @@ class TestImportGuards:
             f"Move these imports to point-of-use (inside a function/method)."
         )
 
+    @pytest.mark.parametrize("module", ["api_client", "_server_launcher", "pyrit_shell"])
+    def test_lockstep_client_imports_remain_lazy(self, module):
+        loaded = _check_forbidden_imports(import_statement=f"import pyrit.cli.{module}", forbidden=_CLI_FORBIDDEN)
+        assert not loaded, f"CLI {module} imported heavy modules: {loaded}"
+
     def test_import_pyrit_does_not_load_heavy_modules(self):
         """
         `import pyrit` must stay fast and not pull in database or ML libraries.

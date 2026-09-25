@@ -23,11 +23,11 @@ from pyrit.backend.services.environment_file_service import EnvironmentFileServi
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(compatibility_headers: dict[str, str]) -> TestClient:
     """Create a test client for the FastAPI app."""
     app.dependency_overrides[require_admin] = lambda: None
     try:
-        yield TestClient(app)
+        yield TestClient(app, headers=compatibility_headers)
     finally:
         app.dependency_overrides.pop(require_admin, None)
 

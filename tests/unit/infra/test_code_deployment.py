@@ -8,8 +8,11 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PIPELINES = REPO_ROOT / "infra" / "pipelines"
@@ -58,6 +61,119 @@ def _find_bash() -> str | None:
 
 BASH = _find_bash()
 JQ = shutil.which("jq")
+
+
+@unittest.skipIf(BASH is None, "Native Bash is not installed")
+class TestLocalDockerBuild(unittest.TestCase):
+    def test_compose_setup_exports_source_provenance_and_fails_on_git_errors(self) -> None:
+        assert BASH is not None
+        commit = "a" * 40
+        git_stub = (
+            'git() { case "$*" in\n'
+            '"rev-parse --verify HEAD") printf "%s\\n" "$TEST_COMMIT";;\n'
+            '"status --porcelain") printf "%s" "$TEST_STATUS"; return "$TEST_STATUS_EXIT";;\n'
+            "*) return 97;; esac; }\n"
+        )
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("PYRIT_SOURCE_")}
+        environment.pop("BASH_ENV", None)
+        for path in ("docker/README.md", "doc/getting_started/install_docker.md"):
+            text = (REPO_ROOT / path).read_text(encoding="utf-8")
+            blocks = [section.split("```", 1)[0] for section in text.split("```bash\n")[1:]]
+            setup = [block for block in blocks if "PYRIT_SOURCE_COMMIT=" in block]
+            assert len(setup) == 1, f"{path} must include one runnable source provenance setup"
+            for status, status_exit, expected in (
+                ("", "0", "false"),
+                (" M pyrit/example.py", "0", "true"),
+                ("?? new-file", "0", "true"),
+                ("", "128", None),
+            ):
+                with self.subTest(path=path, status=status, status_exit=status_exit):
+                    result = subprocess.run(
+                        [BASH, "--noprofile", "--norc", "-s"],
+                        input=git_stub
+                        + setup[0]
+                        + '\nsh -c \'printf "%s\\n%s\\n" "$PYRIT_SOURCE_COMMIT" "$PYRIT_SOURCE_DIRTY"\'\n',
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                        timeout=30,
+                        env={
+                            **environment,
+                            "TEST_COMMIT": commit,
+                            "TEST_STATUS": status,
+                            "TEST_STATUS_EXIT": status_exit,
+                        },
+                    )
+                    if expected is None:
+                        assert result.returncode != 0
+                        assert not result.stdout
+                    else:
+                        assert result.returncode == 0, result.stdout + result.stderr
+                        assert result.stdout.splitlines() == [commit, expected]
+
+    def test_only_dirty_local_builds_use_development_preparation(self) -> None:
+        assert BASH is not None
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        local_build = dockerfile.split('elif [ "$PYRIT_SOURCE" = "local" ]; then', 1)[1].split("\n    else", 1)[0]
+        script = (
+            'set -eu\nuv() { :; }\npython() { printf "prepare:%s\\n" "$*"; }\n'
+            + local_build.replace("/opt/venv/bin/python", "python")
+            + "\n"
+        )
+
+        for dirty in ("true", "false"):
+            with self.subTest(dirty=dirty):
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc", "-s"],
+                    input=script,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                    env={**os.environ, "GIT_COMMIT": "a" * 40, "GIT_MODIFIED": dirty},
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                preparation = [line for line in result.stdout.splitlines() if line.startswith("prepare:")]
+                expected = "prepare:-m build_scripts.prepare_package" + (" --development" if dirty == "true" else "")
+                assert preparation == [expected]
+
+
+@unittest.skipIf(BASH is None, "Native Bash is not installed")
+class TestPypiBuild(unittest.TestCase):
+    def test_pypi_images_require_an_explicit_coordinated_version(self) -> None:
+        pipeline = yaml.safe_load((REPO_ROOT / ".github/workflows/docker_build.yml").read_text(encoding="utf-8"))
+        steps = pipeline["jobs"]["build-production-pypi"]["steps"]
+        selection = next(step for step in steps if step.get("id") == "pypi-version")
+        assert selection["env"]["PYRIT_PYPI_VERSION"] == "${{ inputs.pypiVersion || vars.PYRIT_PYPI_VERSION }}"
+        assert "pip index" not in selection["run"]
+        assert "0.10.0" not in selection["run"]
+        assert BASH is not None
+
+        for version, valid in (
+            ("1.2.0", True),
+            ("1.2.0.dev0", True),
+            ("1.2.0rc1", True),
+            ("", False),
+            ("latest", False),
+            ("1.2.0\nGIT_MODIFIED=false", False),
+            ("1.2.0 --extra-index-url=https://example.com", False),
+        ):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "github-output"
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc", "-s"],
+                    input=selection["run"],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                    env={**os.environ, "PYRIT_PYPI_VERSION": version, "GITHUB_OUTPUT": output.as_posix()},
+                )
+                assert (result.returncode == 0) == valid, result.stdout + result.stderr
+                if valid:
+                    assert output.read_text().strip() == f"version={version}"
+                else:
+                    assert not output.exists()
 
 
 @unittest.skipIf(BASH is None or JQ is None, "Native Bash and jq are required")

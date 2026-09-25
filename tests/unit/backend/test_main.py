@@ -9,6 +9,7 @@ Covers the lifespan manager and setup_frontend function.
 
 import logging
 import os
+import threading
 from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -92,10 +93,17 @@ class TestLifespan:
                 assert not path.exists()
         assert paths[0] != paths[1]
 
-    async def test_lifespan_yields(self, mock_scenario_run_lifecycle) -> None:
+    async def test_lifespan_yields(self, compatibility_id: str, mock_scenario_run_lifecycle) -> None:
         """Test that lifespan delegates to ConfigurationLoader and yields."""
         fake_config = ConfigurationLoader()
+        event_loop_thread_id = threading.get_ident()
+
+        def read_stamp() -> str:
+            assert threading.get_ident() != event_loop_thread_id
+            return compatibility_id
+
         with (
+            patch("pyrit._compatibility.get_compatibility_id", side_effect=read_stamp) as stamp_reader,
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()) as init_mock,
             patch("pyrit.backend.main.setup_frontend"),
@@ -103,7 +111,9 @@ class TestLifespan:
             async with lifespan(app):
                 pass
 
+            stamp_reader.assert_called_once()
             init_mock.assert_awaited_once_with(raise_on_initializer_error=False)
+            assert app.state.compatibility_id == compatibility_id
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./_fixtures";
 
 // ---------------------------------------------------------------------------
 // Helpers – mock backend API responses so URL-driven navigation can be

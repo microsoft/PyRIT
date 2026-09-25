@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./_fixtures";
 
 import { makeTarget } from "./_targets";
 

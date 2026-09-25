@@ -99,6 +99,12 @@ stages:
                   exit 1
                 fi
 
+                source_commit=$(git rev-parse HEAD)
+                if [[ "$source_commit" != "$PYRIT_SOURCE_VERSION" || -n "$(git status --porcelain)" ]]; then
+                  echo "##vso[task.logissue type=error]Published images require a clean checkout at the source commit"
+                  exit 1
+                fi
+
                 docker build \
                   -f .devcontainer/Dockerfile \
                   -t pyrit-devcontainer \
@@ -110,7 +116,7 @@ stages:
                   -t "$image" \
                   --build-arg BASE_IMAGE=pyrit-devcontainer \
                   --build-arg PYRIT_SOURCE=local \
-                  --build-arg GIT_COMMIT="$PYRIT_SOURCE_VERSION" \
+                  --build-arg GIT_COMMIT="$source_commit" \
                   --build-arg GIT_MODIFIED=false \
                   .
 

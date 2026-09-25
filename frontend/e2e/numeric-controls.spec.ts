@@ -1,4 +1,5 @@
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from './_fixtures'
+import { mockVersion } from './_compatibility'
 
 import type { RegisteredScenario } from '../src/types'
 
@@ -40,7 +41,7 @@ async function mockNumericControlApis(page: Page): Promise<void> {
       '/api/auth/config': { clientId: '', tenantId: '', allowedGroupIds: '' },
       '/api/auth/access': { isAdmin: true },
       '/api/health': { status: 'healthy' },
-      '/api/version': { version: '1.2.0', display: 'Mock PyRIT', default_labels: { operator: 'test' } },
+      '/api/version': mockVersion({ display: 'Mock PyRIT', default_labels: { operator: 'test' } }),
       '/api/targets': {
         items: [makeTarget({ target_registry_name: 'mock-target' })],
         pagination: { limit: 200, has_more: false },

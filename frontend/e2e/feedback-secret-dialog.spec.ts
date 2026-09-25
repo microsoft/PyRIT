@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./_fixtures";
+import { mockVersion } from "./_compatibility";
 
 const EMPTY_PAGINATION = {
   limit: 50,
@@ -10,11 +11,6 @@ const EMPTY_PAGINATION = {
 const API_RESPONSES: Record<string, unknown> = {
   "/auth/config": { clientId: "", tenantId: "", allowedGroupIds: "" },
   "/auth/access": { isAdmin: false },
-  "/version": {
-    version: "feedback-test",
-    display: "feedback-test",
-    default_labels: { operator: "test", operation: "feedback" },
-  },
   "/labels": {
     source: "attacks",
     labels: { operator: ["test"], operation: ["feedback"] },
@@ -25,6 +21,13 @@ const API_RESPONSES: Record<string, unknown> = {
 async function installFeedbackMocks(page: Page): Promise<void> {
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
+    if (path === "/version") {
+      await route.fulfill({ json: mockVersion({
+        display: "feedback-test",
+        default_labels: { operator: "test", operation: "feedback" },
+      }) });
+      return;
+    }
     const hasResponse = Object.hasOwn(API_RESPONSES, path);
 
     await route.fulfill({

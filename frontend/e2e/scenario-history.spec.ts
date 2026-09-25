@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./_fixtures";
+import { mockVersion } from "./_compatibility";
 
 const RUN_ID = "123e4567-e89b-12d3-a456-426614174000";
 const ACTIVE_RUN_ID = "123e4567-e89b-12d3-a456-426614174001";
@@ -257,6 +258,7 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
+        ...mockVersion(),
         version: "1.1.0",
         display: "PyRIT 1.1.0",
         default_labels: {

@@ -1,6 +1,7 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Page, type Route } from "./_fixtures";
 import type { BackendMessage } from "@/types";
 import { makeAddMessageResponse } from "./_attacks";
+import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
@@ -145,7 +146,7 @@ async function mockAllAPIs(
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ version: "0.0.0-test", display: "test" }),
+      body: JSON.stringify(mockVersion({ version: "0.0.0-test", display: "test" })),
     });
   });
 
@@ -618,7 +619,7 @@ test.describe("Error: create attack fails", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ version: "0.0.0-test", display: "test" }),
+        body: JSON.stringify(mockVersion({ version: "0.0.0-test", display: "test" })),
       });
     });
 

@@ -1,6 +1,24 @@
 import { createLogger, defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+
+import { isCompatibilityId } from './src/utils/compatibilityId.ts'
+
+const root = path.resolve(__dirname, '..')
+const compatibilityId = process.env.PYRIT_COMPATIBILITY_ID ?? execFileSync(
+  process.env.PYRIT_PYTHON ?? 'python',
+  [path.join(root, 'build_scripts/stamp_compatibility.py'), '--development'],
+  { cwd: root, encoding: 'utf8' },
+).trim()
+const stamp = JSON.parse(readFileSync(path.join(root, 'pyrit/_compatibility.json'), 'utf8'))
+if (!isCompatibilityId(compatibilityId)
+    || stamp.compatibility_id !== compatibilityId
+    || compatibilityId !== `${stamp.version}+g${stamp.commit}`
+    || typeof stamp.dirty !== 'boolean') {
+  throw new Error('Missing or inconsistent PyRIT frontend compatibility provenance')
+}
 
 // Suppress noisy ECONNREFUSED proxy errors while the backend is starting.
 // Without this, Vite logs dozens of "http proxy error" stack traces.
@@ -22,7 +40,17 @@ logger.error = (msg, options) => {
 // https://vitejs.dev/config/
 export default defineConfig({
   customLogger: logger,
-  plugins: [react()],
+  define: { __PYRIT_COMPATIBILITY_ID__: JSON.stringify(compatibilityId) },
+  plugins: [react(), {
+    name: 'pyrit-compatibility-stamp',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'compatibility.json',
+        source: JSON.stringify({ compatibility_id: compatibilityId }),
+      })
+    },
+  }],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
