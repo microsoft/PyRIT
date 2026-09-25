@@ -19,6 +19,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
 
@@ -67,6 +68,7 @@ class HTTPXAPITarget(HTTPTarget):
         callback_function: Callable[..., Any] | None = None,
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        trace_config: TargetTraceConfig | None = None,
         **httpx_client_kwargs: Any,
     ) -> None:
         """
@@ -91,6 +93,9 @@ class HTTPXAPITarget(HTTPTarget):
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for this target
             instance.
             Defaults to None.
+            trace_config: Request tracing configuration. Tracing is disabled by default because an
+                arbitrary HTTP endpoint is not known to support W3C trace context. Pass
+                ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint.
             **httpx_client_kwargs: Additional keyword arguments to pass to the httpx.AsyncClient constructor.
 
         Raises:
@@ -106,6 +111,7 @@ class HTTPXAPITarget(HTTPTarget):
             callback_function=callback_function,
             max_requests_per_minute=max_requests_per_minute,
             custom_configuration=custom_configuration,
+            trace_config=trace_config,
             **httpx_client_kwargs,
         )
 
@@ -153,6 +159,7 @@ class HTTPXAPITarget(HTTPTarget):
         http2_version = self.http2 if self.http2 is not None else False
 
         async with httpx.AsyncClient(http2=http2_version, **self.httpx_client_kwargs) as client:
+            headers = request_trace_headers(request=message, headers=self.headers, default_headers=client.headers)
             try:
                 if upload_path:
                     # Handle file upload (only for POST & PUT)
@@ -168,7 +175,7 @@ class HTTPXAPITarget(HTTPTarget):
                     response = await client.request(
                         method=self.method,
                         url=self.http_url,
-                        headers=self.headers,
+                        headers=headers,
                         params=self.params,
                         files=files,
                         follow_redirects=self.follow_redirects,
@@ -179,7 +186,7 @@ class HTTPXAPITarget(HTTPTarget):
                     response = await client.request(
                         method=self.method,
                         url=self.http_url,
-                        headers=self.headers,
+                        headers=headers,
                         params=self.params,
                         json=self.json_data if self.method in {"POST", "PUT", "PATCH"} else None,
                         data=self.form_data if self.method in {"POST", "PUT", "PATCH"} else None,
