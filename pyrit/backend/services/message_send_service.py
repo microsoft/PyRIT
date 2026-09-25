@@ -5,7 +5,8 @@
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any
@@ -74,8 +75,22 @@ class MessageSendService:
         The ``request.target_conversation_id`` field specifies which conversation
         the messages are stored under (main conversation or a related one).
         """
+        async with self.add_message_context_async(attack_result_id=attack_result_id, request=request):
+            pass
+
+    @asynccontextmanager
+    async def add_message_context_async(
+        self, *, attack_result_id: str, request: AddMessageRequest
+    ) -> AsyncIterator[None]:
+        """
+        Add a message and keep its conversation reserved through the caller's response reads.
+
+        Yields:
+            None: The completed operation's conversation reservation.
+        """
         with self._scheduler.reserve(conversation_id=request.target_conversation_id):
             await self._add_message_async(attack_result_id=attack_result_id, request=request)
+            yield
 
     async def _add_message_async(self, *, attack_result_id: str, request: AddMessageRequest) -> None:
         results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
@@ -107,10 +122,7 @@ class MessageSendService:
         if request.send and target is None:
             raise ValueError(f"Target object for '{target_registry_name}' not found")
 
-        exclusive = bool(
-            request_converter_configs or response_converter_configs or (target and target._max_requests_per_minute)
-        )
-        async with self._scheduler.operation_async(exclusive=exclusive):
+        async with self._scheduler.operation_async():
             await self._execute_message_async(
                 attack_result_id=attack_result_id,
                 request=request,
@@ -481,7 +493,7 @@ class MessageSendService:
             piece_count=len(request.pieces),
         )
 
-        normalizer = PromptNormalizer()
+        normalizer = PromptNormalizer(converter_guard=self._scheduler.conversion_async)
         await normalizer.send_prompt_async(
             message=pyrit_message,
             target=target,

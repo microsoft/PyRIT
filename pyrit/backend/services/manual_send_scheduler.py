@@ -8,6 +8,10 @@ from collections import deque
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pyrit.converter import Converter
 
 
 class ManualSendConflictError(ValueError):
@@ -19,13 +23,7 @@ class ManualSendQueueFullError(ValueError):
 
 
 class ManualSendScheduler:
-    """
-    Bound manual operations on the backend's event loop.
-
-    RPM-limited targets and converters take an exclusive execution slot. This also
-    covers targets hidden inside converters without inspecting their internals.
-    FIFO execution prevents exclusive work from starving behind parallel sends.
-    """
+    """Bound manual operations, with separate guards for shared converter state and metadata."""
 
     DEFAULT_MAX_CONCURRENCY = 4
     DEFAULT_MAX_OPERATIONS = 64
@@ -42,11 +40,11 @@ class ManualSendScheduler:
         self._max_concurrency = max_concurrency
         self._max_operations = max_operations
         self._conversations: set[str] = set()
+        self._converters: set[int] = set()
         self._metadata_updates: set[str] = set()
         self._condition = asyncio.Condition()
         self._queue: deque[object] = deque()
         self._active = 0
-        self._exclusive = False
 
     @contextmanager
     def reserve(self, *, conversation_id: str) -> Iterator[None]:
@@ -71,7 +69,7 @@ class ManualSendScheduler:
             self._conversations.remove(conversation_id)
 
     @asynccontextmanager
-    async def operation_async(self, *, exclusive: bool) -> AsyncIterator[None]:
+    async def operation_async(self) -> AsyncIterator[None]:
         """
         Hold an execution slot, releasing the slot or waiting ticket on every exit.
 
@@ -84,15 +82,10 @@ class ManualSendScheduler:
             self._queue.append(ticket)
             try:
                 await self._condition.wait_for(
-                    lambda: (
-                        self._queue[0] is ticket
-                        and not self._exclusive
-                        and (self._active == 0 if exclusive else self._active < self._max_concurrency)
-                    )
+                    lambda: self._queue[0] is ticket and self._active < self._max_concurrency
                 )
                 self._queue.popleft()
                 self._active += 1
-                self._exclusive = exclusive
                 acquired = True
                 self._condition.notify_all()
             finally:
@@ -104,8 +97,25 @@ class ManualSendScheduler:
         finally:
             async with self._condition:
                 self._active -= 1
-                if exclusive:
-                    self._exclusive = False
+                self._condition.notify_all()
+
+    @asynccontextmanager
+    async def conversion_async(self, converter: "Converter") -> AsyncIterator[None]:
+        """
+        Protect one shared converter instance only while it is converting.
+
+        Yields:
+            None: Ownership of the converter invocation.
+        """
+        key = id(converter)
+        async with self._condition:
+            await self._condition.wait_for(lambda: key not in self._converters)
+            self._converters.add(key)
+        try:
+            yield
+        finally:
+            async with self._condition:
+                self._converters.remove(key)
                 self._condition.notify_all()
 
     @asynccontextmanager

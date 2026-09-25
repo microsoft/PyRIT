@@ -702,20 +702,21 @@ class AttackService:
         Returns:
             AddMessageResponse: Updated attack and messages after sending or storing.
         """
-        await self._message_send_service.add_message_async(attack_result_id=attack_result_id, request=request)
+        async with self._message_send_service.add_message_context_async(
+            attack_result_id=attack_result_id, request=request
+        ):
+            attack_detail = await self.get_attack_async(attack_result_id=attack_result_id)
+            if attack_detail is None:
+                raise ValueError(f"Attack '{attack_result_id}' not found after update")
 
-        attack_detail = await self.get_attack_async(attack_result_id=attack_result_id)
-        if attack_detail is None:
-            raise ValueError(f"Attack '{attack_result_id}' not found after update")
+            attack_messages = await self.get_conversation_messages_async(
+                attack_result_id=attack_result_id,
+                conversation_id=request.target_conversation_id,
+            )
+            if attack_messages is None:
+                raise ValueError(f"Attack '{attack_result_id}' messages not found after update")
 
-        attack_messages = await self.get_conversation_messages_async(
-            attack_result_id=attack_result_id,
-            conversation_id=request.target_conversation_id,
-        )
-        if attack_messages is None:
-            raise ValueError(f"Attack '{attack_result_id}' messages not found after update")
-
-        return AddMessageResponse(attack=attack_detail, messages=attack_messages)
+            return AddMessageResponse(attack=attack_detail, messages=attack_messages)
 
     # ========================================================================
     # Private Helper Methods - Duplicate / Branch

@@ -1651,7 +1651,7 @@ class TestConcurrentMessages:
         _, send = send_dependencies
         scheduler = ManualSendScheduler(max_concurrency=1, max_operations=2)
         service = MessageSendService(scheduler=scheduler)
-        async with scheduler.operation_async(exclusive=True):
+        async with scheduler.operation_async():
             queued = asyncio.create_task(service.add_message_async(attack_result_id="attack", request=_request()))
             await _wait_for_queue_async(scheduler=scheduler)
             queued.cancel()
@@ -1667,9 +1667,9 @@ class TestConcurrentMessages:
     ) -> None:
         target_service, send = send_dependencies
         target = target_service.get_target_object.return_value
-        scheduler = ManualSendScheduler()
+        scheduler = ManualSendScheduler(max_concurrency=1)
         service = MessageSendService(scheduler=scheduler)
-        async with scheduler.operation_async(exclusive=True):
+        async with scheduler.operation_async():
             queued = asyncio.create_task(service.add_message_async(attack_result_id="attack", request=_request()))
             await _wait_for_queue_async(scheduler=scheduler)
             target_service.get_target_object.return_value = None
@@ -1678,16 +1678,15 @@ class TestConcurrentMessages:
         target_service.get_target_object.assert_called_once()
 
     @pytest.mark.parametrize("kind", ["rpm", "request", "response"])
-    async def test_rate_limited_and_converter_sends_execute_exclusively_async(
+    async def test_rate_limited_and_converter_sends_allow_unrelated_sends_async(
         self, *, mock_memory: MagicMock, send_dependencies: tuple[MagicMock, AsyncMock], kind: str
     ) -> None:
         target_service, send = send_dependencies
         scheduler = ManualSendScheduler(max_concurrency=2, max_operations=3)
         service = MessageSendService(scheduler=scheduler)
-        first_started, second_started = asyncio.Event(), asyncio.Event()
-        release_first, release_second = asyncio.Event(), asyncio.Event()
+        first_started, release_first = asyncio.Event(), asyncio.Event()
         order: list[str] = []
-        second = _request(conversation_id="second")
+        first = _request()
         if kind == "rpm":
             limited = _make_matching_target_mock()
             limited._max_requests_per_minute = 30
@@ -1695,41 +1694,166 @@ class TestConcurrentMessages:
             target_service.get_target_object.side_effect = lambda *, target_registry_name: (
                 limited if target_registry_name == "limited" else ordinary
             )
-            second.target_registry_name = "limited"
+            first.target_registry_name = "limited"
         else:
-            setattr(second, f"{kind}_converter_configurations", [ConverterConfigurationRequest(converter_ids=["c"])])
+            setattr(first, f"{kind}_converter_configurations", [ConverterConfigurationRequest(converter_ids=["c"])])
 
         async def hold_async(*, conversation_id: str, **_: Any) -> None:
             order.append(conversation_id)
             if conversation_id == "main":
                 first_started.set()
                 await release_first.wait()
-            elif conversation_id == "second":
-                assert scheduler._active == 1
-                second_started.set()
-                await release_second.wait()
 
         send.side_effect = hold_async
-        tasks = [asyncio.create_task(service.add_message_async(attack_result_id="attack", request=_request()))]
+        active = asyncio.create_task(service.add_message_async(attack_result_id="attack", request=first))
         try:
             await first_started.wait()
-            tasks.append(asyncio.create_task(service.add_message_async(attack_result_id="attack", request=second)))
-            await _wait_for_queue_async(scheduler=scheduler)
-            tasks.append(
-                asyncio.create_task(
-                    service.add_message_async(attack_result_id="attack", request=_request(conversation_id="third"))
-                )
+            await asyncio.wait_for(
+                service.add_message_async(attack_result_id="attack", request=_request(conversation_id="second")),
+                timeout=3,
             )
-            await _wait_for_queue_async(scheduler=scheduler, size=2)
-            assert order == ["main"]
-            release_first.set()
-            await second_started.wait()
             assert order == ["main", "second"]
+            assert not active.done()
         finally:
             release_first.set()
-            release_second.set()
-            await asyncio.gather(*tasks)
-        assert order == ["main", "second", "third"]
+            await active
+
+    async def test_target_pacing_does_not_block_another_target_async(
+        self,
+        *,
+        sqlite_instance: SQLiteMemory,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+    ) -> None:
+        service, ar, target, _ = real_send_context
+        target._max_requests_per_minute = 30
+        other_target = MockPromptTarget(rpm=60)
+        other_attack = make_attack_result(
+            conversation_id=str(uuid.uuid4()), attack_result_id=str(uuid.uuid4()), has_target=False
+        )
+        await asyncio.to_thread(sqlite_instance.add_attack_results_to_memory, attack_results=[other_attack])
+        waiting, release = asyncio.Event(), asyncio.Event()
+        delays: list[float] = []
+
+        async def pace_async(delay: float) -> None:
+            delays.append(delay)
+            if delay == 2:
+                waiting.set()
+                await release.wait()
+            else:
+                assert delay == 1
+
+        other_request = _request(conversation_id=other_attack.conversation_id)
+        other_request.target_registry_name = "other"
+        with (
+            patch("pyrit.backend.services.message_send_service.get_target_service") as registry,
+            patch("pyrit.prompt_target.common.utils.asyncio.sleep", side_effect=pace_async),
+        ):
+            registry.return_value.get_target_object.side_effect = lambda *, target_registry_name: (
+                other_target if target_registry_name == "other" else target
+            )
+            active = asyncio.create_task(
+                service.add_message_async(
+                    attack_result_id=ar.attack_result_id, request=_request(conversation_id=ar.conversation_id)
+                )
+            )
+            try:
+                await waiting.wait()
+                await asyncio.wait_for(
+                    service.add_message_async(attack_result_id=other_attack.attack_result_id, request=other_request),
+                    timeout=3,
+                )
+                assert delays == [2.0, 1.0]
+                assert target.prompt_sent == []
+                assert other_target.prompt_sent == ["Hello"]
+                assert not active.done()
+            finally:
+                release.set()
+                await active
+        assert target.prompt_sent == ["Hello"]
+
+    @pytest.mark.parametrize("stage", ["request", "response"])
+    async def test_converter_protection_is_per_instance_async(
+        self,
+        *,
+        sqlite_instance: SQLiteMemory,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        stage: str,
+    ) -> None:
+        service, ar, target, shared = real_send_context
+        scheduler = service._scheduler
+        peer = MessageSendService(scheduler=scheduler)
+        branch_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        await asyncio.to_thread(
+            sqlite_instance.add_conversation_branches_to_attack,
+            attack_result_id=ar.attack_result_id,
+            conversations=[
+                Conversation(conversation_id=cid, target_identifier=target.get_identifier()) for cid in branch_ids
+            ],
+            message_pieces=[],
+        )
+        independent = Base64Converter()
+        assert shared.get_identifier().hash == independent.get_identifier().hash
+        converters = {"shared": shared, "independent": independent}
+        requests = [_request(conversation_id=cid) for cid in [ar.conversation_id, *branch_ids]]
+        for request, name in zip(requests, ["shared", "shared", "independent"], strict=True):
+            setattr(request, f"{stage}_converter_configurations", [ConverterConfigurationRequest(converter_ids=[name])])
+
+        started, shared_waiting, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        convert = shared.convert_async
+        guard = scheduler.conversion_async
+        calls = 0
+        attempts = 0
+
+        async def convert_async(*, prompt: str, input_type: PromptDataType) -> ConverterResult:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                started.set()
+                await release.wait()
+            return await convert(prompt=prompt, input_type=input_type)
+
+        @asynccontextmanager
+        async def observe_guard_async(converter: Converter) -> AsyncIterator[None]:
+            nonlocal attempts
+            if converter is shared:
+                attempts += 1
+                if attempts == 2:
+                    shared_waiting.set()
+            async with guard(converter):
+                yield
+
+        with (
+            patch("pyrit.backend.services.message_send_service.get_converter_service") as registry,
+            patch.object(shared, "convert_async", side_effect=convert_async),
+            patch.object(scheduler, "conversion_async", side_effect=observe_guard_async),
+        ):
+            registry.return_value.get_converter_objects_for_ids.side_effect = lambda *, converter_ids: [
+                converters[name] for name in converter_ids
+            ]
+            tasks = [
+                asyncio.create_task(
+                    service.add_message_async(attack_result_id=ar.attack_result_id, request=requests[0])
+                )
+            ]
+            try:
+                await started.wait()
+                tasks.append(
+                    asyncio.create_task(
+                        peer.add_message_async(attack_result_id=ar.attack_result_id, request=requests[1])
+                    )
+                )
+                await shared_waiting.wait()
+                await asyncio.wait_for(
+                    peer.add_message_async(attack_result_id=ar.attack_result_id, request=requests[2]), timeout=3
+                )
+                assert calls == 1
+                assert not any(task.done() for task in tasks)
+            finally:
+                release.set()
+                await asyncio.gather(*tasks)
+        assert calls == 2
+        assert not scheduler._converters
+        assert not scheduler._conversations
 
     @pytest.mark.parametrize("error", [RuntimeError("failed"), asyncio.CancelledError()])
     async def test_dispatch_failure_releases_ownership_without_reusing_old_errors_async(
@@ -1846,7 +1970,7 @@ class TestConcurrentMessages:
             conversations=[Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())],
             message_pieces=[],
         )
-        scheduler = ManualSendScheduler()
+        scheduler = ManualSendScheduler(max_concurrency=1)
         services = [MessageSendService(scheduler=scheduler) for _ in range(2)]
         first_started, release = asyncio.Event(), asyncio.Event()
         converters = {"first": first_converter, "second": Base64Converter(encoding_func="b32encode")}

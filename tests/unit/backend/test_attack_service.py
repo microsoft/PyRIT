@@ -36,6 +36,8 @@ from pyrit.backend.services.attack_service import (
     AttackService,
     get_attack_service,
 )
+from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendScheduler
+from pyrit.backend.services.message_send_service import MessageSendService
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -1299,7 +1301,7 @@ class TestAddMessage:
         summary = AttackSummary(conversation_id="main", attack_result_id="attack", objective="test")
         messages = ConversationMessagesResponse(conversation_id="branch", messages=[])
         with (
-            patch.object(attack_service._message_send_service, "add_message_async") as sender,
+            patch.object(attack_service._message_send_service, "_add_message_async") as sender,
             patch.object(attack_service, "get_attack_async", return_value=summary),
             patch.object(attack_service, "get_conversation_messages_async", return_value=messages) as reader,
         ):
@@ -1319,12 +1321,115 @@ class TestAddMessage:
             pieces=[MessagePieceRequest(original_value="Hello")], target_conversation_id="conversation"
         )
         with (
-            patch.object(attack_service._message_send_service, "add_message_async", side_effect=error),
+            patch.object(attack_service._message_send_service, "_add_message_async", side_effect=error),
             patch.object(attack_service, "get_attack_async") as reader,
             pytest.raises(type(error), match=str(error)),
         ):
             await attack_service.add_message_async(attack_result_id="attack", request=request)
         reader.assert_not_called()
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("read_method", ["get_attack_async", "get_conversation_messages_async"])
+    @pytest.mark.parametrize("incoming_send", [False, True])
+    async def test_response_assembly_keeps_conversation_reserved_async(
+        self, *, sqlite_instance: SQLiteMemory, read_method: str, incoming_send: bool
+    ) -> None:
+        ar = make_attack_result(conversation_id=str(uuid.uuid4()), attack_result_id=str(uuid.uuid4()), has_target=False)
+        await asyncio.to_thread(sqlite_instance.add_attack_results_to_memory, attack_results=[ar])
+        service, peer = AttackService(), AttackService()
+        scheduler = ManualSendScheduler()
+        service._message_send_service = MessageSendService(scheduler=scheduler)
+        peer._message_send_service = MessageSendService(scheduler=scheduler)
+        started, release = asyncio.Event(), asyncio.Event()
+        read = getattr(service, read_method)
+
+        async def pause_after_read_async(**kwargs: Any) -> AttackSummary | ConversationMessagesResponse | None:
+            result = await read(**kwargs)
+            started.set()
+            await release.wait()
+            return result
+
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="first")],
+            target_conversation_id=ar.conversation_id,
+            target_registry_name="target",
+        )
+        with (
+            patch("pyrit.backend.services.message_send_service.get_target_service") as registry,
+            patch.object(service, read_method, side_effect=pause_after_read_async),
+        ):
+            registry.return_value.get_target_object.return_value = MockPromptTarget()
+            active = asyncio.create_task(
+                service.add_message_async(attack_result_id=ar.attack_result_id, request=request)
+            )
+            try:
+                await started.wait()
+                with pytest.raises(ManualSendConflictError):
+                    await peer.add_message_async(
+                        attack_result_id=ar.attack_result_id,
+                        request=AddMessageRequest(
+                            pieces=[MessagePieceRequest(original_value="next")],
+                            target_conversation_id=ar.conversation_id,
+                            target_registry_name="target" if incoming_send else None,
+                            send=incoming_send,
+                        ),
+                    )
+            finally:
+                release.set()
+                result = await active
+
+        assert result.attack.message_count == 2
+        assert [message.message_pieces[0].original_value for message in result.messages.messages] == [
+            "first",
+            "default",
+        ]
+        assert result.messages.target_response_status is not None
+        assert result.messages.target_response_status.response_error == "none"
+        assert not scheduler._conversations
+        await peer.add_message_async(
+            attack_result_id=ar.attack_result_id,
+            request=AddMessageRequest(
+                pieces=[MessagePieceRequest(original_value="next")],
+                target_conversation_id=ar.conversation_id,
+                send=False,
+            ),
+        )
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("read_method", ["get_attack_async", "get_conversation_messages_async"])
+    @pytest.mark.parametrize("cancel", [False, True])
+    async def test_response_failure_releases_conversation_async(
+        self, *, attack_service: AttackService, read_method: str, cancel: bool
+    ) -> None:
+        sender = attack_service._message_send_service
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="Hello")], target_conversation_id="conversation", send=False
+        )
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def fail_read_async(**_: Any) -> None:
+            started.set()
+            await release.wait()
+            raise RuntimeError("response failed")
+
+        summary = AttackSummary(conversation_id="conversation", attack_result_id="attack", objective="test")
+        with (
+            patch.object(sender, "_add_message_async"),
+            patch.object(attack_service, "get_attack_async", return_value=summary),
+            patch.object(attack_service, read_method, side_effect=fail_read_async),
+        ):
+            active = asyncio.create_task(attack_service.add_message_async(attack_result_id="attack", request=request))
+            try:
+                await started.wait()
+                assert sender._scheduler._conversations == {"conversation"}
+                if cancel:
+                    active.cancel()
+            finally:
+                release.set()
+                with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+                    await active
+            assert not sender._scheduler._conversations
+            await sender.add_message_async(attack_result_id="attack", request=request)
 
     @pytest.mark.parametrize("role", ["system", "user", "assistant", "simulated_assistant", "tool", "developer"])
     async def test_add_message_send_false_without_registry_name_succeeds(
