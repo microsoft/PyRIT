@@ -16,8 +16,8 @@ Before starting the release process, verify the codebase is in a healthy state.
 Publish the frontend bundle, CLI wheel/sdist, and backend image from one clean source
 commit. They must share `<Python package version>+g<full source commit>` without
 changing the existing package `version`. Package preparation and PEP 517 wheel/sdist
-hooks stamp and seal frontend assets; Git-free sdist builds reuse and verify those
-assets. Do not publish builds created with `--development` or dirty provenance.
+hooks stamp and validate the frontend identity; Git-free sdist builds validate and reuse
+those assets. Do not publish builds created with `--development` or dirty provenance.
 
 Apply this gate separately to each deployment's artifact set. A PyPI wheel from a
 release-branch commit does not match a CoPyRIT image built from `main`, even when the
@@ -264,14 +264,16 @@ This will:
 
 1. Validate clean source provenance and write the Python compatibility stamp.
 2. Run `npm ci --legacy-peer-deps` and `npm run build` in `frontend/` with that identity.
-3. Copy assets to `pyrit/backend/frontend/`, verify `compatibility.json`, and seal
-   their content hashes in the Python stamp. Check for `index.html`, `compatibility.json`,
+3. Copy assets to `pyrit/backend/frontend/` and verify that `compatibility.json` matches
+   the Python identity. Check for `index.html`, `compatibility.json`,
    and the `assets` folder with JavaScript and CSS files.
 
 Running preparation manually does not skip the build hooks; a subsequent source build
 will repeat it, so omit the manual command during the normal release flow.
-The wheel built from a prepared sdist verifies and reuses its sealed assets without
-requiring Node or Git. Do not change source files between stamping and publishing.
+The wheel built from a prepared sdist validates clean provenance, the frontend entry
+point, and identity equality before reusing assets without Node or Git. This validates
+build identity, not asset contents: changes that preserve the identity marker are not
+detected. Do not change source files or prepared assets between stamping and publishing.
 
 ### Build the Python Package
 

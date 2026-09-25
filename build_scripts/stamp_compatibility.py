@@ -4,7 +4,6 @@
 """Stamp source builds and verify provenance carried by Git-free distributions."""
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -125,35 +124,22 @@ def stamp_source(root: Path = ROOT, *, development: bool = False) -> dict[str, A
     return stamp
 
 
-def frontend_hashes(root: Path) -> dict[str, str]:
-    """Return content hashes of all packaged frontend files."""
+def verify_frontend(root: Path, stamp: dict[str, Any]) -> None:
+    """Require a frontend entry point and a matching packaged build identity."""
     frontend = root / "pyrit" / "backend" / "frontend"
-    return {
-        path.relative_to(frontend).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in sorted(frontend.rglob("*"))
-        if path.is_file()
-    }
-
-
-def seal_frontend(root: Path, stamp: dict[str, Any]) -> None:
-    """Verify bundle identity and bind the generated frontend to packaged provenance."""
-    frontend = root / "pyrit" / "backend" / "frontend"
+    if not (frontend / "index.html").is_file():
+        raise ValueError("Frontend is missing index.html")
     metadata = json.loads((frontend / "compatibility.json").read_text(encoding="utf-8"))
-    if metadata != {"compatibility_id": stamp["compatibility_id"]} or not (frontend / "index.html").is_file():
+    if metadata != {"compatibility_id": stamp["compatibility_id"]}:
         raise ValueError("Frontend and Python compatibility identities differ")
-    stamp["frontend_sha256"] = frontend_hashes(root)
-    _write_stamp(root=root, stamp=stamp)
 
 
 def verify_distribution(root: Path = ROOT) -> None:
-    """Reject unstamped, dirty, missing, or altered Git-free distribution assets."""
+    """Require clean provenance and a matching frontend identity for Git-free builds."""
     stamp = read_stamp(root)
-    hashes = frontend_hashes(root)
-    if stamp["dirty"] or not hashes or stamp.get("frontend_sha256") != hashes or "index.html" not in hashes:
-        raise ValueError("Distribution frontend is missing, dirty, or differs from its provenance stamp")
-    metadata = json.loads((root / "pyrit/backend/frontend/compatibility.json").read_text(encoding="utf-8"))
-    if metadata != {"compatibility_id": stamp["compatibility_id"]}:
-        raise ValueError("Distribution frontend identity does not match Python")
+    if stamp["dirty"]:
+        raise ValueError("Refusing to publish a dirty artifact")
+    verify_frontend(root, stamp)
 
 
 def main() -> None:

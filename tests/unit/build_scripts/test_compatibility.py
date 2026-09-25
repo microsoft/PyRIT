@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from build_scripts import build_backend, prepare_package
-from build_scripts.stamp_compatibility import read_stamp, seal_frontend, stamp_source, verify_distribution
+from build_scripts.stamp_compatibility import read_stamp, stamp_source, verify_distribution, verify_frontend
 from pyrit._compatibility import get_compatibility_id, is_valid_compatibility_id
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -45,7 +45,6 @@ def _frontend(source, stamp):
     (frontend / "index.html").write_text('<script src="app.js"></script>')
     (frontend / "app.js").write_text(f'const identity = "{stamp["compatibility_id"]}";')
     (frontend / "compatibility.json").write_text(json.dumps({"compatibility_id": stamp["compatibility_id"]}))
-    seal_frontend(source, stamp)
     return frontend
 
 
@@ -99,16 +98,16 @@ def test_build_validator_loads_without_importing_pyrit() -> None:
     assert not result.stdout
 
 
-@pytest.mark.parametrize("writer", ["source", "frontend"])
 @pytest.mark.parametrize("replace_fails", [False, True])
-def test_stamp_writes_are_atomic(*, source: Path, writer: str, replace_fails: bool) -> None:
+def test_stamp_writes_are_atomic(*, source: Path, replace_fails: bool) -> None:
     with patch.dict(os.environ, {"PYRIT_SOURCE_COMMIT": COMMIT, "PYRIT_SOURCE_DIRTY": "false"}):
         stamp = stamp_source(source)
-        frontend = _frontend(source, stamp)
         stamp_path = source / "pyrit/_compatibility.json"
         original = stamp_path.read_text(encoding="utf-8")
         original_paths = set(source.rglob("*"))
         original_replace = Path.replace
+        next_commit = "b" * 40
+        next_identity = f"{stamp['version']}+g{next_commit}"
 
         def observe_replace(temporary_path: Path, destination: Path) -> Path:
             assert destination == stamp_path
@@ -116,26 +115,21 @@ def test_stamp_writes_are_atomic(*, source: Path, writer: str, replace_fails: bo
             assert temporary_path != stamp_path
             assert temporary_path.stat().st_mode & 0o444 == 0o444
             assert stamp_path.read_text(encoding="utf-8") == original
-            assert (
-                json.loads(temporary_path.read_text(encoding="utf-8"))["compatibility_id"] == stamp["compatibility_id"]
-            )
+            assert json.loads(temporary_path.read_text(encoding="utf-8"))["compatibility_id"] == next_identity
             if replace_fails:
                 raise OSError("replacement failed")
             return original_replace(temporary_path, destination)
 
         with (
+            patch.dict(os.environ, {"PYRIT_SOURCE_COMMIT": next_commit}),
             patch.object(Path, "replace", autospec=True, side_effect=observe_replace) as replace,
             pytest.raises(OSError, match="replacement failed") if replace_fails else nullcontext(),
         ):
-            if writer == "source":
-                stamp_source(source)
-            else:
-                (frontend / "app.js").write_text("updated bundle")
-                seal_frontend(source, stamp)
+            stamp_source(source)
 
     replace.assert_called_once()
     assert set(source.rglob("*")) == original_paths
-    assert read_stamp(source)["compatibility_id"] == stamp["compatibility_id"]
+    assert read_stamp(source)["compatibility_id"] == (stamp["compatibility_id"] if replace_fails else next_identity)
     assert (stamp_path.read_text(encoding="utf-8") == original) is replace_fails
 
 
@@ -180,15 +174,13 @@ def test_git_checkout_is_authoritative(source, monkeypatch):
         stamp_source(source)
 
 
-def test_git_free_stamp_and_frontend_integrity(source, monkeypatch):
+def test_git_free_stamp_and_frontend_identity(source, monkeypatch):
     stamp = _stamp(source, monkeypatch)
-    frontend = _frontend(source, stamp)
+    _frontend(source, stamp)
     monkeypatch.delenv("PYRIT_SOURCE_COMMIT")
     assert stamp_source(source)["compatibility_id"] == stamp["compatibility_id"]
     verify_distribution(source)
-    (frontend / "app.js").write_text("stale frontend")
-    with pytest.raises(ValueError, match="differs"):
-        verify_distribution(source)
+    assert read_stamp(source) == stamp
 
 
 def test_different_bundle_identity_rejected(source, monkeypatch):
@@ -196,7 +188,31 @@ def test_different_bundle_identity_rejected(source, monkeypatch):
     frontend = _frontend(source, stamp)
     (frontend / "compatibility.json").write_text(json.dumps({"compatibility_id": f"1.2.0.dev0+g{'b' * 40}"}))
     with pytest.raises(ValueError, match="differ"):
-        seal_frontend(source, stamp)
+        verify_frontend(source, stamp)
+    with pytest.raises(ValueError, match="differ"):
+        verify_distribution(source)
+
+
+@pytest.mark.parametrize("filename", ["index.html", "compatibility.json"])
+def test_required_frontend_files_missing(source: Path, monkeypatch: pytest.MonkeyPatch, filename: str) -> None:
+    stamp = _stamp(source, monkeypatch)
+    frontend = _frontend(source, stamp)
+    (frontend / filename).unlink()
+    with pytest.raises((OSError, ValueError)):
+        verify_frontend(source, stamp)
+    with pytest.raises((OSError, ValueError)):
+        verify_distribution(source)
+
+
+@pytest.mark.parametrize("payload", ["null", "[]", "{}", "not json"])
+def test_frontend_marker_malformed(source: Path, monkeypatch: pytest.MonkeyPatch, payload: str) -> None:
+    stamp = _stamp(source, monkeypatch)
+    frontend = _frontend(source, stamp)
+    (frontend / "compatibility.json").write_text(payload)
+    with pytest.raises(ValueError):
+        verify_frontend(source, stamp)
+    with pytest.raises(ValueError):
+        verify_distribution(source)
 
 
 @pytest.mark.parametrize("payload", ["null", "[]", "{}", "not json"])
@@ -271,8 +287,8 @@ def test_version_sources_must_match(source, monkeypatch):
         _stamp(source, monkeypatch)
 
 
-def test_package_preparation_embeds_and_seals_one_identity(source, monkeypatch):
-    _stamp(source, monkeypatch)
+def test_package_preparation_embeds_one_identity(source, monkeypatch):
+    stamp = _stamp(source, monkeypatch)
     (source / "frontend").mkdir()
     (source / "frontend/package.json").write_text("{}")
     monkeypatch.setattr(prepare_package, "__file__", str(source / "build_scripts/prepare_package.py"))
@@ -288,7 +304,7 @@ def test_package_preparation_embeds_and_seals_one_identity(source, monkeypatch):
     monkeypatch.setattr(prepare_package, "build_frontend", build_frontend)
     assert prepare_package.main() == 0
     verify_distribution(source)
-    assert read_stamp(source)["compatibility_id"] == f"1.2.0.dev0+g{COMMIT}"
+    assert read_stamp(source) == stamp
 
 
 def test_sdist_wheel_install_without_git(source, monkeypatch):
@@ -348,4 +364,5 @@ def test_sdist_wheel_install_without_git(source, monkeypatch):
         text=True,
     )
     assert result.stdout.strip() == stamp["compatibility_id"]
+    assert read_stamp(installed) == stamp
     assert stamp["compatibility_id"] in (installed / "pyrit/backend/frontend/app.js").read_text()
