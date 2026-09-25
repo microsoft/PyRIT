@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -210,7 +211,25 @@ class MCPToolProvider:
             "type": self.__class__.__name__,
             "server_name": self._server_name,
             "transport": self._server_config.type,
+            "configuration_fingerprint": self._configuration_fingerprint,
         }
+
+    @property
+    def _configuration_fingerprint(self) -> str:
+        if isinstance(self._server_config, MCPStreamableHTTPServerConfig):
+            configuration: dict[str, object] = {
+                "type": self._server_config.type,
+                "url": self._server_config.url,
+            }
+        else:
+            configuration = {
+                "type": self._server_config.type,
+                "command": self._server_config.command,
+                "args": self._server_config.args,
+                "cwd": str(self._server_config.cwd) if self._server_config.cwd is not None else None,
+            }
+        serialized = json.dumps(configuration, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
     @asynccontextmanager
     async def _create_session_async(self) -> AsyncIterator[ClientSession]:

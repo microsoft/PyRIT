@@ -101,6 +101,40 @@ async def test_openai_response_target_advertises_and_executes_tool(patch_central
     assert result == 5
 
 
+def test_openai_response_target_without_tools_preserves_identifier(patch_central_database) -> None:
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+    )
+
+    identifier = target._build_identifier()
+
+    assert "tools" not in identifier.params
+    assert "tool_providers" not in identifier.params
+
+
+def test_openai_response_target_identifier_includes_advertised_tool_definition(patch_central_database) -> None:
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tools=[add],
+    )
+
+    identifier = target._build_identifier()
+
+    assert identifier.params["tools"] == [
+        {
+            "type": "function",
+            "name": "add",
+            "description": add.description,
+            "parameters": add.parameters,
+            "strict": False,
+        }
+    ]
+
+
 async def test_collect_tools_async_preserves_direct_and_provider_order() -> None:
     async def subtract(*, x: int, y: int) -> int:  # pyrit-async-suffix-exempt
         return x - y

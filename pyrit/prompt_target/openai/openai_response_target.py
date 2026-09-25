@@ -230,8 +230,12 @@ class OpenAIResponseTarget(OpenAITarget):
                 "reasoning_effort": self._reasoning_effort,
                 "reasoning_summary": self._reasoning_summary,
                 "extra_body_parameters": self._extra_body_parameters,
-                "tools": sorted(tool.name for tool in self._tools),
-                "tool_providers": [provider.identifier for provider in self._tool_providers],
+                "tools": sorted(
+                    (self._to_openai_function_tool(tool=tool) for tool in self._tools),
+                    key=lambda tool: tool["name"],
+                )
+                or None,
+                "tool_providers": [provider.identifier for provider in self._tool_providers] or None,
             },
         )
 
@@ -553,7 +557,6 @@ class OpenAIResponseTarget(OpenAITarget):
 
         return Message(message_pieces=extracted_response_pieces)
 
-    @pyrit_target_retry
     @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
@@ -594,11 +597,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
             body = await self._construct_request_body_async(conversation=working_conversation, json_config=json_config)
 
-            # Use unified error handling - automatically detects Response and validates
-            result = await self._handle_openai_request_async(
-                api_call=lambda body=body: self._client.responses.create(**body),
-                request=message,
-            )
+            result = await self._send_model_request_async(body=body, request=message)
 
             # Add result to conversation and responses list
             working_conversation.append(result)
@@ -622,6 +621,13 @@ class OpenAIResponseTarget(OpenAITarget):
 
         # Return all responses (normalizer will persist all of them to memory)
         return responses_to_return
+
+    @pyrit_target_retry
+    async def _send_model_request_async(self, *, body: dict[str, Any], request: Message) -> Message:
+        return await self._handle_openai_request_async(
+            api_call=lambda: self._client.responses.create(**body),
+            request=request,
+        )
 
     def _parse_response_message_content(
         self,

@@ -14,6 +14,7 @@ from mcp import StdioServerParameters
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 from pydantic import ValidationError
 
+from pyrit.exceptions import RateLimitException
 from pyrit.models import JsonResponseConfig, Message, MessagePiece
 from pyrit.prompt_target import (
     FunctionTool,
@@ -53,11 +54,10 @@ def test_from_config_file_loads_streamable_http_server(tmp_path: Path) -> None:
     assert provider.server_name == "notes"
     assert provider.server_url == "http://127.0.0.1:8000/mcp/notes"
     assert isinstance(provider.server_config, MCPStreamableHTTPServerConfig)
-    assert provider.identifier == {
-        "type": "MCPToolProvider",
-        "server_name": "notes",
-        "transport": "http",
-    }
+    assert provider.identifier["type"] == "MCPToolProvider"
+    assert provider.identifier["server_name"] == "notes"
+    assert provider.identifier["transport"] == "http"
+    assert len(str(provider.identifier["configuration_fingerprint"])) == 64
 
 
 def test_from_config_loads_inline_server() -> None:
@@ -115,11 +115,72 @@ def test_from_config_loads_stdio_server_and_infers_legacy_transport() -> None:
         env={"MODE": "test"},
         cwd="tools",
     )
-    assert provider.identifier == {
-        "type": "MCPToolProvider",
-        "server_name": "notes",
-        "transport": "stdio",
-    }
+    assert provider.identifier["type"] == "MCPToolProvider"
+    assert provider.identifier["server_name"] == "notes"
+    assert provider.identifier["transport"] == "stdio"
+    assert len(str(provider.identifier["configuration_fingerprint"])) == 64
+
+
+def test_identifier_fingerprints_server_selection_without_credentials() -> None:
+    first = MCPToolProvider(
+        server_name="notes",
+        server_config=MCPStreamableHTTPServerConfig(
+            url="https://one.example/mcp",
+            headers={"Authorization": "first-secret"},
+        ),
+    )
+    same_server = MCPToolProvider(
+        server_name="notes",
+        server_config=MCPStreamableHTTPServerConfig(
+            url="https://one.example/mcp",
+            headers={"Authorization": "second-secret"},
+        ),
+    )
+    different_server = MCPToolProvider(
+        server_name="notes",
+        server_config=MCPStreamableHTTPServerConfig(url="https://two.example/mcp"),
+    )
+
+    first_fingerprint = first.identifier["configuration_fingerprint"]
+    assert first_fingerprint == same_server.identifier["configuration_fingerprint"]
+    assert first_fingerprint != different_server.identifier["configuration_fingerprint"]
+    assert "one.example" not in str(first.identifier)
+    assert "secret" not in str(first.identifier)
+
+
+def test_stdio_identifier_fingerprints_server_selection_without_environment() -> None:
+    first = MCPToolProvider(
+        server_name="notes",
+        server_config=MCPStdioServerConfig(
+            command="python",
+            args=["notes_server.py"],
+            env={"TOKEN": "first-secret"},
+            cwd="tools",
+        ),
+    )
+    same_server = MCPToolProvider(
+        server_name="notes",
+        server_config=MCPStdioServerConfig(
+            command="python",
+            args=["notes_server.py"],
+            env={"TOKEN": "second-secret"},
+            cwd="tools",
+        ),
+    )
+    different_server = MCPToolProvider(
+        server_name="notes",
+        server_config=MCPStdioServerConfig(
+            command="python",
+            args=["other_server.py"],
+            cwd="tools",
+        ),
+    )
+
+    first_fingerprint = first.identifier["configuration_fingerprint"]
+    assert first_fingerprint == same_server.identifier["configuration_fingerprint"]
+    assert first_fingerprint != different_server.identifier["configuration_fingerprint"]
+    assert "notes_server.py" not in str(first.identifier)
+    assert "secret" not in str(first.identifier)
 
 
 def test_from_config_accepts_validated_config() -> None:
@@ -360,6 +421,45 @@ async def test_openai_response_target_scopes_provider_session_to_send() -> None:
     assert result == []
     assert lifecycle == ["enter", "exit"]
     target._run_tool_call_loop_async.assert_awaited_once_with(normalized_conversation=[])
+
+
+async def test_openai_response_target_retries_request_inside_provider_scope() -> None:
+    provider = MagicMock(spec=MCPToolProvider)
+    lifecycle: list[str] = []
+
+    @asynccontextmanager
+    async def execution_scope():
+        lifecycle.append("enter")
+        try:
+            yield
+        finally:
+            lifecycle.append("exit")
+
+    provider.execution_scope_async = execution_scope
+    target = object.__new__(OpenAIResponseTarget)
+    target._tool_providers = [provider]
+    target._get_json_response_config = MagicMock(return_value=JsonResponseConfig(enabled=False))  # type: ignore[method-assign]
+    target._construct_request_body_async = AsyncMock(return_value={})  # type: ignore[method-assign]
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="Done",
+            )
+        ]
+    )
+    target._handle_openai_request_async = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[RateLimitException(message="transient rate limit"), response]
+    )
+    target._find_pending_tool_calls = MagicMock(return_value=[])  # type: ignore[method-assign]
+    request = Message.from_prompt(prompt="Read a note", role="user")
+    send_implementation = inspect.unwrap(OpenAIResponseTarget._send_prompt_to_target_async)
+
+    result = await send_implementation(target, normalized_conversation=[request])
+
+    assert result == [response]
+    assert target._handle_openai_request_async.await_count == 2
+    assert lifecycle == ["enter", "exit"]
 
 
 def test_openai_response_target_finds_parallel_function_calls() -> None:
