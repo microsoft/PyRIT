@@ -4,11 +4,14 @@
 """Provenance validation and Git-free distribution regression tests."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 import zipfile
+from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -53,6 +56,87 @@ def test_invalid_identity(value):
 
 def test_full_commit_identity():
     assert is_valid_compatibility_id(f"1.2.0.dev0+g{COMMIT}")
+
+
+@pytest.mark.parametrize("version", ["1.2.0custom", "1.2.0RC1", "1" * 211 + ".2.0"])
+def test_build_and_runtime_reject_the_same_invalid_identity(*, source: Path, version: str) -> None:
+    (source / "pyrit/_version.py").write_text(f"__version__ = {version!r}\n")
+    stamp = {"version": version, "commit": COMMIT, "dirty": False, "compatibility_id": f"{version}+g{COMMIT}"}
+    stamp_path = source / "pyrit/_compatibility.json"
+    original = json.dumps(stamp)
+    stamp_path.write_text(original)
+    with (
+        patch("pyrit._compatibility.__file__", str(source / "pyrit/_compatibility.py")),
+        patch("pyrit._version.__version__", version),
+        patch.dict(os.environ, {"PYRIT_SOURCE_COMMIT": COMMIT, "PYRIT_SOURCE_DIRTY": "false"}),
+    ):
+        with pytest.raises(ValueError, match="provenance"):
+            get_compatibility_id()
+        with pytest.raises(ValueError, match="provenance"):
+            read_stamp(source)
+        with pytest.raises(ValueError, match="provenance"):
+            stamp_source(source)
+    assert stamp_path.read_text() == original
+
+
+def test_build_validator_loads_without_importing_pyrit() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            (
+                "import runpy, sys; "
+                "helper = runpy.run_path(sys.argv[1]); "
+                f"assert helper['is_valid_compatibility_id']('1.2.0.dev0+g{COMMIT}'); "
+                "assert 'pyrit' not in sys.modules"
+            ),
+            str(ROOT / "build_scripts/stamp_compatibility.py"),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert not result.stdout
+
+
+@pytest.mark.parametrize("writer", ["source", "frontend"])
+@pytest.mark.parametrize("replace_fails", [False, True])
+def test_stamp_writes_are_atomic(*, source: Path, writer: str, replace_fails: bool) -> None:
+    with patch.dict(os.environ, {"PYRIT_SOURCE_COMMIT": COMMIT, "PYRIT_SOURCE_DIRTY": "false"}):
+        stamp = stamp_source(source)
+        frontend = _frontend(source, stamp)
+        stamp_path = source / "pyrit/_compatibility.json"
+        original = stamp_path.read_text(encoding="utf-8")
+        original_paths = set(source.rglob("*"))
+        original_replace = Path.replace
+
+        def observe_replace(temporary_path: Path, destination: Path) -> Path:
+            assert destination == stamp_path
+            assert temporary_path.parent == stamp_path.parent
+            assert temporary_path != stamp_path
+            assert temporary_path.stat().st_mode & 0o444 == 0o444
+            assert stamp_path.read_text(encoding="utf-8") == original
+            assert (
+                json.loads(temporary_path.read_text(encoding="utf-8"))["compatibility_id"] == stamp["compatibility_id"]
+            )
+            if replace_fails:
+                raise OSError("replacement failed")
+            return original_replace(temporary_path, destination)
+
+        with (
+            patch.object(Path, "replace", autospec=True, side_effect=observe_replace) as replace,
+            pytest.raises(OSError, match="replacement failed") if replace_fails else nullcontext(),
+        ):
+            if writer == "source":
+                stamp_source(source)
+            else:
+                (frontend / "app.js").write_text("updated bundle")
+                seal_frontend(source, stamp)
+
+    replace.assert_called_once()
+    assert set(source.rglob("*")) == original_paths
+    assert read_stamp(source)["compatibility_id"] == stamp["compatibility_id"]
+    assert (stamp_path.read_text(encoding="utf-8") == original) is replace_fails
 
 
 @pytest.mark.parametrize("value", [None, 1, True, []])
@@ -219,10 +303,17 @@ def test_sdist_wheel_install_without_git(source, monkeypatch):
         '[build-system]\nrequires=["setuptools", "wheel"]\nbuild-backend="build_scripts.build_backend"\n'
         'backend-path=["."]\n[tool.setuptools.packages.find]\ninclude=["pyrit", "pyrit.*"]\n'
     )
-    (source / "MANIFEST.in").write_text("recursive-include pyrit *\nrecursive-include build_scripts *.py\n")
+    shutil.copy2(ROOT / "MANIFEST.in", source / "MANIFEST.in")
+    build_env = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in {"PYRIT_SOURCE_COMMIT", "PYRIT_SOURCE_DIRTY", "PYRIT_COMPATIBILITY_ID"}
+    }
+    build_env["PATH"] = ""
     subprocess.run(
         [sys.executable, "-c", "from build_scripts.build_backend import build_sdist; build_sdist('dist')"],
         cwd=source,
+        env=build_env,
         check=True,
         capture_output=True,
     )
@@ -230,19 +321,28 @@ def test_sdist_wheel_install_without_git(source, monkeypatch):
     unpacked = source / "unpacked"
     shutil.unpack_archive(str(archive), str(unpacked))
     extracted = next(unpacked.iterdir())
+    assert {path.name for path in (extracted / "build_scripts").iterdir()} == {
+        "__init__.py",
+        "build_backend.py",
+        "prepare_package.py",
+        "stamp_compatibility.py",
+    }
     subprocess.run(
         [sys.executable, "-c", "from build_scripts.build_backend import build_wheel; build_wheel('dist')"],
         cwd=extracted,
+        env=build_env,
         check=True,
         capture_output=True,
     )
     wheel = next((extracted / "dist").glob("*.whl"))
     installed = source / "installed"
     with zipfile.ZipFile(wheel) as bundle:
+        assert not any(name.startswith("build_scripts/") for name in bundle.namelist())
         bundle.extractall(installed)
     result = subprocess.run(
         [sys.executable, "-c", "from pyrit._compatibility import get_compatibility_id; print(get_compatibility_id())"],
         cwd=installed,
+        env=build_env,
         check=True,
         capture_output=True,
         text=True,

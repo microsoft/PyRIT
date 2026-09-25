@@ -4,6 +4,8 @@ import path from 'path'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
+import { isCompatibilityId } from './src/utils/compatibilityId.ts'
+
 const root = path.resolve(__dirname, '..')
 const compatibilityId = process.env.PYRIT_COMPATIBILITY_ID ?? execFileSync(
   process.env.PYRIT_PYTHON ?? 'python',
@@ -11,9 +13,7 @@ const compatibilityId = process.env.PYRIT_COMPATIBILITY_ID ?? execFileSync(
   { cwd: root, encoding: 'utf8' },
 ).trim()
 const stamp = JSON.parse(readFileSync(path.join(root, 'pyrit/_compatibility.json'), 'utf8'))
-if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:(?:a|b|rc)[0-9]+)?(?:\.post[0-9]+)?(?:\.dev[0-9]+)?\+g[0-9a-f]{40}$/.test(compatibilityId)
-    || compatibilityId !== compatibilityId.trim()
-    || compatibilityId.length > 256
+if (!isCompatibilityId(compatibilityId)
     || stamp.compatibility_id !== compatibilityId
     || compatibilityId !== `${stamp.version}+g${stamp.commit}`
     || typeof stamp.dirty !== 'boolean') {
