@@ -1,3 +1,5 @@
+import { isCompatibilityId } from '@/utils/compatibilityId'
+
 declare const __PYRIT_COMPATIBILITY_ID__: string
 
 export const COMPATIBILITY_HEADER = 'PyRIT-Compatibility-ID'
@@ -5,11 +7,6 @@ export const COMPATIBILITY_HEADER = 'PyRIT-Compatibility-ID'
 export type CompatibilitySnapshot =
   | { status: 'checking' | 'ready' }
   | { status: 'blocked'; reason: string; expected?: string; actual?: string }
-
-export function isCompatibilityId(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 256 && value === value.trim() &&
-    /^[0-9]+\.[0-9]+\.[0-9]+(?:(?:a|b|rc)[0-9]+)?(?:\.post[0-9]+)?(?:\.dev[0-9]+)?\+g[0-9a-f]{40}$/.test(value)
-}
 
 export class CompatibilityStore {
   private snapshot: CompatibilitySnapshot = { status: 'checking' }

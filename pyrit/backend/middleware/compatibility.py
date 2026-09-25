@@ -22,9 +22,8 @@ class CompatibilityMiddleware:
     )
 
     def __init__(self, app: ASGIApp) -> None:
-        """Resolve packaged provenance when the application middleware is built."""
+        """Wrap the application without loading provenance before lifespan startup."""
         self.app = app
-        self._compatibility_id = _compatibility.get_compatibility_id()
 
     @classmethod
     def requires_compatibility(cls, *, path: str, method: str) -> bool:
@@ -37,17 +36,11 @@ class CompatibilityMiddleware:
             await self.app(scope, receive, send)
             return
 
-        compatibility_id = self._compatibility_id
-        if "app" in scope:
-            state = scope["app"].state
-            if not hasattr(state, "compatibility_id"):
-                state.compatibility_id = compatibility_id
-            compatibility_id = state.compatibility_id
-
         if not self.requires_compatibility(path=get_route_path(scope), method=scope["method"]):
             await self.app(scope, receive, send)
             return
 
+        compatibility_id = scope["app"].state.compatibility_id
         markers = Headers(scope=scope).getlist(_compatibility.COMPATIBILITY_HEADER)
         actual = ", ".join(markers) if markers else None
         if len(markers) != 1 or not _compatibility.is_valid_compatibility_id(actual):

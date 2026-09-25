@@ -1,9 +1,6 @@
 import { readFileSync } from "node:fs";
 
-export function isValidCompatibilityId(value: unknown): value is string {
-  return typeof value === "string" && value.length <= 256 && value.trim() === value &&
-    /^[0-9]+\.[0-9]+\.[0-9]+(?:(?:a|b|rc)[0-9]+)?(?:\.post[0-9]+)?(?:\.dev[0-9]+)?\+g[0-9a-f]{40}$/.test(value);
-}
+import { isCompatibilityId } from "../src/utils/compatibilityId";
 
 function readStamp() {
   const stamp = JSON.parse(
@@ -11,7 +8,7 @@ function readStamp() {
   );
   if (
     !stamp ||
-    !isValidCompatibilityId(stamp.compatibility_id) ||
+    !isCompatibilityId(stamp.compatibility_id) ||
     typeof stamp.version !== "string" ||
     stamp.compatibility_id !== `${stamp.version}+g${stamp.commit}` ||
     typeof stamp.dirty !== "boolean"

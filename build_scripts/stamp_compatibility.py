@@ -11,10 +11,15 @@ import re
 import runpy
 import subprocess
 import warnings
+from collections.abc import Callable
 from pathlib import Path
+from tempfile import mkstemp
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+is_valid_compatibility_id: Callable[[object], bool] = runpy.run_path(str(ROOT / "pyrit" / "_compatibility.py"))[
+    "is_valid_compatibility_id"
+]
 
 
 def _git(root: Path, *args: str) -> str:
@@ -46,8 +51,9 @@ def read_stamp(root: Path) -> dict[str, Any]:
         stamp = json.loads((root / "pyrit" / "_compatibility.json").read_text(encoding="utf-8"))
         version = _version(root)
         if (
-            stamp["version"] != version
-            or re.fullmatch(r"[0-9a-f]{40}", stamp["commit"]) is None
+            not is_valid_compatibility_id(stamp["compatibility_id"])
+            or stamp["version"] != version
+            or not isinstance(stamp["commit"], str)
             or stamp["compatibility_id"] != f"{version}+g{stamp['commit']}"
             or not isinstance(stamp["dirty"], bool)
         ):
@@ -55,6 +61,21 @@ def read_stamp(root: Path) -> dict[str, Any]:
         return stamp
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise ValueError("Missing or malformed PyRIT build provenance") from exc
+
+
+def _write_stamp(*, root: Path, stamp: dict[str, Any]) -> None:
+    """Replace provenance atomically so readers only observe complete stamps."""
+    contents = json.dumps(stamp, indent=2) + "\n"
+    stamp_path = root / "pyrit" / "_compatibility.json"
+    descriptor, temporary_name = mkstemp(dir=stamp_path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as temporary_file:
+            temporary_file.write(contents)
+        temporary_path.chmod(0o644)
+        temporary_path.replace(stamp_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def stamp_source(root: Path = ROOT, *, development: bool = False) -> dict[str, Any]:
@@ -89,15 +110,18 @@ def stamp_source(root: Path = ROOT, *, development: bool = False) -> dict[str, A
         if stamp["dirty"] and not development:
             raise ValueError("Refusing to publish a dirty artifact")
         return stamp
-    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
-        raise ValueError("Source provenance requires a full lowercase 40-character commit")
     if dirty:
         if not development:
             raise ValueError("Refusing to publish a dirty source tree")
         warnings.warn("Local edits do not change PyRIT's compatibility identity.", stacklevel=2)
     version = _version(root)
-    stamp = {"version": version, "commit": commit, "dirty": dirty, "compatibility_id": f"{version}+g{commit}"}
-    (root / "pyrit" / "_compatibility.json").write_text(json.dumps(stamp, indent=2) + "\n", encoding="utf-8")
+    identity = f"{version}+g{commit}"
+    if not is_valid_compatibility_id(identity):
+        raise ValueError(
+            "Source provenance requires a normalized package version and full lowercase 40-character commit"
+        )
+    stamp = {"version": version, "commit": commit, "dirty": dirty, "compatibility_id": identity}
+    _write_stamp(root=root, stamp=stamp)
     return stamp
 
 
@@ -118,7 +142,7 @@ def seal_frontend(root: Path, stamp: dict[str, Any]) -> None:
     if metadata != {"compatibility_id": stamp["compatibility_id"]} or not (frontend / "index.html").is_file():
         raise ValueError("Frontend and Python compatibility identities differ")
     stamp["frontend_sha256"] = frontend_hashes(root)
-    (root / "pyrit" / "_compatibility.json").write_text(json.dumps(stamp, indent=2) + "\n", encoding="utf-8")
+    _write_stamp(root=root, stamp=stamp)
 
 
 def verify_distribution(root: Path = ROOT) -> None:

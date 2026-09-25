@@ -3,12 +3,15 @@
 
 """Strict lockstep behavior through the production middleware ordering."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.testclient import TestClient
+from uvicorn import Config, Server
+from uvicorn.lifespan.on import LifespanOn
 
 import pyrit
 from pyrit import _compatibility
@@ -20,13 +23,14 @@ from pyrit.setup.configuration_loader import ConfigurationLoader
 
 
 @pytest.fixture
-def guarded_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+def guarded_app(*, monkeypatch: pytest.MonkeyPatch, compatibility_id: str) -> FastAPI:
     """Exercise the real middleware stack with auth enabled and fresh state."""
     monkeypatch.setenv("ENTRA_TENANT_ID", "test-tenant")
     monkeypatch.setenv("ENTRA_CLIENT_ID", "test-client")
     monkeypatch.setenv("ENTRA_ALLOWED_GROUP_IDS", "allowed-group")
     monkeypatch.setenv("ENTRA_ADMIN_GROUP_ID", "admin-group")
     test_app = FastAPI(routes=list(app.router.routes), middleware=app.user_middleware)
+    test_app.state.compatibility_id = compatibility_id
     test_app.state.effects = []
 
     def stateful_dependency() -> None:
@@ -349,10 +353,12 @@ def test_preflight_accepts_marker_without_auth_or_side_effects(
     assert guarded_app.state.effects == []
 
 
-async def test_guard_does_not_consume_rejected_request_body() -> None:
+async def test_guard_does_not_consume_rejected_request_body(guarded_app: FastAPI) -> None:
     downstream, receive, send = AsyncMock(), AsyncMock(), AsyncMock()
     middleware = CompatibilityMiddleware(downstream)
-    await middleware({"type": "http", "method": "POST", "path": "/api/attacks", "headers": []}, receive, send)
+    await middleware(
+        {"type": "http", "method": "POST", "path": "/api/attacks", "headers": [], "app": guarded_app}, receive, send
+    )
     receive.assert_not_awaited()
     downstream.assert_not_awaited()
     assert send.call_args_list[0].args[0]["status"] == 400
@@ -364,17 +370,37 @@ async def test_guard_does_not_consume_rejected_request_body() -> None:
         {"type": "lifespan"},
         {"type": "websocket", "path": "/socket"},
         {"type": "http", "method": "OPTIONS", "path": "/api/attacks"},
+        {"type": "http", "method": "GET", "path": "/api/health"},
+        {"type": "http", "method": "GET", "path": "/api/version"},
+        {"type": "http", "method": "GET", "path": "/api/auth/config"},
+        {"type": "http", "method": "GET", "path": "/api/media"},
+        {"type": "http", "method": "GET", "path": "/assets/app.js"},
     ],
 )
-async def test_non_http_and_options_pass_through(scope: dict[str, object]) -> None:
+async def test_neutral_and_non_http_scopes_need_no_identity_async(scope: dict[str, object]) -> None:
     downstream, receive, send = AsyncMock(), AsyncMock(), AsyncMock()
-    middleware = CompatibilityMiddleware(downstream)
-    await middleware(scope, receive, send)
+    with patch.object(_compatibility, "get_compatibility_id", side_effect=AssertionError("Must not read provenance")):
+        middleware = CompatibilityMiddleware(downstream)
+        await middleware(scope, receive, send)
     downstream.assert_awaited_once_with(scope, receive, send)
 
 
+def test_uninitialized_identity_fails_before_business_work(
+    *, guarded_app: FastAPI, compatibility_headers: dict[str, str]
+) -> None:
+    del guarded_app.state.compatibility_id
+    with (
+        patch.object(_compatibility, "get_compatibility_id", side_effect=AssertionError("Must not load on demand")),
+        patch.object(EntraAuthMiddleware, "_authenticate_request_async", new_callable=AsyncMock) as authenticate,
+    ):
+        with pytest.raises(AttributeError, match="compatibility_id"):
+            TestClient(guarded_app).post("/api/compatibility-probe", headers=compatibility_headers)
+    assert guarded_app.state.effects == []
+    authenticate.assert_not_awaited()
+
+
 @pytest.mark.parametrize("stamp_error", [None, "missing stamp", "malformed stamp"])
-def test_identity_stays_fixed_without_lifespan_after_stamp_changes(
+def test_initialized_identity_stays_fixed_after_stamp_changes(
     guarded_client: TestClient,
     guarded_app: FastAPI,
     compatibility_id: str,
@@ -412,10 +438,10 @@ async def test_lifespan_identity_is_shared_by_guard_and_version(
     compatibility_id: str,
     graph_user: AuthenticatedUser,
 ) -> None:
-    guarded_app.middleware_stack = guarded_app.build_middleware_stack()
+    del guarded_app.state.compatibility_id
     startup_id = "0.14.0+g" + "b" * 40
     with (
-        patch.object(_compatibility, "get_compatibility_id", return_value=startup_id),
+        patch.object(_compatibility, "get_compatibility_id", return_value=startup_id) as startup_reader,
         patch.object(ConfigurationLoader, "load_with_overrides", return_value=ConfigurationLoader()),
         patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
         patch(
@@ -428,7 +454,10 @@ async def test_lifespan_identity_is_shared_by_guard_and_version(
         patch("pyrit.backend.main.setup_frontend"),
         patch.object(EntraAuthMiddleware, "_authenticate_with_graph_async", return_value=graph_user),
     ):
+        guarded_app.middleware_stack = guarded_app.build_middleware_stack()
+        startup_reader.assert_not_called()
         async with lifespan(guarded_app):
+            startup_reader.assert_called_once()
             assert guarded_app.state.compatibility_id == startup_id
             with patch.object(
                 _compatibility, "get_compatibility_id", side_effect=ValueError("stamp changed")
@@ -446,6 +475,7 @@ async def test_lifespan_identity_is_shared_by_guard_and_version(
     assert version.json()["compatibility_id"] == startup_id
     assert mismatched.status_code == 409
     assert mismatched.json()["expected"] == startup_id
+    startup_reader.assert_called_once()
 
 
 @pytest.mark.parametrize("reason", ["missing stamp", "malformed stamp"])
@@ -458,7 +488,35 @@ async def test_startup_fails_before_initialization_without_provenance(reason: st
         with pytest.raises(ValueError, match=reason):
             async with lifespan(FastAPI()):
                 pytest.fail("Startup accepted invalid provenance")
-        with pytest.raises(ValueError, match=reason):
-            CompatibilityMiddleware(MagicMock())
     configuration.assert_not_called()
     frontend.assert_not_called()
+
+
+@pytest.mark.parametrize("reason", ["missing stamp", "malformed stamp"])
+async def test_uvicorn_auto_lifespan_exits_before_listening_on_invalid_provenance_async(reason: str) -> None:
+    test_app = FastAPI(lifespan=lifespan, middleware=app.user_middleware)
+    server = Server(Config(test_app, lifespan="auto", log_config=None))
+    with (
+        patch.object(_compatibility, "get_compatibility_id", side_effect=ValueError(reason)) as read_stamp,
+        patch("pyrit.backend.main.ConfigurationFileService") as configuration,
+        patch("pyrit.backend.main.setup_frontend") as frontend,
+        patch.object(
+            asyncio.get_running_loop(),
+            "create_server",
+            new_callable=AsyncMock,
+            side_effect=AssertionError("Invalid provenance must not open a listener"),
+        ) as create_listener,
+        patch.object(server, "main_loop", new_callable=AsyncMock) as serve_requests,
+    ):
+        await server.serve()
+    assert isinstance(server.lifespan, LifespanOn)
+    assert server.lifespan.startup_failed
+    assert server.lifespan.should_exit
+    assert server.should_exit
+    assert not server.started
+    assert not hasattr(test_app.state, "compatibility_id")
+    read_stamp.assert_called_once()
+    configuration.assert_not_called()
+    frontend.assert_not_called()
+    create_listener.assert_not_awaited()
+    serve_requests.assert_not_awaited()

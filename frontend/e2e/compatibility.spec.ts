@@ -1,5 +1,6 @@
+import { isCompatibilityId } from "../src/utils/compatibilityId";
 import { test, expect, type Page, type Request } from "./_fixtures";
-import { getCompatibilityId, isValidCompatibilityId, mockVersion } from "./_compatibility";
+import { getCompatibilityId, mockVersion } from "./_compatibility";
 
 function otherCompatibilityId(): string {
   const identity = getCompatibilityId();
@@ -8,13 +9,13 @@ function otherCompatibilityId(): string {
 
 test("validates strict version suffixes and rejects whitespace in stamps", () => {
   const identity = "1.2.3rc1.post2.dev3+g" + "a".repeat(40);
-  expect(isValidCompatibilityId(identity)).toBe(true);
+  expect(isCompatibilityId(identity)).toBe(true);
   for (const invalid of [
     `${identity}\n`, `${identity}\r\n`, ` ${identity}`, `${identity} `,
     identity.replace("rc1.post2.dev3", "custom"), identity.toUpperCase(),
     identity.slice(0, -1), identity.replace("rc1.post2.dev3", ".dev3.post2"), null,
   ]) {
-    expect(isValidCompatibilityId(invalid)).toBe(false);
+    expect(isCompatibilityId(invalid)).toBe(false);
   }
 });
 
