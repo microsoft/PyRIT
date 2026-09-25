@@ -365,3 +365,48 @@ async def test_no_duplicate_messages_in_conversation(response_target, patch_cent
 
         # If we got here, no duplicates were detected
         assert len(call_history) == 2
+
+
+async def test_parallel_function_calls_each_get_an_output(response_target, patch_central_database):
+    """Every function_call in one response must be executed and answered before the next request."""
+    executed = []
+
+    async def func_a(args: dict) -> dict:
+        executed.append("func_a")
+        return {"value": "a"}
+
+    async def func_b(args: dict) -> dict:
+        executed.append("func_b")
+        return {"value": "b"}
+
+    response_target._custom_functions["func_a"] = func_a
+    response_target._custom_functions["func_b"] = func_b
+
+    user_message = Message(
+        message_pieces=[MessagePiece(role="user", original_value="Run both", conversation_id=str(uuid.uuid4()))]
+    )
+
+    parallel = create_mock_function_call_response("call_alpha", "func_a", {})
+    parallel.output.append(create_mock_function_call_response("call_beta", "func_b", {}).output[0])
+    responses = [parallel, create_mock_text_response("Done")]
+    call_history = []
+
+    async def mock_create(**kwargs):
+        call_history.append(kwargs["input"])
+        return responses[len(call_history) - 1]
+
+    with patch.object(response_target._async_client.responses, "create", new_callable=AsyncMock) as mock_create_call:
+        mock_create_call.side_effect = mock_create
+        result = await response_target.send_prompt_async(message=user_message)
+
+    assert executed == ["func_a", "func_b"]
+    assert len(call_history) == 2
+    second_call = call_history[1]
+    calls = [item["call_id"] for item in second_call if item.get("type") == "function_call"]
+    outputs = [item["call_id"] for item in second_call if item.get("type") == "function_call_output"]
+    assert calls == ["call_alpha", "call_beta"]
+    assert outputs == ["call_alpha", "call_beta"]
+    last_call = max(i for i, item in enumerate(second_call) if item.get("type") == "function_call")
+    first_output = min(i for i, item in enumerate(second_call) if item.get("type") == "function_call_output")
+    assert last_call < first_output
+    assert result[-1].message_pieces[0].original_value == "Done"

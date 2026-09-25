@@ -546,8 +546,6 @@ class OpenAIResponseTarget(OpenAITarget):
         responses_to_return: list[Message] = []
 
         # Main agentic loop - each back-and-forth creates a new message
-        tool_call_section: dict[str, Any] | None = None
-
         while True:
             logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
 
@@ -563,23 +561,26 @@ class OpenAIResponseTarget(OpenAITarget):
             working_conversation.append(result)
             responses_to_return.append(result)
 
-            # Extract tool call if present
-            tool_call_section = self._find_last_pending_tool_call(result)
+            # Extract every tool call in the reply; parallel calls each need an output
+            tool_call_sections = self._find_pending_tool_calls(result)
 
             # If no tool call, we're done
-            if not tool_call_section:
+            if not tool_call_sections:
                 break
 
-            # Execute the tool/function
-            tool_output = await self._execute_call_section_async(tool_call_section)
+            for tool_call_section in tool_call_sections:
+                # Execute the tool/function
+                tool_output = await self._execute_call_section_async(tool_call_section)
 
-            # Create a new message with the tool output
-            tool_piece = self._make_tool_piece(tool_output, tool_call_section["call_id"], reference_piece=message_piece)
-            tool_message = Message(message_pieces=[tool_piece])
+                # Create a new message with the tool output
+                tool_piece = self._make_tool_piece(
+                    tool_output, tool_call_section["call_id"], reference_piece=message_piece
+                )
+                tool_message = Message(message_pieces=[tool_piece])
 
-            # Add tool output message to conversation and responses list
-            working_conversation.append(tool_message)
-            responses_to_return.append(tool_message)
+                # Add tool output message to conversation and responses list
+                working_conversation.append(tool_message)
+                responses_to_return.append(tool_message)
 
             # Continue loop to send tool result and get next response
 
@@ -776,18 +777,20 @@ class OpenAIResponseTarget(OpenAITarget):
 
     # Agentic helpers (module scope)
 
-    def _find_last_pending_tool_call(self, reply: Message) -> dict[str, Any] | None:
+    def _find_pending_tool_calls(self, reply: Message) -> list[dict[str, Any]]:
         """
-        Return the last tool-call section in assistant messages, or None.
-        Looks for a piece whose value parses as JSON with a 'type' key matching function_call.
+        Return every tool-call section in assistant messages, in reply order.
+        Looks for pieces whose value parses as JSON with a 'type' key matching function_call.
+        The model can request several calls at once, and each one needs its own output.
 
         Args:
             reply: The message to search for tool calls.
 
         Returns:
-            The tool-call section dict, or None if not found.
+            The tool-call section dicts, or an empty list if there are none.
         """
-        for piece in reversed(reply.message_pieces):
+        sections: list[dict[str, Any]] = []
+        for piece in reply.message_pieces:
             # Filter on data_type to skip reasoning/message pieces that also have api_role "assistant".
             if piece.api_role == "assistant" and piece.original_value_data_type == "function_call":
                 try:
@@ -796,8 +799,8 @@ class OpenAIResponseTarget(OpenAITarget):
                     continue
                 if isinstance(section, dict) and section.get("type") == "function_call":
                     # Do NOT skip function_call even if status == "completed" — we still need to emit the output.
-                    return cast("dict[str, Any]", section)
-        return None
+                    sections.append(cast("dict[str, Any]", section))
+        return sections
 
     async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> dict[str, Any]:
         """
