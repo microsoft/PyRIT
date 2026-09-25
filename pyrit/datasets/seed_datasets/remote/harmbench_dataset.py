@@ -99,6 +99,9 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
 
             # Extract data
             category = example["SemanticCategory"]
+            context = example.get("ContextString", "")
+            behavior = example["Behavior"]
+            value = f"{context}\n\n---\n\n{behavior}" if context else behavior
 
             # Standardize harm categories
             standardized_categories = self._standardize_harm_categories(
@@ -110,7 +113,7 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
 
             # Create SeedPrompt
             seed_prompt = SeedObjective(
-                value=example["Behavior"],
+                value=value,
                 name="HarmBench Examples",
                 dataset_name=self.dataset_name,
                 harm_categories=standardized_categories,

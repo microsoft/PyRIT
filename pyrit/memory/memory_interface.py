@@ -3047,8 +3047,10 @@ class MemoryInterface(abc.ABC):
         Args:
             value (str): The value to match. By default this matches by substring; pass exact=True to
                 require full-string equality instead. If None, all values are returned.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to False (substring matching).
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
+                and ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list
+                elements (case-insensitive) rather than substrings of the stored list. Defaults to False
+                (substring matching).
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -3104,12 +3106,14 @@ class MemoryInterface(abc.ABC):
         elif seed_type is not None:
             conditions.append(SeedEntry.seed_type == seed_type)
 
-        self._add_list_conditions(field=SeedEntry.harm_categories, values=harm_categories, conditions=conditions)
-        self._add_list_conditions(field=SeedEntry.authors, values=authors, conditions=conditions)
-        self._add_list_conditions(field=SeedEntry.groups, values=groups, conditions=conditions)
+        self._add_list_conditions(
+            field=SeedEntry.harm_categories, values=harm_categories, conditions=conditions, exact=exact
+        )
+        self._add_list_conditions(field=SeedEntry.authors, values=authors, conditions=conditions, exact=exact)
+        self._add_list_conditions(field=SeedEntry.groups, values=groups, conditions=conditions, exact=exact)
 
         if parameters:
-            self._add_list_conditions(field=SeedEntry.parameters, values=parameters, conditions=conditions)
+            self._add_list_conditions(field=SeedEntry.parameters, values=parameters, conditions=conditions, exact=exact)
 
         if metadata:
             conditions.append(self._get_seed_metadata_conditions(metadata=metadata))
@@ -3229,10 +3233,11 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
-                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
-                by substring.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring, and
+                ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list elements
+                (case-insensitive), so ``harm_categories=["hate"]`` does not also remove seeds tagged
+                ``"hate_speech"``. Defaults to True for the remove methods (the safer choice for deletion).
+                Note this differs from get_seeds, which always matches these filters by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -3246,9 +3251,9 @@ class MemoryInterface(abc.ABC):
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             added_by (str): The user who added the prompts.
-            authors (Sequence[str]): A list of authors to filter by.
-                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
-                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors (Sequence[str]): A list of authors to filter by. With exact=True (the default) each author
+                must match a stored author exactly (case-insensitive); with exact=False this filters by substring.
+                If None, all authors are considered.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
@@ -3344,10 +3349,11 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
-                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
-                by substring.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring, and
+                ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list elements
+                (case-insensitive), so ``harm_categories=["hate"]`` does not also remove seeds tagged
+                ``"hate_speech"``. Defaults to True for the remove methods (the safer choice for deletion).
+                Note this differs from get_seeds, which always matches these filters by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -3361,9 +3367,9 @@ class MemoryInterface(abc.ABC):
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             added_by (str): The user who added the prompts.
-            authors (Sequence[str]): A list of authors to filter by.
-                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
-                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors (Sequence[str]): A list of authors to filter by. With exact=True (the default) each author
+                must match a stored author exactly (case-insensitive); with exact=False this filters by substring.
+                If None, all authors are considered.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
@@ -3431,11 +3437,25 @@ class MemoryInterface(abc.ABC):
 
     def _add_list_conditions(
         self,
+        *,
         field: InstrumentedAttribute[Any],
         conditions: "list[ColumnElement[bool]]",
         values: Sequence[str] | None = None,
+        exact: bool = False,
     ) -> None:
-        if values:
+        if not values:
+            return
+        if exact:
+            # Match whole list elements (case-insensitive) so "hate" does not match "hate_speech" or "whatever".
+            conditions.append(
+                self._get_condition_json_array_match(
+                    json_column=field,
+                    property_path="$",
+                    array_to_match=list(values),
+                    match_mode="all",
+                )
+            )
+        else:
             conditions.extend(field.contains(value) for value in values)
 
     async def _serialize_seed_value_async(self, prompt: Seed) -> str:
@@ -5081,106 +5101,23 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the limit, cursor ID, or label keys are invalid.
         """
-        if limit < 1 or limit > 100:
-            raise ValueError("Scenario history limit must be between 1 and 100.")
+        from pyrit.memory._scenario_history import _ScenarioHistoryQueries
 
-        conditions: list[Any] = []
-        effective_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
-        if effective_names:
-            conditions.append(
-                or_(
-                    ScenarioResultEntry.scenario_name.in_(effective_names),
-                    self._get_scenario_registry_name_condition(scenario_names=effective_names),
-                )
-            )
-        effective_statuses = sorted({status.strip().upper() for status in statuses or [] if status.strip()})
-        if effective_statuses:
-            conditions.append(ScenarioResultEntry.scenario_run_state.in_(effective_statuses))
-        effective_labels = {
-            key: value
-            for key, value in (labels or {}).items()
-            if (isinstance(value, str) and value) or (not isinstance(value, str) and len(value) > 0)
-        }
-        invalid_keys = sorted(key for key in effective_labels if not self._LABEL_KEY_PATTERN.fullmatch(key))
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
-            )
-        if effective_labels:
-            conditions.append(self._get_scenario_result_labels_condition(labels=effective_labels))
-        if cursor is not None:
-            cursor_id = uuid.UUID(cursor.scenario_result_id)
-            conditions.append(
-                or_(
-                    ScenarioResultEntry.timestamp < cursor.timestamp,
-                    and_(
-                        ScenarioResultEntry.timestamp == cursor.timestamp,
-                        ScenarioResultEntry.id < cursor_id,
-                    ),
-                )
-            )
-
-        statement = select(
-            ScenarioResultEntry.id,
-            ScenarioResultEntry.scenario_name,
-            ScenarioResultEntry.scenario_version,
-            ScenarioResultEntry.pyrit_version,
-            ScenarioResultEntry.scenario_identifier,
-            ScenarioResultEntry.objective_target_identifier,
-            ScenarioResultEntry.scenario_run_state,
-            ScenarioResultEntry.labels,
-            ScenarioResultEntry.timestamp,
-            self._get_scenario_started_at_expression().label("started_at"),
-            ScenarioResultEntry.completion_time,
-            ScenarioResultEntry.error_message,
-            ScenarioResultEntry.error_type,
-            *(
-                expression.label(label)
-                for expression, label in zip(
-                    self._get_scenario_history_plan_expressions(),
-                    ("scenario_registry_name", "plan_atomic_groups", "plan_seed_id_map"),
-                    strict=True,
-                )
-            ),
+        queries = _ScenarioHistoryQueries(memory=self)
+        records, has_more = queries.get_page(
+            scenario_names=scenario_names,
+            statuses=statuses,
+            labels=labels,
+            cursor=cursor,
+            limit=limit,
         )
-        if conditions:
-            statement = statement.where(and_(*conditions))
-        statement = statement.order_by(
-            ScenarioResultEntry.timestamp.desc(),
-            ScenarioResultEntry.id.desc(),
-        ).limit(limit + 1)
-        with closing(self.get_session()) as session:
-            rows = session.execute(statement).all()
-        page_rows = rows[:limit]
-
-        records = [
-            ScenarioHistoryRunRecord(
-                scenario_result_id=str(row.id),
-                scenario_name=row.scenario_name,
-                scenario_version=row.scenario_version,
-                pyrit_version=row.pyrit_version,
-                scenario_identifier=row.scenario_identifier or {},
-                objective_target_identifier=row.objective_target_identifier or {},
-                status=row.scenario_run_state,
-                labels=row.labels or {},
-                created_at=row.timestamp,
-                started_at=self._parse_scenario_started_at(raw_value=row.started_at),
-                completed_at=row.completion_time,
-                error_message=row.error_message,
-                error_type=row.error_type,
-                scenario_registry_name=row.scenario_registry_name,
-                plan_atomic_groups=row.plan_atomic_groups,
-                plan_seed_id_map=row.plan_seed_id_map,
-            )
-            for row in page_rows
-        ]
         aggregates = self.get_scenario_history_aggregates(
             scenario_result_ids=[record.scenario_result_id for record in records],
             plan_scenario_ids=[
                 record.scenario_result_id for record in records if record.plan_atomic_groups is not None
             ],
         )
-        return records, aggregates, len(rows) > limit
+        return records, aggregates, has_more
 
     def get_scenario_history_aggregates(
         self,
@@ -5441,13 +5378,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             datetime | None: Aware start timestamp, or None for legacy or malformed values.
         """
-        if not isinstance(raw_value, str):
-            return None
-        try:
-            value = datetime.fromisoformat(raw_value)
-        except ValueError:
-            return None
-        return value if value.tzinfo is not None else None
+        from pyrit.memory._scenario_history import _parse_scenario_started_at
+
+        return _parse_scenario_started_at(raw_value=raw_value)
 
     def get_unique_scenario_labels(self) -> dict[str, list[str]]:
         """Return all unique label values across scenario results."""

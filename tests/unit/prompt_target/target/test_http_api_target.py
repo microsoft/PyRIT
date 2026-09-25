@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, RequestTraceContext
 from pyrit.prompt_target.http_target.httpx_api_target import HTTPXAPITarget
 
 
@@ -133,6 +133,7 @@ async def test_send_prompt_async_preserves_query_params_for_post(mock_request, p
     )
     await target.send_prompt_async(message=message)
 
+    assert RequestTraceContext.from_metadata(message_piece.prompt_metadata) is None
     mock_request.assert_called_once_with(
         method="POST",
         url="http://example.com/data/",

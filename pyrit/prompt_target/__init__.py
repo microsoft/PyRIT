@@ -29,8 +29,10 @@ if TYPE_CHECKING:
     )
     from pyrit.prompt_target.common.target_configuration import TargetConfiguration
     from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
+    from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig
     from pyrit.prompt_target.common.utils import limit_requests_per_minute
     from pyrit.prompt_target.gandalf_target import GandalfLevel, GandalfTarget
+    from pyrit.prompt_target.hack_a_prompt_target import HackAPromptChallenge, HackAPromptTarget
     from pyrit.prompt_target.http_target.http_target import HTTPTarget
     from pyrit.prompt_target.http_target.http_target_callback_functions import (
         get_http_target_json_response_callback_function,
@@ -57,6 +59,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.websocket_target import WebsocketTarget
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "TargetTraceConfig": "pyrit.prompt_target.common.target_trace_config",
     "AzureBlobStorageTarget": "pyrit.prompt_target.azure_blob_storage_target",
     "AzureMLChatTarget": "pyrit.prompt_target.azure_ml_chat_target",
     "CapabilityName": "pyrit.prompt_target.common.target_capabilities",
@@ -70,6 +73,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "get_http_target_regex_matching_callback_function": (
         "pyrit.prompt_target.http_target.http_target_callback_functions"
     ),
+    "HackAPromptChallenge": "pyrit.prompt_target.hack_a_prompt_target",
+    "HackAPromptTarget": "pyrit.prompt_target.hack_a_prompt_target",
     "HTTPTarget": "pyrit.prompt_target.http_target.http_target",
     "HTTPXAPITarget": "pyrit.prompt_target.http_target.httpx_api_target",
     "HuggingFaceChatTarget": "pyrit.prompt_target.hugging_face.hugging_face_chat_target",
