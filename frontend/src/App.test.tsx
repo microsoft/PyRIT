@@ -3,6 +3,7 @@
  * Licensed under the MIT license.
  */
 
+import { Suspense } from "react";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router";
@@ -13,6 +14,7 @@ import { makeTarget } from "./test-utils/targetFixtures";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "./utils/userPreferences";
 
 const mockGetActiveAccount = jest.fn();
+let mockCreatedAttackRender: Promise<void> | null = null;
 
 jest.mock("./hooks/useTargetRegistry", () => ({
   useTargetRegistry: () => {
@@ -183,6 +185,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     onSelectConversation,
     labels,
     scenarioResultId,
+    isLoadingAttack,
   }: {
     onNewAttack: () => void;
     activeTarget: unknown;
@@ -198,8 +201,12 @@ jest.mock("./components/Chat/ChatWindow", () => {
     onSelectConversation: (convId: string) => void;
     labels: Record<string, string>;
     scenarioResultId?: string | null;
+    isLoadingAttack?: boolean;
   }) => {
     const location = useLocation();
+    if (attackResultId === "ar-123" && mockCreatedAttackRender) {
+      throw mockCreatedAttackRender;
+    }
     return (
       <div data-testid="chat-window">
         <span data-testid="attack-result-id">{attackResultId ?? "none"}</span>
@@ -223,6 +230,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <button
           onClick={() => onConversationCreated("ar-123", "conv-123")}
           data-testid="set-conversation"
+          disabled={isLoadingAttack}
         >
           Set Conv
         </button>
@@ -462,6 +470,7 @@ describe("App", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockCreatedAttackRender = null;
     mockGetActiveAccount.mockReturnValue(null);
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
     mockListTargets.mockResolvedValue({
@@ -1128,6 +1137,32 @@ describe("App", () => {
     const labels = screen.getByTestId("global-labels-json").textContent ?? "";
     expect(labels).toContain('"operator":"real.user"');
     expect(labels).toContain('"operation":"op_i_picked"');
+  });
+
+  it("keeps sends locked until navigation to a created attack commits", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <Suspense fallback={<div>Loading route</div>}>
+          <App />
+        </Suspense>
+      </MemoryRouter>,
+    );
+
+    let finishRender: () => void = () => {};
+    mockCreatedAttackRender = new Promise<void>((resolve) => { finishRender = resolve; });
+    await user.click(screen.getByRole("button", { name: "Set Conv" }));
+
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/chat");
+    expect(screen.getByRole("button", { name: "Set Conv" })).toBeDisabled();
+
+    await act(async () => {
+      mockCreatedAttackRender = null;
+      finishRender();
+    });
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/attacks/ar-123");
+    expect(screen.getByRole("button", { name: "Set Conv" })).toBeEnabled();
+    expect(mockGetAttack).not.toHaveBeenCalled();
   });
 
   it("stores attack target when conversation is created with active target", () => {

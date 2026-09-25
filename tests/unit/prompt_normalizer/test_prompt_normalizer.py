@@ -5,6 +5,8 @@ import asyncio
 import os
 import tempfile
 import wave
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -654,6 +656,80 @@ async def test_convert_response_values_type(mock_memory_instance, response: Mess
     await normalizer.convert_values_async(converter_configurations=[response_converter], message=response)
     assert response.get_value() == "SGVsbG8="
     assert response.get_value(1) == "cGFydCAy"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("stage", ["request", "response"])
+async def test_converter_guard_covers_only_selected_conversions_async(
+    *, mock_memory_instance: MagicMock, stage: str
+) -> None:
+    converter, skipped = Base64Converter(), Base64Converter()
+    guarded: list[Converter] = []
+    active: set[Converter] = set()
+    target = MockPromptTarget()
+    convert = converter.convert_async
+    send = target._send_prompt_to_target_async
+
+    @asynccontextmanager
+    async def guard_async(value: Converter) -> AsyncIterator[None]:
+        guarded.append(value)
+        active.add(value)
+        try:
+            yield
+        finally:
+            active.remove(value)
+
+    async def convert_async(*, prompt: str, input_type: PromptDataType) -> ConverterResult:
+        assert active == {converter}
+        return await convert(prompt=prompt, input_type=input_type)
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        assert not active
+        return await send(normalized_conversation=normalized_conversation)
+
+    configurations = [
+        ConverterConfiguration(converters=[skipped], indexes_to_apply=[9]),
+        ConverterConfiguration(converters=[skipped], prompt_data_types_to_apply=["image_path"]),
+        ConverterConfiguration(converters=[converter]),
+    ]
+    with (
+        patch.object(converter, "convert_async", side_effect=convert_async),
+        patch.object(target, "_send_prompt_to_target_async", side_effect=send_async),
+    ):
+        await PromptNormalizer(converter_guard=guard_async).send_prompt_async(
+            message=Message.from_prompt(prompt="Hello", role="user"),
+            target=target,
+            request_converter_configurations=configurations if stage == "request" else None,
+            response_converter_configurations=configurations if stage == "response" else None,
+        )
+    assert guarded == [converter]
+    assert not active
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("error", [RuntimeError("conversion failed"), asyncio.CancelledError()])
+async def test_converter_guard_releases_on_failure_async(
+    *, mock_memory_instance: MagicMock, error: BaseException
+) -> None:
+    active = False
+    converter = Base64Converter()
+
+    @asynccontextmanager
+    async def guard_async(value: Converter) -> AsyncIterator[None]:
+        nonlocal active
+        assert value is converter
+        active = True
+        try:
+            yield
+        finally:
+            active = False
+
+    with patch.object(converter, "convert_async", side_effect=error), pytest.raises(type(error)):
+        await PromptNormalizer(converter_guard=guard_async).convert_values_async(
+            converter_configurations=[ConverterConfiguration(converters=[converter])],
+            message=Message.from_prompt(prompt="Hello", role="user"),
+        )
+    assert not active
 
 
 async def test_send_prompt_async_exception_conv_id(mock_memory_instance, seed_group):
