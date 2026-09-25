@@ -107,7 +107,7 @@ async def test_stale_version_and_invalid_preflight_do_not_mutate(runtime: Runtim
 
 async def test_active_work_rejects_apply_without_stopping_or_mutating(runtime: RuntimeLifecycle) -> None:
     service = MagicMock()
-    service.active_work.return_value = (["running-id"], 1)
+    service.has_active_work.return_value = True
     with patch.object(lifecycle_module, "peek_scenario_run_service", return_value=service):
         await apply_async(runtime)
     assert runtime.outcome == "busy"
@@ -171,7 +171,7 @@ async def test_disconnected_send_remains_owned_and_blocks_apply(runtime: Runtime
         request.cancel()
         with pytest.raises(asyncio.CancelledError):
             await request
-        assert runtime.active_work()["sends"] == 1
+        assert len(runtime.operations) == 1
         await apply_async(runtime)
         assert runtime.outcome == "busy"
         assert runtime.state == "ready"

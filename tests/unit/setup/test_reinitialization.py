@@ -5,6 +5,7 @@
 
 import os
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,7 +15,7 @@ from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
 from pyrit.registry import InitializerRegistry, TargetRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
-from pyrit.setup.initialization import initialize_pyrit_async, reset_setup_registries, validate_reinitialization_memory
+from pyrit.setup.initialization import reset_setup_registries, validate_reinitialization_memory
 
 
 async def test_preflight_uses_isolated_registry_without_changing_live_state() -> None:
@@ -51,7 +52,10 @@ async def test_replacement_precedence_interpolation_empty_and_omission(tmp_path:
             patch("pyrit.setup.initialization.validate_reinitialization_memory", return_value=object()),
             patch.object(CentralMemory, "set_memory_instance"),
         ):
-            await initialize_pyrit_async("InMemory", reinitialize=True, environment_values=values, load_defaults=False)
+            config = ConfigurationLoader(memory_db_type="in_memory", initialization_scripts=[], env_files=[])
+            prepared = await config.preflight_reinitialization_async(environment_values=values)
+            prepared = replace(prepared, initializers=())
+            await config.apply_prepared_reinitialization_async(prepared=prepared)
         assert os.environ["VALUE"] == "local"
         assert os.environ["EMPTY"] == ""
         assert os.environ["OMITTED"] == "keep"
@@ -110,21 +114,24 @@ class CustomInitializer(PyRITInitializer):
         custom_initializers_source=str(source),
     )
     try:
-        await config.initialize_pyrit_async(reinitialize=True)
+        prepared = await config.preflight_reinitialization_async(environment_values={})
+        await config.apply_prepared_reinitialization_async(prepared=prepared)
         assert TargetRegistry.get_registry_singleton().instances.get("first") is not None
         first_registry = TargetRegistry.get_registry_singleton()
         script.write_text(template.replace("TARGET_NAME", "second"), encoding="utf-8")
-        await config.initialize_pyrit_async(reinitialize=True)
+        prepared = await config.preflight_reinitialization_async(environment_values={})
+        await config.apply_prepared_reinitialization_async(prepared=prepared)
         registry = TargetRegistry.get_registry_singleton()
         assert registry is not first_registry
         assert registry.instances.get("first") is None
         assert registry.instances.get("second") is not None
-        await config.initialize_pyrit_async(reinitialize=True)
+        prepared = await config.preflight_reinitialization_async(environment_values={})
+        await config.apply_prepared_reinitialization_async(prepared=prepared)
         assert TargetRegistry.get_registry_singleton().instances.get_names() == ["second"]
         script.unlink()
         with pytest.raises(ValueError, match="not found"):
-            await config.initialize_pyrit_async(reinitialize=True)
-        assert TargetRegistry.get_registry_singleton().instances.get("second") is None
+            await config.preflight_reinitialization_async(environment_values={})
+        assert TargetRegistry.get_registry_singleton().instances.get("second") is not None
         assert CentralMemory.get_memory_instance() is sqlite_instance
         assert sqlite_instance.get_message_pieces(conversation_id=message.message_pieces[0].conversation_id)
     finally:
@@ -139,7 +146,10 @@ async def test_memory_change_rejected_before_environment_or_registries(tmp_path:
     config = ConfigurationLoader(memory_db_type="azure_sql", env_files=[str(env)])
     with patch.dict(os.environ, {"DO_NOT_APPLY": "original"}):
         with pytest.raises(ValueError, match="restart"):
-            await config.initialize_pyrit_async(reinitialize=True)
+            validate_reinitialization_memory(
+                memory_db_type=config._MEMORY_DB_TYPE_MAP[config.memory_db_type],
+                environment={"DO_NOT_APPLY": "changed"},
+            )
         assert os.environ["DO_NOT_APPLY"] == "original"
         assert TargetRegistry.get_registry_singleton() is registry
 

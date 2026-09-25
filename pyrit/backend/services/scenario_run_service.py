@@ -219,18 +219,15 @@ class ScenarioRunService:
         self._queue_revision = 0
         self._stopping = False
 
-    def active_work(self) -> tuple[list[str], int]:
-        """Return scheduled scenario IDs and preparation or handoff work."""
-        scenario_ids = [
-            *([self._active_scenario_result_id] if self._active_scenario_result_id else []),
-            *(run.scenario_result_id for run in self._queued_runs),
-        ]
-        return list(dict.fromkeys(scenario_ids)), len(self._preparations) + len(self._handoff_retry_tasks)
+    def has_active_work(self) -> bool:
+        """Return whether scenario scheduling, preparation, or handoff work remains."""
+        return bool(
+            self._active_scenario_result_id or self._queued_runs or self._preparations or self._handoff_retry_tasks
+        )
 
     async def close_async(self) -> None:
         """Close a service only after all tracked work has drained."""
-        scenario_ids, remaining = self.active_work()
-        if scenario_ids or remaining:
+        if self.has_active_work():
             raise RuntimeError("Scenario work has not drained.")
         await asyncio.to_thread(self._prepare_executor.shutdown, wait=True)
 

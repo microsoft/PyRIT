@@ -47,30 +47,13 @@ class RuntimeLifecycle:
         self.version: str | None = None
         self.outcome = "starting"
         self.message = ""
-        self.operations: dict[asyncio.Task[None], str] = {}
+        self.operations: set[asyncio.Task[None]] = set()
         self.management_operations: set[asyncio.Task[None]] = set()
         self.apply_task: asyncio.Task[None] | None = None
         self.topology_supported = all(
             os.getenv(key, "1") == "1"
             for key in ("WEB_CONCURRENCY", "UVICORN_WORKERS", "PYRIT_API_WORKERS", "PYRIT_REPLICAS")
         )
-
-    def active_work(self) -> dict[str, Any]:
-        """
-        Snapshot real work rather than persisted run status.
-
-        Returns:
-            dict[str, Any]: Outstanding requests, runs, preparations and estimates.
-        """
-        service = peek_scenario_run_service()
-        runs, preparing = service.active_work() if service else ([], 0)
-        return {
-            "scenario_ids": runs,
-            "preparing": preparing,
-            "sends": sum(path.startswith("POST ") and "/messages" in path for path in self.operations.values()),
-            "requests": len(self.operations),
-            "estimates": outstanding_estimates(),
-        }
 
     def status(self) -> dict[str, Any]:
         """Return status recoverable after a disconnected apply."""
@@ -81,7 +64,6 @@ class RuntimeLifecycle:
             "outcome": self.outcome,
             "message": self.message,
             "enabled": self.topology_supported,
-            "active_work": self.active_work(),
             "applying": self.apply_task is not None and not self.apply_task.done(),
         }
 
@@ -236,8 +218,8 @@ class RuntimeLifecycle:
 
     def _has_active_work(self) -> bool:
         """Return whether any admitted or background runtime operation remains."""
-        work = self.active_work()
-        return bool(work["scenario_ids"] or work["preparing"] or work["requests"] or work["estimates"])
+        service = peek_scenario_run_service()
+        return bool((service and service.has_active_work()) or self.operations or outstanding_estimates())
 
     async def shutdown_async(self) -> None:
         """Stop the current scheduler and close services owned by this process."""

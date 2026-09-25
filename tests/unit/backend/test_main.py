@@ -33,7 +33,7 @@ def mock_scenario_run_lifecycle():
     """Mock scenario scheduling lifecycle hooks."""
     service = MagicMock(
         reconcile_interrupted_runs_async=AsyncMock(return_value=0),
-        active_work=MagicMock(return_value=([], 0)),
+        has_active_work=MagicMock(return_value=False),
         shutdown_async=AsyncMock(),
     )
     with (

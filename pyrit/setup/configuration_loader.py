@@ -25,7 +25,7 @@ from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models import class_name_to_snake_case
 from pyrit.setup.environment_loading import validate_env_akv_strict
-from pyrit.setup.initialization import AZURE_SQL, IN_MEMORY, SQLITE, initialize_pyrit_async
+from pyrit.setup.initialization import AZURE_SQL, IN_MEMORY, SQLITE, initialize_pyrit_async, reinitialize_pyrit_async
 
 if TYPE_CHECKING:
     from pyrit.registry import InitializerRegistry
@@ -698,29 +698,28 @@ class ConfigurationLoader(YamlLoadable):
         )
 
     async def apply_prepared_reinitialization_async(self, *, prepared: PreparedReinitialization) -> None:
-        """Apply a preflighted replacement while preserving the current memory instance."""
+        """
+        Apply a preflighted replacement while preserving the current memory instance.
+
+        Raises:
+            RuntimeError: If no live memory instance exists.
+        """
         from pyrit.registry import InitializerRegistry
         from pyrit.setup.initialization import reset_setup_registries, validate_reinitialization_memory
 
-        validate_reinitialization_memory(
+        memory = validate_reinitialization_memory(
             memory_db_type=self._MEMORY_DB_TYPE_MAP[self.memory_db_type],
             environment=prepared.environment_values,
         )
+        if memory is None:
+            raise RuntimeError("Live reinitialization requires initialized memory.")
         reset_setup_registries()
         InitializerRegistry.set_registry_singleton(prepared.initializer_registry)
-        await initialize_pyrit_async(
-            memory_db_type=self._MEMORY_DB_TYPE_MAP[self.memory_db_type],
-            initialization_scripts=[],
+        await reinitialize_pyrit_async(
+            memory=memory,
             initializers=prepared.initializers,
-            load_defaults=False,
-            env_files=[],
-            env_akv_ref=None,
-            env_akv_strict=self.env_akv_strict,
-            silent=self.silent,
-            seed=self.seed,
-            raise_on_initializer_error=True,
-            reinitialize=True,
             environment_values=prepared.environment_values,
+            seed=self.seed,
         )
 
     def resolve_initialization_scripts(self) -> Sequence[pathlib.Path] | None:
@@ -782,13 +781,7 @@ class ConfigurationLoader(YamlLoadable):
         """
         return self.env_akv_ref
 
-    async def initialize_pyrit_async(
-        self,
-        *,
-        raise_on_initializer_error: bool = True,
-        reinitialize: bool = False,
-        environment_values: dict[str, str] | None = None,
-    ) -> None:
+    async def initialize_pyrit_async(self, *, raise_on_initializer_error: bool = True) -> None:
         """
         Initialize PyRIT with the loaded configuration.
 
@@ -798,33 +791,10 @@ class ConfigurationLoader(YamlLoadable):
         Args:
             raise_on_initializer_error: Whether initializer resolution, loading, validation, or execution
                 failures should abort initialization. Defaults to True.
-            reinitialize: Reset setup-owned registries and replace environment assignments, keeping memory.
-            environment_values: Already resolved replacement assignments from an admission-safe preflight.
 
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
         """
-        if reinitialize:
-            from pyrit.registry import InitializerRegistry
-            from pyrit.setup.environment_loading import resolve_environment_async
-            from pyrit.setup.initialization import reset_setup_registries, validate_reinitialization_memory
-
-            if environment_values is None:
-                environment_values = await resolve_environment_async(
-                    env_files=self.resolve_env_files(),
-                    env_akv_ref=self.env_akv_ref,
-                    env_akv_strict=self.env_akv_strict,
-                    silent=self.silent,
-                )
-            validate_reinitialization_memory(
-                memory_db_type=self._MEMORY_DB_TYPE_MAP[self.memory_db_type], environment=environment_values
-            )
-            os.environ.update(environment_values)
-            reset_setup_registries()
-            registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
-            registry.configure_custom_scripts_source(self.custom_initializers_source)
-            if self.allow_custom_initializers:
-                await asyncio.to_thread(registry.register_stored_initializers, strict=True)
         resolved_initializers = self.resolve_initializers(
             raise_on_initializer_error=raise_on_initializer_error,
         )
@@ -844,7 +814,6 @@ class ConfigurationLoader(YamlLoadable):
             silent=self.silent,
             seed=self.seed,
             raise_on_initializer_error=raise_on_initializer_error,
-            **({"reinitialize": True, "environment_values": environment_values} if reinitialize else {}),
         )
 
 

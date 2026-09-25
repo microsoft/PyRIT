@@ -13,7 +13,6 @@ from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteM
 from pyrit.setup.environment_loading import (
     load_environment_async,
     load_environment_files,
-    resolve_environment_async,
     validate_env_akv_strict,
 )
 
@@ -148,8 +147,6 @@ async def initialize_pyrit_async(
     silent: bool = False,
     seed: int | None = None,
     raise_on_initializer_error: bool = True,
-    reinitialize: bool = False,
-    environment_values: dict[str, str] | None = None,
     **memory_instance_kwargs: Any,
 ) -> None:
     """
@@ -187,8 +184,6 @@ async def initialize_pyrit_async(
             whose defaults are selected randomly. This does not control remote model output.
         raise_on_initializer_error (bool): If True, raise when loading or executing an initializer fails.
             If False, log each failure and continue with the remaining initializers. Defaults to True.
-        reinitialize (bool): Replace current environment assignments and retain the existing memory.
-        environment_values (dict[str, str] | None): Resolved replacement values, used only for reinitialization.
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
 
     Raises:
@@ -196,21 +191,9 @@ async def initialize_pyrit_async(
         ValueError: If an unsupported memory_db_type is provided or env_files contains non-existent files.
     """
     validate_env_akv_strict(env_akv_strict=env_akv_strict)
-    existing_memory = None
-    if reinitialize:
-        values = environment_values
-        if values is None:
-            values = await resolve_environment_async(
-                env_akv_ref=env_akv_ref, env_files=env_files, env_akv_strict=env_akv_strict, silent=silent
-            )
-        existing_memory = validate_reinitialization_memory(memory_db_type=memory_db_type, environment=values)
-        if memory_instance_kwargs:
-            raise ValueError("Memory constructor overrides require a backend restart.")
-        os.environ.update(values)
-    else:
-        await load_environment_async(
-            env_akv_ref=env_akv_ref, env_files=env_files, env_akv_strict=env_akv_strict, silent=silent
-        )
+    await load_environment_async(
+        env_akv_ref=env_akv_ref, env_files=env_files, env_akv_strict=env_akv_strict, silent=silent
+    )
     configure_random_seed(seed=seed)
 
     # Reset all default values before executing initialization scripts
@@ -222,9 +205,7 @@ async def initialize_pyrit_async(
     # (like prompt targets) that require central memory to be initialized
     memory: MemoryInterface
 
-    if existing_memory is not None:
-        memory = existing_memory
-    elif memory_db_type == IN_MEMORY:
+    if memory_db_type == IN_MEMORY:
         logger.info("Using in-memory SQLite database.")
         memory = SQLiteMemory(db_path=":memory:", silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     elif memory_db_type == SQLITE:
@@ -279,3 +260,18 @@ async def initialize_pyrit_async(
             initializers=all_initializers,
             raise_on_initializer_error=raise_on_initializer_error,
         )
+
+
+async def reinitialize_pyrit_async(
+    *,
+    memory: MemoryInterface,
+    initializers: Sequence["PyRITInitializer"],
+    environment_values: dict[str, str],
+    seed: int | None,
+) -> None:
+    """Replace runtime-only setup while retaining the validated memory instance."""
+    os.environ.update(environment_values)
+    configure_random_seed(seed=seed)
+    reset_default_values()
+    CentralMemory.set_memory_instance(memory)
+    await _execute_initializers_async(initializers=initializers, raise_on_initializer_error=True)

@@ -28,7 +28,6 @@ const ready: RuntimeStatus = {
   applying: false,
   outcome: 'success',
   message: 'PyRIT is ready.',
-  active_work: { scenario_ids: [], preparing: 0, sends: 0, requests: 0, estimates: 0 },
 }
 const api = jest.mocked(configurationApi)
 
@@ -95,7 +94,6 @@ describe('Reinitialize', () => {
       ...ready,
       outcome: 'busy',
       message: 'Wait for active work to finish, then retry.',
-      active_work: { scenario_ids: ['run-42'], preparing: 1, sends: 1, requests: 2, estimates: 1 },
     })
     render(
       <TestWrapper>
@@ -105,8 +103,7 @@ describe('Reinitialize', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Reinitialize PyRIT' }))
-    expect(await screen.findByText(/Outstanding: 1 scenarios, 1 preparing, 1 sends, 1 estimates, 2 requests/))
-      .toBeInTheDocument()
+    expect(await screen.findByText(/Wait for active work to finish, then retry/)).toBeInTheDocument()
   })
 
   it('requires a backend restart after a mutation failure', async () => {

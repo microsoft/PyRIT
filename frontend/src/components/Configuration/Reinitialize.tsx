@@ -75,11 +75,6 @@ export default function Reinitialize({
         <MessageBar intent={statusIsError ? 'error' : 'info'}>
           <MessageBarBody>
             Runtime: {status.state}. {status.message}
-            {status.outcome === 'busy' && (
-              <> Outstanding: {status.active_work.scenario_ids.length} scenarios,
-                {' '}{status.active_work.preparing} preparing, {status.active_work.sends} sends,
-                {' '}{status.active_work.estimates} estimates, {status.active_work.requests} requests.</>
-            )}
             {!status.enabled && ' Reinitialization requires one backend worker and one replica.'}
           </MessageBarBody>
         </MessageBar>

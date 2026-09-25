@@ -67,8 +67,7 @@ class RuntimeAdmissionMiddleware:
                 else:
                     await self.app(scope, receive, send)
             finally:
-                if task in runtime.operations:
-                    del runtime.operations[task]
+                runtime.operations.discard(task)
                 runtime.management_operations.discard(task)
 
         task = asyncio.create_task(execute_async())
@@ -76,6 +75,6 @@ class RuntimeAdmissionMiddleware:
         if management:
             runtime.management_operations.add(task)
         else:
-            runtime.operations[task] = f"{scope['method']} {path}"
+            runtime.operations.add(task)
         # Strong ownership plus shield ensures sends/threads finish even when an HTTP task is cancelled.
         await asyncio.shield(task)

@@ -1146,11 +1146,4 @@ export interface RuntimeStatus {
   applying: boolean
   outcome: string
   message: string
-  active_work: {
-    scenario_ids: string[]
-    preparing: number
-    sends: number
-    requests: number
-    estimates: number
-  }
 }
