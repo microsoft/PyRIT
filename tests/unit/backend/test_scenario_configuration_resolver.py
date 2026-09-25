@@ -15,7 +15,20 @@ from pyrit.scenario.core import (
     override_default_adversarial_target,
     scenario_target_defaults,
 )
+from pyrit.scenario.scenarios.garak.api_key import ApiKey
 from unit.mocks import MockPromptTarget
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(("limit", "expected"), [(None, 20), (7, 7)])
+def test_dataset_name_override_preserves_default_limit(*, limit: int | None, expected: int) -> None:
+    resolved = ScenarioConfigurationResolver.resolve_configuration(
+        scenario_name="garak.api_key",
+        scenario_class=ApiKey,
+        dataset_names=ApiKey.required_datasets(),
+        max_dataset_size=limit,
+    )
+    assert resolved["dataset_config"].max_dataset_size == expected
 
 
 @pytest.mark.usefixtures("patch_central_database")

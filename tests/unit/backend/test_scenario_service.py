@@ -148,6 +148,31 @@ def test_catalog_preserves_adversarial_default_usage(uses_default: bool) -> None
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAdversarialEstimateScope:
+    async def test_default_and_configured_previews_do_not_load_datasets_async(self) -> None:
+        registry = ScenarioRegistry()
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(
+                DatasetAttackConfiguration,
+                "_collect_named_seeds_async",
+                side_effect=AssertionError("Preview queried datasets"),
+            ),
+        ):
+            registry.get_class("garak.api_key")
+            service = ScenarioService()
+            default = await service._get_default_run_size_estimate_async(
+                metadata=_make_scenario_metadata(registry_name="garak.api_key"),
+            )
+            configured = await service.estimate_scenario_run_size_async(
+                scenario_name="garak.api_key",
+                request=ScenarioRunSizeEstimateRequest(max_dataset_size=7),
+            )
+        assert default.estimated_attack_count == 20
+        assert configured is not None
+        assert configured.estimated_attack_count == 7
+        assert configured.model_dump(mode="json")["status"] == "approximate"
+        assert all(dataset.logical_seed_group_count is None for dataset in configured.datasets)
+
     async def test_cold_registry_estimate_uses_selected_target_without_global_fallback_async(self) -> None:
         registry = ScenarioRegistry()
         selected = MockPromptTarget()

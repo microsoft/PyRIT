@@ -258,19 +258,25 @@ class ApiKey(Scenario):
 
         Returns:
             ScenarioRunSizeEstimate: The selected request count.
+
+        Raises:
+            DatasetConstraintError: If the dataset configuration is not supported.
         """
-        groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
+        config = self._dataset_config
+        if not isinstance(config, ApiKeyDatasetConfiguration):
+            raise DatasetConstraintError("ApiKey requires an ApiKeyDatasetConfiguration.")
+        config._set_techniques([ApiKeyTechnique(technique.value) for technique in self._scenario_techniques])
+        count, datasets = self._get_dataset_budget_for_estimate()
         for dataset in datasets:
             dataset.kind = "synthesized"
         components = [
             ScenarioRunSizeComponent(
-                label=f"{name} prompts",
-                count=len(population),
+                label="Synthesized request budget",
+                count=count,
                 factors=[
-                    ScenarioRunSizeFactor(label="selected synthesized requests", count=len(population)),
+                    ScenarioRunSizeFactor(label="combined request cap", count=count),
                 ],
             )
-            for name, population in groups.items()
         ]
         return ScenarioRunSizeEstimate(
             status=ScenarioRunSizeEstimateStatus.Exact,

@@ -332,8 +332,7 @@ class Jailbreak(Scenario):
             ValueError: If native system-prompt delivery is the only selected
                 technique but the selected target cannot support it.
         """
-        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
-        seed_group_count = sum(len(groups) for groups in selected_groups.values())
+        seed_group_count, datasets = self._get_dataset_budget_for_estimate()
         template_count = len(self.params.get("jailbreak_names") or []) or (
             self.params.get("num_jailbreaks") or _DEFAULT_NUM_JAILBREAKS
         )

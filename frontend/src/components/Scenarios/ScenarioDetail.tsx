@@ -95,22 +95,9 @@ function targetOptionLabel(target: TargetInstance): string {
 }
 
 function defaultMaxDatasetSize(scenario: RegisteredScenario): string {
-  const datasets = scenario.default_run_size.datasets
-  if (datasets.length === 0) {
-    return ''
-  }
-
-  for (const dataset of datasets) {
-    if (dataset.configured_caps.length === 0) {
-      return ''
-    }
-  }
-
-  const selectedGroupCount = datasets.reduce(
-    (total, dataset) => total + dataset.selected_seed_group_count,
-    0,
-  )
-  return selectedGroupCount > 0 ? String(selectedGroupCount) : ''
+  const estimate = scenario.default_run_size
+  const size = estimate.effective_parameters?.max_dataset_size ?? estimate.configured_dataset_size
+  return typeof size === 'number' ? String(size) : ''
 }
 
 /** Resolves a Fluent `SpinButton` change event to a numeric value, preferring the parsed `value` over the raw `displayValue`. */
@@ -210,19 +197,20 @@ function formatAtomicAttackCount(state: ScenarioRunEstimateState): string {
   if (!estimate) {
     return state.status === 'loading' ? 'Calculating...' : 'Unavailable'
   }
+  const prefix = estimate.approximate ? 'About ' : ''
   if (estimate.total !== null) {
-    return estimate.total.toLocaleString()
+    return `${prefix}${estimate.total.toLocaleString()}`
   }
   if (estimate.minimum != null && estimate.maximum != null) {
     return estimate.minimum === estimate.maximum
-      ? estimate.minimum.toLocaleString()
-      : `${estimate.minimum.toLocaleString()}-${estimate.maximum.toLocaleString()}`
+      ? `${prefix}${estimate.minimum.toLocaleString()}`
+      : `${prefix}${estimate.minimum.toLocaleString()}-${estimate.maximum.toLocaleString()}`
   }
   if (estimate.minimum != null) {
-    return `At least ${estimate.minimum.toLocaleString()}`
+    return `At least ${prefix.toLowerCase()}${estimate.minimum.toLocaleString()}`
   }
   if (estimate.maximum != null) {
-    return `Up to ${estimate.maximum.toLocaleString()}`
+    return `Up to ${prefix.toLowerCase()}${estimate.maximum.toLocaleString()}`
   }
   return 'Varies'
 }

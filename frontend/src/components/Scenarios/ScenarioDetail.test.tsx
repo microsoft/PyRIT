@@ -890,6 +890,7 @@ describe('ScenarioDetail', () => {
     mockGetScenario.mockResolvedValueOnce(
       makeScenario({
         default_run_size: {
+          configured_dataset_size: 8,
           estimated_attack_count: null,
           components: [],
           datasets: [
@@ -948,6 +949,28 @@ describe('ScenarioDetail', () => {
     await confirmRunPreview(user)
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')
+  })
+
+  it('uses the configured default and labels the pre-run total as approximate', async () => {
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: {
+        ...makeEstimate(10),
+        status: 'approximate',
+        configured_dataset_size: 10,
+        effective_parameters: { max_dataset_size: 5 },
+      },
+    }))
+    mockEstimateRun.mockResolvedValue({
+      ...makeEstimate(10),
+      status: 'approximate',
+      configured_dataset_size: 10,
+    })
+
+    renderDetail('/scanner/foundry.red_team_agent')
+
+    expect(await screen.findByTestId('max-dataset-size-input')).toHaveValue(5)
+    expect(await screen.findByText('About 10')).toBeInTheDocument()
+    expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
   })
 
   it('includes dataset overrides and filters when provided', async () => {

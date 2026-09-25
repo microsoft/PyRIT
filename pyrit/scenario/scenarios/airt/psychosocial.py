@@ -32,6 +32,8 @@ from pyrit.executor.attack import (
     CrescendoAttack,
 )
 from pyrit.models import (
+    ScenarioDatasetSizeCap,
+    ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     SeedPrompt,
@@ -514,13 +516,22 @@ class Psychosocial(Scenario):
         Estimate the independent sub-harm technique sweeps and per-harm baselines.
 
         Returns:
-            ScenarioRunSizeEstimate: Exact per-sub-harm estimate.
+            ScenarioRunSizeEstimate: Configured per-sub-harm budget.
         """
-        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
+        seed_group_count, _ = self._get_dataset_budget_for_estimate()
+        datasets = [
+            ScenarioDatasetSummary(
+                name=harm.dataset_name,
+                configured_caps=[
+                    ScenarioDatasetSizeCap(label="per-sub-harm cap", count=seed_group_count),
+                ],
+            )
+            for harm in self._selected_sub_harms()
+        ]
         technique_count = len(self._scenario_techniques)
         components: list[ScenarioRunSizeComponent] = []
-        for dataset_name, seed_groups in selected_groups.items():
-            seed_group_count = len(seed_groups)
+        for dataset in datasets:
+            dataset_name = dataset.name
             components.append(
                 ScenarioRunSizeComponent(
                     label=f"{dataset_name} technique sweep",
@@ -540,6 +551,7 @@ class Psychosocial(Scenario):
             total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
+            configured_dataset_size=seed_group_count * len(datasets),
             note="Each default sub-harm is planned independently; retries and internal turns are excluded.",
         )
 

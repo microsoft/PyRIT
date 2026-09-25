@@ -235,10 +235,9 @@ class Encoding(Scenario):
         Estimate converter variants crossed with raw and decode-template prompt configurations.
 
         Returns:
-            ScenarioRunSizeEstimate: Exact converter-variant estimate.
+            ScenarioRunSizeEstimate: Configured converter-variant budget.
         """
-        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
-        seed_group_count = sum(len(groups) for groups in selected_groups.values())
+        seed_group_count, datasets = self._get_dataset_budget_for_estimate()
         selected_encoding_names = {technique.value for technique in self._scenario_techniques}
         variant_count = sum(1 for _, name, _ in self._converter_variants() if name in selected_encoding_names)
         prompt_configuration_count = 1 + len(self._encoding_templates)

@@ -148,7 +148,9 @@ class ScenarioConfigurationResolver:
                 try:
                     resolved["dataset_config"] = default_config_class(
                         dataset_names=dataset_names,
-                        max_dataset_size=max_dataset_size,
+                        max_dataset_size=(
+                            max_dataset_size if max_dataset_size is not None else default_config.max_dataset_size
+                        ),
                         filters=filters or None,
                     )
                 except TypeError as exc:

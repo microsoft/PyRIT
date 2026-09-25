@@ -289,6 +289,18 @@ technique, or dataset before trying again.
 
 ### Scenario Run Results
 
+Before launch, the scenario list and configuration page show an approximate run
+size based on configured dataset limits. They do not query dataset populations.
+The estimate includes scenario-specific templates, attempts, technique expansion,
+and enabled baselines. The dataset column shows configured limits, not the actual
+number of available objectives.
+
+The default dataset limit is **5** when no limit is supplied. Existing explicit
+scenario limits still apply. During initialization, PyRIT loads and selects the
+real seed groups. The running view then uses the exact planned count from the run
+plan; saved and resumed runs use that persisted plan. Internal turns and retries
+are not additional planned units.
+
 In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.
 
 Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.

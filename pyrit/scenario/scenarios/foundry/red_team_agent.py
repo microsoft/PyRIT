@@ -426,8 +426,7 @@ class RedTeamAgent(Scenario):
         Returns:
             ScenarioRunSizeEstimate: The composition population estimate.
         """
-        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
-        selected_count = sum(len(groups) for groups in selected_groups.values())
+        selected_count, datasets = self._get_dataset_budget_for_estimate()
         components = [
             ScenarioRunSizeComponent(
                 label=composition.name,

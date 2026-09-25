@@ -52,6 +52,30 @@ const EXACT_ESTIMATE: ScenarioRunSizeEstimateResponse = {
 }
 
 describe('ScenarioRunEstimate', () => {
+  it('labels a configuration-based total as approximate without population counts', () => {
+    const state = mapScenarioRunEstimate({
+      ...EXACT_ESTIMATE,
+      status: 'approximate',
+      configured_dataset_size: 5,
+      datasets: [{
+        name: 'not-loaded',
+        kind: 'dataset',
+        logical_seed_group_count: null,
+        selected_seed_group_count: null,
+        configured_caps: [],
+        selection_note: null,
+      }],
+    }, 'default')
+    render(
+      <TestWrapper>
+        <ScenarioRunEstimateSummary state={state} />
+      </TestWrapper>,
+    )
+    expect(screen.getByText('About 8 attacks')).toBeInTheDocument()
+    expect(screen.getByText('Approximate estimate')).toBeInTheDocument()
+    expect(screen.queryByText('Estimate unavailable')).not.toBeInTheDocument()
+  })
+
   it('renders only the authoritative total and formula in the detailed preview', () => {
     const state = mapScenarioRunEstimate(EXACT_ESTIMATE, 'request')
 
@@ -69,6 +93,29 @@ describe('ScenarioRunEstimate', () => {
     expect(screen.queryByText('Current configuration')).not.toBeInTheDocument()
     expect(screen.queryByText('Planned components')).not.toBeInTheDocument()
     expect(screen.queryByText('Dataset populations')).not.toBeInTheDocument()
+  })
+
+  it.each<[number | null, number | null, string]>([
+    [12, 20, 'About 12-20 attacks'],
+    [12, 12, 'About 12 attacks'],
+    [null, 20, 'Up to about 20 attacks'],
+    [12, null, 'At least about 12 attacks'],
+  ])('labels budget ranges as approximate (%s, %s)', (minimum, maximum, label) => {
+    const state = mapScenarioRunEstimate({
+      ...EXACT_ESTIMATE,
+      status: 'conditional',
+      configured_dataset_size: 4,
+      estimated_attack_count: null,
+      minimum_attack_count: minimum,
+      maximum_attack_count: maximum,
+      components: [],
+    }, 'default')
+    render(
+      <TestWrapper>
+        <ScenarioRunEstimateSummary state={state} />
+      </TestWrapper>,
+    )
+    expect(screen.getByText(label)).toBeInTheDocument()
   })
 
   it('supports loading, conditional null totals, unavailable, and stale states', () => {

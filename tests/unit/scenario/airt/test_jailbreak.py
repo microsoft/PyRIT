@@ -230,8 +230,8 @@ class TestJailbreakInitialization:
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
         assert estimate.estimated_attack_count == 8
         assert [component.label for component in estimate.components] == ["Inline jailbreak delivery"]
-        assert estimate.datasets[0].logical_seed_group_count == 4
-        assert estimate.datasets[0].selected_seed_group_count == 4
+        assert estimate.datasets[0].logical_seed_group_count is None
+        assert estimate.datasets[0].selected_seed_group_count is None
         assert [(cap.label, cap.count) for cap in estimate.datasets[0].configured_caps] == [("per-dataset cap", 4)]
 
     async def test_run_size_is_conditional_when_system_delivery_target_is_not_selected(
@@ -252,8 +252,8 @@ class TestJailbreakInitialization:
 
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
         assert estimate.estimated_attack_count is None
-        assert estimate.minimum_attack_count == 2
-        assert estimate.maximum_attack_count == 4
+        assert estimate.minimum_attack_count == 8
+        assert estimate.maximum_attack_count == 16
         assert [component.label for component in estimate.components] == [
             "Inline jailbreak delivery",
             "Native system-prompt jailbreak delivery",
@@ -277,8 +277,8 @@ class TestJailbreakInitialization:
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
 
         assert estimate.estimated_attack_count is None
-        assert estimate.minimum_attack_count == 2
-        assert estimate.maximum_attack_count == 2
+        assert estimate.minimum_attack_count == 8
+        assert estimate.maximum_attack_count == 8
         assert "incompatible targets cannot run it" in (estimate.note or "")
 
     async def test_mutually_exclusive_selectors_raise(

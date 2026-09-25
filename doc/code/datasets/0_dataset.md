@@ -55,3 +55,20 @@ A `SeedDataset` is a collection of related `SeedGroups` that you want to test to
 - `airt_*`: Various harm categories from AI Red Team
 
 Datasets can be loaded from local YAML files or fetched remotely from sources like HuggingFace, making it easy to share and version test cases across teams.
+
+## Dataset selection limits
+
+`DatasetConfiguration` defaults to a maximum size of **5**. This default also
+applies to `DatasetAttackConfiguration`, notebook code, and programmatic use.
+An explicit limit, such as `max_dataset_size=4`, takes priority. Pass
+`max_dataset_size=None` to use the full population.
+
+A single configuration applies its limit to the combined selection, even when it
+names several datasets. `CompoundDatasetAttackConfiguration.per_dataset(...)`
+applies the limit to each dataset independently. A compound configuration can also
+set a separate limit on the combined result.
+
+Before a scenario starts, its run estimate uses these configured limits without
+reading datasets. Scenario-specific template and attempt counts still apply.
+Once initialization selects the real seed groups, the run plan supplies the exact
+planned count. Smaller datasets and compatibility checks can change the count.

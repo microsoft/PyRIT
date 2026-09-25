@@ -92,6 +92,7 @@ def test_run_size_estimate_preserves_legacy_total_and_serializes_additively() ->
             },
         ],
         "datasets": [],
+        "configured_dataset_size": None,
         "effective_parameters": {
             "include_baseline": True,
             "techniques": ["one", "two"],
@@ -110,6 +111,32 @@ def test_run_size_estimate_rejects_conflicting_total_aliases() -> None:
                 "estimated_attack_count": 3,
                 "components": [{"label": "Techniques", "count": 2}],
             }
+        )
+
+
+def test_approximate_estimate_round_trip_preserves_unknown_population() -> None:
+    estimate = ScenarioRunSizeEstimate(
+        status=ScenarioRunSizeEstimateStatus.Approximate,
+        total_attack_count=10,
+        configured_dataset_size=5,
+        components=[ScenarioRunSizeComponent(label="Techniques", count=10)],
+        datasets=[ScenarioDatasetSummary(name="not-loaded")],
+    )
+    restored = ScenarioRunSizeEstimate.model_validate_json(estimate.model_dump_json())
+    assert restored.status is ScenarioRunSizeEstimateStatus.Approximate
+    assert restored.estimated_attack_count == 10
+    assert restored.minimum_attack_count is None
+    assert restored.maximum_attack_count is None
+    assert restored.datasets[0].logical_seed_group_count is None
+    assert restored.datasets[0].selected_seed_group_count is None
+
+
+def test_approximate_estimate_still_requires_consistent_components() -> None:
+    with pytest.raises(ValidationError, match="components total"):
+        ScenarioRunSizeEstimate(
+            status=ScenarioRunSizeEstimateStatus.Approximate,
+            total_attack_count=10,
+            components=[ScenarioRunSizeComponent(label="Techniques", count=9)],
         )
 
 

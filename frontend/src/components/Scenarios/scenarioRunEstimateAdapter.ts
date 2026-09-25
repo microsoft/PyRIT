@@ -67,6 +67,8 @@ export function mapScenarioRunEstimate(
   const componentOccurrences = new Map<string, number>()
   const estimate: ScenarioRunEstimate = {
     scope,
+    approximate: response.status === 'approximate'
+      || (response.status === 'conditional' && response.configured_dataset_size != null),
     total: response.estimated_attack_count,
     minimum: response.minimum_attack_count ?? null,
     maximum: response.maximum_attack_count ?? null,

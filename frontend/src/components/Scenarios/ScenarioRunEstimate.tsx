@@ -41,7 +41,7 @@ function statusLabel(state: ScenarioRunEstimateState): string {
     case 'loading':
       return 'Loading estimate'
     case 'available':
-      return 'Backend estimate'
+      return state.estimate.approximate ? 'Approximate estimate' : 'Backend estimate'
     case 'conditional':
       return 'Conditional estimate'
     case 'refreshing':
@@ -75,19 +75,20 @@ function countLabel(value: number, singular: string, plural: string): string {
 }
 
 function formatPlannedAttackSummary(estimate: ScenarioRunEstimate): string {
+  const prefix = estimate.approximate ? 'About ' : ''
   if (estimate.total !== null) {
-    return countLabel(estimate.total, 'attack', 'attacks')
+    return `${prefix}${countLabel(estimate.total, 'attack', 'attacks')}`
   }
   if (estimate.minimum != null && estimate.maximum != null) {
     return estimate.minimum === estimate.maximum
-      ? countLabel(estimate.minimum, 'attack', 'attacks')
-      : `${formatEstimateValue(estimate.minimum)}-${formatEstimateValue(estimate.maximum)} attacks`
+      ? `${prefix}${countLabel(estimate.minimum, 'attack', 'attacks')}`
+      : `${prefix}${formatEstimateValue(estimate.minimum)}-${formatEstimateValue(estimate.maximum)} attacks`
   }
   if (estimate.maximum != null) {
-    return `Up to ${countLabel(estimate.maximum, 'attack', 'attacks')}`
+    return `Up to ${prefix.toLowerCase()}${countLabel(estimate.maximum, 'attack', 'attacks')}`
   }
   if (estimate.minimum != null) {
-    return `At least ${countLabel(estimate.minimum, 'attack', 'attacks')}`
+    return `At least ${prefix.toLowerCase()}${countLabel(estimate.minimum, 'attack', 'attacks')}`
   }
   return 'Attack count varies'
 }

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from functools import cache
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
@@ -66,7 +66,6 @@ class RapidResponse(Scenario):
     #: technique pool (and the ``all`` aggregate) reflects whatever the initializer
     #: registered. ``use_cached`` only matches prior runs at the current ``VERSION``.
     VERSION: int = 3
-    RUN_SIZE_USES_FACTORY_COMPATIBILITY: ClassVar[bool] = True
 
     @apply_defaults
     def __init__(

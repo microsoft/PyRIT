@@ -294,7 +294,7 @@ class DatasetConfiguration:
         seeds: Sequence[Seed] | None = None,
         seed_groups: list[SeedGroup] | None = None,
         dataset_names: list[str] | None = None,
-        max_dataset_size: int | None = None,
+        max_dataset_size: int | None = 5,
         filters: dict[str, list[str]] | None = None,
         validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
         auto_fetch: bool = True,
@@ -307,8 +307,9 @@ class DatasetConfiguration:
             seed_groups (list[SeedGroup] | None): Explicit, inline seed groups (never
                 touches memory).
             dataset_names (list[str] | None): Names of datasets to load from memory.
-            max_dataset_size (int | None): If set, randomly samples up to this many items
-                from the resolved dataset (without replacement).
+            max_dataset_size (int | None): Randomly samples up to this many items
+                from the resolved dataset (without replacement). Defaults to 5.
+                Pass None to use the full dataset.
             filters (dict[str, list[str]] | None): Filters passed to ``MemoryInterface.get_seeds``
                 when resolving named datasets (e.g. ``{"harm_categories": ["cyber"]}``).
                 Applied before ``max_dataset_size`` sampling; ignored for inline seeds.
@@ -410,6 +411,10 @@ class DatasetConfiguration:
     def has_size_cap(self) -> bool:
         """Whether this configuration applies a logical-group selection cap."""
         return self.max_dataset_size is not None
+
+    def get_size_budget(self) -> int | None:
+        """Return the configured selection budget without reading or sampling seeds."""
+        return self.max_dataset_size
 
     def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
         """
@@ -810,7 +815,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         cls,
         *,
         dataset_names: Sequence[str],
-        max_dataset_size: int | None = None,
+        max_dataset_size: int | None = 5,
         auto_fetch: bool = True,
         filters: dict[str, list[str]] | None = None,
         validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
@@ -824,6 +829,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         Args:
             dataset_names (Sequence[str]): The dataset names; one child is built per name.
             max_dataset_size (int | None): Per-dataset cap applied to each child.
+                Defaults to 5; pass None for unlimited children.
             auto_fetch (bool): Passed to each child (fetch missing datasets into memory).
             filters (dict[str, list[str]] | None): ``get_seeds`` filters applied to each child.
             validators (Sequence[Callable[[ResolvedDataset], None]] | None): Applied to each child.
@@ -880,6 +886,19 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
     def has_size_cap(self) -> bool:
         """Whether the compound or any child applies a logical-group cap."""
         return self.max_dataset_size is not None or any(child.has_size_cap for child in self._configurations)
+
+    def get_size_budget(self) -> int | None:
+        """
+        Combine child budgets and apply the optional overall cap without reading seeds.
+
+        Returns:
+            int | None: The combined limit, or None when the configuration is unlimited.
+        """
+        budgets = [child.get_size_budget() for child in self._configurations]
+        if any(budget is None for budget in budgets):
+            return self.max_dataset_size
+        total = sum(budget for budget in budgets if budget is not None)
+        return min(total, self.max_dataset_size) if self.max_dataset_size is not None else total
 
     def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
         """

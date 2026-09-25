@@ -729,13 +729,15 @@ export interface ScenarioDatasetSizeCap {
 export interface ScenarioDatasetSummary {
   name: string
   kind: 'dataset' | 'synthesized'
-  logical_seed_group_count: number
-  selected_seed_group_count: number
+  logical_seed_group_count: number | null
+  selected_seed_group_count: number | null
   configured_caps: ScenarioDatasetSizeCap[]
   selection_note: string | null
 }
 
 export interface ScenarioRunSizeEstimateResponse {
+  status?: 'exact' | 'approximate' | 'conditional' | 'unavailable'
+  configured_dataset_size?: number | null
   estimated_attack_count: number | null
   minimum_attack_count?: number | null
   maximum_attack_count?: number | null
@@ -776,14 +778,15 @@ export interface ScenarioRunEstimateDataset {
   id: string
   name: string
   kind: 'dataset' | 'synthesized'
-  logicalSeedGroupCount: number
-  selectedSeedGroupCount: number
+  logicalSeedGroupCount: number | null
+  selectedSeedGroupCount: number | null
   configuredCaps: ScenarioRunEstimateDatasetCap[]
   selectionNote: string | null
 }
 
 export interface ScenarioRunEstimate {
   scope: 'default' | 'request'
+  approximate?: boolean
   total: number | null
   minimum?: number | null
   maximum?: number | null
