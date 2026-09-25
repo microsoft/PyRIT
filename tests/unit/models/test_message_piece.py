@@ -14,9 +14,11 @@ from unit.mocks import get_sample_conversations
 from pyrit.converter import Base64Converter
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
+    ChatMessageRole,
     ComponentIdentifier,
     Message,
     MessagePiece,
+    RequestTraceContext,
     Score,
     construct_response_from_request,
     flatten_to_message_pieces,
@@ -24,6 +26,27 @@ from pyrit.models import (
     group_message_pieces_into_conversations,
     sort_message_pieces,
 )
+
+
+@pytest.mark.parametrize(
+    ("role", "expected_role", "api_role"),
+    [("assistant", "simulated_assistant", "assistant"), ("tool", "simulated_tool", "tool"), ("user", "user", "user")],
+)
+def test_simulated_history_provenance(
+    *, role: ChatMessageRole, expected_role: ChatMessageRole, api_role: ChatMessageRole
+) -> None:
+    piece = MessagePiece(role=role, original_value="history")
+    piece.prompt_metadata.update(RequestTraceContext(traceparent=f"00-{'1' * 32}-{'2' * 16}-01").to_metadata())
+    piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
+    piece.set_simulated_role()
+    piece.set_simulated_role()
+    restored = MessagePiece.model_validate_json(piece.model_dump_json())
+    assert restored.role == expected_role
+    assert restored.api_role == api_role
+    assert restored.is_simulated is (role != "user")
+    assert restored.prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY] is True
+    assert RequestTraceContext.from_metadata(restored.prompt_metadata) is None
+    assert RequestTraceContext.REQUEST_METADATA_KEY not in restored.prompt_metadata
 
 
 @pytest.fixture

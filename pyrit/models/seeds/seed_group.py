@@ -452,8 +452,6 @@ class SeedGroup(BaseModel):
             message_pieces = []
             for prompt in sequence_prompts:
                 role = prompt.role or "user"
-                if role == "assistant":
-                    role = "simulated_assistant"
 
                 piece = MessagePiece(
                     role=role,
@@ -463,6 +461,7 @@ class SeedGroup(BaseModel):
                     sequence=sequence,
                     prompt_metadata=prompt.metadata,
                 )
+                piece.set_simulated_role()
                 message_pieces.append(piece)
 
             messages.append(Message(message_pieces=message_pieces))

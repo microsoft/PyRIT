@@ -100,6 +100,13 @@ describe("conversationExport", () => {
     jest.restoreAllMocks();
   });
 
+  it("preserves the synthetic tool label in exported conversations", async () => {
+    const messages = [message({ role: "simulated_tool", content: "Injected tool result" })];
+    expect(conversationToMarkdown(messages, "conv-1", FIXED_NOW)).toContain("Simulated Tool");
+    expect(await conversationToHtml(messages, "conv-1", FIXED_NOW)).toContain("Simulated Tool");
+    expect(conversationToJson(messages, "conv-1")).toContain("simulated_tool");
+  });
+
   describe("conversationToMarkdown", () => {
     it("renders a header with the conversation id, exported time, and message count", () => {
       const md = conversationToMarkdown([message()], "conv-1", FIXED_NOW);

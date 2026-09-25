@@ -758,10 +758,10 @@ describe("messageMapper", () => {
       expect(backendMessageToFrontend(msg).role).toBe("system");
     });
 
-    it("should preserve simulated_assistant role", () => {
+    it.each(["simulated_assistant", "tool", "simulated_tool"])("should preserve %s role", (role) => {
       const msg: BackendMessage = {
         turn_number: 0,
-        role: "simulated_assistant",
+        role,
         message_pieces: [
           {
             id: "p1",
@@ -775,7 +775,7 @@ describe("messageMapper", () => {
         created_at: "2026-02-15T00:00:00Z",
       };
 
-      expect(backendMessageToFrontend(msg).role).toBe("simulated_assistant");
+      expect(backendMessageToFrontend(msg).role).toBe(role);
     });
 
     it("should use default MIME type when none provided for image", () => {

@@ -76,6 +76,7 @@ class OpenAIChatTarget(OpenAITarget):
 
     """
 
+    _SUPPORTS_TOOL_CALL_HISTORY = True
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,

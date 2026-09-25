@@ -16,6 +16,9 @@ This module exposes two complementary probes:
 * ``_discover_input_modalities_async`` discovers which input modality
   combinations a target actually supports by sending a minimal test request
   for each combination declared in ``TargetCapabilities.input_modalities``.
+  Structured function calls and results use a history probe instead of file
+  assets. That probe is available for OpenAI Chat, Responses,
+  and LiteLLM; other adapters retain their declared tool-history support.
 
 .. note::
    Output modality probing is intentionally not provided. Unlike inputs,
@@ -40,7 +43,7 @@ import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from pyrit.common.path import DATASETS_PATH
@@ -57,6 +60,7 @@ from pyrit.prompt_target.common.target_capabilities import (
     TargetCapabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +158,7 @@ def _permissive_configuration(
         supports_editable_history=True,
         supports_system_prompt=True,
         supports_streaming_audio=True,
-        input_modalities=merged_modalities,
+        input_modalities=merged_modalities | TOOL_CALL_INPUT_MODALITIES,
         output_modalities=original.capabilities.output_modalities,
     )
     # Rebuild a fresh configuration from the instance's native capabilities so
@@ -163,9 +167,32 @@ def _permissive_configuration(
     probe_configuration = TargetConfiguration(capabilities=permissive_caps)
     target._configuration = probe_configuration
     try:
-        yield
+        with _disable_probe_tools(target=target):
+            yield
     finally:
         target._configuration = original
+
+
+@contextmanager
+def _disable_probe_tools(*, target: PromptTarget) -> Iterator[None]:
+    """Disable configured tools during probes and restore all settings on exit."""
+    from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
+    from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
+    from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
+
+    with ExitStack() as stack:
+        if isinstance(target, (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget)):
+            original_body = target._extra_body_parameters
+            stack.callback(setattr, target, "_extra_body_parameters", original_body)
+            target._extra_body_parameters = {
+                key: value
+                for key, value in (original_body or {}).items()
+                if key not in {"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"}
+            }
+        if isinstance(target, OpenAIResponseTarget):
+            stack.callback(setattr, target, "_execute_tools", target._execute_tools)
+            target._execute_tools = False
+        yield
 
 
 def _new_conversation_id() -> str:
@@ -523,6 +550,64 @@ async def _probe_json_schema_async(target: PromptTarget, timeout_s: float, retri
     )
 
 
+async def _probe_tool_calls_async(
+    *, target: PromptTarget, timeout_s: float, retries: int = 1, include_text: bool = False
+) -> bool:
+    """
+    Check acceptance of synthetic function-call history without executing tools.
+
+    Returns:
+        bool: Whether the endpoint accepted the structured history.
+    """
+    conversation_id = _new_conversation_id()
+    call_id = f"call_{uuid.uuid4().hex}"
+    history = [
+        _user_text_piece(value="Look up the probe value.", conversation_id=conversation_id).to_message(),
+        MessagePiece(
+            role="simulated_assistant",
+            original_value=json.dumps(
+                {"type": "function_call", "call_id": call_id, "name": "pyrit_probe", "arguments": "{}"}
+            ),
+            original_value_data_type="function_call",
+            conversation_id=conversation_id,
+            prompt_metadata=_probe_metadata(),
+        ).to_message(),
+        MessagePiece(
+            role="simulated_tool",
+            original_value=json.dumps({"type": "function_call_output", "call_id": call_id, "output": "probe value"}),
+            original_value_data_type="function_call_output",
+            conversation_id=conversation_id,
+            prompt_metadata=_probe_metadata(),
+        ).to_message(),
+    ]
+    if include_text:
+        history[1].message_pieces.insert(
+            0,
+            MessagePiece(
+                role="simulated_assistant",
+                original_value="Looking up the probe value.",
+                conversation_id=conversation_id,
+                prompt_metadata=_probe_metadata(),
+            ),
+        )
+    await asyncio.to_thread(
+        target._memory.add_conversation_to_memory,
+        conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier()),
+    )
+    for message in history:
+        message.set_simulated_role()
+        await asyncio.to_thread(target._memory.add_message_to_memory, request=message)
+    return await _send_and_check_async(
+        target=target,
+        message=_user_text_piece(
+            value="Acknowledge the tool result without calling any tools.", conversation_id=conversation_id
+        ).to_message(),
+        timeout_s=timeout_s,
+        retries=retries,
+        label="Tool-call history probe",
+    )
+
+
 # Registry of capabilities that can be queried via a live API call.
 # Capabilities not present here fall back to the target's declared support.
 _CAPABILITY_PROBES: dict[CapabilityName, _CapabilityProbe] = {
@@ -532,6 +617,20 @@ _CAPABILITY_PROBES: dict[CapabilityName, _CapabilityProbe] = {
     CapabilityName.JSON_OUTPUT: _probe_json_output_async,
     CapabilityName.JSON_SCHEMA: _probe_json_schema_async,
 }
+
+
+def _supports_tool_history_probe(target: PromptTarget) -> bool:
+    """
+    Check whether the adapter has a verified structured-history probe.
+
+    Returns:
+        bool: Whether the structured history can be sent by this adapter.
+    """
+    from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
+    from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
+    from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
+
+    return isinstance(target, (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget))
 
 
 async def _discover_capability_flags_async(
@@ -657,8 +756,8 @@ async def _discover_input_modalities_async(
             Defaults to 1.
 
     Returns:
-        set[frozenset[PromptDataType]]: The modality combinations confirmed
-        to work against the target.
+        set[frozenset[PromptDataType]]: Confirmed combinations and existing tool
+        declarations where structured history probing is unavailable or inconclusive.
     """
     if test_modalities is None:
         declared = target.capabilities.input_modalities
@@ -670,8 +769,26 @@ async def _discover_input_modalities_async(
     assets = test_assets if test_assets is not None else DEFAULT_TEST_ASSETS
 
     queried: set[frozenset[PromptDataType]] = set()
+    tool_modalities = test_modalities & TOOL_CALL_INPUT_MODALITIES
+    declared_modalities = target.capabilities.input_modalities
+    declared_tools = declared_modalities & tool_modalities
     with _permissive_configuration(target=target, extra_input_modalities=test_modalities):
+        if tool_modalities:
+            for include_text in sorted({"text" in combo for combo in tool_modalities}):
+                combinations = {combo for combo in tool_modalities if ("text" in combo) == include_text}
+                if _supports_tool_history_probe(target) and await _probe_tool_calls_async(
+                    target=target, timeout_s=per_probe_timeout_s, retries=retries, include_text=include_text
+                ):
+                    queried.update(combinations)
+                else:
+                    logger.info("Tool history support was not confirmed; retaining declared tool modalities.")
+                    queried.update(declared_tools & combinations)
         for combination in test_modalities:
+            if combination & {"function_call", "function_call_output", "tool_call"}:
+                logger.debug("Tool artifacts are checked by the tool-call history probe, not file-asset probes.")
+                if combination not in tool_modalities and combination in declared_modalities:
+                    queried.add(combination)
+                continue
             try:
                 message = _create_test_message(modalities=combination, test_assets=assets)
             except FileNotFoundError as exc:
@@ -796,12 +913,12 @@ async def discover_target_capabilities_async(
         supports_json_output=_resolve(CapabilityName.JSON_OUTPUT),
         supports_editable_history=resolved_editable_history,
         supports_system_prompt=_resolve(CapabilityName.SYSTEM_PROMPT),
+        supports_streaming_audio=declared.supports_streaming_audio,
         input_modalities=resolved_input_modalities,
         # Output modalities are still declarative because probing them would
         # require target-specific response inspection.
         output_modalities=declared.output_modalities,
     )
-
     if apply:
         target.apply_capabilities(capabilities=resolved)
 

@@ -52,6 +52,7 @@ def _make_litellm_stub(
     supports_response_schema: bool = False,
     supports_audio_input: bool = False,
     supports_audio_output: bool = False,
+    supports_function_calling: bool = False,
 ):
     mod = types.ModuleType("litellm")
     mod.acompletion = AsyncMock(name="litellm.acompletion")
@@ -59,6 +60,7 @@ def _make_litellm_stub(
     mod.supports_response_schema = MagicMock(return_value=supports_response_schema)
     mod.supports_audio_input = MagicMock(return_value=supports_audio_input)
     mod.supports_audio_output = MagicMock(return_value=supports_audio_output)
+    mod.supports_function_calling = MagicMock(return_value=supports_function_calling)
     mod.get_supported_openai_params = MagicMock(
         return_value=["temperature", "top_p", "max_tokens", "response_format", "seed", "n", "stop"]
     )
@@ -136,6 +138,31 @@ def _user_message(text="test prompt", conversation_id="convo"):
 
 def _disabled_json_config() -> JsonResponseConfig:
     return JsonResponseConfig.from_metadata(metadata={})
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_tool_history_capability_from_model_metadata(patch_central_database, litellm_stub, enabled: bool) -> None:
+    litellm_stub.supports_function_calling.return_value = enabled
+    target = LiteLLMChatTarget(model_name="custom/model")
+    assert ("function_call" in target.capabilities.supported_input_modalities) is enabled
+    assert ("function_call_output" in target.capabilities.supported_input_modalities) is enabled
+
+
+async def test_tool_history_discovery_preserves_litellm_wire_fields(target: LiteLLMChatTarget, litellm_stub) -> None:
+    from pyrit.prompt_target import discover_target_capabilities_async
+
+    litellm_stub.acompletion.return_value = _mock_response()
+    result = await discover_target_capabilities_async(
+        target=target,
+        capabilities=[],
+        test_modalities={frozenset({"function_call"}), frozenset({"function_call_output"})},
+        retries=0,
+    )
+    assert "function_call_output" in result.supported_input_modalities
+    litellm_stub.acompletion.assert_called_once()
+    messages = litellm_stub.acompletion.call_args.kwargs["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant", "tool", "user"]
+    assert messages[2]["tool_call_id"] == messages[1]["tool_calls"][0]["id"]
 
 
 # ---------------------------------------------------------------------------

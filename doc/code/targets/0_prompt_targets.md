@@ -104,6 +104,57 @@ Each target class defines defaults; instances can override individual capabiliti
 
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
 
+Tool-call history uses the existing `function_call` and `function_call_output` input
+modalities. Support requires both a compatible target adapter and a compatible AI
+endpoint. The standard `OpenAIResponseTarget` declares this support by default. OpenAI
+Chat and LiteLLM use known model support or LiteLLM model metadata; unknown deployments
+use conservative defaults. A known model cannot enable these modalities on an adapter that
+does not implement tool-history serialization. Use `custom_configuration` to override
+these declarations for a restricted gateway or a deployment whose support you know.
+
+Input modalities do not promise tool execution, generation of new calls, or support
+for every provider-specific built-in tool. An attack that needs native synthetic history
+must also require native multi-turn and editable-history support:
+
+```python
+from pyrit.prompt_target import CapabilityName, TargetRequirements
+
+tool_history_requirements = TargetRequirements(
+    native_required=frozenset(
+        {
+            CapabilityName.MULTI_TURN,
+            CapabilityName.EDITABLE_HISTORY,
+        }
+    ),
+    required_input_modalities=frozenset(
+        {
+            frozenset({"function_call"}),
+            frozenset({"function_call_output"}),
+        }
+    ),
+)
+tool_history_requirements.validate(target=target)
+```
+
+OpenAI Chat, LiteLLM, and Responses accept `function_call` pieces in either existing
+Chat Completions form (`id` and a nested `function`) or Responses form (`call_id`,
+`name`, and `arguments`). Use `function_call_output` pieces for matching results.
+The serializers send `converted_value`, retain call IDs, and map `simulated_assistant`
+and `simulated_tool` to the API's `assistant` and `tool` roles. Use these simulated
+roles for fake calls and results. Default message scorers exclude both; a scorer
+can explicitly opt in to inspect injected content. Neither artifact proves execution.
+`OtelToolCallScorer` requires execution traces, not message claims.
+
+Targets validate the normalized request. With an ADAPT policy, history normalization
+can replace tool artifacts with text placeholders while memory retains the originals.
+Use the native requirements above when that loss of structure would change the attack.
+If structured artifacts remain after normalization and their input modalities are not
+supported, the target raises before the provider request.
+
+`OpenAIResponseTarget(execute_tools=False, ...)` returns the first response without
+executing registered functions locally. This setting does not disable provider-hosted
+tools configured in `extra_body_parameters`.
+
 ### How consumers use capabilities
 
 Components that need a particular capability declare it as a `TargetRequirements` and validate at construction time:
@@ -169,6 +220,32 @@ from pyrit.prompt_target import discover_target_capabilities_async
 # best-effort TargetCapabilities:
 queried = await discover_target_capabilities_async(target=target)
 ```
+
+To probe only tool-call history, without probing image or audio inputs:
+
+```python
+queried = await discover_target_capabilities_async(
+    target=target,
+    capabilities=[],
+    test_modalities={
+        frozenset({"function_call"}),
+        frozenset({"function_call_output"}),
+    },
+)
+print(queried.supported_input_modalities)
+```
+
+For OpenAI Chat, LiteLLM, and Responses, this probe sends a synthetic assistant
+function call and matching tool result before a new user message. It tests history
+acceptance, not whether the model chooses to generate a new call or uses the result
+correctly. Probes use the normal send lifecycle, temporarily disable local Responses
+execution, and remove configured tool declarations and tool-choice settings from the
+supported adapters. This cannot control tools inside an opaque remote agent.
+Other adapters retain their declared tool modalities because there is no verified
+probe path for them. A failed history probe retains existing declarations: a timeout
+or authentication error does not establish that history is unsupported. For an unknown
+modality, only a successful probe adds support. Results do not change the target unless
+you pass `apply=True`.
 
 Each probe sends a minimal request (bounded by `per_probe_timeout_s`, default 30s, with one retry on transient errors) and only marks a capability or modality as supported if the call returns cleanly. `discover_target_capabilities_async` returns a merged view: probed where possible, declared where probing is unavailable or out of scope. "Supported" here means *the request was accepted* — a target that silently ignores a system prompt or `response_format` directive is still reported as supporting it, so validate response content out of band when the distinction matters. This function is not safe to call concurrently with other operations on the same target instance: it temporarily mutates `target._configuration` and writes probe rows to memory (rows are tagged with `prompt_metadata["capability_probe"] == "1"` for filtering). See [Target Capabilities](./6_1_target_capabilities.ipynb) for runnable examples.
 

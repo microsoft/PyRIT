@@ -42,6 +42,7 @@ from pyrit.prompt_target.common.target_capabilities import (
     get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.prompt_target.common.utils import (
     limit_requests_per_minute,
     validate_temperature,
@@ -165,6 +166,7 @@ class LiteLLMChatTarget(PromptTarget):
 
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
+    _SUPPORTS_TOOL_CALL_HISTORY = True
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -321,7 +323,8 @@ class LiteLLMChatTarget(PromptTarget):
             supports_system_prompt=True,
             supports_json_output=supports_json_output,
             supports_json_schema=supports_json_schema,
-            input_modalities=_build_input_modalities(image=supports_vision, audio=supports_audio_input),
+            input_modalities=_build_input_modalities(image=supports_vision, audio=supports_audio_input)
+            | (TOOL_CALL_INPUT_MODALITIES if _supports("supports_function_calling") else frozenset()),
             output_modalities=_build_output_modalities(audio=supports_audio_output),
         )
 

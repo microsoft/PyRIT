@@ -163,7 +163,9 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
         """
         lines: list[str] = []
         piece = pieces[0]
-        role_name = "Assistant (Simulated)" if piece.is_simulated else piece.api_role.capitalize()
+        role_name = piece.api_role.capitalize()
+        if piece.is_simulated:
+            role_name += " (Simulated)"
 
         lines.append(f"\n#### {role_name}\n")
 

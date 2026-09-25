@@ -21,7 +21,23 @@ from pydantic import BaseModel, ConfigDict
 
 from pyrit.models.literals import ChatMessageRole
 
-ALLOWED_CHAT_MESSAGE_ROLES = ["system", "user", "assistant", "simulated_assistant", "tool", "developer"]
+ALLOWED_CHAT_MESSAGE_ROLES = [
+    "system",
+    "user",
+    "assistant",
+    "simulated_assistant",
+    "tool",
+    "simulated_tool",
+    "developer",
+]
+
+
+class FunctionCall(BaseModel):
+    """A function name and its serialized argument payload."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    arguments: str
 
 
 class ToolCall(BaseModel):
@@ -30,7 +46,7 @@ class ToolCall(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
     type: str
-    function: str
+    function: FunctionCall | str
 
 
 class ChatMessage(BaseModel):
@@ -44,7 +60,7 @@ class ChatMessage(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     role: ChatMessageRole
-    content: str | list[dict[str, Any]]
+    content: str | list[dict[str, Any]] | None = None
     name: str | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None

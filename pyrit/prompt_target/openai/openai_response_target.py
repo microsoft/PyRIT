@@ -31,8 +31,10 @@ from pyrit.models import (
     PromptDataType,
     PromptResponseError,
 )
+from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -87,6 +89,7 @@ class OpenAIResponseTarget(OpenAITarget):
     https://platform.openai.com/docs/api-reference/responses/create
     """
 
+    _SUPPORTS_TOOL_CALL_HISTORY = True
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -120,6 +123,7 @@ class OpenAIResponseTarget(OpenAITarget):
         reasoning_summary: Literal["auto", "concise", "detailed"] | None = None,
         extra_body_parameters: dict[str, Any] | None = None,
         fail_on_missing_function: bool = False,
+        execute_tools: bool = True,
         custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
@@ -156,6 +160,9 @@ class OpenAIResponseTarget(OpenAITarget):
                 an unknown function or does not output a function; if False, return a structured error so we can
                 wrap it as function_call_output and let the model potentially recover
                 (e.g., pick another tool or ask for clarification).
+            execute_tools: Whether to execute returned calls locally. If False, return
+                the first response without running registered functions. This does not
+                disable provider-hosted tools configured in extra_body_parameters.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
@@ -190,6 +197,7 @@ class OpenAIResponseTarget(OpenAITarget):
         # Per-instance tool/func registries:
         self._custom_functions: dict[str, ToolExecutor] = custom_functions or {}
         self._fail_on_missing_function: bool = fail_on_missing_function
+        self._execute_tools = execute_tools
 
         # Extract the grammar 'tool' if one is present
         # See
@@ -220,6 +228,7 @@ class OpenAIResponseTarget(OpenAITarget):
                 "reasoning_effort": self._reasoning_effort,
                 "reasoning_summary": self._reasoning_summary,
                 "extra_body_parameters": self._extra_body_parameters,
+                "execute_tools": self._execute_tools,
             },
         )
 
@@ -280,16 +289,18 @@ class OpenAIResponseTarget(OpenAITarget):
         return {"role": "developer", "content": content}
 
     def _serialize_function_call(self, piece: MessagePiece) -> "ResponseFunctionToolCallParam":
-        stored = json.loads(piece.original_value)
+        call = parse_function_call(piece)
+        if not isinstance(call.function, FunctionCall):
+            raise ValueError("Function-call history requires structured function arguments.")
         return {
-            "type": stored["type"],
-            "call_id": stored["call_id"],
-            "name": stored["name"],
-            "arguments": stored["arguments"],
+            "type": "function_call",
+            "call_id": call.id,
+            "name": call.function.name,
+            "arguments": call.function.arguments,
         }
 
     def _serialize_tool_call(self, piece: MessagePiece) -> dict[str, Any]:
-        stored = json.loads(piece.original_value)
+        stored = json.loads(piece.converted_value)
         if stored.get("type") == "web_search_call":
             return {
                 "type": stored["type"],
@@ -301,13 +312,10 @@ class OpenAIResponseTarget(OpenAITarget):
         return filtered
 
     def _serialize_function_call_output(self, piece: MessagePiece) -> "FunctionCallOutput":
-        payload = json.loads(piece.original_value)
-        output = payload.get("output")
-        if not isinstance(output, str):
-            output = json.dumps(output, separators=(",", ":"))
+        call_id, output = parse_function_call_output(piece)
         return {
             "type": "function_call_output",
-            "call_id": payload["call_id"],
+            "call_id": call_id,
             "output": output,
         }
 
@@ -551,13 +559,11 @@ class OpenAIResponseTarget(OpenAITarget):
         while True:
             logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
 
-            body = await self._construct_request_body_async(conversation=working_conversation, json_config=json_config)
-
-            # Use unified error handling - automatically detects Response and validates
-            result = await self._handle_openai_request_async(
-                api_call=lambda body=body: self._client.responses.create(**body),
-                request=message,
+            result = await self._send_single_response_async(
+                conversation=working_conversation, json_config=json_config, request=message
             )
+            if not self._execute_tools:
+                return [result]
 
             # Add result to conversation and responses list
             working_conversation.append(result)
@@ -585,6 +591,20 @@ class OpenAIResponseTarget(OpenAITarget):
 
         # Return all responses (normalizer will persist all of them to memory)
         return responses_to_return
+
+    async def _send_single_response_async(
+        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig, request: Message
+    ) -> Message:
+        """
+        Send one request without executing any returned function call.
+
+        Returns:
+            Message: The parsed provider response.
+        """
+        body = await self._construct_request_body_async(conversation=conversation, json_config=json_config)
+        return await self._handle_openai_request_async(
+            api_call=lambda: self._client.responses.create(**body), request=request
+        )
 
     def _parse_response_message_content(
         self,
