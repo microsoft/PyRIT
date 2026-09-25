@@ -30,6 +30,7 @@ import { useObjectiveHeaderStyles } from './ObjectiveHeader.styles'
 
 interface ObjectiveHeaderProps {
   objective: string
+  draftMode?: boolean
   outcome?: AttackOutcome
   automatedScore?: BackendScore | null
   humanScore?: BackendScore | null
@@ -53,6 +54,7 @@ function scoreLabel(score?: BackendScore | null): string {
 
 export default function ObjectiveHeader({
   objective,
+  draftMode = false,
   outcome,
   automatedScore,
   humanScore,
@@ -83,6 +85,7 @@ export default function ObjectiveHeader({
   const contentRef = useRef<HTMLElement>(null)
   const humanScoreDisabledReasonId = useId()
   const missingObjective = !objective.trim()
+  const ObjectiveContent = canAdd && onAdd ? 'button' : 'span'
 
   useLayoutEffect(() => {
     const content = contentRef.current
@@ -101,7 +104,7 @@ export default function ObjectiveHeader({
 
   const handleSave = async (): Promise<void> => {
     const trimmedObjective = draft.trim()
-    if (!trimmedObjective || !onAdd) return
+    if ((!trimmedObjective && missingObjective) || !onAdd) return
 
     setIsSaving(true)
     setError('')
@@ -271,7 +274,7 @@ export default function ObjectiveHeader({
     </div>
   )
 
-  if (!objective) {
+  if (!objective || isEditing) {
     const canShowObjective = (canAdd || isEditing) && Boolean(onAdd)
     if (!canShowObjective && !outcome) return null
     return (
@@ -291,9 +294,10 @@ export default function ObjectiveHeader({
                   aria-label="Attack objective"
                   autoFocus
                 />
-                <Button appearance="primary" size="small" className={styles.editorAction} onClick={handleSave} disabled={!draft.trim() || isSaving}>
+                <Button appearance="primary" size="small" className={styles.editorAction} onClick={handleSave} disabled={(!draft.trim() && missingObjective) || isSaving}>
                   {isSaving ? 'Saving...' : 'Save'}
                 </Button>
+                {objective && !draftMode && <Text>This changes the shared attack objective and resets the outcome. Old scores stay in history.</Text>}
                 <Button appearance="subtle" size="small" className={styles.editorAction} onClick={() => setIsEditing(false)} disabled={isSaving}>
                   Cancel
                 </Button>
@@ -319,13 +323,16 @@ export default function ObjectiveHeader({
         <Badge className={styles.label} appearance="tint" color="brand" size="small">
           Objective
         </Badge>
-        <Text
-          ref={contentRef}
-          className={mergeClasses(styles.content, expanded ? styles.contentExpanded : styles.contentCollapsed)}
+        <ObjectiveContent
+          type={canAdd && onAdd ? 'button' : undefined}
+          aria-label={canAdd && onAdd ? 'Edit objective' : undefined}
+          onClick={canAdd && onAdd ? () => { setDraft(objective); setIsEditing(true) } : undefined}
+          ref={(element: HTMLButtonElement | HTMLSpanElement | null) => { contentRef.current = element }}
+          className={mergeClasses(styles.content, canAdd && onAdd && styles.editableContent, expanded ? styles.contentExpanded : styles.contentCollapsed)}
           data-testid="objective-header-content"
         >
           {objective}
-        </Text>
+        </ObjectiveContent>
         {showToggle && (
           <Button
             appearance="transparent"

@@ -3,7 +3,7 @@
 
 import abc
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Literal, final
 
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -17,6 +17,7 @@ from pyrit.models import (
     MessagePiece,
     TargetIdentifier,
 )
+from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
@@ -134,6 +135,18 @@ class PromptTarget(Identifiable):
 
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
+
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """
+        Validate stored tool context without sending, normalizing, or retrieving media.
+
+        Targets may extend this check with the same payload checks used by their serializers.
+        Empty histories and histories that end with an assistant message are permitted.
+
+        Raises:
+            ValueError: Tool content or call/response links are invalid.
+        """
+        validate_tool_conversation(messages)
 
     @final
     async def send_prompt_async(

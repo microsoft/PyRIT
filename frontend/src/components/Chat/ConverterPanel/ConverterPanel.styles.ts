@@ -72,6 +72,23 @@ export const useConverterPanelStyles = makeStyles({
     gap: tokens.spacingVerticalS,
     flex: 1,
   },
+  resultsSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    marginTop: tokens.spacingVerticalL,
+    paddingTop: tokens.spacingVerticalL,
+    borderTop: `${tokens.strokeWidthThicker} solid ${tokens.colorNeutralStroke1}`,
+  },
+  resultPair: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    paddingBottom: tokens.spacingVerticalL,
+    ':not(:last-child)': {
+      borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
+  },
   converterPicker: {
     width: '100%',
   },

@@ -11,7 +11,7 @@ This is the attack-centric API design.
 import logging
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import Field
 
 from pyrit.backend.models.attacks import (
@@ -27,6 +27,7 @@ from pyrit.backend.models.attacks import (
     CreateAttackResponse,
     CreateConversationRequest,
     CreateConversationResponse,
+    SaveConversationRequest,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
@@ -35,10 +36,32 @@ from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError, get_attack_service
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.memory.memory_interface import AttackStateConflictError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/attacks", tags=["attacks"])
+
+
+@router.post("/save-conversation", response_model=AddMessageResponse)
+async def save_conversation_async(*, body: SaveConversationRequest, request: Request) -> AddMessageResponse:
+    """
+    Save a complete draft without sending messages.
+
+    Returns:
+        The stored attack and conversation.
+    """
+    user = getattr(request.state, "user", None)
+    if user is not None:
+        body.operator = user.email.split("@", 1)[0].lower()
+    try:
+        return await get_attack_service().save_conversation_async(request=body)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except AttackStateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get(
@@ -257,7 +280,7 @@ async def get_attack(attack_result_id: str) -> AttackSummary:  # pyrit-async-suf
     response_model=AttackSummary,
     responses={
         404: {"model": ProblemDetail, "description": "Attack not found"},
-        409: {"model": ProblemDetail, "description": "Attack already has a different objective"},
+        409: {"model": ProblemDetail, "description": "The shared objective changed since it was read"},
     },
 )
 async def update_attack(  # pyrit-async-suffix-exempt

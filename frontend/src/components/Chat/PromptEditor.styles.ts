@@ -1,10 +1,23 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 import { mobileTouchTarget, mobileTouchTargetHeight } from '../../styles/touchTargets'
 
-export const useChatInputAreaStyles = makeStyles({
+export const usePromptEditorStyles = makeStyles({
   root: {
     padding: `${tokens.spacingVerticalXL} ${tokens.spacingHorizontalXXL}`,
     backgroundColor: tokens.colorNeutralBackground2,
+  },
+  editRoot: {
+    padding: 0,
+    backgroundColor: 'transparent',
+  },
+  editHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM} 0`,
+  },
+  hiddenInput: {
+    display: 'none',
   },
   inputContainer: {
     display: 'flex',

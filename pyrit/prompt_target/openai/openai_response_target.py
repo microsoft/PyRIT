@@ -15,6 +15,7 @@ from typing import (
 
 from openai.types.responses import Response, ResponseOutputRefusal, ResponseOutputText
 from openai.types.shared import ReasoningEffort
+from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
@@ -31,6 +32,7 @@ from pyrit.models import (
     PromptDataType,
     PromptResponseError,
 )
+from pyrit.models.messages.tool_content import FunctionCallContent, FunctionOutputContent
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
@@ -75,6 +77,15 @@ class MessagePieceType(str, Enum):
     MCP_CALL = "mcp_call"
     MCP_LIST_TOOLS = "mcp_list_tools"
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
+
+
+class _ResponseToolCallContent(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    type: str = Field(min_length=1, pattern=r"\S")
+    call_id: str | None = None
+    query: str | None = None
+    name: str | None = None
+    arguments: str | None = None
 
 
 class OpenAIResponseTarget(OpenAITarget):
@@ -280,16 +291,17 @@ class OpenAIResponseTarget(OpenAITarget):
         return {"role": "developer", "content": content}
 
     def _serialize_function_call(self, piece: MessagePiece) -> "ResponseFunctionToolCallParam":
-        stored = json.loads(piece.original_value)
+        call = FunctionCallContent.model_validate_json(piece.converted_value)
+        call_id = call.validated_call_id()
         return {
-            "type": stored["type"],
-            "call_id": stored["call_id"],
-            "name": stored["name"],
-            "arguments": stored["arguments"],
+            "type": "function_call",
+            "call_id": call_id,
+            "name": call.function.name if call.function else call.name or "",
+            "arguments": call.function.arguments if call.function else call.arguments or "{}",
         }
 
     def _serialize_tool_call(self, piece: MessagePiece) -> dict[str, Any]:
-        stored = json.loads(piece.original_value)
+        stored = _ResponseToolCallContent.model_validate_json(piece.converted_value).model_dump(exclude_unset=True)
         if stored.get("type") == "web_search_call":
             return {
                 "type": stored["type"],
@@ -301,15 +313,27 @@ class OpenAIResponseTarget(OpenAITarget):
         return filtered
 
     def _serialize_function_call_output(self, piece: MessagePiece) -> "FunctionCallOutput":
-        payload = json.loads(piece.original_value)
-        output = payload.get("output")
+        payload = FunctionOutputContent.model_validate_json(piece.converted_value)
+        output = payload.output
         if not isinstance(output, str):
             output = json.dumps(output, separators=(",", ":"))
         return {
             "type": "function_call_output",
-            "call_id": payload["call_id"],
+            "call_id": payload.call_id,
             "output": output,
         }
+
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """Check replayed tool payloads through the same pure serializers used to send them."""
+        super().validate_tool_history(messages)
+        for message in messages:
+            for piece in message.message_pieces:
+                if piece.converted_value_data_type == "tool_call":
+                    self._serialize_tool_call(piece)
+                elif piece.converted_value_data_type == "function_call":
+                    self._serialize_function_call(piece)
+                elif piece.converted_value_data_type == "function_call_output":
+                    self._serialize_function_call_output(piece)
 
     async def _serialize_piece_async(self, *, piece: MessagePiece, message_index: int) -> _SerializedPiece | None:
         data_type = piece.converted_value_data_type

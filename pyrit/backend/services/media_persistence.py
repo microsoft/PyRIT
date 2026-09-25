@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import mimetypes
@@ -90,6 +91,7 @@ async def persist_media_value_async(
     use_data_uri_mime_type: bool = True,
     require_valid_base64_after_path_error: bool = False,
     serializer_factory: SerializerFactory = data_serializer_factory,
+    created_paths: list[str] | None = None,
 ) -> MediaPersistenceResult:
     """
     Classify and, when needed, persist one path-typed media value.
@@ -129,7 +131,7 @@ async def persist_media_value_async(
         origin = MediaOrigin.DATA_URI
     else:
         try:
-            if Path(value).is_file():
+            if await asyncio.to_thread(Path(value).is_file):
                 return MediaPersistenceResult(
                     value=value,
                     origin=MediaOrigin.LOCAL_PATH,
@@ -152,7 +154,17 @@ async def persist_media_value_async(
         data_type=data_type,
         extension=extension,
     )
-    await serializer.save_b64_image_async(data=payload)
+    if created_paths is None:
+        await serializer.save_b64_image_async(data=payload)
+    else:
+        # Record ownership before writing so partial writes can also be removed.
+        created_paths.append(str(await serializer.get_data_filename_async()))
+        write_task = asyncio.create_task(serializer.save_b64_image_async(data=payload))
+        try:
+            await asyncio.shield(write_task)
+        except asyncio.CancelledError:
+            await write_task
+            raise
     return MediaPersistenceResult(
         value=str(serializer.value),
         origin=origin,

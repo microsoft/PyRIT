@@ -112,6 +112,17 @@ export const useObjectiveHeaderStyles = makeStyles({
     color: tokens.colorNeutralForeground1,
     fontSize: tokens.fontSizeBase300,
   },
+  editableContent: {
+    border: 0,
+    backgroundColor: 'transparent',
+    padding: 0,
+    textAlign: 'left',
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    ...mobileTouchTargetHeight,
+    ':hover': { color: tokens.colorBrandForegroundLink },
+    ':focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}` },
+  },
   contentCollapsed: {
     whiteSpace: 'nowrap',
     overflow: 'hidden',

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,7 +14,8 @@ from openai.types.completion_usage import CompletionUsage
 from openai.types.responses import Response, ResponseOutputMessage, ResponseOutputText
 
 from pyrit.exceptions import PyritException
-from pyrit.models import MessagePiece
+from pyrit.models import Message, MessagePiece
+from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target.openai._response_adapter import (
     ChatCompletionsResponseAdapter,
     CompletionsResponseAdapter,
@@ -24,6 +26,70 @@ from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
 from pyrit.prompt_target.openai.openai_completion_target import OpenAICompletionTarget
 from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "payload", [{}, {"type": ""}, {"type": " "}, {"type": 1}, {"type": "web_search_call", "query": []}]
+)
+def test_tool_preflight_and_serialization_reject_invalid_provider_fields(payload: dict[str, object]) -> None:
+    target = object.__new__(OpenAIResponseTarget)
+    piece = MessagePiece(
+        role="simulated_assistant", original_value_data_type="tool_call", original_value=json.dumps(payload)
+    )
+    messages = [Message(message_pieces=[piece])]
+    validate_tool_conversation(messages)
+    with pytest.raises(ValueError):
+        target.validate_tool_history(messages)
+    with pytest.raises(ValueError):
+        target._serialize_tool_call(piece)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_tool_preflight_accepts_empty_history_and_preserves_provider_extensions() -> None:
+    target = object.__new__(OpenAIResponseTarget)
+    payload = '{"type":"web_search_call","call_id":"web-1","query":"query","extension":{"key":"value"}}'
+    piece = MessagePiece(role="simulated_assistant", original_value_data_type="tool_call", original_value=payload)
+    target.validate_tool_history([])
+    target.validate_tool_history([Message(message_pieces=[piece])])
+    assert piece.converted_value == payload
+    assert target._serialize_tool_call(piece) == {"type": "web_search_call", "call_id": "web-1", "query": "query"}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("nested", [True, False])
+def test_responses_replays_edited_function_calls(nested: bool) -> None:
+    target = object.__new__(OpenAIResponseTarget)
+    converted = (
+        {"id": "edited", "function": {"name": "lookup", "arguments": '{"key":"edited"}'}}
+        if nested
+        else {"call_id": "edited", "name": "lookup", "arguments": '{"key":"edited"}'}
+    )
+    piece = MessagePiece(
+        role="simulated_assistant",
+        original_value_data_type="function_call",
+        original_value=json.dumps({"call_id": "original", "name": "old", "arguments": "{}"}),
+        converted_value=json.dumps(converted),
+        converted_value_data_type="function_call",
+    )
+    assert target._serialize_function_call(piece) == {
+        "type": "function_call",
+        "call_id": "edited",
+        "name": "lookup",
+        "arguments": '{"key":"edited"}',
+    }
+    output = MessagePiece(
+        role="tool",
+        original_value_data_type="function_call_output",
+        original_value='{"call_id":"original","output":"old"}',
+        converted_value='{"call_id":"edited","output":{"result":1}}',
+        converted_value_data_type="function_call_output",
+    )
+    assert target._serialize_function_call_output(output) == {
+        "type": "function_call_output",
+        "call_id": "edited",
+        "output": '{"result":1}',
+    }
 
 
 @pytest.mark.parametrize("text", [None, 123, [], "", " ", "retained"])

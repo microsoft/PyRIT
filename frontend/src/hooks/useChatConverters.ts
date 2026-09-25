@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { buildAppliedConversions } from '@/utils/conversionResults'
 
 import { buildConverterInputs } from '@/components/Chat/converterTypes'
 import { convertersApi } from '@/services/api'
@@ -21,6 +22,7 @@ interface VersionedInput extends ConverterInputPiece {
 }
 
 interface ConversionState {
+  scopeKey?: string
   sourceInputs: ConverterInputPiece[]
   inputs: VersionedInput[]
   nextRevision: number
@@ -153,8 +155,13 @@ function invalidatePiece(state: ConversionState, pieceId: string): ConversionSta
 
 export function useChatConverters(text: string, attachments: MessageAttachment[]): ChatConverterController {
   const inputs = useMemo(() => buildConverterInputs(text, attachments), [text, attachments])
+  return usePieceConverters(inputs)
+}
+
+export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: string): ChatConverterController {
   const [state, setState] = useState<ConversionState>(() => ({
     sourceInputs: inputs,
+    scopeKey,
     inputs: inputs.map((input: ConverterInputPiece) => ({ ...input, revision: 0 })),
     nextRevision: 0,
     workingInputs: {},
@@ -169,7 +176,12 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   const nextRunId = useRef(0)
   const activeRun = useRef<number | null>(null)
 
-  if (state.sourceInputs !== inputs) setState(reconcileInputs(state, inputs))
+  if (state.scopeKey !== scopeKey) {
+    setState({
+      ...reconcileInputs(state, inputs), scopeKey, stageResults: {}, errors: {}, applied: {},
+      workingInputs: {}, runId: -1, isConverting: false,
+    })
+  } else if (state.sourceInputs !== inputs) setState(reconcileInputs(state, inputs))
 
   const setPipeline = useCallback((
     pieceType: string,
@@ -229,7 +241,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     afterStageId,
     includeIncomplete = false,
   }: ConversionScope): Promise<void> => {
-    if (activeRun.current !== null) return
+    if (activeRun.current !== null && activeRun.current === state.runId) return
     const completed = completedResults(state)
     const selected = state.inputs.flatMap((input: VersionedInput): ConversionJob[] => {
       if (
@@ -247,7 +259,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
       const start = boundary + 1
       const value = boundary < 0 ? state.workingInputs[input.id] ?? input.value : previous[boundary].value
       const dataType = boundary < 0 ? input.dataType : previous[boundary].generated.output_data_type
-      if (start >= pipeline.length || (boundary < 0 && !value.trim())) return []
+      if (start >= pipeline.length || (boundary < 0 && !value.trim() && !input.file)) return []
       return [{ input, pipeline, prefix: previous.slice(0, start), start, value, dataType }]
     })
     if (selected.length === 0) return
@@ -312,20 +324,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   const apply = useCallback((): void => {
     setState((current: ConversionState) => {
       if (current.isConverting) return current
-      const applied: Record<string, PieceConversion> = {}
-      const results = completedResults(current)
-      for (const input of current.inputs) {
-        const result = results[input.id]
-        if (!result) continue
-        applied[input.id] = {
-          pieceId: input.id,
-          pieceType: input.pieceType,
-          converterInstanceIds: result.steps.map((step: ConverterPreviewStep) => step.converter_id),
-          originalValue: input.value,
-          convertedValue: result.converted_value,
-          convertedDataType: result.converted_value_data_type,
-        }
-      }
+      const applied = buildAppliedConversions(current.inputs, completedResults(current))
       return { ...current, applied }
     })
   }, [])

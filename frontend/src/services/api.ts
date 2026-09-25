@@ -49,6 +49,7 @@ import type {
   BackendScore,
   ManualScoreRequest,
   UpdateAttackRequest,
+  SaveConversationRequest,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -271,6 +272,10 @@ export const initializersApi = {
 }
 
 export const attacksApi = {
+  saveConversation: async (request: SaveConversationRequest): Promise<AddMessageResponse> => {
+    const response = await apiClient.post('/attacks/save-conversation', request)
+    return response.data
+  },
   createAttack: async (request: CreateAttackRequest): Promise<CreateAttackResponse> => {
     const response = await apiClient.post('/attacks', request)
     return response.data

@@ -102,7 +102,7 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 #### Sending Messages
 
-For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside the label controls to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target; their badge does not change the target.
+For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside the label controls to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target. An attack saved without a target uses this dropdown until its first send binds the selected target.
 
 Clicking **Chat** while already in a new chat keeps its target and draft. Starting
 a new attack resets both. Default changes in another tab apply to the next new
@@ -168,16 +168,77 @@ CoPyRIT renders different response types inline:
 
 <img width="1662" alt="Text-to-image response" src="images/chat_image.png" />
 
-#### Branching Conversations
+#### Editing Conversations
 
-Each assistant message has four action buttons:
+Select **Edit Conversation**, beside the target dropdown in the chat ribbon, to make a local draft.
+Anyone who can view a conversation can edit a draft. The original messages stay
+unchanged. Insert or delete messages at any position, change their roles, and use
+the prompt area for text and attachments. The role selector is inside each prompt.
+Use the small **Insert message** control between messages and the **X** at the
+upper-right corner to delete a message. The attachment menu also provides text
+pieces and tool calls or responses. New messages offer `system`, `developer`, `user`, and
+`simulated_assistant` roles. Existing `developer` and `tool` messages keep their
+roles. Model replies become `simulated_assistant` context.
 
-1. **Copy to input:** Copies the message content and attachments into the current input box.
-2. **Copy to new conversation:** Creates a new conversation within the same attack and copies the message to its input.
-3. **Branch conversation:** Clones the conversation up to the selected message into a new conversation within the same attack.
-4. **Branch into new attack:** Opens a destination-target picker, then creates a new attack with the conversation cloned up to the selected message. This does not change the source chat or your defaults.
+Add a tool call to a `simulated_assistant` message from its content menu. Enter
+the call ID, name, and JSON arguments. **Add tool response** inserts a separate
+`tool` message after it and copies the call ID. A response needs a preceding,
+unanswered call. Tool content is stored, not executed.
 
-<img width="1663" alt="Branching into a new conversation" src="images/chat_branch.png" />
+During editing, targets without editable history are disabled. If the draft
+contains tool pieces, the target must also accept each tool input type. The
+requirements update when pieces are added or removed. An incompatible current
+target shows a warning; select a compatible target or clear the selection to
+save a new attack without a target. These checks also apply on the server and
+when the first send binds an unbound attack.
+The selected target also checks its required tool fields before saving or binding.
+A rejected check does not save media or change the attack's target. A targetless
+draft can retain provider-specific content until a target is selected.
+
+Click the objective to edit it, or select **Add objective** on an empty chat.
+Changes made during conversation editing stay local until you save.
+Unsaved-change protection includes target-only changes. Canceling a draft leaves
+the normal prompt box and its conversions unchanged.
+The draft can have an objective and no messages or target. Sending is disabled
+while you edit. **Save conversation** opens a destination dialog:
+
+- **Same attack** adds a related conversation without replacing the main one.
+  This option is disabled for another operator's attack or a target conflict.
+- **New attack** creates a separate manual attack. A target is optional. For an
+  unbound attack, select a target from the chat dropdown before the first send.
+  That first send binds the attack and its conversations to the selected target.
+
+While editing, **Save to new attack** in the ribbon opens the same dialog with
+**New attack** selected. It works for unsaved drafts and converted conversations.
+The save confirmation disappears when you send the next prompt.
+
+The objective is shared by all conversations in an attack. Changing it outside
+conversation editing, or saving a changed objective to **Same attack**, resets the
+outcome to Undetermined and clears the current score links. Old scores stay in
+history. Saving to **New attack** does not change the source objective or scores.
+You can also clear an existing objective. A message-only save to **Same attack**
+keeps the current shared objective, even if another edit changed it while your
+draft was open. Explicit objective changes still check for conflicting edits.
+
+**Convert Conversation** opens the converter panel and selects all messages.
+The converter icon in a prompt selects only that message. Use the checkboxes in chat to use batch
+mode, which pairs each **Original message** with its **Converted message**.
+A strong divider separates the converter pipeline from the results; lighter
+dividers separate message pairs. **Select all** and **Clear** control the
+selection. **Add converted values** applies batch results to the draft. Structured
+tool content is not passed to text converters.
+Single-message conversion keeps editable stage outputs. After a middle-stage
+edit, rerun only the remaining stages. Converter IDs record the stages used,
+including stages whose output was manually edited; they do not prove that the
+final value is unchanged. Applying or saving results does not run converters again.
+
+User and assistant messages have one **Copy conversation** menu. **This conversation**
+copies the selected message into the prompt box without saving or sending.
+**New conversation** and **New attack** copy the conversation through the selected
+message and open the saved destination directly, without the editor or save dialog.
+Retrying the same failed save or copy reuses its save ID to avoid duplicate results.
+A new copy after a confirmed success gets a new ID.
+Downloads, original/converted views, and score details remain available.
 
 #### Conversations Panel
 
@@ -219,7 +280,7 @@ CoPyRIT enforces several safety guards:
 
 - **No target selected:** The composer is disabled without a warning banner. Click **Select a target** in the chat ribbon. If the registry is empty, add a target first.
 - **Single-turn targets:** Some targets (e.g., image generators) don't track conversation history. CoPyRIT shows a warning indicator and blocks additional messages after the first turn, offering a "New Conversation" button instead.
-- **Operator locking:** If you open a historical attack created by a different operator, the conversation is read-only. "Continue with your target" opens the same destination-target picker as "Branch into new attack", then copies the conversation into a new attack with your labels.
+- **Operator locking:** You cannot send or save to another operator's attack. You can select **Edit**, choose a target in the chat toolbar, and save a **New attack** with your labels. **Same attack** stays disabled and explains the restriction.
 - **Target identity:** A saved chat uses its original target, not your default. Sending is blocked while that target is being resolved, or if it is missing, changed, or ambiguous. Retry after restoring the target, or branch into a new attack and select a destination target.
 
 Human score changes do not require a registered objective target. The original operator can update or remove a human score even when the target is unavailable. The existing operator lock still applies.

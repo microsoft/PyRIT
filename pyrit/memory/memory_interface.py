@@ -63,6 +63,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
+    AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackOutcome,
@@ -108,6 +109,11 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+
+class AttackStateConflictError(ValueError):
+    """An atomic attack write no longer matches the state read by its caller."""
+
 
 #: Canonical criteria key of a seed that carries no conditions.
 _NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
@@ -4035,22 +4041,30 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the database transaction fails.
         """
-        entries = [AttackResultEntry(entry=attack_result) for attack_result in attack_results]
         with closing(self.get_session()) as session:
             try:
                 for attack_result in attack_results:
-                    if attack_result.atomic_attack_identifier is not None:
-                        self._persist_identifier(
-                            session=session,
-                            identifier=AtomicAttackIdentifier.from_component_identifier(
-                                attack_result.atomic_attack_identifier
-                            ),
-                        )
-                session.add_all(entries)
+                    self._add_attack_result_to_session(session=session, attack_result=attack_result)
                 session.commit()
             except SQLAlchemyError:
                 session.rollback()
                 raise
+
+    def _add_attack_result_to_session(self, *, session: Session, attack_result: AttackResult) -> AttackResultEntry:
+        """
+        Insert an attack and its identifier in the caller's transaction.
+
+        Returns:
+            The pending attack entry.
+        """
+        if attack_result.atomic_attack_identifier is not None:
+            self._persist_identifier(
+                session=session,
+                identifier=AtomicAttackIdentifier.from_component_identifier(attack_result.atomic_attack_identifier),
+            )
+        entry = AttackResultEntry(entry=attack_result)
+        session.add(entry)
+        return entry
 
     def add_conversation_branches_to_attack(
         self,
@@ -4059,20 +4073,27 @@ class MemoryInterface(abc.ABC):
         conversations: Sequence[Conversation],
         message_pieces: Sequence[MessagePiece],
         source_conversation: Conversation | None = None,
+        new_attack: AttackResult | None = None,
+        expected_fields: Mapping[str, Any] | None = None,
+        update_fields: Mapping[str, Any] | None = None,
+        request_fingerprint: str | None = None,
     ) -> bool:
         """
-        Atomically store prepared conversations, copied pieces, and their attack references.
+        Atomically store initial or related conversations, pieces, and attack references.
 
         The caller prepares the copies. This method only persists them, preserving the usual
         conversation and message insertion invariants. A supplied source must still be an
         active objective conversation when the transaction acquires the attack's write lock.
+        Supply ``new_attack`` to create the attack in the same transaction. An optional
+        request fingerprint makes retries with the same conversation IDs idempotent.
 
         Returns:
-            bool: False when the attack no longer exists.
+            bool: True for an insert; False for an identical retry or a missing destination.
 
         Raises:
             ValueError: If the source is unrelated, branch IDs repeat, or pieces belong elsewhere.
-            SQLAlchemyError: If persistence fails; the complete preparation is rolled back.
+            AttackStateConflictError: An expected field or creation identity changed.
+            IntegrityError: If persistence fails; the complete preparation is rolled back.
         """
         conversation_ids = [conversation.conversation_id for conversation in conversations]
         if len(set(conversation_ids)) != len(conversation_ids):
@@ -4082,25 +4103,131 @@ class MemoryInterface(abc.ABC):
         if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
             raise ValueError("Copied message pieces must belong to the prepared branches")
 
+        if new_attack and (
+            new_attack.attack_result_id != attack_result_id or new_attack.conversation_id not in conversation_ids
+        ):
+            raise ValueError("The new attack must reference one of the prepared conversations")
+        receipt_key = f"conversation_save:{','.join(sorted(conversation_ids))}"
+        try:
+            with closing(self.get_session()) as session, session.begin():
+                entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
+                if (
+                    request_fingerprint
+                    and entry is not None
+                    and (entry.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                ):
+                    return False
+                if new_attack is not None:
+                    if entry is not None:
+                        raise AttackStateConflictError("The creation identity is already in use")
+                    entry = self._add_attack_result_to_session(session=session, attack_result=new_attack)
+                elif entry is None:
+                    return False
+                self._check_attack_fields(entry=entry, expected_fields=expected_fields or {})
+                if source_conversation is not None:
+                    active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
+                    if source_conversation.conversation_id not in active_ids:
+                        raise ValueError("Source conversation is not an active objective conversation of this attack")
+                    self._insert_conversation_in_session(session=session, conversation=source_conversation)
+                for conversation in conversations:
+                    if request_fingerprint and session.get(ConversationEntry, conversation.conversation_id) is not None:
+                        raise AttackStateConflictError("The creation identity is already in use")
+                    self._insert_conversation_in_session(session=session, conversation=conversation)
+                self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
+                pruned_ids = list(entry.pruned_conversation_ids or [])
+                for conversation_id in conversation_ids:
+                    if conversation_id != entry.conversation_id and conversation_id not in pruned_ids:
+                        pruned_ids.append(conversation_id)
+                entry.pruned_conversation_ids = pruned_ids or None
+                self._apply_attack_fields_in_session(session=session, entry=entry, update_fields=update_fields or {})
+                if request_fingerprint:
+                    entry.attack_metadata = {**(entry.attack_metadata or {}), receipt_key: request_fingerprint}
+                entry.timestamp = datetime.now(UTC)
+            return True
+        except IntegrityError:
+            # A concurrent retry may have committed the same new attack before our insert.
+            with closing(self.get_session()) as session:
+                existing = session.get(AttackResultEntry, uuid.UUID(attack_result_id))
+                if (
+                    request_fingerprint
+                    and existing is not None
+                    and (existing.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                ):
+                    return False
+            raise
+
+    def update_attack_result_conditionally(
+        self,
+        *,
+        attack_result_id: str,
+        expected_fields: Mapping[str, Any],
+        update_fields: Mapping[str, Any],
+        conversation_target: ComponentIdentifier | None = None,
+    ) -> bool:
+        """
+        Compare and update prepared fields and conversation targets in one transaction.
+
+        Returns:
+            True after a successful update.
+
+        Raises:
+            AttackStateConflictError: The attack changed or a conversation uses another target.
+        """
         with closing(self.get_session()) as session, session.begin():
             entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
             if entry is None:
-                return False
-            if source_conversation is not None:
-                active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
-                if source_conversation.conversation_id not in active_ids:
-                    raise ValueError("Source conversation is not an active objective conversation of this attack")
-                self._insert_conversation_in_session(session=session, conversation=source_conversation)
-            for conversation in conversations:
-                self._insert_conversation_in_session(session=session, conversation=conversation)
-            self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
-            pruned_ids = list(entry.pruned_conversation_ids or [])
-            for conversation_id in conversation_ids:
-                if conversation_id != entry.conversation_id and conversation_id not in pruned_ids:
-                    pruned_ids.append(conversation_id)
-            entry.pruned_conversation_ids = pruned_ids or None
-            entry.timestamp = datetime.now(UTC)
-        return True
+                raise AttackStateConflictError("The destination attack no longer exists")
+            self._check_attack_fields(entry=entry, expected_fields=expected_fields)
+            if conversation_target is not None:
+                target = TargetIdentifier.from_component_identifier(conversation_target)
+                self._persist_target_identifier(session=session, target_identifier=target)
+                for conversation_id in {entry.conversation_id, *(entry.pruned_conversation_ids or [])}:
+                    conversation = session.get(ConversationEntry, conversation_id)
+                    if conversation is None:
+                        session.add(
+                            ConversationEntry(
+                                conversation=Conversation(
+                                    conversation_id=conversation_id,
+                                    target_identifier=target,
+                                )
+                            )
+                        )
+                    elif conversation.target_identifier_hash not in (None, target.hash):
+                        raise AttackStateConflictError("A conversation already has a different target")
+                    else:
+                        conversation.target_identifier = target.model_dump()
+                        conversation.target_identifier_hash = target.hash
+            self._apply_attack_fields_in_session(session=session, entry=entry, update_fields=update_fields)
+            return True
+
+    @staticmethod
+    def _check_attack_fields(*, entry: AttackResultEntry, expected_fields: Mapping[str, Any]) -> None:
+        """
+        Reject a stale write before changing any rows.
+
+        Raises:
+            AttackStateConflictError: An expected field no longer matches.
+        """
+        for field, expected in expected_fields.items():
+            if getattr(entry, field) != expected:
+                raise AttackStateConflictError(f"The attack's {field} changed. Reload before saving.")
+
+    def _apply_attack_fields_in_session(
+        self, *, session: Session, entry: AttackResultEntry, update_fields: Mapping[str, Any]
+    ) -> None:
+        """Persist prepared fields and their identifier references in the caller's transaction."""
+        for field, value in update_fields.items():
+            if field == "atomic_attack_identifier" and value is not None:
+                identifier = AtomicAttackIdentifier.model_validate(value)
+                identifier = AtomicAttackIdentifier.from_component_identifier(
+                    identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
+                )
+                self._persist_identifier(session=session, identifier=identifier)
+                entry.atomic_attack_identifier_hash = identifier.hash
+                value = identifier.model_dump()
+            if field == "attack_metadata":
+                value = {**(entry.attack_metadata or {}), **value}
+            setattr(entry, field, value)
 
     def promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
         """
