@@ -416,6 +416,10 @@ class DatasetConfiguration:
         """Return the configured selection budget without reading or sampling seeds."""
         return self.max_dataset_size
 
+    def clear_size_limits(self) -> None:
+        """Remove the dataset selection cap."""
+        self.max_dataset_size = None
+
     def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
         """
         Describe configured caps for each named dataset or inline source.
@@ -929,6 +933,12 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         super().update_filters(filters=filters)
         for child in self._configurations:
             child.update_filters(filters=filters)
+
+    def clear_size_limits(self) -> None:
+        """Remove the combined cap and every child dataset selection cap."""
+        super().clear_size_limits()
+        for child in self._configurations:
+            child.clear_size_limits()
 
     async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
         """

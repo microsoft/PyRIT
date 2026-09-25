@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Configuration-only previews stay separate from exact initialized run plans."""
+"""Finite and read-only unlimited previews stay separate from initialized run plans."""
 
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
@@ -140,8 +140,11 @@ async def test_default_estimate_uses_five_without_population_or_persistence_asyn
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("read_dataset_counts", [False, True])
 @pytest.mark.parametrize(("baseline", "expected"), [(False, 7), (True, 14)])
-async def test_configured_estimate_uses_selected_techniques_and_limit_async(*, baseline: bool, expected: int) -> None:
+async def test_configured_estimate_uses_selected_techniques_and_limit_async(
+    *, baseline: bool, expected: int, read_dataset_counts: bool
+) -> None:
     scenario = _MatrixEstimateScenario()
     scenario.set_params_from_args(
         args={
@@ -150,7 +153,7 @@ async def test_configured_estimate_uses_selected_techniques_and_limit_async(*, b
             "dataset_config": DatasetAttackConfiguration(dataset_names=["also-missing"], max_dataset_size=7),
         }
     )
-    estimate = await scenario.get_run_size_estimate_async()
+    estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=read_dataset_counts)
     assert estimate.estimated_attack_count == expected
     assert estimate.datasets[0].name == "also-missing"
     assert estimate.effective_parameters["max_dataset_size"] == 7
@@ -195,6 +198,77 @@ async def test_unlimited_estimate_does_not_load_data_or_invent_a_count_async() -
     estimate = await scenario.get_run_size_estimate_async()
     assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
     assert "No size limit" in estimate.note
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("baseline", [False, True])
+async def test_unlimited_preview_counts_groups_with_selected_techniques_async(baseline: bool) -> None:
+    scenario = _MatrixEstimateScenario()
+    scenario.set_params_from_args(
+        args={
+            "include_baseline": baseline,
+            "scenario_techniques": [_TwoTechniqueDefault.ONE],
+            "dataset_config": DatasetAttackConfiguration(dataset_names=["stored"], max_dataset_size=None),
+        }
+    )
+    groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"objective-{index}")]) for index in range(7)]
+    with patch.object(scenario, "_resolve_seed_groups_by_dataset_async", return_value={"stored": groups}) as resolve:
+        estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=True)
+    resolve.assert_awaited_once_with(apply_sampling=False)
+    assert estimate.estimated_attack_count == (14 if baseline else 7)
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+    assert estimate.configured_dataset_size is None
+    assert estimate.datasets[0].logical_seed_group_count == 7
+    assert scenario._memory.get_scenario_results() == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_unlimited_jailbreak_preserves_template_and_attempt_factors_async(jailbreak: Jailbreak) -> None:
+    jailbreak.set_params_from_args(
+        args={
+            "scenario_techniques": [_JailbreakDefault.PROMPT_SENDING],
+            "include_baseline": True,
+            "jailbreak_names": ["aim.yaml", "dan.yaml", "third.yaml"],
+            "num_jailbreak_attempts": 2,
+            "dataset_config": DatasetAttackConfiguration(dataset_names=["stored"], max_dataset_size=None),
+        }
+    )
+    groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"objective-{index}")]) for index in range(7)]
+    with patch.object(jailbreak, "_resolve_seed_groups_by_dataset_async", return_value={"stored": groups}):
+        estimate = await jailbreak.get_run_size_estimate_async(read_dataset_counts=True)
+    assert estimate.estimated_attack_count == 7 * 3 * 2 + 7
+    assert estimate.configured_dataset_size is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_unlimited_psychosocial_keeps_distinct_harm_population_sizes_async() -> None:
+    scenario = Psychosocial(imminent_crisis_scorer=_scorer(), licensed_therapist_scorer=_scorer())
+    scenario.set_params_from_args(
+        args={"dataset_config": DatasetAttackConfiguration(dataset_names=["ignored"], max_dataset_size=None)}
+    )
+    populations = {
+        harm.dataset_name: [
+            AttackSeedGroup(seeds=[SeedObjective(value=f"{harm.dataset_name}-{index}")]) for index in range(count)
+        ]
+        for harm, count in zip(scenario._selected_sub_harms(), [2, 3], strict=True)
+    }
+    with patch.object(scenario, "_resolve_seed_groups_by_dataset_async", return_value=populations):
+        estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=True)
+    assert [component.count for component in estimate.components] == [6, 2, 9, 3]
+    assert [dataset.logical_seed_group_count for dataset in estimate.datasets] == [2, 3]
+    assert estimate.configured_dataset_size is None
+    assert all(dataset.configured_caps == [] for dataset in estimate.datasets)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scenario_class", [WebInjection, SystemPromptExtraction])
+async def test_database_preview_does_not_invent_uncapped_generated_counts_async(scenario_class: type[Scenario]) -> None:
+    scenario = scenario_class()
+    if isinstance(scenario, SystemPromptExtraction):
+        scenario = SystemPromptExtraction(prompt_cap=None)
+    with patch.object(scenario, "_resolve_seed_groups_by_dataset_async", side_effect=AssertionError("Generated data")):
+        estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=True)
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
 
 
 @pytest.mark.usefixtures("patch_central_database")

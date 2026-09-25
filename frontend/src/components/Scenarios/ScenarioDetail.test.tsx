@@ -280,6 +280,7 @@ describe('ScenarioDetail', () => {
       {
         techniques: ['default_technique'],
         include_baseline: true,
+        max_dataset_size: null,
       },
       expect.any(AbortSignal),
     )
@@ -375,6 +376,7 @@ describe('ScenarioDetail', () => {
           target_name: 'target-a',
           techniques: ['default_technique'],
           include_baseline: true,
+          max_dataset_size: null,
           ...(name ? { adversarial_target_name: name } : {}),
         },
         expect.any(AbortSignal),
@@ -569,6 +571,9 @@ describe('ScenarioDetail', () => {
   it('keeps the last good estimate and entered state after a transient preview failure', async () => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: { ...makeEstimate(8), configured_dataset_size: 5 },
+    }))
     mockEstimateRun
       .mockResolvedValueOnce(makeEstimate(8))
       .mockRejectedValueOnce({
@@ -604,7 +609,7 @@ describe('ScenarioDetail', () => {
 
     expect(mockEstimateRun).not.toHaveBeenCalled()
     expect(screen.getByTestId('launch-scenario-btn')).toBeDisabled()
-    expect(within(screen.getByTestId('run-estimate')).getByText('Unavailable')).toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('Unknown')).toBeInTheDocument()
   })
 
   it('renders a backend conditional estimate without inventing a total', async () => {
@@ -870,7 +875,7 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 
-  it('omits the dataset override and max dataset size when left blank, sending default concurrency/retries', async () => {
+  it('sends an unlimited dataset size when blank, with default concurrency/retries', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
@@ -880,7 +885,7 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     const request = mockStartRun.mock.calls[0][0]
     expect(request).not.toHaveProperty('dataset_names')
-    expect(request).not.toHaveProperty('max_dataset_size')
+    expect(request.max_dataset_size).toBeNull()
     expect(request.max_concurrency).toBe(10)
     expect(request.max_retries).toBe(0)
   })
@@ -936,7 +941,7 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByText('Advanced options')).not.toBeInTheDocument()
     expect(screen.getByTestId('max-dataset-size-input')).toHaveValue(8)
     expect(screen.getByText(
-      'The scenario default is 8. Edit it to override the default.',
+      'The scenario default is 8. Clear this field to remove the dataset size limit.',
     )).toBeInTheDocument()
     const estimate = screen.getByTestId('run-estimate')
     expect(within(estimate).getByText('Dataset size')).toBeInTheDocument()
@@ -971,6 +976,133 @@ describe('ScenarioDetail', () => {
     expect(await screen.findByTestId('max-dataset-size-input')).toHaveValue(5)
     expect(await screen.findByText('About 10')).toBeInTheDocument()
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
+  })
+
+  it('sends explicit null for estimate and launch when the populated limit is cleared', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: {
+        ...makeEstimate(10),
+        configured_dataset_size: 5,
+        effective_parameters: { max_dataset_size: 5 },
+      },
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    const input = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
+    expect(input).toHaveValue(5)
+
+    await user.clear(input)
+    expect(within(screen.getByTestId('run-estimate')).getByText('Unlimited')).toBeInTheDocument()
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
+      'foundry.red_team_agent',
+      expect.objectContaining({ max_dataset_size: null }),
+      expect.any(AbortSignal),
+    ))
+
+    await confirmRunPreview(user)
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0].max_dataset_size).toBeNull()
+  })
+
+  it('restores default limit behavior after clearing and re-entering the default', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: { ...makeEstimate(10), configured_dataset_size: 5 },
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    const input = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
+    await user.clear(input)
+    await user.type(input, '5')
+    await confirmRunPreview(user)
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')
+  })
+
+  it('shows Calculating instead of the capped count while an unlimited estimate is pending', async () => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: { ...makeEstimate(10), configured_dataset_size: 5 },
+    }))
+    let resolveUnlimited: (estimate: ScenarioRunSizeEstimateResponse) => void = () => {}
+    mockEstimateRun
+      .mockResolvedValueOnce(makeEstimate(10))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveUnlimited = resolve }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await flushRenderedPromises()
+    await advanceTimers(300)
+    const estimate = screen.getByTestId('run-estimate')
+    expect(within(estimate).getByText('10')).toBeInTheDocument()
+
+    await user.clear(screen.getByRole('spinbutton', { name: 'Max dataset size' }))
+    expect(within(estimate).getByText('Calculating...')).toBeInTheDocument()
+    expect(within(estimate).queryByText('10')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
+    await advanceTimers(300)
+
+    resolveUnlimited({ ...makeEstimate(42), status: 'approximate' })
+    await flushRenderedPromises()
+    expect(within(estimate).getByText('About 42')).toBeInTheDocument()
+    expect(within(estimate).getByText('Unlimited')).toBeInTheDocument()
+    expect(screen.getByRole('spinbutton', { name: 'Max dataset size' })).toHaveValue(null)
+  })
+
+  it.each(['unknown', 'error'])('shows Unknown without a stale capped count for an unlimited %s', async (outcome) => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: { ...makeEstimate(10), configured_dataset_size: 5 },
+    }))
+    mockEstimateRun.mockResolvedValueOnce(makeEstimate(10))
+    if (outcome === 'unknown') {
+      mockEstimateRun.mockResolvedValueOnce({
+        status: 'unavailable',
+        estimated_attack_count: null,
+        components: [],
+        datasets: [],
+        note: 'The dataset is not in the database.',
+      })
+    } else {
+      mockEstimateRun.mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 503, data: { detail: 'The database is not available.' } },
+      })
+    }
+    renderDetail('/scanner/foundry.red_team_agent')
+    await flushRenderedPromises()
+    await advanceTimers(300)
+    await user.clear(screen.getByRole('spinbutton', { name: 'Max dataset size' }))
+    await advanceTimers(300)
+    const estimate = screen.getByTestId('run-estimate')
+    expect(within(estimate).getByText('Unknown')).toBeInTheDocument()
+    expect(within(estimate).queryByText('10')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
+  })
+
+  it('ignores an unlimited response after the user restores the default limit', async () => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: { ...makeEstimate(10), configured_dataset_size: 5 },
+    }))
+    let resolveUnlimited: (estimate: ScenarioRunSizeEstimateResponse) => void = () => {}
+    mockEstimateRun
+      .mockResolvedValueOnce(makeEstimate(10))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveUnlimited = resolve }))
+      .mockResolvedValueOnce(makeEstimate(10))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await flushRenderedPromises()
+    await advanceTimers(300)
+    const input = screen.getByRole('spinbutton', { name: 'Max dataset size' })
+    await user.clear(input)
+    await advanceTimers(300)
+    await user.type(input, '5')
+    await advanceTimers(300)
+    resolveUnlimited({ ...makeEstimate(42), status: 'approximate' })
+    await flushRenderedPromises()
+    const estimate = screen.getByTestId('run-estimate')
+    expect(within(estimate).getByText('10')).toBeInTheDocument()
+    expect(within(estimate).queryByText('About 42')).not.toBeInTheDocument()
   })
 
   it('includes dataset overrides and filters when provided', async () => {
@@ -1080,6 +1212,7 @@ describe('ScenarioDetail', () => {
       scenario_name: 'foundry.red_team_agent',
       target_name: 'target-a',
       techniques: ['default_technique'],
+      max_dataset_size: null,
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: true,
@@ -1169,6 +1302,7 @@ describe('ScenarioDetail', () => {
       scenario_name: 'airt.jailbreak',
       target_name: 'target-a',
       techniques: ['prompt_sending'],
+      max_dataset_size: null,
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: false,
@@ -1180,6 +1314,7 @@ describe('ScenarioDetail', () => {
     const expectedEstimateRequest = {
       target_name: 'target-a',
       techniques: ['prompt_sending'],
+      max_dataset_size: null,
       include_baseline: false,
       scenario_params: {
         num_jailbreak_attempts: 1,

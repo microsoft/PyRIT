@@ -72,6 +72,25 @@ def sample_seed_groups() -> list[SeedGroup]:
     ]
 
 
+async def test_clear_size_limits_restores_full_compound_population_async() -> None:
+    groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"objective-{index}")]) for index in range(8)]
+    config = CompoundDatasetAttackConfiguration(
+        configurations=[
+            DatasetAttackConfiguration(seed_groups=groups[:4], max_dataset_size=1),
+            CompoundDatasetAttackConfiguration(
+                configurations=[DatasetAttackConfiguration(seed_groups=groups[4:], max_dataset_size=2)],
+                max_dataset_size=1,
+            ),
+        ],
+        max_dataset_size=1,
+    )
+    assert len(await config.get_attack_seed_groups_async()) == 1
+    config.clear_size_limits()
+    assert not config.has_size_cap
+    assert config.get_size_budget() is None
+    assert len(await config.get_attack_seed_groups_async()) == 8
+
+
 def make_objectives(*values: str) -> list[SeedObjective]:
     """Build a list of SeedObjective seeds (each becomes its own attack group)."""
     return [SeedObjective(value=v) for v in values]

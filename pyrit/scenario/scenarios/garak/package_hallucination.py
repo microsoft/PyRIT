@@ -212,7 +212,7 @@ class PackageHallucination(Scenario):
         """Return the combined generated-prompt cap for the selected languages."""
         return self._max_prompts_per_language * len(self._scenario_techniques)
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate generated prompts from the per-language cap without loading the corpus.
 

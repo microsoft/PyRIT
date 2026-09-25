@@ -513,38 +513,44 @@ class Psychosocial(Scenario):
             self._dataset_config = rebuilt
         return await super()._resolve_seed_groups_by_dataset_async(apply_sampling=apply_sampling)
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate the independent sub-harm technique sweeps and per-harm baselines.
 
         Returns:
             ScenarioRunSizeEstimate: Configured per-sub-harm budget.
         """
-        seed_group_count, _ = self._get_dataset_budget_for_estimate()
-        datasets = [
-            ScenarioDatasetSummary(
-                name=harm.dataset_name,
-                configured_caps=[
-                    ScenarioDatasetSizeCap(label="per-sub-harm cap", count=seed_group_count),
-                ],
-            )
-            for harm in self._selected_sub_harms()
-        ]
+        budget = self._get_run_size_budget()
+        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(
+            read_dataset_counts=read_dataset_counts
+        )
+        if budget is not None:
+            datasets = [
+                ScenarioDatasetSummary(
+                    name=harm.dataset_name,
+                    configured_caps=[
+                        ScenarioDatasetSizeCap(label="per-sub-harm cap", count=seed_group_count),
+                    ],
+                )
+                for harm in self._selected_sub_harms()
+            ]
         technique_count = len(self._scenario_techniques)
         components: list[ScenarioRunSizeComponent] = []
         for dataset in datasets:
             dataset_name = dataset.name
+            count = dataset.selected_seed_group_count if budget is None else seed_group_count
+            assert count is not None
             components.append(
                 ScenarioRunSizeComponent(
                     label=f"{dataset_name} technique sweep",
-                    count=seed_group_count * technique_count,
+                    count=count * technique_count,
                 )
             )
             if self._include_baseline:
                 components.append(
                     ScenarioRunSizeComponent(
                         label=f"{dataset_name} baseline",
-                        count=seed_group_count,
+                        count=count,
                         is_baseline=True,
                         note="Psychosocial uses a distinct baseline and scorer for each sub-harm.",
                     )
@@ -553,7 +559,7 @@ class Psychosocial(Scenario):
             total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
-            configured_dataset_size=seed_group_count * len(datasets),
+            configured_dataset_size=budget * len(datasets) if budget is not None else None,
             note="Each default sub-harm is planned independently; retries and internal turns are excluded.",
         )
 

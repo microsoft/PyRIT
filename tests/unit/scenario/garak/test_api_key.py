@@ -11,6 +11,7 @@ import pytest
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import Base64Converter, Converter
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.memory import CentralMemory
 from pyrit.models import ComponentIdentifier, ScenarioRunSizeEstimateStatus, Seed, SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
@@ -120,6 +121,33 @@ class TestApiKey:
                 assert group.prompts[0].source
                 assert group.objective.source
                 assert group.objective.metadata["technique"] == attack.atomic_attack_name
+
+    async def test_uncapped_preview_counts_existing_synthesized_requests_once(
+        self, corpus_seeds: dict[str, list[Seed]]
+    ) -> None:
+        memory = CentralMemory.get_memory_instance()
+        await memory.add_seeds_to_memory_async(
+            seeds=[seed for seeds in corpus_seeds.values() for seed in seeds], added_by="test"
+        )
+        scenario = ApiKey()
+        scenario.set_params_from_args(
+            args={
+                "dataset_config": ApiKeyDatasetConfiguration(
+                    dataset_names=ApiKey.required_datasets(), max_dataset_size=None
+                )
+            }
+        )
+        with patch.object(
+            DatasetAttackConfiguration, "_fetch_dataset_async", side_effect=AssertionError("Fetched datasets")
+        ):
+            estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=True)
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+        assert estimate.estimated_attack_count == 58 + 290
+        assert {dataset.name: dataset.logical_seed_group_count for dataset in estimate.datasets} == {
+            "get_key": 58,
+            "complete_key": 290,
+        }
+        assert memory.get_scenario_results() == []
 
     async def test_standard_sampling_can_select_rows_beyond_the_prefix(
         self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed]]
@@ -263,7 +291,7 @@ class TestApiKey:
         assert estimate.maximum_attack_count is None
         assert all(
             [(factor.label, factor.count) for factor in component.factors]
-            == [("combined request cap", component.count)]
+            == [("selected request estimate", component.count)]
             for component in estimate.components
         )
         assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == expected

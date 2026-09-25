@@ -310,9 +310,11 @@ class ScenarioRunService:
         ):
             raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
         try:
-            request = RunScenarioRequest.model_validate(
-                {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS}, strict=True
-            )
+            request_data = {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS}
+            # Older launch records used null for omitted sizes, not unlimited selection.
+            if request_data["max_dataset_size"] is None and raw_request.get("max_dataset_size_explicit") is not True:
+                request_data.pop("max_dataset_size")
+            request = RunScenarioRequest.model_validate(request_data, strict=True)
         except ValidationError as exc:
             raise ScenarioRunConflictError(
                 "The saved launch configuration is invalid; resume was not started."
@@ -607,6 +609,7 @@ class ScenarioRunService:
                 techniques=request.techniques,
                 dataset_names=request.dataset_names,
                 max_dataset_size=request.max_dataset_size,
+                max_dataset_size_explicit="max_dataset_size" in request.model_fields_set,
                 dataset_filters=request.dataset_filters,
                 include_baseline=request.include_baseline,
                 max_concurrency=request.max_concurrency,
@@ -1211,6 +1214,7 @@ class ScenarioRunService:
         """
         scenario_registry = ScenarioRegistry.get_registry_singleton()
         launch_request = {name: getattr(request, name) for name in _LAUNCH_REQUEST_FIELDS}
+        launch_request["max_dataset_size_explicit"] = "max_dataset_size" in request.model_fields_set
         if launch_request["include_baseline"] is None:
             scenario_class = scenario_registry.get_class(request.scenario_name)
             baseline_parameter = next(

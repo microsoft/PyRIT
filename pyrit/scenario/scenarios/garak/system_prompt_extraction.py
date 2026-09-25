@@ -159,7 +159,7 @@ class SystemPromptExtraction(Scenario):
         """Return the shared cap on system-prompt and template combinations."""
         return self._prompt_cap
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate the combined prompt budget without multiplying it by category count.
 

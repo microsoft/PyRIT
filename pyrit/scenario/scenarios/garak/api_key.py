@@ -252,7 +252,7 @@ class ApiKey(Scenario):
             self._objective_scorer_identifier = self._objective_scorer.get_identifier()
         return groups
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
         """
         Count each synthesized request once rather than crossing techniques again.
 
@@ -266,15 +266,15 @@ class ApiKey(Scenario):
         if not isinstance(config, ApiKeyDatasetConfiguration):
             raise DatasetConstraintError("ApiKey requires an ApiKeyDatasetConfiguration.")
         config._set_techniques([ApiKeyTechnique(technique.value) for technique in self._scenario_techniques])
-        count, datasets = self._get_dataset_budget_for_estimate()
+        count, datasets = await self._get_dataset_size_for_estimate_async(read_dataset_counts=read_dataset_counts)
         for dataset in datasets:
             dataset.kind = "synthesized"
         components = [
             ScenarioRunSizeComponent(
-                label="Synthesized request budget",
+                label="Synthesized requests",
                 count=count,
                 factors=[
-                    ScenarioRunSizeFactor(label="combined request cap", count=count),
+                    ScenarioRunSizeFactor(label="selected request estimate", count=count),
                 ],
             )
         ]

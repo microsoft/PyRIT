@@ -195,7 +195,7 @@ function estimateFromState(state: ScenarioRunEstimateState): ScenarioRunEstimate
 function formatAtomicAttackCount(state: ScenarioRunEstimateState): string {
   const estimate = estimateFromState(state)
   if (!estimate) {
-    return state.status === 'loading' ? 'Calculating...' : 'Unavailable'
+    return state.status === 'loading' ? 'Calculating...' : 'Unknown'
   }
   const prefix = estimate.approximate ? 'About ' : ''
   if (estimate.total !== null) {
@@ -235,7 +235,7 @@ interface BuildEstimateRequestInput {
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
   datasetOverride: string
-  maxDatasetSize: string
+  maxDatasetSize?: string
   harmCategoriesFilter: string
   dataTypesFilter: string
   includeBaseline: boolean
@@ -310,9 +310,11 @@ function buildEstimateRequest({
     scenarioParams = result.parameters
   }
 
-  let maxDatasetSizeValue: number | undefined
-  const trimmedMaxDatasetSize = maxDatasetSize.trim()
-  if (trimmedMaxDatasetSize.length > 0) {
+  let maxDatasetSizeValue: number | null | undefined
+  const trimmedMaxDatasetSize = maxDatasetSize?.trim()
+  if (trimmedMaxDatasetSize === '') {
+    maxDatasetSizeValue = null
+  } else if (trimmedMaxDatasetSize !== undefined) {
     const parsed = Number(trimmedMaxDatasetSize)
     if (!Number.isInteger(parsed) || parsed < 1) {
       return { ok: false, error: 'Max dataset size must be a positive integer.' }
@@ -653,10 +655,9 @@ function ScenarioLaunchForm({
     [isBaselineForbidden, techniqueOptions],
   )
   const techniques = selectedTechniques
-  const maxDatasetSizeOverride = maxDatasetSize.trim()
-    && maxDatasetSize !== configuredDefaultMaxDatasetSize
-    ? maxDatasetSize
-    : ''
+  const maxDatasetSizeOverride = maxDatasetSize.trim() === ''
+    ? ''
+    : maxDatasetSize === configuredDefaultMaxDatasetSize ? undefined : maxDatasetSize
   const estimateResult = useMemo(
     () => buildEstimateRequest({
       scenario,
@@ -799,7 +800,7 @@ function ScenarioLaunchForm({
     estimateRequestState?.requestKey === estimateRequestKey
     && estimateRequestState.status === 'error'
   ) {
-    estimateState = lastGoodEstimate
+    estimateState = lastGoodEstimate && estimateRequest?.max_dataset_size !== null
       ? {
           status: 'stale',
           estimate: lastGoodEstimate.estimate,
@@ -812,7 +813,7 @@ function ScenarioLaunchForm({
           label: 'The backend estimate could not be refreshed.',
           note: estimateRequestState.error,
         }
-  } else if (lastGoodEstimate) {
+  } else if (lastGoodEstimate && estimateRequest?.max_dataset_size !== null) {
     estimateState = {
       status: 'refreshing',
       estimate: lastGoodEstimate.estimate,
@@ -1105,8 +1106,8 @@ function ScenarioLaunchForm({
                 <Field
                   label="Max dataset size"
                   hint={configuredDefaultMaxDatasetSize
-                    ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Edit it to override the default.`
-                    : 'Enter a positive integer to limit the selected dataset size.'}
+                    ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Clear this field to remove the dataset size limit.`
+                    : 'Enter a positive integer to limit the dataset size, or leave empty for no dataset size limit.'}
                 >
                   <Input
                     className={styles.numberInput}
@@ -1201,9 +1202,7 @@ function ScenarioLaunchForm({
                 <div className={styles.costEstimateRow}>
                   <dt>Dataset size</dt>
                   <dd>
-                    {maxDatasetSizeOverride.trim()
-                      || configuredDefaultMaxDatasetSize
-                      || 'Not configured'}
+                    {maxDatasetSize.trim() || 'Unlimited'}
                   </dd>
                 </div>
                 <div className={styles.costEstimateRow}>
@@ -1298,7 +1297,7 @@ function ScenarioLaunchForm({
                           </Text>
                           <Text size={200} className={styles.hint}>
                             {previewDatasets.length > 0 ? 'Custom override' : 'Scenario defaults'}
-                            {maxDatasetSize.trim() ? ` - capped at ${maxDatasetSize.trim()} each` : ''}
+                            {maxDatasetSize.trim() ? ` - dataset size limit: ${maxDatasetSize.trim()}` : ' - no dataset size limit'}
                           </Text>
                         </div>
                       </dd>

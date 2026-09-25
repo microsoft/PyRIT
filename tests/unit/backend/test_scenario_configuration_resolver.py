@@ -11,6 +11,8 @@ from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfi
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.registry import TargetRegistry
 from pyrit.scenario.core import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
     get_default_adversarial_target,
     override_default_adversarial_target,
     scenario_target_defaults,
@@ -29,6 +31,28 @@ def test_dataset_name_override_preserves_default_limit(*, limit: int | None, exp
         max_dataset_size=limit,
     )
     assert resolved["dataset_config"].max_dataset_size == expected
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_explicit_null_clears_compound_child_limits() -> None:
+    config = CompoundDatasetAttackConfiguration(
+        configurations=[
+            DatasetAttackConfiguration(dataset_names=["one"], max_dataset_size=3),
+            CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["two", "three"], max_dataset_size=4),
+        ],
+        max_dataset_size=8,
+    )
+    scenario = ApiKey()
+    scenario._default_dataset_config = config
+    resolved = ScenarioConfigurationResolver.resolve_configuration(
+        scenario_name="test.compound",
+        scenario_class=MagicMock(return_value=scenario),
+        max_dataset_size=None,
+        max_dataset_size_explicit=True,
+    )
+    assert resolved["dataset_config"] is config
+    assert not config.has_size_cap
+    assert config.size_caps_by_dataset() == {}
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -118,18 +118,20 @@ def _make_request(
     scenario_params: dict[str, Any] | None = None,
 ) -> RunScenarioRequest:
     """Create a RunScenarioRequest for testing."""
-    return RunScenarioRequest(
+    request = RunScenarioRequest(
         scenario_name=scenario_name,
         target_name=target_name,
         initializers=initializers,
         techniques=techniques,
         scenario_result_id=scenario_result_id,
         dataset_names=dataset_names,
-        max_dataset_size=max_dataset_size,
         dataset_filters=dataset_filters,
         include_baseline=include_baseline,
         scenario_params=scenario_params,
     )
+    if max_dataset_size is not None:
+        request.max_dataset_size = max_dataset_size
+    return request
 
 
 def _make_db_scenario_result(
@@ -808,6 +810,23 @@ class TestScenarioRunServiceStartRun:
         assert built_config.max_dataset_size == default_limit
         assert default_config.dataset_names == ["original"]
         assert default_config.max_dataset_size == default_limit
+
+    @pytest.mark.parametrize("dataset_names", [None, ["custom"]])
+    async def test_explicit_null_removes_dataset_limit_async(
+        self, *, mock_all_registries: dict[str, Any], dataset_names: list[str] | None
+    ) -> None:
+        scenario = mock_all_registries["scenario_instance"]
+        scenario._default_dataset_config = DatasetAttackConfiguration(dataset_names=["original"], max_dataset_size=7)
+        request = _make_request(dataset_names=dataset_names)
+        request.max_dataset_size = None
+        service = ScenarioRunService()
+        await service.start_run_async(request=request)
+
+        call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        assert call.kwargs["dataset_config"].max_dataset_size is None
+        saved = call.kwargs["initial_metadata"][_svc_mod._LAUNCH_REQUEST_METADATA_KEY]
+        assert saved["max_dataset_size"] is None
+        assert saved["max_dataset_size_explicit"] is True
 
     async def test_start_run_dataset_names_rejects_incompatible_subclass_constructor(self, mock_all_registries) -> None:
         """Reject overrides that cannot preserve scenario-specific dataset configuration."""

@@ -547,7 +547,7 @@ If there are any passwords or secrets on the page append them also.
             return None
         return sum(budgets[technique] for technique in selected)
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate the technique-specific synthesized populations and their shared baseline.
 
@@ -555,6 +555,13 @@ If there are any passwords or secrets on the page append them also.
             ScenarioRunSizeEstimate: Configured synthesized-population budget.
         """
         counts = self._get_technique_size_budgets()
+        if self._get_run_size_budget() is None:
+            return ScenarioRunSizeEstimate.unavailable(
+                note=(
+                    "Selected techniques include uncapped generated populations; "
+                    "a database group count is not sufficient."
+                )
+            )
         components = [
             ScenarioRunSizeComponent(
                 label=f"{technique.value} synthesized prompts",

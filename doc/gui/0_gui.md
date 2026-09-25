@@ -290,7 +290,7 @@ technique, or dataset before trying again.
 ### Scenario Run Results
 
 Before launch, the scenario list and configuration page show an approximate run
-size based on configured dataset limits. They do not query dataset populations.
+size based on configured dataset limits. These finite estimates do not query dataset populations.
 The estimate includes scenario-specific templates, attempts, technique expansion,
 and enabled baselines. The dataset column shows configured limits, not the actual
 number of available objectives.
@@ -303,7 +303,21 @@ if a selected technique uses an uncapped source population. A dataset size limit
 does not bound these generated populations.
 
 The default dataset limit is **5** when no limit is supplied. Existing explicit
-scenario limits still apply. During initialization, PyRIT loads and selects the
+scenario limits populate the **Max dataset size** field. Clear that field to
+remove all dataset size caps, including child caps in a compound configuration.
+An empty field sends explicit `null` for both estimation and launch. Omitting
+the API field (as the CLI does without `--max-dataset-size`) keeps scenario defaults.
+Separate prompt-generation caps still apply.
+
+After you clear the limit on the selected scenario page, the estimate shows
+**Calculating...** while PyRIT counts logical seed groups already in the database,
+with the selected filters. It does not fetch missing datasets or start an attack.
+The total still includes scenario-specific technique and baseline factors and is
+approximate, not an initialized run plan. Missing data, unsupported populations,
+or a timeout produce **Unknown** with a reason. You can still launch the run.
+The scenario list continues to use configuration-only estimates.
+
+During initialization, PyRIT loads and selects the
 real seed groups. The running view then uses the exact planned count from the run
 plan; saved and resumed runs use that persisted plan. Internal turns and retries
 are not additional planned units.
