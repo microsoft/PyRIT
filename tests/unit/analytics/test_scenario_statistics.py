@@ -101,13 +101,13 @@ def test_saved_plan_counts_planned_units_and_reports_unattributed_attempts() -> 
     assert statistics.display_groups["Attack"].planned == 2
 
 
-def test_explicit_none_plan_ignores_saved_plan() -> None:
+def test_use_saved_plan_false_counts_a_legacy_run() -> None:
     result = make_scenario_result(
         attack_results={"attack": [_result(objective="A", outcome=AttackOutcome.SUCCESS)]},
         metadata={SCENARIO_RUN_PLAN_METADATA_KEY: _plan().model_dump(mode="json")},
     )
 
-    statistics = compute_scenario_statistics(result, plan=None)
+    statistics = compute_scenario_statistics(result, use_saved_plan=False)
 
     assert statistics.overall.planned is None
     assert statistics.overall.completed == 1

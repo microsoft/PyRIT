@@ -57,8 +57,8 @@ async def test_write_async_renders_full_summary(printer, capsys):
         target_params={"model_name": "gpt-test", "endpoint": "https://example.com"},
         attack_results={
             "technique_a": [
-                _attack_result(outcome=AttackOutcome.SUCCESS),
-                _attack_result(outcome=AttackOutcome.FAILURE),
+                _attack_result(outcome=AttackOutcome.SUCCESS, objective="obj1"),
+                _attack_result(outcome=AttackOutcome.FAILURE, objective="obj2"),
             ],
             "technique_b": [_attack_result(outcome=AttackOutcome.SUCCESS)],
         },
@@ -77,6 +77,7 @@ async def test_write_async_renders_full_summary(printer, capsys):
     assert "Overall Statistics" in out
     assert "Total Techniques: 2" in out
     assert "Total Attack Results: 3" in out
+    assert "Total Attempts: 3" in out
     assert "Per-Group Breakdown" in out
     assert "technique_a" in out
     assert "technique_b" in out

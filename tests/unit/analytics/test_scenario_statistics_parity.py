@@ -114,6 +114,7 @@ _HISTORIES = {
             _group(name="attack", eval_hash="eval-2", seed_ids=["a"], display_group="Attack"),
             seeds=[_seed("a", "A")],
         ),
+        display_group_map={"attack": "Attack"},
         attempts=[
             _Attempt("attack", "A", AttackOutcome.SUCCESS, eval_hash="eval-1", seed_group_id="a"),
             _Attempt("attack", "A", AttackOutcome.FAILURE, eval_hash="eval-2", seed_group_id="a"),
@@ -221,14 +222,27 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     report = json.loads(await JsonScenarioResultPrinter().render_async(scenario_result))
     assert report["stats"]["overall_success_rate"] == (expected or 0)
 
-    # Per-group numbers agree between the saved-plan progress view and the reports.
+    # Per-group numbers agree between the SDK, the saved-plan progress view, and the reports. Compare
+    # key sets first so a group missing from one view fails instead of reading as 0%.
+    sdk_groups = {name: (counts.completed, counts.success_percentage) for name, counts in sdk.display_groups.items()}
+    report_groups = {
+        group["name"]: (group["num_results"], group["success_rate"])
+        for group in report["groups"]
+        if group["num_attempts"]
+    }
+    # Reports list the groups that have results; planned groups with no attempts only appear in the SDK/API.
+    sdk_groups_with_results = {name: value for name, value in sdk_groups.items() if value[0]}
+    assert set(report_groups) == set(sdk_groups_with_results)
+    assert report_groups == {
+        name: (completed, rate or 0) for name, (completed, rate) in sdk_groups_with_results.items()
+    }
     if history.plan is not None:
-        progress_groups = {group.display_group: group.success_percentage for group in progress.summary.display_groups}
-        sdk_groups = {name: counts.success_percentage for name, counts in sdk.display_groups.items()}
-        assert sdk_groups == progress_groups
-        report_groups = {group["name"]: group["success_rate"] for group in report["groups"]}
-        for name, rate in report_groups.items():
-            assert rate == (progress_groups.get(name) or 0)
+        progress_groups = {
+            group.display_group: (group.completed, group.success_percentage)
+            for group in progress.summary.display_groups
+        }
+        assert set(progress_groups) == set(sdk_groups)
+        assert progress_groups == sdk_groups
 
 
 def test_historical_attempt_counts_stay_separate_from_units(sqlite_instance) -> None:

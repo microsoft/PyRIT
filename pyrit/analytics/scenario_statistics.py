@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import ValidationError
 
@@ -48,8 +48,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Default for ``compute_scenario_statistics(plan=...)``: use the plan saved in the result's metadata.
-SAVED_RUN_PLAN: Any = object()
+
+class _CountableAttempt(Protocol):
+    """An attempt that can be counted: both ``ScenarioAttempt`` and ``ScenarioProgressResult`` qualify."""
+
+    @property
+    def outcome(self) -> AttackOutcome: ...
+
+    @property
+    def total_retries(self) -> int: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +66,6 @@ class ScenarioPlanLookup:
     groups_by_identity: dict[tuple[str, str], ScenarioRunPlanAtomicGroup]
     groups_by_name: dict[str, tuple[ScenarioRunPlanAtomicGroup, ...]]
     seed_ids_by_group_and_objective: dict[tuple[str, str], tuple[str, ...]]
-    planned_units: frozenset[ScenarioExecutionUnit]
 
     @classmethod
     def from_plan(cls, *, plan: ScenarioRunPlan | None) -> ScenarioPlanLookup:
@@ -74,14 +80,12 @@ class ScenarioPlanLookup:
                 groups_by_identity={},
                 groups_by_name={},
                 seed_ids_by_group_and_objective={},
-                planned_units=frozenset(),
             )
 
         groups_by_identity: dict[tuple[str, str], ScenarioRunPlanAtomicGroup] = {}
         grouped_by_name: dict[str, list[ScenarioRunPlanAtomicGroup]] = {}
         seeds_by_id = {seed.id: seed for seed in plan.seed_groups}
         seed_ids_by_group_and_objective: dict[tuple[str, str], tuple[str, ...]] = {}
-        planned_units: set[ScenarioExecutionUnit] = set()
         for group in plan.atomic_groups:
             groups_by_identity[(group.atomic_attack_name, group.technique_eval_hash)] = group
             grouped_by_name.setdefault(group.atomic_attack_name, []).append(group)
@@ -95,16 +99,11 @@ class ScenarioPlanLookup:
                     for objective_sha256, seed_ids in seed_ids_by_objective.items()
                 }
             )
-            planned_units.update(
-                ScenarioExecutionUnit(atomic_group_id=group.id, seed_group_id=seed_group_id)
-                for seed_group_id in group.seed_group_ids
-            )
 
         return cls(
             groups_by_identity=groups_by_identity,
             groups_by_name={name: tuple(groups) for name, groups in grouped_by_name.items()},
             seed_ids_by_group_and_objective=seed_ids_by_group_and_objective,
-            planned_units=frozenset(planned_units),
         )
 
     def resolve_group(
@@ -269,7 +268,7 @@ def success_percentage(*, succeeded: int, completed: int) -> int | None:
 def count_execution_units(
     *,
     units: Iterable[ScenarioExecutionUnit],
-    attempts_by_unit: Mapping[ScenarioExecutionUnit, Sequence[Any]],
+    attempts_by_unit: Mapping[ScenarioExecutionUnit, Sequence[_CountableAttempt]],
     planned: int | None,
 ) -> ScenarioProgressCounts:
     """
@@ -306,10 +305,33 @@ def count_execution_units(
     )
 
 
+def combine_execution_counts(counts: Iterable[ScenarioProgressCounts]) -> ScenarioProgressCounts:
+    """
+    Combine counts for disjoint sets of execution units, such as the atomic attacks of one display group.
+
+    Returns:
+        ScenarioProgressCounts: The summed counts with the success percentage recomputed. ``planned`` is
+            None unless every input has one.
+    """
+    counts = list(counts)
+    completed = sum(item.completed for item in counts)
+    succeeded = sum(item.succeeded for item in counts)
+    planned = [item.planned for item in counts]
+    return ScenarioProgressCounts(
+        completed=completed,
+        planned=sum(value for value in planned if value is not None) if all(v is not None for v in planned) else None,
+        succeeded=succeeded,
+        success_percentage=success_percentage(succeeded=succeeded, completed=completed),
+        errors=sum(item.errors for item in counts),
+        retries=sum(item.retries for item in counts),
+    )
+
+
 def compute_scenario_statistics(
     scenario_result: ScenarioResult,
     *,
-    plan: ScenarioRunPlan | None = SAVED_RUN_PLAN,
+    plan: ScenarioRunPlan | None = None,
+    use_saved_plan: bool = True,
 ) -> ScenarioExecutionStatistics:
     """
     Calculate effective execution-unit statistics for a scenario result.
@@ -320,13 +342,14 @@ def compute_scenario_statistics(
 
     Args:
         scenario_result (ScenarioResult): The scenario result with its hydrated attack results.
-        plan (ScenarioRunPlan | None): The run plan, or None to count the result as a legacy run.
-            Defaults to the plan saved in the result's metadata.
+        plan (ScenarioRunPlan | None): An explicit run plan. Defaults to None.
+        use_saved_plan (bool): When ``plan`` is None, whether to use the plan saved in the result's
+            metadata. Pass False to count the result as a legacy run. Defaults to True.
 
     Returns:
         ScenarioExecutionStatistics: Overall, per atomic attack, and per display group counts.
     """
-    if plan is SAVED_RUN_PLAN:
+    if plan is None and use_saved_plan:
         plan = load_scenario_run_plan(scenario_result)
     plan_lookup = ScenarioPlanLookup.from_plan(plan=plan)
 

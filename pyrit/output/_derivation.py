@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from pyrit.analytics.scenario_statistics import combine_execution_counts, compute_scenario_statistics
+
 if TYPE_CHECKING:
     from pyrit.models import AttackResult, ComponentIdentifier, ScenarioResult, Score
 
@@ -51,25 +53,63 @@ def resolve_target_info(target_id: ComponentIdentifier | None) -> TargetInfo:
     )
 
 
-def scenario_success_rates(result: ScenarioResult) -> tuple[int, dict[str, int]]:
-    """
-    Return the overall and per-display-group success rates of a scenario result.
+class GroupStatistics(NamedTuple):
+    """Effective-unit statistics for one display group, alongside its raw attempt count."""
 
-    The numbers come from ``pyrit.analytics.compute_scenario_statistics``, the calculation shared with
-    the SDK and the GUI backend, so every report shows the same effective execution-unit statistics.
-    Groups with no completed unit report 0.
+    name: str
+    units: int
+    attempts: int
+    success_rate: int
+
+
+class ScenarioOverview(NamedTuple):
+    """Overall and per-display-group statistics for a scenario report."""
+
+    units: int
+    attempts: int
+    success_rate: int
+    groups: list[GroupStatistics]
+
+
+def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
+    """
+    Summarize a scenario result for the reports.
+
+    The numbers come from ``pyrit.analytics.compute_scenario_statistics``, the calculation shared with the
+    SDK and the GUI backend. Groups follow ``result.get_display_groups()``: each group folds the per-atomic-
+    attack counts of the atomic attacks ``display_group_map`` assigns to it, so the rate is always keyed the
+    same way the printers group their results. ``units`` counts effective execution units (the success-rate
+    denominator); ``attempts`` counts every persisted attempt, including retries.
 
     Args:
         result (ScenarioResult): The scenario result to summarize.
 
     Returns:
-        tuple[int, dict[str, int]]: The overall rate and the rate for each display group, as integer percents.
+        ScenarioOverview: The overall and per-group statistics.
     """
-    from pyrit.analytics.scenario_statistics import compute_scenario_statistics
-
     statistics = compute_scenario_statistics(result)
-    group_rates = {name: counts.success_percentage or 0 for name, counts in statistics.display_groups.items()}
-    return statistics.overall.success_percentage or 0, group_rates
+    groups: list[GroupStatistics] = []
+    for group_name, group_results in result.get_display_groups().items():
+        atomic_attack_names = [
+            name for name in result.attack_results if result.display_group_map.get(name, name) == group_name
+        ]
+        counts = combine_execution_counts(
+            statistics.atomic_attacks[name] for name in atomic_attack_names if name in statistics.atomic_attacks
+        )
+        groups.append(
+            GroupStatistics(
+                name=group_name,
+                units=counts.completed,
+                attempts=len(group_results),
+                success_rate=counts.success_percentage or 0,
+            )
+        )
+    return ScenarioOverview(
+        units=statistics.overall.completed,
+        attempts=statistics.attempts,
+        success_rate=statistics.overall.success_percentage or 0,
+        groups=groups,
+    )
 
 
 def attack_score_display(attack: AttackResult, *, none_value: str | None = None) -> str | None:

@@ -244,7 +244,7 @@ class ScenarioProgressReadModel:
             tuple[int, int, int, int]: Total, completed, success-rate percentage,
                 and successful-unit count.
         """
-        overall = compute_scenario_statistics(scenario_result, plan=plan).overall
+        overall = compute_scenario_statistics(scenario_result, plan=plan, use_saved_plan=False).overall
         total = overall.planned if overall.planned is not None else overall.completed
         return total, overall.completed, overall.success_percentage or 0, overall.succeeded
 

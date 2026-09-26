@@ -51,6 +51,8 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
       <div class="value">{{ report.overview.stats.total_techniques }}</div></div>
     <div class="card"><div class="label">Attack results</div>
       <div class="value">{{ report.overview.stats.total_results }}</div></div>
+    {% if report.overview.stats.total_attempts is defined %}<div class="card"><div class="label">Attempts</div>
+      <div class="value">{{ report.overview.stats.total_attempts }}</div></div>{% endif %}
     <div class="card"><div class="label">Objectives</div>
       <div class="value">{{ report.overview.stats.unique_objectives }}</div></div>
   </div>
@@ -64,9 +66,11 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
 
   <h2>Per-group breakdown</h2>
   <table>
-    <tr><th>Group</th><th>Results</th><th>Success rate</th></tr>
+    <tr><th>Group</th><th>Results</th><th>Attempts</th><th>Success rate</th></tr>
     {% for g in report.overview.groups %}
-    <tr><td>{{ g.name }}</td><td>{{ g.num_results }}</td><td>{{ g.success_rate }}%</td></tr>
+    <tr><td>{{ g.name }}</td><td>{{ g.num_results }}</td>
+      <td>{{ g.num_attempts if g.num_attempts is defined else g.num_results }}</td>
+      <td>{{ g.success_rate }}%</td></tr>
     {% endfor %}
   </table>
 
