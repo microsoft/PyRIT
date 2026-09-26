@@ -70,6 +70,9 @@ jest.mock("@azure/msal-react", () => ({
 }));
 
 jest.mock("./services/api", () => ({
+  runtimeApi: {
+    getReadiness: jest.fn().mockResolvedValue({ ready: true, state: 'ready', generation: '' }),
+  },
   attacksApi: {
     getAttack: jest.fn(),
     listAttacks: jest.fn(),

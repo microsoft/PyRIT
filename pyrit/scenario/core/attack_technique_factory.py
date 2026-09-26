@@ -720,20 +720,49 @@ class AttackTechniqueFactory(Identifiable):
                 create_time_system_prompt=adversarial_system_prompt,
                 create_time_seed_prompt=adversarial_seed_prompt,
             )
-        if attack_converter_config_override is not None and "attack_converter_config" in accepted_params:
-            kwargs["attack_converter_config"] = attack_converter_config_override
-
-        if extra_request_converters and "attack_converter_config" in accepted_params:
-            existing = kwargs.get("attack_converter_config")
-            base_request = list(existing.request_converters) if existing else []
-            base_response = list(existing.response_converters) if existing else []
-            kwargs["attack_converter_config"] = AttackConverterConfig(
-                request_converters=base_request + list(extra_request_converters),
-                response_converters=base_response,
+        if "attack_converter_config" in accepted_params:
+            converter_config = self._compose_converter_config(
+                attack_converter_config_override=attack_converter_config_override,
+                extra_request_converters=extra_request_converters,
             )
+            if converter_config is not None:
+                kwargs["attack_converter_config"] = converter_config
 
         attack = self._attack_class(**kwargs)
         return AttackTechnique(attack=attack, seed_technique=self._seed_technique)
+
+    def _compose_converter_config(
+        self,
+        *,
+        attack_converter_config_override: AttackConverterConfig | None = None,
+        extra_request_converters: list[ConverterConfiguration] | None = None,
+    ) -> AttackConverterConfig | None:
+        """
+        Compose the effective converter config without mutating stored or caller-owned inputs.
+
+        Args:
+            attack_converter_config_override (AttackConverterConfig | None): Config that replaces the baked config.
+            extra_request_converters (list[ConverterConfiguration] | None): Request converters to append.
+
+        Returns:
+            AttackConverterConfig | None: The selected config with any extra request converters appended,
+                or None when neither a config nor extra converters are present.
+        """
+        base: AttackConverterConfig | None = (
+            attack_converter_config_override
+            if attack_converter_config_override is not None
+            else self._attack_kwargs.get("attack_converter_config")
+        )
+
+        if not extra_request_converters:
+            return base
+
+        base_request = list(base.request_converters) if base else []
+        base_response = list(base.response_converters) if base else []
+        return AttackConverterConfig(
+            request_converters=base_request + list(extra_request_converters),
+            response_converters=base_response,
+        )
 
     def _build_adversarial_config(
         self,

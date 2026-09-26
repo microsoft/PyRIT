@@ -104,6 +104,33 @@ def clear_service_cache():
     _svc_mod._service_instance = None
 
 
+async def test_has_active_work_covers_scheduler_owned_work(patch_central_database: MagicMock) -> None:
+    service = ScenarioRunService()
+    assert not service.has_active_work()
+
+    service._active_scenario_result_id = "active"
+    assert service.has_active_work()
+    service._active_scenario_result_id = None
+
+    service._queued_runs.append(MagicMock())
+    assert service.has_active_work()
+    service._queued_runs.clear()
+
+    preparation: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+    service._preparations.add(preparation)
+    assert service.has_active_work()
+    service._preparations.clear()
+
+    handoff = asyncio.create_task(asyncio.sleep(0))
+    service._handoff_retry_tasks.add(handoff)
+    assert service.has_active_work()
+    service._handoff_retry_tasks.clear()
+    await handoff
+
+    assert not service.has_active_work()
+    await service.close_async()
+
+
 def _make_request(
     *,
     scenario_name: str = "foundry.red_team_agent",

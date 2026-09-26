@@ -73,7 +73,7 @@ def test_init_warns_when_admin_group_is_missing(caplog: pytest.LogCaptureFixture
 
 
 def test_require_admin_rejects_anonymous_request_by_default() -> None:
-    request = MagicMock(spec=Request)
+    request = Request({"type": "http"})
     request.state.user = None
 
     with patch.dict("os.environ", {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": ""}, clear=False):
@@ -84,7 +84,7 @@ def test_require_admin_rejects_anonymous_request_by_default() -> None:
 
 
 def test_require_admin_allows_explicit_local_development_override() -> None:
-    request = MagicMock(spec=Request)
+    request = Request({"type": "http"})
     request.state.user = None
 
     with patch.dict("os.environ", {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": "true"}, clear=False):

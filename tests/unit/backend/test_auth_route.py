@@ -19,7 +19,7 @@ async def test_get_auth_config_returns_enabled_graph_contract() -> None:
     }
 
     with patch.dict("os.environ", environment, clear=False):
-        result = await get_auth_config_async()
+        result = await get_auth_config_async(Request({"type": "http"}))
 
     assert result == {
         "enabled": True,
@@ -38,7 +38,7 @@ async def test_get_auth_config_returns_disabled_contract_when_configuration_is_a
     }
 
     with patch.dict("os.environ", environment, clear=False):
-        result = await get_auth_config_async()
+        result = await get_auth_config_async(Request({"type": "http"}))
 
     assert result == {
         "enabled": False,
@@ -57,7 +57,7 @@ async def test_get_auth_config_does_not_enable_incomplete_configuration() -> Non
     }
 
     with patch.dict("os.environ", environment, clear=False):
-        result = await get_auth_config_async()
+        result = await get_auth_config_async(Request({"type": "http"}))
 
     assert result["enabled"] is False
     assert result["scopes"] == []
@@ -77,7 +77,7 @@ async def test_get_auth_access_returns_authenticated_admin_state() -> None:
 
 
 async def test_get_auth_access_uses_explicit_local_admin_override() -> None:
-    request = MagicMock(spec=Request)
+    request = Request({"type": "http"})
     request.state.user = None
 
     with patch.dict("os.environ", {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": "true"}, clear=False):

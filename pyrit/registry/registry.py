@@ -247,6 +247,19 @@ class Registry(ABC, Generic[T, MetadataT]):
             if cls in cls._singletons:
                 del cls._singletons[cls]
 
+    @classmethod
+    def set_registry_singleton(cls, instance: Self) -> None:
+        """
+        Replace this registry's singleton with an already constructed instance.
+
+        Raises:
+            TypeError: If the instance is not an instance of this registry class.
+        """
+        if not isinstance(instance, cls):
+            raise TypeError(f"Expected {cls.__name__}, got {type(instance).__name__}.")
+        with cls._singletons_lock:
+            cls._singletons[cls] = instance
+
     def _ensure_discovered(self) -> None:
         """Ensure discovery has been performed. Runs discovery on first access."""
         with self._catalog_lock:
