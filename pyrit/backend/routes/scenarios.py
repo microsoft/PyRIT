@@ -12,7 +12,7 @@ Route structure:
     /api/scenarios/runs          — scenario execution lifecycle
 """
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 
 from pyrit.backend.models.common import ProblemDetail
@@ -153,7 +153,9 @@ async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
         409: {"model": ProblemDetail, "description": "Saved run cannot be resumed"},
     },
 )
-async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt
+async def start_scenario_run(  # pyrit-async-suffix-exempt
+    request: RunScenarioRequest, http_request: Request
+) -> ScenarioRunSummary:
     """
     Start a new scenario run as a background task.
 
@@ -163,10 +165,14 @@ async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
 
     Args:
         request: Scenario run configuration.
+        http_request: HTTP admission context, captured before body parsing.
 
     Returns:
         ScenarioRunSummary: Run metadata with PENDING status.
     """
+    runtime = getattr(http_request.app.state, "runtime_lifecycle", None)
+    if runtime is not None and runtime.state != "ready":
+        raise HTTPException(status_code=503, detail="Scenario start was interrupted by runtime reinitialization.")
     service = get_scenario_run_service()
     try:
         return await service.start_run_async(request=request)

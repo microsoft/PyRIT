@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+import asyncio
 import logging
+import os
 import pathlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pyrit.common.apply_defaults import reset_default_values
@@ -25,6 +27,64 @@ AZURE_SQL = "AzureSQL"
 MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
 
 _load_environment_files = load_environment_files
+
+
+def validate_reinitialization_memory(*, memory_db_type: str, environment: dict[str, str]) -> MemoryInterface | None:
+    """
+    Reject changed persistence configuration without exposing connection details.
+
+    Returns:
+        MemoryInterface | None: The unchanged live memory, or None before memory creation.
+
+    Raises:
+        ValueError: If the requested memory configuration requires a restart.
+    """
+    if memory_db_type not in get_args(MemoryDatabaseType):
+        raise ValueError("Unsupported memory database type.")
+    try:
+        memory = CentralMemory.get_memory_instance()
+    except ValueError:
+        return None
+    compatible = (
+        isinstance(memory, SQLiteMemory) and memory_db_type == (IN_MEMORY if memory.db_path == ":memory:" else SQLITE)
+    ) or (isinstance(memory, AzureSQLMemory) and memory_db_type == AZURE_SQL)
+    if not compatible:
+        raise ValueError("Memory configuration changed; a backend restart is required.")
+    if isinstance(memory, AzureSQLMemory):
+        effective = {**os.environ, **environment}
+        for key, live in (
+            (memory.AZURE_SQL_DB_CONNECTION_STRING, memory._connection_string),
+            (memory.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL, memory._results_container_url),
+            (memory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN, memory._results_container_sas_token),
+        ):
+            if (effective.get(key) or None) != (live or None):
+                raise ValueError("Memory configuration changed; a backend restart is required.")
+    return memory
+
+
+def reset_setup_registries() -> None:
+    """Discard only PyRIT's setup-owned registries, not persistence singletons."""
+    from pyrit.registry import (
+        AttackTechniqueRegistry,
+        ConverterRegistry,
+        InitializerRegistry,
+        ScenarioRegistry,
+        ScorerRegistry,
+        TargetRegistry,
+    )
+    from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
+
+    reset_dynamic_technique_caches()
+
+    for registry in (
+        AttackTechniqueRegistry,
+        ConverterRegistry,
+        InitializerRegistry,
+        ScenarioRegistry,
+        ScorerRegistry,
+        TargetRegistry,
+    ):
+        registry.reset_registry_singleton()
 
 
 async def _execute_initializers_async(
@@ -131,13 +191,10 @@ async def initialize_pyrit_async(
         ValueError: If an unsupported memory_db_type is provided or env_files contains non-existent files.
     """
     validate_env_akv_strict(env_akv_strict=env_akv_strict)
-    configure_random_seed(seed=seed)
     await load_environment_async(
-        env_akv_ref=env_akv_ref,
-        env_files=env_files,
-        env_akv_strict=env_akv_strict,
-        silent=silent,
+        env_akv_ref=env_akv_ref, env_files=env_files, env_akv_strict=env_akv_strict, silent=silent
     )
+    configure_random_seed(seed=seed)
 
     # Reset all default values before executing initialization scripts
     # This ensures a clean state for each initialization
@@ -176,7 +233,11 @@ async def initialize_pyrit_async(
         script_paths = [pathlib.Path(script_path) for script_path in initialization_scripts]
         for script_path in script_paths:
             try:
-                script_initializers = registry.create_from_script_paths(script_paths=[script_path])
+                script_initializers = await asyncio.to_thread(
+                    registry.create_from_script_paths,
+                    script_paths=[script_path],
+                    strict=raise_on_initializer_error,
+                )
                 all_initializers.extend(script_initializers)
             except Exception:
                 logger.exception("Error loading initializers from script %s", script_path)
@@ -199,3 +260,19 @@ async def initialize_pyrit_async(
             initializers=all_initializers,
             raise_on_initializer_error=raise_on_initializer_error,
         )
+
+
+async def reinitialize_pyrit_async(
+    *,
+    memory: MemoryInterface,
+    initializer_factory: Callable[[], Sequence["PyRITInitializer"]],
+    environment_values: dict[str, str],
+    seed: int | None,
+) -> None:
+    """Replace runtime-only setup while retaining the validated memory instance."""
+    os.environ.update(environment_values)
+    configure_random_seed(seed=seed)
+    reset_default_values()
+    CentralMemory.set_memory_instance(memory)
+    initializers = await asyncio.to_thread(initializer_factory)
+    await _execute_initializers_async(initializers=initializers, raise_on_initializer_error=True)
