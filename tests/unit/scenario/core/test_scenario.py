@@ -1897,6 +1897,41 @@ class TestScenarioParallelExecution:
         # Sanity check: the failure actually happened.
         assert bad_started.is_set()
 
+    async def test_child_cancellation_stops_queue_before_ready_sibling_finishes(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        sibling_started = asyncio.Event()
+        release_sibling = asyncio.Event()
+
+        async def cancelled_run_async(**_kwargs):
+            await sibling_started.wait()
+            release_sibling.set()
+            raise asyncio.CancelledError("atomic attack cancelled")
+
+        async def sibling_run_async(**_kwargs):
+            sibling_started.set()
+            await release_sibling.wait()
+            return AttackExecutorResult(completed_results=[sample_attack_results[1]], incomplete_objectives=[])
+
+        mock_atomic_attacks[0].run_async = AsyncMock(side_effect=cancelled_run_async)
+        mock_atomic_attacks[1].run_async = AsyncMock(side_effect=sibling_run_async)
+        mock_atomic_attacks[2].run_async = create_mock_run_async(
+            [sample_attack_results[2]], atomic_attack=mock_atomic_attacks[2]
+        )
+        scenario = ConcreteScenario(
+            name="Child Cancellation Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
+        await scenario.initialize_async()
+
+        with pytest.raises(asyncio.CancelledError, match="atomic attack cancelled"):
+            await asyncio.wait_for(scenario.run_async(), timeout=5)
+
+        mock_atomic_attacks[2].run_async.assert_not_called()
+        assert not scenario._active_atomic_groups
+
     async def test_multiple_inflight_failures_are_grouped_into_exception_group(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
     ):
