@@ -8,10 +8,15 @@ from pyrit.models import ComponentIdentifier
 
 class TaskFramingConverter(PromptTemplateConverter):
     """
-    Deprecated alias for PromptTemplateConverter; will be removed in 1.4.0.
+    Deprecated: use PromptTemplateConverter instead; will be removed in 1.4.0.
 
     Use ``PromptTemplateConverter(template=...)`` instead. To keep the previous
     default behavior, pass ``template="TASK is '{{ prompt }}'"``.
+
+    The docstring intentionally does not start with "Deprecated alias": the registry
+    skips such classes, and existing callers must still be able to build this one by
+    name (e.g. ``ConverterRegistry.create_instance("TaskFramingConverter", ...)``)
+    until it is removed.
     """
 
     #: Default template framing the input as a quoted task.

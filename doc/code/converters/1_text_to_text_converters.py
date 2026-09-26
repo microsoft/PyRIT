@@ -304,24 +304,44 @@ print("Policy Puppetry:", await policy_puppetry.convert_async(prompt=prompt))  #
 # Use the converted text as the attack content in an XPIA workflow
 # (see [Workflows](../executor/5_workflow.ipynb)).
 #
-# Pass `strip_characters` with the characters that would close the hiding spot early: `"` for
-# HTML attributes and Markdown link titles, `<>` for element content, `>` for HTML comments,
-# and `)` for Markdown comments.
+# For HTML, pass `strip_characters` with the characters that would close the hiding spot
+# early: `"` for attributes, `<>` for element content, and `>` for comments.
 
 # %%
-hidden_text_templates = {
+html_templates = {
     "HTML comment": ("<p>Our store hours are 9am to 5pm.</p>\n<!-- {{ prompt }} -->", ">"),
     "CSS display:none": ('<p>Welcome!</p>\n<div style="display:none">{{ prompt }}</div>', "<>"),
     "CSS off-screen": ('<p>Welcome!</p>\n<span style="position:absolute;left:-9999px">{{ prompt }}</span>', "<>"),
     "HTML alt text": ('<img src="logo.png" alt="{{ prompt }}">', '"'),
     "ARIA label": ('<button aria-label="{{ prompt }}">Submit</button>', '"'),
-    "Markdown comment": ("Welcome to the docs.\n\n[//]: # ({{ prompt }})", ")"),
-    "Markdown link title": ('See [our FAQ](https://example.com/faq "{{ prompt }}").', '"'),
 }
 
-for name, (template, strip_characters) in hidden_text_templates.items():
+for name, (template, strip_characters) in html_templates.items():
     hidden_text = PromptTemplateConverter(template=template, strip_characters=strip_characters)
     print(f"{name}:", await hidden_text.convert_async(prompt=prompt))  # type: ignore
+
+# %% [markdown]
+# Markdown needs more than stripping: a blank line in the prompt ends the hiding spot and
+# renders the rest as a visible paragraph, and a trailing backslash escapes the closing
+# delimiter. So put the prompt on one line and backslash-escape `\` and the delimiter first.
+# `SearchReplaceConverter` does both, and `PromptTemplateConverter` still inserts the result
+# as is. In an attack, pass the three converters as request converters in this order.
+
+# %%
+one_line = SearchReplaceConverter(pattern=r"\s*[\r\n]\s*", replace=" ")
+markdown_templates = {
+    # name: (template, characters to backslash-escape)
+    "Markdown comment": ("Welcome to the docs.\n\n[//]: # ({{ prompt }})", r"([\\()])"),
+    "Markdown link title": ('See [our FAQ](https://example.com/faq "{{ prompt }}").', r'([\\"])'),
+}
+
+for name, (template, escape_pattern) in markdown_templates.items():
+    escape = SearchReplaceConverter(pattern=escape_pattern, replace=r"\\\1")
+    hidden_text = PromptTemplateConverter(template=template)
+    text = prompt
+    for converter in (one_line, escape, hidden_text):
+        text = (await converter.convert_async(prompt=text)).output_text  # type: ignore
+    print(f"{name}:", text)
 
 # %% [markdown]
 # ### 1.4 Token Smuggling Converters

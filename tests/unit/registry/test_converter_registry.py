@@ -299,10 +299,17 @@ class TestDiscovery:
         # concern) but must remain discoverable/buildable so agents can use it.
         assert "SelectiveTextConverter" in registry.get_class_names()
 
-    def test_skips_deprecated_alias_converters(self, registry: ConverterRegistry):
-        names = registry.get_class_names()
-        assert "PromptTemplateConverter" in names
-        assert "TaskFramingConverter" not in names
+    def test_discovers_prompt_template_converter(self, registry: ConverterRegistry):
+        assert "PromptTemplateConverter" in registry.get_class_names()
+
+    async def test_builds_deprecated_task_framing_converter_by_name(self, registry: ConverterRegistry):
+        # Deprecated until 1.4.0, but existing callers must still be able to build it by name.
+        with pytest.warns(
+            DeprecationWarning, match=r"TaskFramingConverter is deprecated and will be removed in 1\.4\.0"
+        ):
+            converter = registry.create_instance("TaskFramingConverter", task_template="Example {{ prompt }}")
+        result = await converter.convert_async(prompt="x")
+        assert result.output_text == "Example x"
 
     def test_does_not_register_base_class(self, registry: ConverterRegistry):
         assert "Converter" not in registry.get_class_names()

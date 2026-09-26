@@ -20,8 +20,10 @@ def test_is_prompt_template_converter_subclass():
     assert isinstance(_make(), PromptTemplateConverter)
 
 
-def test_docstring_marks_deprecated_alias():
-    assert (TaskFramingConverter.__doc__ or "").strip().startswith("Deprecated alias")
+def test_docstring_does_not_opt_into_registry_alias_skip():
+    # The registry skips classes whose docstring starts with "Deprecated alias";
+    # this class must stay buildable by name until it is removed.
+    assert not (TaskFramingConverter.__doc__ or "").strip().startswith("Deprecated alias")
 
 
 async def test_convert_async_default_template_frames_as_task():

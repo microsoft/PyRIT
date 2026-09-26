@@ -429,6 +429,26 @@ class TestCreateConverter:
         assert result.identifier.class_name == "Base64Converter"
         assert result.is_llm_based is False
 
+    async def test_create_converter_supports_deprecated_task_framing_converter(self) -> None:
+        """Deprecated TaskFramingConverter stays creatable by type until its removal in 1.4.0."""
+        service = ConverterService()
+
+        request = CreateConverterRequest(
+            name="task-framing",
+            type="TaskFramingConverter",
+            params={"task_template": "Example {{ prompt }}"},
+        )
+
+        with pytest.warns(
+            DeprecationWarning, match=r"TaskFramingConverter is deprecated and will be removed in 1\.4\.0"
+        ):
+            result = await service.create_converter_async(request=request)
+
+        assert result.identifier.class_name == "TaskFramingConverter"
+        converter_obj = service.get_converter_object(converter_id=result.converter_id)
+        converted = await converter_obj.convert_async(prompt="x")
+        assert converted.output_text == "Example x"
+
     async def test_create_converter_registers_in_registry(self) -> None:
         """Test that create_converter registers object in registry."""
         service = ConverterService()

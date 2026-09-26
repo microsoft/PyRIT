@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from html.parser import HTMLParser
+
 import pytest
 
-from pyrit.converter import PromptTemplateConverter
+from pyrit.converter import PromptTemplateConverter, SearchReplaceConverter
 
 
 async def test_convert_async_inserts_prompt_into_template():
@@ -106,3 +108,88 @@ def test_identifier_differs_by_template():
     first = PromptTemplateConverter(template="A {{ prompt }}").get_identifier()
     second = PromptTemplateConverter(template="B {{ prompt }}").get_identifier()
     assert first.hash != second.hash
+
+
+# Markdown hidden-text recipes from the converters doc: put the prompt on one line,
+# backslash-escape ``\`` and the delimiter, then insert it with PromptTemplateConverter.
+_MARKDOWN_RECIPES = {
+    # name: (template, characters to backslash-escape, text a reader should see)
+    "comment": ("Welcome to the docs.\n\n[//]: # ({{ prompt }})", r"([\\()])", "Welcome to the docs."),
+    "link_title": ('See [our FAQ](https://example.com/faq "{{ prompt }}").', r'([\\"])', "See our FAQ."),
+}
+
+_TRICKY_MARKDOWN_PROMPTS = [
+    "do X",
+    "line one\n\nline two",
+    "a\r\n\r\nb",
+    "a\r\rb",
+    "hello\\",
+    "tail \\\\",
+    "a)b",
+    '\\"',
+    'say "hi"',
+    "(nested (parens))",
+    "end)\n\nvisible",
+    "x\n    indented code",
+    "- item\n# heading",
+    "<b>bold</b>",
+    "[x](y)",
+]
+
+
+async def _apply_markdown_recipe(*, template: str, escape_pattern: str, prompt: str) -> str:
+    converters = [
+        SearchReplaceConverter(pattern=r"\s*[\r\n]\s*", replace=" "),
+        SearchReplaceConverter(pattern=escape_pattern, replace=r"\\\1"),
+        PromptTemplateConverter(template=template),
+    ]
+    text = prompt
+    for converter in converters:
+        text = (await converter.convert_async(prompt=text)).output_text
+    return text
+
+
+class _VisibleTextParser(HTMLParser):
+    """Collects the text a reader sees; tag attributes (e.g. ``title``) are not visible."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def _render_visible_text(*, markdown: str, renderer: str) -> str:
+    if renderer == "markdown-it-py":
+        markdown_it = pytest.importorskip("markdown_it")
+        rendered = markdown_it.MarkdownIt("commonmark").render(markdown)
+    else:
+        mistune = pytest.importorskip("mistune")
+        rendered = mistune.create_markdown()(markdown)
+    parser = _VisibleTextParser()
+    parser.feed(rendered)
+    return " ".join("".join(parser.parts).split())
+
+
+@pytest.mark.parametrize("renderer", ["markdown-it-py", "mistune"])
+@pytest.mark.parametrize("recipe", sorted(_MARKDOWN_RECIPES))
+@pytest.mark.parametrize("prompt", _TRICKY_MARKDOWN_PROMPTS)
+async def test_markdown_hidden_text_recipe_stays_hidden_when_rendered(renderer, recipe, prompt):
+    template, escape_pattern, expected_visible = _MARKDOWN_RECIPES[recipe]
+    markdown = await _apply_markdown_recipe(template=template, escape_pattern=escape_pattern, prompt=prompt)
+    assert _render_visible_text(markdown=markdown, renderer=renderer) == expected_visible
+
+
+async def test_markdown_link_title_recipe_keeps_prompt_in_title():
+    markdown_it = pytest.importorskip("markdown_it")
+    template, escape_pattern, _ = _MARKDOWN_RECIPES["link_title"]
+    markdown = await _apply_markdown_recipe(
+        template=template, escape_pattern=escape_pattern, prompt='say "hi"\n\nthen (leave) \\'
+    )
+    link = next(
+        token
+        for token in markdown_it.MarkdownIt("commonmark").parseInline(markdown)[0].children
+        if token.type == "link_open"
+    )
+    assert link.attrs["title"] == 'say "hi" then (leave) \\'
