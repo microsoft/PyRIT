@@ -53,13 +53,13 @@ unit-test:
 	$(CMD) pytest -n 4 --dist=loadfile $(UNIT_TESTS)
 
 unit-test-junit:
-	$(CMD) pytest -n 4 --dist=loadfile $(UNIT_TESTS) --junitxml=junit/test-results.xml
+	$(CMD) pytest -n 4 --dist=loadfile $(UNIT_TESTS) --junitxml=$(JUNIT_XML) --durations=25
 
 unit-test-cov-html:
 	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report html
 
 unit-test-cov-xml:
-	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report xml --cov-report term
+	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report xml --cov-report term --junitxml=$(JUNIT_XML) --durations=25
 
 diff-cover:
 	$(CMD) pytest -n 4 --dist=loadfile --cov=$(PYMODULE) --cov-fail-under=78 $(UNIT_TESTS) --cov-report xml

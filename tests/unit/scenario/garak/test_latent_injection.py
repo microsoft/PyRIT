@@ -31,6 +31,11 @@ def _config(**kwargs: Any) -> LatentInjectionDatasetConfiguration:
 
 
 @pytest.fixture
+def garak_dataset_names() -> list[str]:
+    return LatentInjection.required_datasets()
+
+
+@pytest.fixture
 async def seeded_memory_async(patch_central_database: None) -> MemoryInterface:
     config = LatentInjectionDatasetConfiguration
     seeds: list[Seed] = []
@@ -82,6 +87,7 @@ def _ids(scenario: LatentInjection) -> dict[str, list[str]]:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestLatentDefaults:
+    @pytest.mark.usefixtures("mock_garak_dataset_fetch")
     async def test_default_population_budget_and_estimate_async(self) -> None:
         scenario = LatentInjection()
         await _initialize_async(scenario)
@@ -95,14 +101,24 @@ class TestLatentDefaults:
         assert len(LatentInjectionDatasetConfiguration.FAMILIES) == 9
         assert {parameter.name for parameter in scenario.additional_parameters()} == {"families"}
 
+    @pytest.mark.usefixtures("mock_garak_dataset_fetch")
     async def test_all_families_and_separators_async(self) -> None:
-        config = _config(families=LatentInjectionDatasetConfiguration.FAMILIES)
+        # The dataset tests fingerprint the full population; this test covers each family/trigger and separator.
+        cap = LatentInjectionDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE
+        config = _config(families=LatentInjectionDatasetConfiguration.FAMILIES, max_dataset_size=cap)
         scenario = LatentInjection(harm_scorer=SubStringScorer(substring="harm"))
         await _initialize_async(scenario, dataset_config=config, scenario_techniques=[LatentInjectionTechnique.ALL])
         assert {key[0] for key in config.coverage_keys} == set(config.FAMILIES)
         assert len(scenario._atomic_attacks) == len(config.coverage_keys) * 14
+        assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == cap * 14
         for technique in LatentInjectionTechnique.expand([LatentInjectionTechnique.ALL]):
-            attack = next(a for a in scenario._atomic_attacks if a.display_group == technique.value)
+            attacks = [attack for attack in scenario._atomic_attacks if attack.display_group == technique.value]
+            assert {
+                (group.objective.metadata["family"], group.objective.metadata["trigger"])
+                for attack in attacks
+                for group in attack.seed_groups
+            } == set(config.coverage_keys)
+            attack = attacks[0]
             group = attack.seed_groups[0]
             text = group.prompts[0].value
             for entry in attack.attack_technique.attack.get_request_converters():

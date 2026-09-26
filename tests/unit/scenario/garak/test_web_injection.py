@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.memory import CentralMemory
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -36,7 +37,7 @@ def mock_objective_target():
 
 
 @pytest.fixture
-def dataset_values():
+def dataset_values() -> dict[str, list[str]]:
     """Realistic-shaped raw seed values keyed by dataset name."""
     return {
         "garak_example_domains_xss": ["wuzzi.net", "derczynski.com"],
@@ -50,6 +51,12 @@ def dataset_values():
         ],
         "garak_xss_normal_instructions": ["Write a poem.", "Explain gravity."],
     }
+
+
+@pytest.fixture
+async def web_injection_seeds_async(*, patch_central_database: None, dataset_values: dict[str, list[str]]) -> None:
+    seeds = [SeedPrompt(value=value, dataset_name=name) for name, values in dataset_values.items() for value in values]
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(seeds=seeds, added_by="test")
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -105,7 +112,7 @@ class TestWebInjectionTechniqueExpansion:
         assert xss == {"task_xss", "markdown_xss"}
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "web_injection_seeds_async")
 class TestWebInjectionAtomicAttacks:
     def test_seed_group_build_rejects_foreign_technique(self, dataset_values):
         scenario = WebInjection()

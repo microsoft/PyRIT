@@ -29,6 +29,11 @@ def _mock_id(name: str) -> ComponentIdentifier:
 
 
 @pytest.fixture
+def garak_dataset_names() -> list[str]:
+    return ["prompt_inject_contexts", "prompt_inject_techniques"]
+
+
+@pytest.fixture
 def mock_objective_target() -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = _mock_id("MockObjectiveTarget")
@@ -109,7 +114,7 @@ class TestPromptInjectInitialization:
         assert "random_seed" not in parameters
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_garak_dataset_fetch")
 class TestPromptInjectAtomicAttacks:
     async def test_technique_and_goal_select_independent_axes(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
@@ -451,7 +456,7 @@ class TestPromptInjectAtomicAttacks:
             )
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_garak_dataset_fetch")
 class TestPromptInjectDatasetSampling:
     @pytest.mark.parametrize("grouped", [False, True])
     async def test_both_resolvers_preserve_goal_coverage_async(self, grouped: bool) -> None:

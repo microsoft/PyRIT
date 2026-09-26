@@ -18,9 +18,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # This ensures after each commit the old jobs are cancelled and the new ones
-  # run instead.
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # PR numbers distinguish same-named branches from different forks.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -134,10 +133,10 @@ jobs:
 
       - name: Upload JUnit results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: (success() || failure()) && runner.os == 'Linux'
+        if: success() || failure()
         with:
-          name: junit-results-${{ matrix.python }}-${{ matrix.package_extras }}
-          path: '**/test-*.xml'
+          name: junit-results-${{ runner.os }}-${{ matrix.python }}-${{ matrix.package_extras }}
+          path: junit/test-results.xml
           if-no-files-found: ignore
 
       - name: Publish Pytest Results
