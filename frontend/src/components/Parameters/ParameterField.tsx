@@ -3,6 +3,7 @@ import {
   Field,
   Input,
   Select,
+  Textarea,
 } from '@fluentui/react-components'
 
 import type { Parameter } from '@/types'
@@ -12,6 +13,7 @@ import {
   getInitialFormValues,
   getParameterControlKind,
   isStructuredParameterFormValue,
+  parseJsonObjectFormValue,
   type ParameterFormValue,
 } from './parameterForm'
 
@@ -20,6 +22,10 @@ export interface ParameterFieldProps {
   value: ParameterFormValue
   disabled: boolean
   onChange: (name: string, value: ParameterFormValue) => void
+  /** Optional presentation label when the parameter name should remain unchanged for submission. */
+  label?: string
+  /** Present the declared default as guidance while keeping the field unset. */
+  showDefaultHint?: boolean
   /** Let a list field distinguish an explicit empty list from an omitted value. */
   allowEmptyList?: boolean
   /** Show required validation for a structured input whose variant is unset. */
@@ -43,14 +49,28 @@ export default function ParameterField({
   value,
   disabled,
   onChange,
+  label: labelOverride,
+  showDefaultHint = false,
   allowEmptyList = false,
   showRequiredError = false,
   testIdPrefix = 'param',
 }: ParameterFieldProps) {
   const styles = useParameterFieldStyles()
   const kind = getParameterControlKind(parameter)
-  const label = parameter.required ? `${parameter.name} *` : parameter.name
+  const label = parameter.required
+    ? `${labelOverride ?? parameter.name} *`
+    : labelOverride ?? parameter.name
   const testId = `${testIdPrefix}-${parameter.name}`
+  const defaultText = Array.isArray(parameter.default)
+    ? parameter.default.join(', ')
+    : parameter.default
+  const hasDisplayDefault = defaultText != null && defaultText !== ''
+  const defaultHint = showDefaultHint && hasDisplayDefault
+    ? `Defaults to ${defaultText}.`
+    : null
+  const descriptiveHint = [parameter.description, defaultHint]
+    .filter((part): part is string => Boolean(part))
+    .join(' ')
 
   if (kind === 'structured') {
     const current = isStructuredParameterFormValue(value) ? value : { type: '', values: {} }
@@ -58,7 +78,7 @@ export default function ParameterField({
       <>
         <Field
           label={label}
-          hint={parameter.description ?? undefined}
+          hint={descriptiveHint || undefined}
           validationMessage={showRequiredError && !current.type ? 'Required' : undefined}
         >
           <Select
@@ -95,10 +115,41 @@ export default function ParameterField({
     )
   }
 
+  if (kind === 'json') {
+    const current = typeof value === 'string' ? value : ''
+    const parsed = current.trim()
+      ? parseJsonObjectFormValue(current, label.replace(/ \*$/, ''))
+      : null
+    const validationMessage = parsed && !parsed.ok ? parsed.error : undefined
+    const jsonHint = [descriptiveHint, 'Enter a JSON object.']
+      .filter((part): part is string => Boolean(part))
+      .join(' ')
+    return (
+      <Field
+        label={label}
+        hint={jsonHint}
+        validationMessage={validationMessage}
+        validationState={validationMessage ? 'error' : 'none'}
+      >
+        <Textarea
+          className={styles.control}
+          value={current}
+          placeholder={hasDisplayDefault
+            ? showDefaultHint ? `Defaults to ${defaultText}` : String(defaultText)
+            : '{"key": "value"}'}
+          disabled={disabled}
+          resize="vertical"
+          onChange={(_, data) => onChange(parameter.name, data.value)}
+          data-testid={testId}
+        />
+      </Field>
+    )
+  }
+
   if (kind === 'boolean') {
     const current = value === 'true' || value === 'false' ? value : ''
     return (
-      <Field label={label} hint={parameter.description ?? undefined}>
+      <Field label={label} hint={descriptiveHint || undefined}>
         <Select
           className={styles.control}
           value={current}
@@ -106,7 +157,9 @@ export default function ParameterField({
           onChange={(_, data) => onChange(parameter.name, data.value)}
           data-testid={testId}
         >
-          <option value="">Use default / not set</option>
+          <option value="">
+            {defaultHint ? `Use default (${defaultText})` : 'Use default / not set'}
+          </option>
           <option value="true">True</option>
           <option value="false">False</option>
         </Select>
@@ -117,7 +170,7 @@ export default function ParameterField({
   if (kind === 'multiselect') {
     const selected = Array.isArray(value) ? value : []
     return (
-      <Field label={label} hint={parameter.description ?? undefined}>
+      <Field label={label} hint={descriptiveHint || undefined}>
         <div className={styles.checkboxGroup} role="group" aria-labelledby={`${testId}-group-label`}>
           <span id={`${testId}-group-label`} className={styles.srOnly}>
             {label}
@@ -154,7 +207,7 @@ export default function ParameterField({
 
   if (kind === 'select') {
     return (
-      <Field label={label} hint={parameter.description ?? undefined}>
+      <Field label={label} hint={descriptiveHint || undefined}>
         <Select
           className={styles.control}
           value={stringValue}
@@ -162,7 +215,9 @@ export default function ParameterField({
           onChange={(_, data) => onChange(parameter.name, data.value)}
           data-testid={testId}
         >
-          <option value="">Select a value</option>
+          <option value="">
+            {defaultHint ? `Use default (${defaultText})` : 'Select a value'}
+          </option>
           {(parameter.choices ?? []).map((choice) => (
             <option key={choice} value={choice}>
               {choice}
@@ -173,9 +228,11 @@ export default function ParameterField({
     )
   }
 
-  const placeholder = typeof parameter.default === 'string' ? parameter.default : undefined
-  const hint =
-    parameter.description ?? (kind === 'list' ? 'Comma-separated list of values.' : parameter.type_name)
+  const placeholder = hasDisplayDefault
+    ? showDefaultHint ? `Defaults to ${defaultText}` : defaultText
+    : undefined
+  const fallbackHint = kind === 'list' ? 'Comma-separated list of values.' : parameter.type_name
+  const hint = descriptiveHint || fallbackHint
 
   return (
     <>

@@ -95,6 +95,25 @@ export const useCreateTargetDialogStyles = makeStyles({
     overflowWrap: 'anywhere',
     wordBreak: 'break-word',
   },
+  advancedSettings: {
+    minWidth: 0,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  advancedSettingsSummary: {
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    color: tokens.colorNeutralForeground1,
+    fontWeight: tokens.fontWeightSemibold,
+    cursor: 'pointer',
+  },
+  advancedSettingsFields: {
+    display: 'flex',
+    flexDirection: 'column',
+    minWidth: 0,
+    gap: tokens.spacingVerticalL,
+    padding: `0 ${tokens.spacingHorizontalM} ${tokens.spacingVerticalM}`,
+  },
   selectedTargetsSection: {
     minWidth: 0,
     maxWidth: '100%',

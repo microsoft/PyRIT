@@ -25,6 +25,12 @@ import {
   Tooltip,
 } from '@fluentui/react-components'
 import { DeleteRegular } from '@fluentui/react-icons'
+
+import ParameterField from '@/components/Parameters/ParameterField'
+import {
+  buildParametersFromForm,
+  type ParameterFormValue,
+} from '@/components/Parameters/parameterForm'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { TargetInstance, TargetTypeEntry } from '@/types'
@@ -35,34 +41,33 @@ import {
   targetUnderlyingModelName,
 } from '@/utils/targetIdentity'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
+import {
+  canConfigureTargetType,
+  getTargetParameterPolicy,
+  isMetadataDrivenTargetParameter,
+} from './targetParameterPolicy'
 import { MAX_WEIGHT, parseWeight } from './weightValidation'
 
-/**
- * Form shape for each target type the dialog knows how to render.
- *
- * The dialog renders bespoke, type-specific forms (endpoint/model for OpenAI,
- * extra sampling params for Azure ML, an inner-target picker for RoundRobin),
- * so this map declares *which* types are renderable and *how*. The list of
- * available types and their auth flags come from TargetRegistry metadata
- * (`/targets/types`); this map only governs the form layout. Types the
- * backend offers but that aren't in this map are simply not shown, and types in
- * this map that the backend doesn't offer fall back to being listed anyway
- * (e.g. when the type metadata fetch fails).
- */
-type TargetFormShape = 'openai' | 'azureml' | 'roundrobin'
+const FALLBACK_TARGET_TYPES = [
+  'OpenAIChatTarget',
+  'OpenAICompletionTarget',
+  'OpenAIImageTarget',
+  'OpenAIVideoTarget',
+  'OpenAITTSTarget',
+  'OpenAIResponseTarget',
+  'AzureMLChatTarget',
+  'RoundRobinTarget',
+]
 
-const TARGET_FORM_SHAPES: Record<string, TargetFormShape> = {
-  OpenAIChatTarget: 'openai',
-  OpenAICompletionTarget: 'openai',
-  OpenAIImageTarget: 'openai',
-  OpenAIVideoTarget: 'openai',
-  OpenAITTSTarget: 'openai',
-  OpenAIResponseTarget: 'openai',
-  AzureMLChatTarget: 'azureml',
-  RoundRobinTarget: 'roundrobin',
-}
-
-const RENDERABLE_TARGET_TYPES = Object.keys(TARGET_FORM_SHAPES)
+const FALLBACK_IDENTITY_TARGET_TYPES = new Set([
+  'OpenAIChatTarget',
+  'OpenAICompletionTarget',
+  'OpenAIImageTarget',
+  'OpenAIVideoTarget',
+  'OpenAITTSTarget',
+  'OpenAIResponseTarget',
+  'AzureMLChatTarget',
+])
 
 const TARGET_DISPLAY_NAMES: Record<string, string> = {
   AzureMLChatTarget: 'Azure Machine Learning chat',
@@ -75,7 +80,7 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
   RoundRobinTarget: 'Weighted round robin',
 }
 
-const FALLBACK_TARGET_TYPE_ENTRIES: TargetTypeEntry[] = RENDERABLE_TARGET_TYPES.map((targetType) => ({
+const FALLBACK_TARGET_TYPE_ENTRIES: TargetTypeEntry[] = FALLBACK_TARGET_TYPES.map((targetType) => ({
   target_type: targetType,
   parameters: [],
   supported_auth_modes: [],
@@ -99,12 +104,27 @@ function getAuthDescription(authModes: TargetTypeEntry['supported_auth_modes']):
 }
 
 /**
- * Fallback for whether a target type supports identity-based auth when the
- * registry metadata hasn't loaded (or the fetch failed). Once the metadata is
- * available it is authoritative; this only keeps the form usable offline / mid-load.
+ * Fallback for identity-based auth while registry metadata is unavailable.
  */
-function defaultSupportsIdentity(shape: TargetFormShape | undefined): boolean {
-  return shape === 'openai' || shape === 'azureml'
+function defaultSupportsIdentity(targetType: string): boolean {
+  return FALLBACK_IDENTITY_TARGET_TYPES.has(targetType)
+}
+
+function getParameterLabel(name: string): string {
+  return name
+    .split('_')
+    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0].toUpperCase()}${word.slice(1)}`)
+    .join(' ')
+}
+
+function isParameterValueSet(value: ParameterFormValue | undefined): boolean {
+  if (typeof value === 'string') {
+    return value.trim().length > 0
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0
+  }
+  return value !== undefined && value.type.length > 0
 }
 
 // Mirrors backend's hostname-suffix check (list in target_service.py).
@@ -207,13 +227,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [underlyingModel, setUnderlyingModel] = useState('')
   const [authMode, setAuthMode] = useState<AuthMode>('api_key')
   const [apiKey, setApiKey] = useState('')
-  const [maxNewTokens, setMaxNewTokens] = useState('400')
-  const [temperature, setTemperature] = useState('1.0')
-  const [topP, setTopP] = useState('1.0')
-  const [repetitionPenalty, setRepetitionPenalty] = useState('1.0')
+  const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [fieldErrors, setFieldErrors] = useState<{ targetType?: string; endpoint?: string }>({})
+  const [fieldErrors, setFieldErrors] = useState<{
+    targetType?: string
+    endpoint?: string
+    modelName?: string
+    underlyingModel?: string
+    apiKey?: string
+  }>({})
 
   // --- RoundRobin-specific state ---
   // The list of targets available for selection (fetched once when dialog opens).
@@ -265,7 +288,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   }, [open])
 
   const registeredTargetTypeOptions = useMemo(() => {
-    return targetTypeEntries.filter((entry) => entry.target_type in TARGET_FORM_SHAPES)
+    return targetTypeEntries.filter(canConfigureTargetType)
   }, [targetTypeEntries])
   const typeMetadataAvailable = registeredTargetTypeOptions.length > 0
   const typeMetadataUnavailable = typeMetadataStatus !== 'loading' && !typeMetadataAvailable
@@ -273,20 +296,57 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     ? registeredTargetTypeOptions
     : FALLBACK_TARGET_TYPE_ENTRIES
 
-  const formShape = TARGET_FORM_SHAPES[targetType]
-  const isRoundRobin = formShape === 'roundrobin'
-  const isAzureML = formShape === 'azureml'
-  const isOpenAi = formShape === 'openai'
+  const isRoundRobin = targetType === 'RoundRobinTarget'
+  const isAzureML = targetType === 'AzureMLChatTarget'
+  const isOpenAi = targetType.startsWith('OpenAI') || targetType === 'RealtimeTarget'
   const targetTypeEntry = targetTypeByName.get(targetType)
+  const metadataDrivenParameters = useMemo(
+    () => targetTypeEntry?.parameters.filter(
+      (parameter) => isMetadataDrivenTargetParameter(targetType, parameter),
+    ) ?? [],
+    [targetType, targetTypeEntry],
+  )
+  const requiredMetadataParameters = metadataDrivenParameters.filter((parameter) => parameter.required)
+  const optionalMetadataParameters = metadataDrivenParameters.filter((parameter) => !parameter.required)
+  const requiredMetadataParameterMissing = requiredMetadataParameters.some(
+    (parameter) => !isParameterValueSet(parameterValues[parameter.name]),
+  )
+  const endpointParameter = targetTypeEntry?.parameters.find((parameter) => parameter.name === 'endpoint')
+  const modelNameParameter = targetTypeEntry?.parameters.find((parameter) => parameter.name === 'model_name')
+  const underlyingModelParameter = targetTypeEntry?.parameters.find(
+    (parameter) => parameter.name === 'underlying_model' || parameter.name === 'underlying_model_name',
+  )
+  const apiKeyParameter = targetTypeEntry?.parameters.find((parameter) => parameter.name === 'api_key')
+  const customFunctionsParameter = targetTypeEntry?.parameters.find(
+    (parameter) => parameter.name === 'custom_functions',
+  )
+  const customFunctionsReason = customFunctionsParameter
+    ? getTargetParameterPolicy(targetType, customFunctionsParameter.name)?.reason
+    : null
+  const metadataUnavailableForSelection = targetType !== '' && !targetTypeEntry
+  const hasEndpointField = endpointParameter !== undefined
+    || (metadataUnavailableForSelection && !isRoundRobin)
+  const hasModelNameField = modelNameParameter !== undefined
+    || (metadataUnavailableForSelection && !isRoundRobin)
+  const hasUnderlyingModelField = underlyingModelParameter !== undefined
+    || (metadataUnavailableForSelection && !isRoundRobin)
+  const hasApiKeyField = apiKeyParameter !== undefined
+    || (metadataUnavailableForSelection && !isRoundRobin)
   const selectedTargetDisplayName = getTargetDisplayName(targetType)
   const selectedTargetAuthDescription = targetTypeEntry
     ? getAuthDescription(targetTypeEntry.supported_auth_modes)
     : null
   const supportsIdentity = targetTypeEntry
     ? targetTypeEntry.supported_auth_modes.includes('identity')
-    : defaultSupportsIdentity(formShape)
+    : defaultSupportsIdentity(targetType)
   const showAuthField = targetType !== '' && supportsIdentity
   const isIdentity = showAuthField && authMode === 'identity'
+  const endpointRequired = Boolean(endpointParameter?.required)
+    || (isIdentity && hasEndpointField)
+    || (metadataUnavailableForSelection && hasEndpointField)
+  const modelNameRequired = Boolean(modelNameParameter?.required)
+  const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
+  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity
   const identityEndpointError: string | null = (() => {
     if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
@@ -382,10 +442,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setUnderlyingModel('')
     setAuthMode('api_key')
     setApiKey('')
-    setMaxNewTokens('400')
-    setTemperature('1.0')
-    setTopP('1.0')
-    setRepetitionPenalty('1.0')
+    setParameterValues({})
     setError(null)
     setFieldErrors({})
     setSelectedInnerTargets([])
@@ -439,36 +496,47 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       return
     }
 
-    const errors: { targetType?: string; endpoint?: string } = {}
+    const errors: {
+      targetType?: string
+      endpoint?: string
+      modelName?: string
+      underlyingModel?: string
+      apiKey?: string
+    } = {}
     if (!targetType) errors.targetType = 'Please select a target type'
-    if (!endpoint) errors.endpoint = 'Please provide an endpoint URL'
+    if (endpointRequired && !endpoint) errors.endpoint = 'Please provide an endpoint URL'
+    if (modelNameRequired && !modelName) errors.modelName = 'Please provide a model name'
+    if (underlyingModelRequired && !underlyingModel) {
+      errors.underlyingModel = 'Please provide the underlying model'
+    }
+    if (apiKeyRequired && !apiKey) errors.apiKey = 'Please provide an API key'
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors)
       return
     }
     setFieldErrors({})
 
+    const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
+    if (!metadataParams.ok) {
+      setError(metadataParams.error)
+      return
+    }
+
     setSubmitting(true)
     setError(null)
 
     try {
-      const params: Record<string, unknown> = {
-        endpoint,
-      }
-      if (modelName) params.model_name = modelName
-      if (!isIdentity && apiKey) params.api_key = apiKey
+      const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
+      if (hasEndpointField && endpoint) params.endpoint = endpoint
+      if (hasModelNameField && modelName) params.model_name = modelName
+      if (hasApiKeyField && !isIdentity && apiKey) params.api_key = apiKey
 
-      if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
-
-      if (isAzureML) {
-        const parsedMaxNewTokens = parseInt(maxNewTokens, 10)
-        if (!isNaN(parsedMaxNewTokens)) params.max_new_tokens = parsedMaxNewTokens
-        const parsedTemperature = parseFloat(temperature)
-        if (!isNaN(parsedTemperature)) params.temperature = parsedTemperature
-        const parsedTopP = parseFloat(topP)
-        if (!isNaN(parsedTopP)) params.top_p = parsedTopP
-        const parsedRepetitionPenalty = parseFloat(repetitionPenalty)
-        if (!isNaN(parsedRepetitionPenalty)) params.repetition_penalty = parsedRepetitionPenalty
+      if (
+        (underlyingModelRequired || hasDifferentUnderlying)
+        && underlyingModel
+        && hasUnderlyingModelField
+      ) {
+        params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
       }
 
       await targetsApi.createTarget({
@@ -538,10 +606,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     const next = data.optionValue
                     if (!next) return
                     setTargetType(next)
+                    setParameterValues({})
                     const nextEntry = targetTypeByName.get(next)
                     const nextSupportsIdentity = nextEntry
                       ? nextEntry.supported_auth_modes.includes('identity')
-                      : defaultSupportsIdentity(TARGET_FORM_SHAPES[next])
+                      : defaultSupportsIdentity(next)
                     if (!nextSupportsIdentity) {
                       setAuthMode('api_key')
                     }
@@ -722,129 +791,173 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               {/* === Standard target form fields (hidden for RoundRobin) === */}
               {!isRoundRobin && (
                 <>
-              <Field
-                label="Endpoint URL"
-                required
-                validationMessage={fieldErrors.endpoint}
-                validationState={fieldErrors.endpoint ? 'error' : 'none'}
-              >
-                <Input
-                  placeholder={isAzureML
-                    ? 'https://your-model.region.inference.ml.azure.com/score'
-                    : 'https://your-resource.openai.azure.com/'}
-                  value={endpoint}
-                  onChange={(_, data) => setEndpoint(data.value)}
-                />
-              </Field>
+                  {hasEndpointField && (
+                    <Field
+                      label="Endpoint URL"
+                      hint={endpointParameter?.description || undefined}
+                      required={endpointRequired}
+                      validationMessage={fieldErrors.endpoint}
+                      validationState={fieldErrors.endpoint ? 'error' : 'none'}
+                    >
+                      <Input
+                        placeholder={isAzureML
+                          ? 'https://your-model.region.inference.ml.azure.com/score'
+                          : isOpenAi
+                            ? 'https://your-resource.openai.azure.com/'
+                            : 'https://example.com/'}
+                        value={endpoint}
+                        onChange={(_, data) => setEndpoint(data.value)}
+                      />
+                    </Field>
+                  )}
 
-              <Field label="Model / Deployment Name">
-                <Input
-                  placeholder={isAzureML ? 'e.g. Llama-3.2-3B-Instruct' : 'e.g. gpt-4o, my-deployment'}
-                  value={modelName}
-                  onChange={(_, data) => setModelName(data.value)}
-                />
-              </Field>
+                  {hasModelNameField && (
+                    <Field
+                      label="Model / Deployment Name"
+                      hint={modelNameParameter?.description || undefined}
+                      required={modelNameRequired}
+                      validationMessage={fieldErrors.modelName}
+                      validationState={fieldErrors.modelName ? 'error' : 'none'}
+                    >
+                      <Input
+                        placeholder={isAzureML
+                          ? 'e.g. Llama-3.2-3B-Instruct'
+                          : 'e.g. gpt-4o, my-deployment'}
+                        value={modelName}
+                        onChange={(_, data) => setModelName(data.value)}
+                      />
+                    </Field>
+                  )}
 
-              <div>
-                <Switch
-                  checked={hasDifferentUnderlying}
-                  onChange={(_, data) => {
-                    setHasDifferentUnderlying(data.checked)
-                    if (!data.checked) setUnderlyingModel('')
-                  }}
-                  label="Underlying model differs from deployment name"
-                />
-                <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: '2px' }}>
-                  On Azure, the deployment name (e.g. my-gpt4-deployment) may differ from the actual model (e.g. gpt-4o).
-                </Text>
-              </div>
+                  {hasUnderlyingModelField && !underlyingModelRequired && (
+                    <div>
+                      <Switch
+                        checked={hasDifferentUnderlying}
+                        onChange={(_, data) => {
+                          setHasDifferentUnderlying(data.checked)
+                          if (!data.checked) setUnderlyingModel('')
+                        }}
+                        label="Underlying model differs from deployment name"
+                      />
+                      <Text
+                        size={200}
+                        style={{
+                          color: tokens.colorNeutralForeground3,
+                          display: 'block',
+                          marginTop: '2px',
+                        }}
+                      >
+                        On Azure, the deployment name may differ from the actual model.
+                      </Text>
+                    </div>
+                  )}
 
-              {hasDifferentUnderlying && (
-                <Field label="Underlying Model">
-                  <Input
-                    placeholder="e.g. gpt-4o-2024-08-06"
-                    value={underlyingModel}
-                    onChange={(_, data) => setUnderlyingModel(data.value)}
-                  />
-                </Field>
-              )}
+                  {hasUnderlyingModelField && (underlyingModelRequired || hasDifferentUnderlying) && (
+                    <Field
+                      label="Underlying Model"
+                      hint={underlyingModelParameter?.description || undefined}
+                      required={underlyingModelRequired}
+                      validationMessage={fieldErrors.underlyingModel}
+                      validationState={fieldErrors.underlyingModel ? 'error' : 'none'}
+                    >
+                      <Input
+                        placeholder="e.g. gpt-4o-2024-08-06"
+                        value={underlyingModel}
+                        onChange={(_, data) => setUnderlyingModel(data.value)}
+                      />
+                    </Field>
+                  )}
 
-              {isAzureML && (
-                <>
-                  <Field label="Max New Tokens">
-                    <Input
-                      type="number"
-                      placeholder="400"
-                      value={maxNewTokens}
-                      onChange={(_, data) => setMaxNewTokens(data.value)}
+                  {requiredMetadataParameters.map((parameter) => (
+                    <ParameterField
+                      key={parameter.name}
+                      parameter={parameter}
+                      value={parameterValues[parameter.name] ?? ''}
+                      disabled={submitting}
+                      label={getParameterLabel(parameter.name)}
+                      showDefaultHint
+                      allowEmptyList
+                      testIdPrefix="target-param"
+                      onChange={(name, value) => setParameterValues((current) => ({
+                        ...current,
+                        [name]: value,
+                      }))}
                     />
-                  </Field>
+                  ))}
 
-                  <Field label="Temperature">
-                    <Input
-                      type="number"
-                      placeholder="1.0"
-                      value={temperature}
-                      onChange={(_, data) => setTemperature(data.value)}
-                    />
-                  </Field>
+                  {showAuthField && (
+                    <Field label="Authentication">
+                      <RadioGroup
+                        value={authMode}
+                        onChange={(_, data) => {
+                          const next = data.value as AuthMode
+                          setAuthMode(next)
+                          if (next === 'identity') setApiKey('')
+                        }}
+                      >
+                        <Radio value="api_key" label="API Key" />
+                        <Radio value="identity" label="Identity-based (Microsoft Entra ID)" />
+                      </RadioGroup>
+                    </Field>
+                  )}
 
-                  <Field label="Top P">
-                    <Input
-                      type="number"
-                      placeholder="1.0"
-                      value={topP}
-                      onChange={(_, data) => setTopP(data.value)}
-                    />
-                  </Field>
+                  {showIdentityEndpointError && (
+                    <MessageBar intent="error" className={styles.warningMessage}>
+                      <MessageBarBody className={styles.warningMessageBody}>
+                        {identityEndpointError}
+                      </MessageBarBody>
+                    </MessageBar>
+                  )}
 
-                  <Field label="Repetition Penalty">
-                    <Input
-                      type="number"
-                      placeholder="1.0"
-                      value={repetitionPenalty}
-                      onChange={(_, data) => setRepetitionPenalty(data.value)}
-                    />
-                  </Field>
-                </>
-              )}
+                  {hasApiKeyField && !isIdentity && (
+                    <Field
+                      label="API Key"
+                      hint={apiKeyParameter?.description || undefined}
+                      required={apiKeyRequired}
+                      validationMessage={fieldErrors.apiKey}
+                      validationState={fieldErrors.apiKey ? 'error' : 'none'}
+                    >
+                      <Input
+                        type="password"
+                        placeholder="API key (stored in memory only)"
+                        value={apiKey}
+                        onChange={(_, data) => setApiKey(data.value)}
+                      />
+                    </Field>
+                  )}
 
-              {showAuthField && (
-                <Field label="Authentication">
-                  <RadioGroup
-                    value={authMode}
-                    onChange={(_, data) => {
-                      const next = data.value as AuthMode
-                      setAuthMode(next)
-                      if (next === 'identity') setApiKey('')
-                    }}
-                  >
-                    <Radio value="api_key" label="API Key" />
-                    <Radio value="identity" label="Identity-based (Microsoft Entra ID)" />
-                  </RadioGroup>
-                </Field>
-              )}
-
-              {showIdentityEndpointError && (
-                <MessageBar intent="error" className={styles.warningMessage}>
-                  <MessageBarBody className={styles.warningMessageBody}>
-                    {identityEndpointError}
-                  </MessageBarBody>
-                </MessageBar>
-              )}
-
-              {!isIdentity && (
-                <Field label="API Key">
-                  <Input
-                    type="password"
-                    placeholder="API key (stored in memory only)"
-                    value={apiKey}
-                    onChange={(_, data) => setApiKey(data.value)}
-                  />
-                </Field>
-              )}
-
-              {/* Close the !isRoundRobin conditional wrapper */}
+                  {(optionalMetadataParameters.length > 0 || customFunctionsReason) && (
+                    <details className={styles.advancedSettings}>
+                      <summary className={styles.advancedSettingsSummary}>
+                        Advanced settings
+                      </summary>
+                      <div className={styles.advancedSettingsFields}>
+                        {optionalMetadataParameters.map((parameter) => (
+                          <ParameterField
+                            key={parameter.name}
+                            parameter={parameter}
+                            value={parameterValues[parameter.name] ?? ''}
+                            disabled={submitting}
+                            label={getParameterLabel(parameter.name)}
+                            showDefaultHint
+                            allowEmptyList
+                            testIdPrefix="target-param"
+                            onChange={(name, value) => setParameterValues((current) => ({
+                              ...current,
+                              [name]: value,
+                            }))}
+                          />
+                        ))}
+                        {customFunctionsReason && (
+                          <MessageBar intent="info">
+                            <MessageBarBody>
+                              <strong>Custom Functions:</strong> {customFunctionsReason}
+                            </MessageBarBody>
+                          </MessageBar>
+                        )}
+                      </div>
+                    </details>
+                  )}
                 </>
               )}
 
@@ -878,7 +991,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 (isRoundRobin
                   ? selectedInnerTargets.length < 2 ||
                     selectedInnerTargets.some((t) => !parseWeight(t.weightInput).ok)
-                  : !endpoint || showIdentityEndpointError)
+                  : (endpointRequired && !endpoint) || showIdentityEndpointError)
+                  || (modelNameRequired && !modelName)
+                  || (underlyingModelRequired && !underlyingModel)
+                  || (apiKeyRequired && !apiKey)
+                  || requiredMetadataParameterMissing
               }
             >
               {submitting ? 'Creating...' : 'Create Target'}

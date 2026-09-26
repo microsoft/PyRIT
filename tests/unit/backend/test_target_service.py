@@ -785,3 +785,53 @@ class TestFrontendBackendCompatibilitySync:
             f"Update effectiveUnderlyingModel() in CreateTargetDialog.tsx to match, "
             f"then update this test's expected dict."
         )
+
+    def test_required_target_parameters_match_frontend_form_capabilities(self) -> None:
+        """
+        Guard the dynamic target form against new required Python-only inputs.
+
+        Scalar, choice, simple-list, and dictionary parameters are rendered from
+        metadata. Connection/auth parameters and RoundRobin inputs have dedicated
+        controls. The remaining targets require live Python objects and must stay
+        excluded until the frontend gains an explicit policy for them.
+        """
+        connection_parameters = {
+            "api_key",
+            "endpoint",
+            "model_name",
+            "underlying_model",
+            "underlying_model_name",
+        }
+        scalar_types = {"bool", "float", "int", "str"}
+        simple_list_types = {"list[bool]", "list[float]", "list[int]", "list[str]"}
+        unsupported_required: dict[str, list[str]] = {}
+
+        registry = TargetRegistry.get_registry_singleton()
+        for metadata in registry.get_all_registered_class_metadata():
+            unsupported_names: list[str] = []
+            for parameter in metadata.parameters:
+                if not parameter.required:
+                    continue
+                if parameter.name in connection_parameters:
+                    continue
+                if metadata.class_name == "RoundRobinTarget" and parameter.name in {"targets", "weights"}:
+                    continue
+                if parameter.choices:
+                    continue
+                if parameter.type_name in scalar_types or parameter.type_name in simple_list_types:
+                    continue
+                if parameter.type_name.startswith("dict["):
+                    continue
+                unsupported_names.append(parameter.name)
+            if unsupported_names:
+                unsupported_required[metadata.class_name] = sorted(unsupported_names)
+
+        assert unsupported_required == {
+            "PlaywrightCopilotTarget": ["page"],
+            "PlaywrightTarget": ["interaction_func", "page"],
+            "WebsocketTarget": ["initialization_strings", "message_builder", "response_parser"],
+        }, (
+            "The target registry's required parameters changed. Update "
+            "frontend/src/components/Config/targetParameterPolicy.ts with a renderable or "
+            "explicitly unsupported policy, then update this expected catalog."
+        )

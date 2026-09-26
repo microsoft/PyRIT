@@ -19,6 +19,13 @@ export const useParameterFieldStyles = makeStyles({
         minHeight: MINIMUM_TOUCH_TARGET_SIZE,
       },
     },
+    '& > textarea': {
+      minHeight: '6rem',
+      fontFamily: tokens.fontFamilyMonospace,
+      [TOUCH_INPUT_QUERY]: {
+        minHeight: '6rem',
+      },
+    },
   },
   selectionControl: {
     ...mobileTouchTargetHeight,
