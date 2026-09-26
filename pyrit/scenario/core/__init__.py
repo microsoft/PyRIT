@@ -30,6 +30,11 @@ if TYPE_CHECKING:
         override_default_adversarial_target,
     )
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+    from pyrit.scenario.core.technique_resolution import (
+        TechniqueResolutionError,
+        resolve_technique_factories,
+        resolve_technique_factories_for_techniques,
+    )
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AtomicAttack": "pyrit.scenario.core.atomic_attack",
@@ -48,9 +53,12 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "Scenario": "pyrit.scenario.core.scenario",
     "ScenarioTechnique": "pyrit.scenario.core.scenario_technique",
     "ScorerOverridePolicy": "pyrit.scenario.core.attack_technique_factory",
+    "TechniqueResolutionError": "pyrit.scenario.core.technique_resolution",
     "get_default_scorer_target": "pyrit.scenario.core.scenario_target_defaults",
     "get_default_adversarial_target": "pyrit.scenario.core.scenario_target_defaults",
     "override_default_adversarial_target": "pyrit.scenario.core.scenario_target_defaults",
+    "resolve_technique_factories": "pyrit.scenario.core.technique_resolution",
+    "resolve_technique_factories_for_techniques": "pyrit.scenario.core.technique_resolution",
 }
 
 __all__ = list(_LAZY_EXPORTS)

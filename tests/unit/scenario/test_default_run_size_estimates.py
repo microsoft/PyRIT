@@ -320,7 +320,7 @@ async def test_matrix_estimate_filters_each_technique_seed_population_like_execu
     )
 
     with patch(
-        "pyrit.scenario.core.matrix_atomic_attack_builder.resolve_technique_factories_for_techniques",
+        "pyrit.scenario.core.technique_resolution.resolve_technique_factories_for_techniques",
         return_value={"one": plain_factory, "two": conversation_factory},
     ):
         estimate = await scenario.get_run_size_estimate_async()
@@ -363,7 +363,7 @@ async def test_matrix_estimate_with_binding_cap_is_exact_when_every_group_is_com
     factory.seed_technique = None
 
     with patch(
-        "pyrit.scenario.core.matrix_atomic_attack_builder.resolve_technique_factories_for_techniques",
+        "pyrit.scenario.core.technique_resolution.resolve_technique_factories_for_techniques",
         return_value={"one": factory, "two": factory},
     ):
         estimate = await scenario.get_run_size_estimate_async()
@@ -423,7 +423,7 @@ async def test_matrix_estimate_with_binding_cap_reports_compatibility_bounds() -
     )
 
     with patch(
-        "pyrit.scenario.core.matrix_atomic_attack_builder.resolve_technique_factories_for_techniques",
+        "pyrit.scenario.core.technique_resolution.resolve_technique_factories_for_techniques",
         return_value={"one": plain_factory, "two": conversation_factory},
     ):
         estimate = await scenario.get_run_size_estimate_async()
@@ -469,7 +469,7 @@ async def test_matrix_estimate_with_unsupported_binding_cap_is_conditional() -> 
     factory.seed_technique = None
 
     with patch(
-        "pyrit.scenario.core.matrix_atomic_attack_builder.resolve_technique_factories_for_techniques",
+        "pyrit.scenario.core.technique_resolution.resolve_technique_factories_for_techniques",
         return_value={"one": factory, "two": factory},
     ):
         estimate = await scenario.get_run_size_estimate_async()
@@ -488,7 +488,7 @@ def test_compatibility_bounds_skip_missing_factories_and_require_dataset_summari
     scenario._estimate_full_groups_by_dataset = {"sample": [_seed_group("one")]}
 
     with patch(
-        "pyrit.scenario.core.matrix_atomic_attack_builder.resolve_technique_factories_for_techniques",
+        "pyrit.scenario.core.technique_resolution.resolve_technique_factories_for_techniques",
         return_value={},
     ):
         assert scenario._get_technique_compatibility_bounds(datasets=[]) == {}
@@ -496,7 +496,7 @@ def test_compatibility_bounds_skip_missing_factories_and_require_dataset_summari
     factory = MagicMock()
     factory.seed_technique = None
     with patch(
-        "pyrit.scenario.core.matrix_atomic_attack_builder.resolve_technique_factories_for_techniques",
+        "pyrit.scenario.core.technique_resolution.resolve_technique_factories_for_techniques",
         return_value={"one": factory},
     ):
         assert scenario._get_technique_compatibility_bounds(datasets=[]) is None

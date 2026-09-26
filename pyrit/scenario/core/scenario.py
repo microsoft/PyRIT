@@ -708,10 +708,8 @@ class Scenario(ABC):
                 )
             ]
 
-        from pyrit.scenario.core.matrix_atomic_attack_builder import (
-            filter_compatible_seed_groups,
-            resolve_technique_factories_for_techniques,
-        )
+        from pyrit.scenario.core.matrix_atomic_attack_builder import filter_compatible_seed_groups
+        from pyrit.scenario.core.technique_resolution import resolve_technique_factories_for_techniques
 
         factories = resolve_technique_factories_for_techniques(
             scenario_techniques=self._scenario_techniques,
@@ -753,10 +751,8 @@ class Scenario(ABC):
             dict[str, tuple[int, int]] | None: Technique names mapped to minimum and maximum
                 compatible counts, or ``None`` when the configured sampling shape is unsupported.
         """
-        from pyrit.scenario.core.matrix_atomic_attack_builder import (
-            filter_compatible_seed_groups,
-            resolve_technique_factories_for_techniques,
-        )
+        from pyrit.scenario.core.matrix_atomic_attack_builder import filter_compatible_seed_groups
+        from pyrit.scenario.core.technique_resolution import resolve_technique_factories_for_techniques
 
         summaries = {dataset.name: dataset for dataset in datasets}
         factories = resolve_technique_factories_for_techniques(
