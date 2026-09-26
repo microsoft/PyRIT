@@ -30,6 +30,10 @@ from pyrit.scenario.core import (
     Scenario,
     ScenarioTechnique,
 )
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetConstraintError,
+    read_only_dataset_resolution,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
@@ -930,3 +934,102 @@ async def test_foundry_estimate_counts_composites_instead_of_flattened_technique
     assert estimate.estimated_attack_count == 6
     assert len(estimate.components) == 2
     assert [component.count for component in estimate.components] == [3, 3]
+
+
+def _unpopulated_memory() -> MagicMock:
+    """Build a memory whose configured datasets have never been loaded."""
+    memory = MagicMock()
+    memory.get_seeds.return_value = []
+    return memory
+
+
+async def test_read_only_estimate_bounds_a_capped_dataset_without_materializing_it() -> None:
+    """A capped default reports its ceiling from the cap rather than fetching the dataset."""
+    memory = _unpopulated_memory()
+
+    with (
+        patch(
+            "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
+            return_value=memory,
+        ),
+        patch.object(DatasetConfiguration, "_fetch_dataset_async", new_callable=AsyncMock) as fetch_dataset,
+    ):
+        scenario = _NamedDatasetEstimateScenario(objective_scorer=_scorer())
+        scenario.set_params_from_args(
+            args={
+                "dataset_config": DatasetAttackConfiguration(dataset_names=["sample"], max_dataset_size=5),
+                "include_baseline": False,
+            }
+        )
+
+        with read_only_dataset_resolution():
+            estimate = await scenario.get_run_size_estimate_async()
+
+    # Two concrete default techniques, capped at five seed groups, no baseline.
+    assert estimate.maximum_attack_count == 10
+    assert estimate.minimum_attack_count == 0
+    assert estimate.estimated_attack_count is None
+    fetch_dataset.assert_not_awaited()
+
+
+async def test_read_only_estimate_counts_a_shared_cap_once_across_datasets() -> None:
+    """A combined configuration cap is one budget for every dataset, not one cap each."""
+    memory = _unpopulated_memory()
+
+    with patch(
+        "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
+        return_value=memory,
+    ):
+        scenario = _NamedDatasetEstimateScenario(objective_scorer=_scorer())
+        scenario.set_params_from_args(
+            args={
+                "dataset_config": DatasetAttackConfiguration(
+                    dataset_names=["sample", "other"],
+                    max_dataset_size=5,
+                ),
+                "include_baseline": False,
+            }
+        )
+
+        with read_only_dataset_resolution():
+            estimate = await scenario.get_run_size_estimate_async()
+
+    assert estimate.maximum_attack_count == 10
+
+
+async def test_read_only_estimate_includes_the_baseline_unit_in_the_ceiling() -> None:
+    """The baseline adds one more planned unit per capped seed group."""
+    memory = _unpopulated_memory()
+
+    with patch(
+        "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
+        return_value=memory,
+    ):
+        scenario = _NamedDatasetEstimateScenario(objective_scorer=_scorer())
+        scenario.set_params_from_args(
+            args={
+                "dataset_config": DatasetAttackConfiguration(dataset_names=["sample"], max_dataset_size=5),
+                "include_baseline": True,
+            }
+        )
+
+        with read_only_dataset_resolution():
+            estimate = await scenario.get_run_size_estimate_async()
+
+    # Two techniques plus one baseline unit per capped seed group.
+    assert estimate.maximum_attack_count == 15
+
+
+async def test_read_only_estimate_without_a_cap_stays_unavailable() -> None:
+    """An uncapped dataset has no ceiling, so the estimate still fails loudly."""
+    memory = _unpopulated_memory()
+
+    with patch(
+        "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
+        return_value=memory,
+    ):
+        scenario = _NamedDatasetEstimateScenario(objective_scorer=_scorer())
+        scenario.set_params_from_args(args={})
+
+        with read_only_dataset_resolution(), pytest.raises(DatasetConstraintError):
+            await scenario.get_run_size_estimate_async()

@@ -53,7 +53,10 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+    DatasetConstraintError,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -602,17 +605,30 @@ class Scenario(ABC):
         estimate. Omitted values use the same declared defaults, aggregate
         expansion, dataset selection, and baseline policy as ``initialize_async``.
 
+        Read-only estimation never fetches a missing dataset, so configured datasets that
+        are not in memory cannot be counted. When a ``max_dataset_size`` cap is configured
+        the run is still bounded by it, and that bound is returned instead of failing.
+
         Returns:
-            ScenarioRunSizeEstimate: Structured configured-run estimate.
+            ScenarioRunSizeEstimate: Structured configured-run estimate, or a cap-derived
+                bound when the configured datasets are not materialized.
 
         Raises:
             ValueError: If target certainty is asserted without a resolved target.
+            DatasetConstraintError: If the datasets cannot be resolved and no cap is
+                configured to bound the run.
         """
         self._resolve_runtime_configuration(require_objective_target=False)
         if target_is_configured and self._objective_target is None:
             raise ValueError("target_is_configured requires a resolved objective_target")
         self._estimate_target_is_configured = self._objective_target is not None
-        return await self._estimate_run_size_async()
+        try:
+            return await self._estimate_run_size_async()
+        except DatasetConstraintError as exc:
+            bounded = self._estimate_run_size_from_caps(reason=exc)
+            if bounded is None:
+                raise
+            return bounded
 
     async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
         """
@@ -682,6 +698,82 @@ class Scenario(ABC):
             datasets=datasets,
             note=note,
         )
+
+    def _estimate_run_size_from_caps(self, *, reason: DatasetConstraintError) -> ScenarioRunSizeEstimate | None:
+        """
+        Bound the planned run from configured caps when the datasets are not materialized.
+
+        Read-only estimation deliberately refuses to fetch and persist missing datasets, so a
+        fresh backend cannot count a dataset's real population. A configured ``max_dataset_size``
+        still bounds it: sampling never selects more than the cap, whatever the population turns
+        out to be. That yields an upper bound without materializing a single seed.
+
+        The bound is reported the way this class already reports an uncertain sweep -- no
+        ``estimated_attack_count``, only ``minimum_attack_count`` and ``maximum_attack_count`` --
+        so a capped default shows a usable ceiling instead of nothing at all. The lower bound
+        stays 0 because an unmaterialized dataset may also resolve to fewer seeds than the cap.
+
+        Args:
+            reason (DatasetConstraintError): The resolution failure this bound stands in for.
+
+        Returns:
+            ScenarioRunSizeEstimate | None: The cap-derived bound, or None when no cap is
+                configured and the estimate is genuinely unavailable.
+        """
+        seed_group_ceiling = self._seed_group_ceiling_from_caps()
+        if seed_group_ceiling is None:
+            return None
+
+        technique_count = len(self._scenario_techniques)
+        per_seed_group_units = technique_count + (1 if self._include_baseline else 0)
+        maximum_attack_count = seed_group_ceiling * per_seed_group_units
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=None,
+            minimum_attack_count=0,
+            maximum_attack_count=maximum_attack_count,
+            components=[],
+            datasets=[],
+            note=(
+                "Counts planned outer execution units; retries and internal attack turns are excluded. "
+                f"The configured datasets are not loaded, so their population is unknown ({reason}). "
+                f"The ceiling applies the configured cap of {seed_group_ceiling} seed group(s) to "
+                f"{per_seed_group_units} unit(s) per seed group."
+            ),
+        )
+
+    def _seed_group_ceiling_from_caps(self) -> int | None:
+        """
+        Derive the largest seed-group count the configured caps can admit.
+
+        A cap recorded against ``"dataset"`` bounds that dataset alone, so independent
+        per-dataset caps add up. A ``"configuration"`` or ``"compound"`` cap is instead one
+        budget shared across every contributing dataset, so it bounds the total directly.
+        When both kinds are present the tightest of them wins.
+
+        Per-dataset caps only bound the total when every contributing dataset carries one --
+        a single uncapped dataset leaves the sum unbounded, so that candidate is dropped.
+
+        Returns:
+            int | None: The seed-group ceiling, or None when no cap bounds the run.
+        """
+        caps_by_dataset = self._dataset_config.size_caps_by_dataset()
+        if not caps_by_dataset:
+            return None
+
+        shared_budgets: list[int] = []
+        per_dataset_caps: dict[str, int] = {}
+        for name, entries in caps_by_dataset.items():
+            dataset_scoped = [count for _, count, configured_on in entries if configured_on == "dataset"]
+            if dataset_scoped:
+                per_dataset_caps[name] = min(dataset_scoped)
+            shared_budgets.extend(
+                count for _, count, configured_on in entries if configured_on in ("configuration", "compound")
+            )
+
+        candidates = list(shared_budgets)
+        if per_dataset_caps and len(per_dataset_caps) == len(caps_by_dataset):
+            candidates.append(sum(per_dataset_caps.values()))
+        return min(candidates) if candidates else None
 
     def _build_technique_size_components(
         self,
