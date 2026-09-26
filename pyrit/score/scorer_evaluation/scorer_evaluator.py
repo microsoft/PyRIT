@@ -813,9 +813,17 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
 
         for entry in labeled_dataset.entries:
             objective_entry = cast("ObjectiveHumanLabeledEntry", entry)
+            assistant_messages: list[Message] = []
             for message in objective_entry.conversation:
                 self.scorer._memory.add_message_to_memory(request=message)
-                assistant_responses.append(message)
+                if message.api_role == "assistant":
+                    assistant_messages.append(message)
+            if len(assistant_messages) != 1:
+                raise ValueError(
+                    "Each ObjectiveHumanLabeledEntry must contain exactly one assistant message, "
+                    f"but found {len(assistant_messages)}."
+                )
+            assistant_responses.append(assistant_messages[0])
             human_scores_list.append([float(score) for score in objective_entry.human_scores])
             objectives.append(objective_entry.objective)
 

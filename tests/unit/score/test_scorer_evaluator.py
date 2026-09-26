@@ -142,6 +142,102 @@ def test_validate_and_extract_harm_data_scores_only_assistant_message(mock_harm_
     assert mock_harm_scorer._memory.add_message_to_memory.call_count == 2
 
 
+def _objective_conversation(conversation_id: str = "conversation") -> tuple[Message, Message]:
+    user_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="Write a poem about the moon",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+                sequence=0,
+            )
+        ]
+    )
+    assistant_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="Here is a poem about the moon.",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+                sequence=1,
+            )
+        ]
+    )
+    return user_message, assistant_message
+
+
+def _objective_dataset(entries: list[ObjectiveHumanLabeledEntry]) -> HumanLabeledDataset:
+    return HumanLabeledDataset(
+        name="test_dataset",
+        metrics_type=MetricsType.OBJECTIVE,
+        entries=entries,
+        version="1.0",
+    )
+
+
+def test_validate_and_extract_objective_data_scores_only_assistant_message(mock_objective_scorer):
+    user_message, assistant_message = _objective_conversation()
+    dataset = _objective_dataset(
+        [ObjectiveHumanLabeledEntry([user_message, assistant_message], [True], "Test objective")]
+    )
+
+    responses, human_scores, objectives = ObjectiveScorerEvaluator(mock_objective_scorer)._validate_and_extract_data(
+        dataset
+    )
+
+    assert responses == [assistant_message]
+    assert human_scores == [[1.0]]
+    assert objectives == ["Test objective"]
+    assert mock_objective_scorer._memory.add_message_to_memory.call_count == 2
+
+
+def test_validate_and_extract_objective_data_keeps_one_row_per_entry(mock_objective_scorer):
+    first_user, first_assistant = _objective_conversation("first")
+    second_user, second_assistant = _objective_conversation("second")
+    dataset = _objective_dataset(
+        [
+            ObjectiveHumanLabeledEntry([first_user, first_assistant], [True], "First objective"),
+            ObjectiveHumanLabeledEntry([second_user, second_assistant], [False], "Second objective"),
+        ]
+    )
+
+    responses, human_scores, objectives = ObjectiveScorerEvaluator(mock_objective_scorer)._validate_and_extract_data(
+        dataset
+    )
+
+    assert responses == [first_assistant, second_assistant]
+    assert human_scores == [[1.0], [0.0]]
+    assert objectives == ["First objective", "Second objective"]
+
+
+@pytest.mark.parametrize(
+    "conversation",
+    ["no_assistant", "two_assistants"],
+)
+def test_validate_and_extract_objective_data_rejects_conversation_without_exactly_one_assistant_message(
+    mock_objective_scorer, conversation
+):
+    user_message, assistant_message = _objective_conversation()
+    second_assistant = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="A second answer.",
+                original_value_data_type="text",
+                conversation_id="conversation",
+                sequence=2,
+            )
+        ]
+    )
+    messages = {"no_assistant": [user_message], "two_assistants": [user_message, assistant_message, second_assistant]}
+    dataset = _objective_dataset([ObjectiveHumanLabeledEntry(messages[conversation], [True], "Test objective")])
+
+    with pytest.raises(ValueError, match="exactly one assistant message"):
+        ObjectiveScorerEvaluator(mock_objective_scorer)._validate_and_extract_data(dataset)
+
+
 async def test_evaluate_dataset_async_objective(mock_objective_scorer):
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
