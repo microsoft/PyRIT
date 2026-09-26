@@ -174,13 +174,16 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   const activeRun = useRef<number | null>(null)
 
   if (state.generation !== generation) {
+    // A runtime generation change invalidates generated results, but text the
+    // user typed into the working copy is theirs and must survive the swap.
+    // Working entries for pieces that no longer exist are inert (lookups are
+    // by current input id).
     setState({
       ...state,
       generation,
       sourceInputs: inputs,
       inputs: inputs.map((input: ConverterInputPiece) => ({ ...input, revision: state.nextRevision + 1 })),
       nextRevision: state.nextRevision + 1,
-      workingInputs: {},
       stageResults: {},
       errors: {},
       applied: {},
