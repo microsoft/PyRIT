@@ -136,8 +136,13 @@ litellm = [
     "litellm>=1.84.0",
 ]
 
+a2a = [
+    "a2a-sdk>=1.1.0",
+]
+
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
+    "a2a-sdk>=1.1.0",
     "accelerate>=1.7.0",
     "azure-ai-ml>=1.32.0",
     "azure-cognitiveservices-speech>=1.44.0",
