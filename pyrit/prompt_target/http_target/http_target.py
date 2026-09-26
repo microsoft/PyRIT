@@ -229,7 +229,7 @@ class HTTPTarget(PromptTarget):
                     follow_redirects=self.follow_redirects,
                 )
 
-            response_content = response.content
+            response_content = response.text
 
             if self.callback_function:
                 response_content = self.callback_function(response=response)

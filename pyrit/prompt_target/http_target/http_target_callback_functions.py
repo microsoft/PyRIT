@@ -7,10 +7,10 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-import requests
+import httpx
 
 
-def get_http_target_json_response_callback_function(key: str) -> Callable[[requests.Response], str]:
+def get_http_target_json_response_callback_function(key: str) -> Callable[[httpx.Response], str]:
     """
     Determine proper parsing response function for an HTTP Request.
 
@@ -24,7 +24,7 @@ def get_http_target_json_response_callback_function(key: str) -> Callable[[reque
         Callable: proper output parsing response
     """
 
-    def parse_json_http_response(response: requests.Response) -> str:
+    def parse_json_http_response(response: httpx.Response) -> str:
         """
         Parse JSON outputs.
 
@@ -43,7 +43,7 @@ def get_http_target_json_response_callback_function(key: str) -> Callable[[reque
 
 def get_http_target_regex_matching_callback_function(
     key: str, url: str | None = None
-) -> Callable[[requests.Response], str]:
+) -> Callable[[httpx.Response], str]:
     """
     Get a callback function that parses HTTP responses using regex matching.
 
@@ -55,7 +55,7 @@ def get_http_target_regex_matching_callback_function(
         Callable: A function that parses responses using the provided regex pattern.
     """
 
-    def parse_using_regex(response: requests.Response) -> str:
+    def parse_using_regex(response: httpx.Response) -> str:
         """
         Parse text outputs using regex.
 
@@ -67,13 +67,16 @@ def get_http_target_regex_matching_callback_function(
         Returns:
             str: parsed output from response given a regex pattern to follow
         """
+        # Search the decoded text; str(response.content) would search the bytes repr (b'...'),
+        # where non-ASCII characters and newlines appear as escape sequences.
+        response_text = response.text
         re_pattern = re.compile(key)
-        match = re.search(re_pattern, str(response.content))
+        match = re.search(re_pattern, response_text)
         if match:
             if url:
                 return url + match.group()
             return match.group()
-        return str(response.content)
+        return response_text
 
     return parse_using_regex
 
@@ -93,14 +96,17 @@ def _fetch_key(data: dict[str, Any], key: str) -> Any:
         ValueError: If any path segment is missing, so a misconfigured key
             surfaces immediately instead of silently degrading to "".
     """
-    pattern = re.compile(r"([a-zA-Z_]+)|\[(-?\d+)\]")
+    # A key segment is a quoted bracket lookup, or any run of characters other than
+    # ".", "[" and "]", so keys such as "output2" or "generated-text" are kept whole.
+    pattern = re.compile(r"\[\s*[\"']([^\"']+)[\"']\s*\]|([^.\[\]]+)|\[(-?\d+)\]")
     keys = pattern.findall(key)
     result: Any = data
-    for key_part, index_part in keys:
-        if key_part:
-            if not isinstance(result, dict) or key_part not in result:
-                raise ValueError(f"Key path {key!r} not found in HTTP JSON response: missing segment {key_part!r}.")
-            result = result[key_part]
+    for quoted_part, key_part, index_part in keys:
+        name = quoted_part or key_part
+        if name:
+            if not isinstance(result, dict) or name not in result:
+                raise ValueError(f"Key path {key!r} not found in HTTP JSON response: missing segment {name!r}.")
+            result = result[name]
         elif index_part:
             index = int(index_part)
             if not isinstance(result, list) or not -len(result) <= index < len(result):
