@@ -2,9 +2,12 @@
 # Licensed under the MIT license.
 
 import string
+from collections.abc import Callable
+from functools import partial
 
 import pytest
 
+from pyrit.common.random_context import configure_random_seed, get_configured_random_seed, random_execution
 from pyrit.converter import DigitBijectionConverter, LetterBijectionConverter, TokenBijectionConverter
 from pyrit.converter.bijection_converter import BijectionConverter
 
@@ -492,6 +495,21 @@ def _mock_tokenizer(vocab: dict[str, int]):
     return type("MockTokenizer", (), {"get_vocab": lambda self: vocab})()
 
 
+@pytest.fixture(
+    params=[
+        LetterBijectionConverter,
+        DigitBijectionConverter,
+        partial(
+            TokenBijectionConverter,
+            tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
+        ),
+    ],
+    ids=["letter", "digit", "token"],
+)
+def bijection_factory(request: pytest.FixtureRequest) -> Callable[..., BijectionConverter]:
+    return request.param
+
+
 async def test_token_converter_delimits_encoded_units():
     # Regression test: without a delimiter between mapped tokens, a multi-letter word
     # collapses into an unsegmentable run-on string that the target model can't learn to
@@ -566,3 +584,80 @@ def test_token_converter_excludes_wordpiece_continuation_fragments():
     for token in converter.mapping.values():
         assert not token.startswith("##")
         assert token in _PLAIN_VOCAB_WORDS
+
+
+def test_mapping_is_reproducible_under_configured_root_seed():
+    """
+    The mapping is drawn at construction time. With no explicit seed it must inherit the
+    root configured by initialize_pyrit_async, not fresh entropy.
+    """
+    try:
+        configure_random_seed(seed=42)
+        first = LetterBijectionConverter().mapping
+        configure_random_seed(seed=42)
+        second = LetterBijectionConverter().mapping
+        assert first == second
+    finally:
+        configure_random_seed(seed=None)
+
+
+def test_mapping_varies_with_root_seed():
+    try:
+        configure_random_seed(seed=42)
+        first = LetterBijectionConverter().mapping
+        configure_random_seed(seed=99)
+        second = LetterBijectionConverter().mapping
+        assert first != second
+    finally:
+        configure_random_seed(seed=None)
+
+
+def test_explicit_seed_overrides_configured_root_seed():
+    try:
+        configure_random_seed(seed=1)
+        first = LetterBijectionConverter(seed=7).mapping
+        configure_random_seed(seed=99)
+        second = LetterBijectionConverter(seed=7).mapping
+        assert first == second
+    finally:
+        configure_random_seed(seed=None)
+
+
+def test_mapping_is_unseeded_without_a_configured_root():
+    configure_random_seed(seed=None)
+    mappings = {tuple(sorted(LetterBijectionConverter().mapping.items())) for _ in range(5)}
+    assert len(mappings) > 1
+
+
+@pytest.mark.parametrize("root_seed,seed", [(None, 7), (42, 7), (42, None)])
+def test_mapping_is_reproducible_within_random_execution(
+    *, bijection_factory: Callable[..., BijectionConverter], root_seed: int | None, seed: int | None
+) -> None:
+    previous_seed = get_configured_random_seed()
+    try:
+        configure_random_seed(seed=root_seed)
+        with random_execution(namespace="composite"):
+            first = bijection_factory(seed=seed)
+            second = bijection_factory(seed=seed)
+
+        assert first.mapping == second.mapping
+    finally:
+        configure_random_seed(seed=previous_seed)
+
+
+@pytest.mark.parametrize("seed", [None, 7])
+def test_mapping_inherits_operation_key(
+    *, bijection_factory: Callable[..., BijectionConverter], seed: int | None
+) -> None:
+    previous_seed = get_configured_random_seed()
+    try:
+        configure_random_seed(seed=42)
+        mappings = []
+        for operation_key in ("first", "second", "first"):
+            with random_execution(namespace="composite", operation_key=operation_key):
+                mappings.append(bijection_factory(seed=seed).mapping)
+
+        assert mappings[0] != mappings[1]
+        assert mappings[0] == mappings[2]
+    finally:
+        configure_random_seed(seed=previous_seed)

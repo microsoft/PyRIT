@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common.random_context import random_execution
 from pyrit.common.utils import warn_if_set
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
@@ -74,6 +75,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             max_attempts_on_failure (int): Maximum number of attempts to retry on failure.
+                Converter randomness is scoped per attempt and is reproducible with a configured root seed.
             params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
                 Defaults to AttackParameters. Use AttackParameters.excluding() to create
                 a params type that rejects certain fields.
@@ -201,8 +203,12 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             # Prepare a fresh message for each attempt to avoid duplicate ID errors in database
             message = self._get_message(context)
 
-            # Send the prompt
-            response = await self._send_prompt_to_objective_target_async(message=message, context=context)
+            with random_execution(
+                namespace=f"{type(self).__module__}.{type(self).__qualname__}",
+                owner=self,
+                operation_key=f"attempt:{attempt}",
+            ):
+                response = await self._send_prompt_to_objective_target_async(message=message, context=context)
             if not response:
                 self._logger.warning(f"No response received on attempt {attempt + 1} (likely filtered)")
                 continue  # Retry if no response (filtered or error)

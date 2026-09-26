@@ -4,7 +4,6 @@
 import asyncio
 import json
 import pathlib
-import random
 import uuid
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -102,7 +101,8 @@ class PuzzledConverter(Converter):
             essential_words (list[str] | None): Sensitive words to prefer when selecting what to
                 mask. When omitted, words are chosen automatically.
             seed (int | None): Seed for the puzzle randomness (word-search placement and anagram
-                shuffling). Pass an int for reproducible output; leave as None for fresh randomness.
+                shuffling). Pass an int for reproducible output; leave as None to inherit the root
+                configured by ``initialize_pyrit_async(seed=...)``.
             converter_target (PromptTarget | None): Optional chat model used to generate the paper's
                 "indirect semantic description" clue for each masked word. When omitted, each clue is
                 the deterministic length-and-part-of-speech clue only.
@@ -188,7 +188,7 @@ class PuzzledConverter(Converter):
         if puzzle_type is PuzzleType.CROSSWORD and not crossword_symbol_map(words):
             puzzle_type = PuzzleType.ANAGRAM
 
-        rng = random.Random(self._seed)
+        rng = self._get_random_generator(stream="puzzle")
         if puzzle_type is PuzzleType.WORD_SEARCH:
             puzzle_body = build_word_search(words, rng)
         elif puzzle_type is PuzzleType.ANAGRAM:

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import MockPromptTarget, get_mock_scorer_identifier, get_mock_target_identifier
 
+from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
 from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
@@ -36,6 +37,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.setup.initializers.techniques.extra import get_technique_factories
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -219,6 +221,20 @@ def failure_score():
         message_piece_id=str(uuid.uuid4()),
         scorer_class_identifier=get_mock_scorer_identifier(),
     )
+
+
+@pytest.fixture
+def best_of_n_attack(
+    *, patch_central_database: MagicMock, mock_true_false_scorer: MagicMock
+) -> tuple[PromptSendingAttack, MockPromptTarget]:
+    target = MockPromptTarget()
+    factory = next(factory for factory in get_technique_factories() if factory.name == "best_of_n")
+    attack = factory.create(
+        objective_target=target,
+        attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
+    ).attack
+    assert isinstance(attack, PromptSendingAttack)
+    return attack, target
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -933,6 +949,42 @@ class TestAttackExecution:
 @pytest.mark.usefixtures("patch_central_database")
 class TestConverterIntegration:
     """Tests for converter integration"""
+
+    @pytest.mark.parametrize("root_seed", [None, 42])
+    async def test_best_of_n_retry_diversity_and_seeded_replay_async(
+        self,
+        *,
+        best_of_n_attack: tuple[PromptSendingAttack, MockPromptTarget],
+        failure_score: Score,
+        root_seed: int | None,
+    ) -> None:
+        attack, target = best_of_n_attack
+        previous_seed = get_configured_random_seed()
+        try:
+            configure_random_seed(seed=root_seed)
+            sequences: list[list[str]] = []
+            with patch.object(attack, "_evaluate_response_async", new_callable=AsyncMock, return_value=failure_score):
+                for _ in range(2):
+                    target.prompt_sent.clear()
+                    context = SingleTurnAttackContext(
+                        params=AttackParameters(
+                            objective="Describe several different approaches to organizing a collection of books."
+                        ),
+                    )
+                    await attack._setup_async(context=context)
+                    result = await attack._perform_async(context=context)
+
+                    assert result.outcome == AttackOutcome.FAILURE
+                    assert len(target.prompt_sent) == 20
+                    assert len(set(target.prompt_sent)) == 20
+                    sequences.append(target.prompt_sent.copy())
+
+            if root_seed is not None:
+                assert sequences[0] == sequences[1]
+            else:
+                assert sequences[0] != sequences[1]
+        finally:
+            configure_random_seed(seed=previous_seed)
 
     @pytest.mark.parametrize(
         "converters,input_text,expected_pattern",
