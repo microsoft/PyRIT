@@ -513,6 +513,15 @@ class Psychosocial(Scenario):
             self._dataset_config = rebuilt
         return await super()._resolve_seed_groups_by_dataset_async(apply_sampling=apply_sampling)
 
+    def _get_run_size_budget(self) -> int | None:
+        """
+        Use the outer limit applied by seed resolution, not compound child budgets.
+
+        Returns:
+            int | None: Per-sub-harm limit, or None for an unlimited population.
+        """
+        return self._dataset_config.max_dataset_size
+
     async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate the independent sub-harm technique sweeps and per-harm baselines.
