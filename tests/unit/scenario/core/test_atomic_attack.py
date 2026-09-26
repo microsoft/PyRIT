@@ -12,6 +12,7 @@ from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.models import (
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
@@ -20,6 +21,7 @@ from pyrit.models import (
     SeedGroup,
     SeedObjective,
     SeedPrompt,
+    TargetIdentifier,
 )
 from pyrit.scenario import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -1279,3 +1281,38 @@ class TestAtomicAttackTechniqueEvalHash:
             atomic_attack_name="same",
         )
         assert a1.technique_eval_hash != a2.technique_eval_hash
+
+    def test_hash_differs_for_different_adversarial_prompt_template(self, sample_seed_groups):
+        """Two otherwise-identical adversarial attacks that differ only in their resolved
+        per-turn adversarial_prompt_template must land in different resume buckets --
+        otherwise resuming a scenario after only the follow-up prompt changed would
+        silently reuse results generated under the old template."""
+        adv_target = TargetIdentifier(class_name="AdvChat", class_module="pyrit.test")
+
+        attack_a = MagicMock(spec=AttackStrategy)
+        attack_a.get_identifier.return_value = AttackIdentifier(
+            class_name="RedTeamingAttack",
+            class_module="pyrit.test",
+            adversarial_chat=adv_target,
+            adversarial_prompt_template="A: {{ feedback_text }}",
+        )
+        attack_b = MagicMock(spec=AttackStrategy)
+        attack_b.get_identifier.return_value = AttackIdentifier(
+            class_name="RedTeamingAttack",
+            class_module="pyrit.test",
+            adversarial_chat=adv_target,
+            adversarial_prompt_template="B: {{ feedback_text }}",
+        )
+
+        a1 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=attack_a),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        a2 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=attack_b),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        assert a1.technique_eval_hash != a2.technique_eval_hash
+        assert a1.logical_group_id != a2.logical_group_id

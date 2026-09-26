@@ -1394,6 +1394,26 @@ class TestCreateIdentifierAdversarial:
         identifier = strategy.get_identifier()
         assert identifier.params["adversarial_seed_prompt"] == "seed {{ objective }}"
 
+    def test_prompt_template_string_stored_in_params(self, mock_objective_target):
+        config = AttackAdversarialConfig(
+            target=_adv_target(),
+            system_prompt=None,
+            first_message=None,
+            adversarial_prompt_template="turn {{ feedback_text }}",
+        )
+        strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=config)
+        identifier = strategy.get_identifier()
+        assert identifier.params["adversarial_prompt_template"] == "turn {{ feedback_text }}"
+
+    def test_prompt_template_seedprompt_value_stored_in_params(self, mock_objective_target):
+        template = SeedPrompt(value="turn {{ feedback_text }}", data_type="text", parameters=["feedback_text"])
+        config = AttackAdversarialConfig(
+            target=_adv_target(), system_prompt=None, first_message=None, adversarial_prompt_template=template
+        )
+        strategy = _IdentityTestStrategy(objective_target=mock_objective_target, adversarial_config=config)
+        identifier = strategy.get_identifier()
+        assert identifier.params["adversarial_prompt_template"] == "turn {{ feedback_text }}"
+
     def test_different_system_prompt_changes_full_and_eval_hash(self, mock_objective_target):
         adv = _adv_target()
         s1 = _IdentityTestStrategy(
@@ -1417,6 +1437,28 @@ class TestCreateIdentifierAdversarial:
         s2 = _IdentityTestStrategy(
             objective_target=mock_objective_target,
             adversarial_config=AttackAdversarialConfig(target=adv, system_prompt=None, first_message="first B"),
+        )
+        id1, id2 = s1.get_identifier(), s2.get_identifier()
+        assert id1.hash != id2.hash
+        assert _eval_hash(id1) != _eval_hash(id2)
+
+    def test_different_prompt_template_changes_full_and_eval_hash(self, mock_objective_target):
+        """Regression test: two attacks differing only in their resolved per-turn
+        adversarial_prompt_template must not collide, since scenario resume matches
+        completed objectives by eval hash -- a silent collision here would let a changed
+        follow-up prompt reuse results generated under the old one."""
+        adv = _adv_target()
+        s1 = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(
+                target=adv, system_prompt=None, first_message=None, adversarial_prompt_template="A: {{ feedback_text }}"
+            ),
+        )
+        s2 = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            adversarial_config=AttackAdversarialConfig(
+                target=adv, system_prompt=None, first_message=None, adversarial_prompt_template="B: {{ feedback_text }}"
+            ),
         )
         id1, id2 = s1.get_identifier(), s2.get_identifier()
         assert id1.hash != id2.hash

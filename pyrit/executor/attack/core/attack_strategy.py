@@ -698,11 +698,15 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         adversarial_chat: TargetIdentifier | None = None
         adversarial_system_prompt: str | None = None
         adversarial_seed_prompt: str | None = None
+        adversarial_prompt_template: str | None = None
         adversarial_config = self.get_attack_adversarial_config()
         if adversarial_config is not None and getattr(adversarial_config, "target", None) is not None:
             adversarial_chat = TargetIdentifier.from_component_identifier(adversarial_config.target.get_identifier())
             adversarial_system_prompt = self._extract_adversarial_prompt_text(adversarial_config.system_prompt)
             adversarial_seed_prompt = self._extract_adversarial_prompt_text(adversarial_config.first_message)
+            adversarial_prompt_template = self._extract_adversarial_prompt_text(
+                adversarial_config.adversarial_prompt_template
+            )
 
         # Add request converter identifiers if present
         request_converters: list[ConverterIdentifier] | None = None
@@ -733,6 +737,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             response_converters=response_converters,
             adversarial_system_prompt=adversarial_system_prompt,
             adversarial_seed_prompt=adversarial_seed_prompt,
+            adversarial_prompt_template=adversarial_prompt_template,
         )
 
     @staticmethod

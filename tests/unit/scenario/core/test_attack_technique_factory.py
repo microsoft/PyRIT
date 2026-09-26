@@ -10,7 +10,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.converter import Base64Converter, QRCodeConverter, ROT13Converter, TranslationConverter
-from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_config import (
+    DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
+    AttackConverterConfig,
+    AttackScoringConfig,
+)
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -966,6 +970,126 @@ class TestCustomAdversarialPrompt:
                 adversarial_system_prompt="create-time {{ objective }}",
             )
 
+    def test_custom_prompt_template_implies_uses_adversarial(self):
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=_StubAttack,
+            adversarial_prompt_template="custom {{ feedback_text }}",
+        )
+        assert factory.uses_adversarial is True
+
+    def test_prompt_template_with_uses_adversarial_false_raises(self):
+        with pytest.raises(ValueError, match="uses_adversarial=False"):
+            AttackTechniqueFactory(
+                name="durian",
+                attack_class=_StubAttack,
+                adversarial_prompt_template="custom {{ feedback_text }}",
+                uses_adversarial=False,
+            )
+
+    def test_baked_prompt_template_attaches_to_adversarial_config(self):
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="sys {{ objective }}",
+            adversarial_prompt_template="turn {{ feedback_text }}",
+        )
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+        )
+        config = technique.attack.attack_adversarial_config
+        assert config.adversarial_prompt_template == "turn {{ feedback_text }}"
+
+    def test_create_time_prompt_template_attaches_when_none_baked(self):
+        """A create-time adversarial_prompt_template is used when the factory baked no custom
+        adversarial prompt at all (baking even just a system prompt locks out every create-time
+        prompt override, per test_create_custom_prompt_conflicts_with_baked_raises)."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+        )
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+            adversarial_prompt_template="create-time {{ feedback_text }}",
+        )
+        config = technique.attack.attack_adversarial_config
+        assert config.adversarial_prompt_template == "create-time {{ feedback_text }}"
+
+    def test_baked_prompt_template_takes_precedence_over_create_time(self):
+        """Like system_prompt/seed_prompt, a baked prompt_template wins over a create-time one
+        when both happen to be supplied (create() otherwise raises on that conflict; this covers
+        the internal precedence in _build_adversarial_config directly)."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="sys {{ objective }}",
+            adversarial_prompt_template="baked {{ feedback_text }}",
+        )
+        config = factory._build_adversarial_config(
+            create_time_target=MagicMock(spec=PromptTarget),
+            create_time_prompt_template="ignored {{ feedback_text }}",
+        )
+        assert config.adversarial_prompt_template == "baked {{ feedback_text }}"
+
+    def test_baked_empty_string_prompt_template_still_takes_precedence(self):
+        """Precedence must use an explicit None check, not truthiness: a deliberately-baked
+        empty-string template (suppressing the default per-turn text) must still win over a
+        create-time value, the same as any other baked template."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="sys {{ objective }}",
+            adversarial_prompt_template="",
+        )
+        config = factory._build_adversarial_config(
+            create_time_target=MagicMock(spec=PromptTarget),
+            create_time_prompt_template="ignored {{ feedback_text }}",
+        )
+        assert config.adversarial_prompt_template == ""
+
+    def test_create_prompt_template_conflicts_with_baked_raises(self):
+        """create() must not supply adversarial_prompt_template when the factory baked one."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_prompt_template="baked {{ feedback_text }}",
+        )
+        with pytest.raises(ValueError, match="custom adversarial prompt is already baked"):
+            factory.create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=self._scoring(),
+                adversarial_prompt_template="create-time {{ feedback_text }}",
+            )
+
+    def test_default_adversarial_prompt_template_is_unset_when_not_wired(self):
+        """When no adversarial_prompt_template is wired anywhere, the built config leaves it at
+        AttackAdversarialConfig's own default rather than forcing a value."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="sys {{ objective }}",
+        )
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+        )
+        config = technique.attack.attack_adversarial_config
+        assert config.adversarial_prompt_template == DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE
+
+    def test_identifier_distinguishes_custom_prompt_template(self):
+        f1 = AttackTechniqueFactory(
+            name="durian", attack_class=self._AdversarialAttack, adversarial_prompt_template="a {{ feedback_text }}"
+        )
+        f2 = AttackTechniqueFactory(
+            name="durian", attack_class=self._AdversarialAttack, adversarial_prompt_template="b {{ feedback_text }}"
+        )
+        assert f1.get_identifier().hash != f2.get_identifier().hash
+
 
 class TestWithAdversarialSystemPromptPrefix:
     """Tests for ``with_adversarial_system_prompt_prefix``, the explicit prefix-layering API."""
@@ -981,9 +1105,14 @@ class TestWithAdversarialSystemPromptPrefix:
     def _scoring():
         return MagicMock(spec=AttackScoringConfig)
 
-    def test_reaches_attack_config(self):
+    @pytest.mark.parametrize("prompt_template", [None, "", "turn {{ feedback_text }}"])
+    def test_reaches_attack_config(self, *, prompt_template: str | None) -> None:
         prefix = "Static guidance"
-        factory = AttackTechniqueFactory(name="durian", attack_class=self._AdversarialAttack)
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_prompt_template=prompt_template,
+        )
 
         technique = factory.with_adversarial_system_prompt_prefix(prefix).create(
             objective_target=MagicMock(spec=PromptTarget),
@@ -991,7 +1120,11 @@ class TestWithAdversarialSystemPromptPrefix:
             adversarial_chat=MagicMock(spec=PromptTarget),
         )
 
-        assert technique.attack.attack_adversarial_config.system_prompt_prefix == prefix
+        config = technique.attack.attack_adversarial_config
+        assert config.system_prompt_prefix == prefix
+        assert config.adversarial_prompt_template == (
+            DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE if prompt_template is None else prompt_template
+        )
 
     def test_does_not_mutate_original_factory(self):
         """Deriving a prefixed factory must not change what the original factory creates."""
@@ -1040,9 +1173,14 @@ class TestWithAdversarialSystemPromptPrefix:
 
         assert factory.get_identifier().hash != new_factory.get_identifier().hash
 
-    def test_distinct_prefixes_produce_distinct_identities(self):
+    @pytest.mark.parametrize("prompt_template", [None, "turn {{ feedback_text }}"])
+    def test_distinct_prefixes_produce_distinct_identities(self, *, prompt_template: str | None) -> None:
         """Two factories differing only by prefix text must not collide."""
-        factory = AttackTechniqueFactory(name="durian", attack_class=self._AdversarialAttack)
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_prompt_template=prompt_template,
+        )
 
         first = factory.with_adversarial_system_prompt_prefix("Guidance A")
         second = factory.with_adversarial_system_prompt_prefix("Guidance B")
