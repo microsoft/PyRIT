@@ -148,6 +148,91 @@ def test_catalog_preserves_adversarial_default_usage(uses_default: bool) -> None
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAdversarialEstimateScope:
+    async def test_default_and_configured_previews_do_not_load_datasets_async(self) -> None:
+        registry = ScenarioRegistry()
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(
+                DatasetAttackConfiguration,
+                "_collect_named_seeds_async",
+                side_effect=AssertionError("Preview queried datasets"),
+            ),
+        ):
+            registry.get_class("garak.api_key")
+            service = ScenarioService()
+            default = await service._get_default_run_size_estimate_async(
+                metadata=_make_scenario_metadata(registry_name="garak.api_key"),
+            )
+            configured = await service.estimate_scenario_run_size_async(
+                scenario_name="garak.api_key",
+                request=ScenarioRunSizeEstimateRequest(max_dataset_size=7),
+            )
+        assert default.estimated_attack_count == 20
+        assert configured is not None
+        assert configured.estimated_attack_count == 7
+        assert configured.model_dump(mode="json")["status"] == "approximate"
+        assert all(dataset.logical_seed_group_count is None for dataset in configured.datasets)
+
+    async def test_null_dataset_limit_is_not_cached_as_omitted_async(self) -> None:
+        registry = ScenarioRegistry()
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(
+                DatasetAttackConfiguration, "_fetch_dataset_async", side_effect=AssertionError("Fetched missing data")
+            ),
+        ):
+            registry.get_class("garak.api_key")
+            service = ScenarioService()
+            default = await service.estimate_scenario_run_size_async(
+                scenario_name="garak.api_key", request=ScenarioRunSizeEstimateRequest()
+            )
+            unlimited = await service.estimate_scenario_run_size_async(
+                scenario_name="garak.api_key", request=ScenarioRunSizeEstimateRequest(max_dataset_size=None)
+            )
+            default_again = await service.estimate_scenario_run_size_async(
+                scenario_name="garak.api_key", request=ScenarioRunSizeEstimateRequest()
+            )
+        assert default.estimated_attack_count == 20
+        assert unlimited.estimated_attack_count is None
+        assert unlimited.status.value == "unavailable"
+        assert "no seeds found in memory" in unlimited.note
+        assert default_again.estimated_attack_count == 20
+
+    async def test_unlimited_estimate_timeout_retains_worker_and_capacity_async(self) -> None:
+        registry = ScenarioRegistry()
+        with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry):
+            service = ScenarioService()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def estimate_async(**kwargs: object) -> ScenarioRunSizeEstimate:
+            started.set()
+            await release.wait()
+            return ScenarioRunSizeEstimate.unavailable(note="Finished")
+
+        with (
+            patch.object(service, "_estimate_configured_run_size_async", side_effect=estimate_async) as estimate,
+            patch("pyrit.backend.services.scenario_service._DATASET_ESTIMATE_TIMEOUT_SECONDS", 0.02),
+        ):
+            try:
+                request = ScenarioRunSizeEstimateRequest(max_dataset_size=None)
+                result = await service.estimate_scenario_run_size_async(scenario_name="garak.api_key", request=request)
+                assert started.is_set()
+                assert result is not None
+                assert result.status.value == "unavailable"
+                assert "timed out" in result.note
+                [worker] = service._configured_estimate_tasks.values()
+                assert not worker.done()
+                repeated = await service.estimate_scenario_run_size_async(
+                    scenario_name="garak.api_key", request=request
+                )
+                assert repeated == result
+                estimate.assert_awaited_once()
+            finally:
+                release.set()
+                await asyncio.gather(*service._configured_estimate_tasks.values())
+        assert service._configured_estimate_tasks == {}
+
     async def test_cold_registry_estimate_uses_selected_target_without_global_fallback_async(self) -> None:
         registry = ScenarioRegistry()
         selected = MockPromptTarget()

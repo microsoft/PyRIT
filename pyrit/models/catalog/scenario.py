@@ -63,6 +63,7 @@ class ScenarioRunSizeEstimateStatus(str, Enum):
     """Confidence level for a scenario run-size estimate."""
 
     Exact = "exact"
+    Approximate = "approximate"
     Conditional = "conditional"
     Unavailable = "unavailable"
 
@@ -125,12 +126,12 @@ class ScenarioDatasetSummary(BaseModel):
 
     name: str = Field(..., min_length=1)
     kind: Literal["dataset", "synthesized"] = "dataset"
-    logical_seed_group_count: int = Field(
-        ...,
+    logical_seed_group_count: int | None = Field(
+        default=None,
         ge=0,
         validation_alias=AliasChoices("logical_seed_group_count", "seed_group_count"),
     )
-    selected_seed_group_count: int = Field(..., ge=0)
+    selected_seed_group_count: int | None = Field(default=None, ge=0)
     configured_caps: list[ScenarioDatasetSizeCap] = Field(default_factory=list)
     selection_note: str | None = None
 
@@ -162,6 +163,7 @@ class ScenarioRunSizeEstimate(BaseModel):
     condition: ScenarioRunSizeEstimateCondition | None = None
     components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
     datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
+    configured_dataset_size: int | None = Field(default=None, ge=0)
     effective_parameters: dict[str, bool | int | float | str | list[str]] = Field(
         default_factory=dict,
         description="Scenario parameter values used by this estimate, including implicit runtime defaults.",
@@ -229,9 +231,9 @@ class ScenarioRunSizeEstimate(BaseModel):
         if self.status is not ScenarioRunSizeEstimateStatus.Conditional and self.condition is not None:
             raise ValueError(f"{self.status.value.capitalize()} run-size estimates cannot include condition")
 
-        if self.status is ScenarioRunSizeEstimateStatus.Exact:
+        if self.status in (ScenarioRunSizeEstimateStatus.Exact, ScenarioRunSizeEstimateStatus.Approximate):
             if self.total_attack_count is None:
-                raise ValueError("Exact run-size estimates require total_attack_count")
+                raise ValueError(f"{self.status.value.capitalize()} run-size estimates require total_attack_count")
             for field_name, bound in (
                 ("minimum_attack_count", self.minimum_attack_count),
                 ("maximum_attack_count", self.maximum_attack_count),
@@ -352,7 +354,11 @@ class ScenarioRunSizeEstimateRequest(BaseModel):
     dataset_names: list[str] | None = Field(
         None, description="Dataset names to estimate (uses scenario default if omitted)"
     )
-    max_dataset_size: int | None = Field(None, ge=1, description="Maximum selected logical seed groups")
+    max_dataset_size: int | None = Field(
+        None,
+        ge=1,
+        description="Maximum selected logical seed groups. Omit to keep defaults; null removes dataset caps.",
+    )
     dataset_filters: dict[str, list[str]] | None = Field(
         None,
         description="Dataset seed filters keyed by field. Accepted keys: harm_categories, data_types.",
@@ -393,7 +399,11 @@ class RunScenarioRequest(BaseModel):
     )
     techniques: list[str] | None = Field(None, description="Technique names to use (uses scenario default if omitted)")
     dataset_names: list[str] | None = Field(None, description="Dataset names to use (uses scenario default if omitted)")
-    max_dataset_size: int | None = Field(None, ge=1, description="Maximum items per dataset")
+    max_dataset_size: int | None = Field(
+        None,
+        ge=1,
+        description="Maximum selected logical seed groups. Omit to keep defaults; null removes dataset caps.",
+    )
     dataset_filters: dict[str, list[str]] | None = Field(
         None,
         description=(

@@ -188,6 +188,7 @@ describe('Scenario catalog-to-run integration', () => {
     const expectedEstimateRequest = {
       target_name: TARGET.target_registry_name,
       techniques: SCENARIO.default_techniques,
+      max_dataset_size: null,
       include_baseline: true,
     }
     await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
@@ -206,6 +207,7 @@ describe('Scenario catalog-to-run integration', () => {
       scenario_name: SCENARIO_NAME,
       target_name: TARGET.target_registry_name,
       techniques: expectedEstimateRequest.techniques,
+      max_dataset_size: expectedEstimateRequest.max_dataset_size,
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: expectedEstimateRequest.include_baseline,

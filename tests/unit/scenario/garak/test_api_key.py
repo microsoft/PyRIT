@@ -11,6 +11,7 @@ import pytest
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import Base64Converter, Converter
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.memory import CentralMemory
 from pyrit.models import ComponentIdentifier, ScenarioRunSizeEstimateStatus, Seed, SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
@@ -107,7 +108,7 @@ class TestApiKey:
             scenario=scenario,
             target=mock_objective_target,
             corpus_seeds=corpus_seeds,
-            dataset_config=ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets()),
+            dataset_config=ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets(), max_dataset_size=None),
         )
 
         assert {name: len(groups) for name, groups in _objectives(scenario).items()} == {
@@ -120,6 +121,33 @@ class TestApiKey:
                 assert group.prompts[0].source
                 assert group.objective.source
                 assert group.objective.metadata["technique"] == attack.atomic_attack_name
+
+    async def test_uncapped_preview_counts_existing_synthesized_requests_once(
+        self, corpus_seeds: dict[str, list[Seed]]
+    ) -> None:
+        memory = CentralMemory.get_memory_instance()
+        await memory.add_seeds_to_memory_async(
+            seeds=[seed for seeds in corpus_seeds.values() for seed in seeds], added_by="test"
+        )
+        scenario = ApiKey()
+        scenario.set_params_from_args(
+            args={
+                "dataset_config": ApiKeyDatasetConfiguration(
+                    dataset_names=ApiKey.required_datasets(), max_dataset_size=None
+                )
+            }
+        )
+        with patch.object(
+            DatasetAttackConfiguration, "_fetch_dataset_async", side_effect=AssertionError("Fetched datasets")
+        ):
+            estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=True)
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+        assert estimate.estimated_attack_count == 58 + 290
+        assert {dataset.name: dataset.logical_seed_group_count for dataset in estimate.datasets} == {
+            "get_key": 58,
+            "complete_key": 290,
+        }
+        assert memory.get_scenario_results() == []
 
     async def test_standard_sampling_can_select_rows_beyond_the_prefix(
         self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed]]
@@ -256,21 +284,21 @@ class TestApiKey:
             await scenario.initialize_async()
 
         expected = size or 20
-        assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
         assert estimate.total_attack_count == expected
         assert estimate.estimated_attack_count == expected
-        assert estimate.minimum_attack_count == expected
-        assert estimate.maximum_attack_count == expected
+        assert estimate.minimum_attack_count is None
+        assert estimate.maximum_attack_count is None
         assert all(
             [(factor.label, factor.count) for factor in component.factors]
-            == [("selected synthesized requests", component.count)]
+            == [("selected request estimate", component.count)]
             for component in estimate.components
         )
         assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == expected
         assert all(
             isinstance(attack.attack_technique.attack, PromptSendingAttack) for attack in scenario._atomic_attacks
         )
-        assert sum(dataset.logical_seed_group_count for dataset in estimate.datasets) == 348
+        assert all(dataset.logical_seed_group_count is None for dataset in estimate.datasets)
 
         for dataset in estimate.datasets:
             assert dataset.kind == "synthesized"
@@ -305,19 +333,19 @@ class TestApiKey:
         ):
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
 
-        population_size = 58 if technique is ApiKeyTechnique.GetKey else 290
-        assert estimate.estimated_attack_count == (size or population_size)
+        assert estimate.estimated_attack_count == size
+        if size is None:
+            assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+            assert "No size limit" in estimate.note
+            return
         assert len(estimate.datasets) == 1
         summary = estimate.datasets[0]
         assert summary.name == technique.value
-        assert summary.logical_seed_group_count == population_size
-        assert summary.selected_seed_group_count == (size or population_size)
-        if size is None:
-            assert summary.configured_caps == []
-        else:
-            assert len(summary.configured_caps) == 1
-            assert summary.configured_caps[0].count == size
-            assert summary.configured_caps[0].configured_on == "configuration"
+        assert summary.logical_seed_group_count is None
+        assert summary.selected_seed_group_count is None
+        assert len(summary.configured_caps) == 1
+        assert summary.configured_caps[0].count == size
+        assert summary.configured_caps[0].configured_on == "configuration"
 
     async def test_real_local_datasets_resolve_through_memory(self, mock_objective_target: PromptTarget) -> None:
         scenario = ApiKey()

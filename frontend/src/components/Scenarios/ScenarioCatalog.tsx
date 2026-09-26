@@ -84,42 +84,27 @@ function formatObjectiveCount(value: number): string {
 function DefaultDatasetSummary({
   datasets,
   declaredDatasets,
-  calculating,
+  configuredSize,
 }: {
   datasets: ScenarioDatasetSummary[]
   declaredDatasets: string[]
-  calculating: boolean
+  configuredSize: number | null | undefined
 }) {
   const styles = useScenarioCatalogStyles()
-
-  if (calculating) {
-    return <Spinner size="tiny" label="Calculating..." labelPosition="after" />
-  }
 
   if (datasets.length === 0 && declaredDatasets.length === 0) {
     return <Text weight="semibold">No default datasets</Text>
   }
 
-  if (datasets.length === 0) {
-    return (
-      <div className={styles.compactStack}>
-        <Text weight="semibold">Population counts unavailable</Text>
-        <Text size={200} className={styles.secondaryText}>{declaredDatasets.join(' · ')}</Text>
-      </div>
-    )
-  }
-
-  const objectiveCount = datasets.reduce(
-    (total, dataset) => total + dataset.selected_seed_group_count,
-    0,
-  )
   const datasetNames = declaredDatasets.length > 0
     ? declaredDatasets
     : datasets.map((dataset) => dataset.name)
 
   return (
     <div className={styles.compactStack}>
-      <Text weight="semibold">{formatObjectiveCount(objectiveCount)}</Text>
+      {configuredSize != null && (
+        <Text weight="semibold">Up to {formatObjectiveCount(configuredSize)}</Text>
+      )}
       <Text size={200} className={styles.secondaryText}>{datasetNames.join(' · ')}</Text>
     </div>
   )
@@ -249,7 +234,7 @@ function ScenarioCatalogRow({ scenario, estimatesLoading }: ScenarioCatalogRowPr
         <DefaultDatasetSummary
           datasets={scenario.default_run_size.datasets}
           declaredDatasets={scenario.default_datasets}
-          calculating={estimatesLoading}
+          configuredSize={scenario.default_run_size.configured_dataset_size}
         />
       </TableCell>
       <TableCell

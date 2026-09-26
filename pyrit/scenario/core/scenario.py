@@ -41,7 +41,6 @@ from pyrit.models import (
     ScenarioRunPlanSeedPrompt,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
-    ScenarioRunSizeEstimateCondition,
     ScenarioRunSizeEstimateStatus,
     ScenarioRunSizeFactor,
     ScenarioRunState,
@@ -53,7 +52,11 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+    DatasetConstraintError,
+    read_only_dataset_resolution,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -71,7 +74,6 @@ from pyrit.score import (
 if TYPE_CHECKING:
     from pyrit.converter import Converter
     from pyrit.models import ComponentIdentifier
-    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +131,6 @@ class Scenario(ABC):
     #: ``Enabled`` and ``Disabled`` states; ``Forbidden`` is a hard constraint and a
     #: caller-supplied ``include_baseline=True`` raises ``ValueError``.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
-
-    #: Whether the default estimator must mirror matrix-builder seed compatibility.
-    RUN_SIZE_USES_FACTORY_COMPATIBILITY: ClassVar[bool] = False
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -217,9 +216,6 @@ class Scenario(ABC):
         # These will be set in initialize_async
         self._objective_target: PromptTarget | None = None
         self._objective_target_identifier: ComponentIdentifier | None = None
-        self._estimate_target_is_configured = False
-        self._estimate_has_binding_size_cap = False
-        self._estimate_full_groups_by_dataset: dict[str, list[AttackSeedGroup]] = {}
         self._memory_labels: dict[str, str] = {}
         self._max_concurrency: int | None = None
         self._max_retries: int = 0
@@ -594,42 +590,103 @@ class Scenario(ABC):
         return await self.get_run_size_estimate_async(target_is_configured=False)
 
     @final
-    async def get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
+    async def get_run_size_estimate_async(
+        self, *, target_is_configured: bool = False, read_dataset_counts: bool = False
+    ) -> ScenarioRunSizeEstimate:
         """
         Estimate the currently configured run without creating or persisting it.
 
         ``set_params_from_args`` should be called first for a request-specific
         estimate. Omitted values use the same declared defaults, aggregate
-        expansion, dataset selection, and baseline policy as ``initialize_async``.
+        expansion, dataset limits, and baseline policy as ``initialize_async``.
+        Dataset contents are not read unless explicitly requested for an unlimited
+        population. The initialized run plan supplies exact counts.
+
+        Args:
+            target_is_configured: Whether a concrete objective target has been resolved.
+            read_dataset_counts: Allow unlimited estimates to read existing database
+                populations. Missing datasets are never fetched.
 
         Returns:
             ScenarioRunSizeEstimate: Structured configured-run estimate.
 
         Raises:
             ValueError: If target certainty is asserted without a resolved target.
+            DatasetConstraintError: If a configuration-only estimate has invalid dataset inputs.
         """
         self._resolve_runtime_configuration(require_objective_target=False)
         if target_is_configured and self._objective_target is None:
             raise ValueError("target_is_configured requires a resolved objective_target")
-        self._estimate_target_is_configured = self._objective_target is not None
-        return await self._estimate_run_size_async()
+        budget = self._get_run_size_budget()
+        if budget is None and not read_dataset_counts:
+            return ScenarioRunSizeEstimate.unavailable(
+                note=(
+                    "No size limit is configured for at least one selected population. "
+                    "An estimate requires a limit that the scenario applies during execution."
+                )
+            )
+        use_database = budget is None and read_dataset_counts
+        try:
+            estimate = (
+                await self._estimate_run_size_async(read_dataset_counts=True)
+                if use_database
+                else await self._estimate_run_size_async()
+            )
+        except DatasetConstraintError as exc:
+            if not use_database:
+                raise
+            return ScenarioRunSizeEstimate.unavailable(note=f"Cannot count the existing dataset groups: {exc}")
+        if estimate.status is ScenarioRunSizeEstimateStatus.Unavailable:
+            return estimate
+        values = estimate.model_dump(exclude={"estimated_attack_count"})
+        values["configured_dataset_size"] = (
+            estimate.configured_dataset_size if estimate.configured_dataset_size is not None else budget
+        )
+        if self._dataset_config.max_dataset_size is not None and any(
+            dataset.kind == "dataset" for dataset in estimate.datasets
+        ):
+            values["effective_parameters"]["max_dataset_size"] = self._dataset_config.max_dataset_size
+        if estimate.status is ScenarioRunSizeEstimateStatus.Exact:
+            values["status"] = ScenarioRunSizeEstimateStatus.Approximate
+            values["minimum_attack_count"] = None
+            values["maximum_attack_count"] = None
+        source_note = (
+            "Approximate count based on existing database seed groups and the selected techniques. "
+            "No missing datasets were fetched. Compatibility checks can reduce the actual count. "
+            if use_database
+            else "Approximate count based on configured limits, without reading datasets. "
+            "Smaller datasets, filters, and compatibility checks can reduce the actual count. "
+        )
+        values["note"] = source_note + "The running view uses the exact initialized run plan. " + (estimate.note or "")
+        return ScenarioRunSizeEstimate.model_validate(values)
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate a standard technique-by-seed-group scenario.
 
         Subclasses override this hook when their outer execution shape adds axes,
         synthesizes technique-specific populations, or selects techniques adaptively.
 
+        Args:
+            read_dataset_counts: Allow read-only group resolution when no finite budget exists.
+
         Returns:
-            ScenarioRunSizeEstimate: Exact default sweep and baseline count.
+            ScenarioRunSizeEstimate: Configured sweep and baseline budget.
         """
-        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
-        seed_group_count = sum(len(groups) for groups in selected_groups.values())
-        components = self._build_technique_size_components(
-            selected_groups=selected_groups,
-            seed_group_count=seed_group_count,
+        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(
+            read_dataset_counts=read_dataset_counts
         )
+        technique_count = len(self._scenario_techniques)
+        components = [
+            ScenarioRunSizeComponent(
+                label="Technique sweep",
+                count=seed_group_count * technique_count,
+                factors=[
+                    ScenarioRunSizeFactor(label="selected seed-group estimate", count=seed_group_count),
+                    ScenarioRunSizeFactor(label="selected concrete techniques", count=technique_count),
+                ],
+            )
+        ]
         if self._include_baseline:
             components.append(
                 ScenarioRunSizeComponent(
@@ -644,229 +701,67 @@ class Scenario(ABC):
             )
 
         estimated_attack_count = sum(component.count for component in components)
-        minimum_attack_count = None
-        maximum_attack_count = None
         note = "Counts planned outer execution units; retries and internal attack turns are excluded."
-        if self.RUN_SIZE_USES_FACTORY_COMPATIBILITY and self._estimate_has_binding_size_cap:
-            compatibility_bounds = self._get_technique_compatibility_bounds(datasets=datasets)
-            if compatibility_bounds is None:
-                estimated_attack_count = None
-                note += " A binding randomized dataset cap may select a different compatibility mix at launch."
-            else:
-                baseline_count = seed_group_count if self._include_baseline else 0
-                minimum_attack_count = baseline_count + sum(bounds[0] for bounds in compatibility_bounds.values())
-                maximum_attack_count = baseline_count + sum(bounds[1] for bounds in compatibility_bounds.values())
-                if minimum_attack_count == maximum_attack_count:
-                    estimated_attack_count = sum(component.count for component in components)
-                    minimum_attack_count = None
-                    maximum_attack_count = None
-                else:
-                    estimated_attack_count = None
-                    note += " The range covers every compatibility mix that the randomized per-dataset caps can select."
-        status = (
-            ScenarioRunSizeEstimateStatus.Exact
-            if estimated_attack_count is not None
-            else ScenarioRunSizeEstimateStatus.Conditional
-        )
         return ScenarioRunSizeEstimate(
-            status=status,
+            status=ScenarioRunSizeEstimateStatus.Approximate,
             total_attack_count=estimated_attack_count,
-            minimum_attack_count=minimum_attack_count,
-            maximum_attack_count=maximum_attack_count,
-            condition=(
-                ScenarioRunSizeEstimateCondition.LaunchConfiguration
-                if status is ScenarioRunSizeEstimateStatus.Conditional
-                else None
-            ),
             components=components,
             datasets=datasets,
             note=note,
         )
 
-    def _build_technique_size_components(
-        self,
-        *,
-        selected_groups: dict[str, list[AttackSeedGroup]],
-        seed_group_count: int,
-    ) -> list[ScenarioRunSizeComponent]:
+    def _get_run_size_budget(self) -> int | None:
+        """Return the scenario's configured population budget."""
+        return self._dataset_config.get_size_budget()
+
+    async def _get_dataset_size_for_estimate_async(
+        self, *, read_dataset_counts: bool = False
+    ) -> tuple[int, list[ScenarioDatasetSummary]]:
         """
-        Build the standard sweep, applying matrix-builder compatibility when declared.
-
-        Returns:
-            list[ScenarioRunSizeComponent]: Additive technique components.
-        """
-        if not self.RUN_SIZE_USES_FACTORY_COMPATIBILITY:
-            technique_count = len(self._scenario_techniques)
-            return [
-                ScenarioRunSizeComponent(
-                    label="Default technique sweep",
-                    count=seed_group_count * technique_count,
-                    factors=[
-                        ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count),
-                        ScenarioRunSizeFactor(label="selected concrete techniques", count=technique_count),
-                    ],
-                )
-            ]
-
-        from pyrit.scenario.core.matrix_atomic_attack_builder import (
-            filter_compatible_seed_groups,
-            resolve_technique_factories_for_techniques,
-        )
-
-        factories = resolve_technique_factories_for_techniques(
-            scenario_techniques=self._scenario_techniques,
-            extra_factories=self._get_run_size_extra_factories(),
-        )
-        components: list[ScenarioRunSizeComponent] = []
-        for technique in self._scenario_techniques:
-            factory = factories.get(technique.value)
-            if factory is None:
-                continue
-            compatible_count = sum(
-                len(filter_compatible_seed_groups(factory=factory, seed_groups=groups))
-                for groups in selected_groups.values()
-            )
-            components.append(
-                ScenarioRunSizeComponent(
-                    label=technique.value,
-                    count=compatible_count,
-                    factors=[
-                        ScenarioRunSizeFactor(label="selected concrete techniques", count=1),
-                        ScenarioRunSizeFactor(label="compatible logical seed groups", count=compatible_count),
-                    ],
-                )
-            )
-        return components
-
-    def _get_technique_compatibility_bounds(
-        self,
-        *,
-        datasets: list[ScenarioDatasetSummary],
-    ) -> dict[str, tuple[int, int]] | None:
-        """
-        Calculate selected compatible-group bounds for each technique.
+        Describe finite limits, or count existing groups for an unlimited preview.
 
         Args:
-            datasets (list[ScenarioDatasetSummary]): Resolved dataset counts and cap provenance.
+            read_dataset_counts: Allow read-only group resolution when no finite budget exists.
 
         Returns:
-            dict[str, tuple[int, int]] | None: Technique names mapped to minimum and maximum
-                compatible counts, or ``None`` when the configured sampling shape is unsupported.
+            tuple[int, list[ScenarioDatasetSummary]]: Population size and per-dataset details.
+
+        Raises:
+            ValueError: If no finite limit exists and database reads are disabled.
+            DatasetConstraintError: If an existing dataset is missing or invalid.
         """
-        from pyrit.scenario.core.matrix_atomic_attack_builder import (
-            filter_compatible_seed_groups,
-            resolve_technique_factories_for_techniques,
-        )
-
-        summaries = {dataset.name: dataset for dataset in datasets}
-        factories = resolve_technique_factories_for_techniques(
-            scenario_techniques=self._scenario_techniques,
-            extra_factories=self._get_run_size_extra_factories(),
-        )
-        result: dict[str, tuple[int, int]] = {}
-        for technique in self._scenario_techniques:
-            factory = factories.get(technique.value)
-            if factory is None:
-                continue
-            minimum = 0
-            maximum = 0
-            for name, full_groups in self._estimate_full_groups_by_dataset.items():
-                summary = summaries.get(name)
-                if summary is None:
-                    return None
-                compatible_count = len(filter_compatible_seed_groups(factory=factory, seed_groups=full_groups))
-                bounds = self._get_sampled_compatibility_bounds(
-                    full_count=len(full_groups),
-                    selected_count=summary.selected_seed_group_count,
-                    compatible_count=compatible_count,
-                    uses_only_per_dataset_caps=bool(summary.configured_caps)
-                    and all(cap.configured_on == "dataset" for cap in summary.configured_caps),
-                )
-                if bounds is None:
-                    return None
-                minimum += bounds[0]
-                maximum += bounds[1]
-            result[technique.value] = (minimum, maximum)
-        return result
-
-    @staticmethod
-    def _get_sampled_compatibility_bounds(
-        *,
-        full_count: int,
-        selected_count: int,
-        compatible_count: int,
-        uses_only_per_dataset_caps: bool,
-    ) -> tuple[int, int] | None:
-        """
-        Calculate compatible-group bounds for one independently sampled dataset.
-
-        Args:
-            full_count (int): Number of groups before sampling.
-            selected_count (int): Number of groups selected by the configured cap.
-            compatible_count (int): Number of compatible groups before sampling.
-            uses_only_per_dataset_caps (bool): Whether selection uses independent per-dataset caps.
-
-        Returns:
-            tuple[int, int] | None: Minimum and maximum compatible selected groups, or ``None``
-                when the sampling shape is unsupported.
-        """
-        if selected_count == full_count:
-            return compatible_count, compatible_count
-        if not uses_only_per_dataset_caps:
-            return None
-        minimum = max(0, selected_count - (full_count - compatible_count))
-        maximum = min(selected_count, compatible_count)
-        return minimum, maximum
-
-    def _get_run_size_extra_factories(self) -> dict[str, "AttackTechniqueFactory"] | None:
-        """Return scenario-local factories used by compatibility-aware sizing."""
-        return None
-
-    async def _resolve_dataset_groups_for_estimate_async(
-        self,
-    ) -> tuple[dict[str, list[AttackSeedGroup]], list[ScenarioDatasetSummary]]:
-        """
-        Resolve full and effectively selected logical groups for configured datasets.
-
-        Returns:
-            tuple: Selected groups keyed by population and their catalog summaries.
-        """
-        configured_dataset = self._dataset_config
-        self._dataset_config = configured_dataset
-        full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
-        self._estimate_full_groups_by_dataset = full_groups
-        self._dataset_config = configured_dataset
-        selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
-
-        configured_caps = self._dataset_config.size_caps_by_dataset()
-        datasets: list[ScenarioDatasetSummary] = []
-        for name in dict.fromkeys([*full_groups, *selected_groups]):
-            logical_count = len(full_groups.get(name, []))
-            selected_count = len(selected_groups.get(name, []))
-            selection_note = None
-            if selected_count != logical_count:
-                selection_note = f"The default selection uses {selected_count} of {logical_count} available objectives."
-            datasets.append(
+        budget = self._get_run_size_budget()
+        if budget is None and read_dataset_counts:
+            with read_only_dataset_resolution():
+                groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+            datasets = [
                 ScenarioDatasetSummary(
                     name=name,
-                    logical_seed_group_count=logical_count,
-                    selected_seed_group_count=selected_count,
-                    configured_caps=[
-                        ScenarioDatasetSizeCap(
-                            label=label,
-                            count=count,
-                            configured_on=configured_on,
-                            dataset_name=name,
-                        )
-                        for label, count, configured_on in configured_caps.get(name, [])
-                    ],
-                    selection_note=selection_note,
+                    logical_seed_group_count=len(groups),
+                    selected_seed_group_count=len(groups),
                 )
+                for name, groups in groups_by_dataset.items()
+            ]
+            return sum(len(groups) for groups in groups_by_dataset.values()), datasets
+        if budget is None:
+            raise ValueError("A finite dataset size limit is required for this estimate.")
+        caps = self._dataset_config.size_caps_by_dataset()
+        names = list(caps) or self._dataset_config.dataset_names
+        return budget, [
+            ScenarioDatasetSummary(
+                name=name,
+                configured_caps=[
+                    ScenarioDatasetSizeCap(
+                        label=label,
+                        count=count,
+                        configured_on=configured_on,
+                        dataset_name=name,
+                    )
+                    for label, count, configured_on in caps.get(name, [])
+                ],
             )
-        self._estimate_has_binding_size_cap = bool(configured_caps) and sum(
-            dataset.selected_seed_group_count for dataset in datasets
-        ) < sum(dataset.logical_seed_group_count for dataset in datasets)
-        return selected_groups, datasets
+            for name in names
+        ]
 
     def _resolve_runtime_configuration(self, *, require_objective_target: bool) -> None:
         """

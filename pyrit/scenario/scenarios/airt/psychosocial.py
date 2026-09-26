@@ -32,6 +32,8 @@ from pyrit.executor.attack import (
     CrescendoAttack,
 )
 from pyrit.models import (
+    ScenarioDatasetSizeCap,
+    ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     SeedPrompt,
@@ -497,7 +499,9 @@ class Psychosocial(Scenario):
         per_subharm_cap = self._dataset_config.max_dataset_size
         filters = self._dataset_config.filters
         if per_subharm_cap is None:
-            self._dataset_config = DatasetAttackConfiguration(dataset_names=dataset_names, filters=filters)
+            self._dataset_config = DatasetAttackConfiguration(
+                dataset_names=dataset_names, max_dataset_size=None, filters=filters
+            )
         else:
             rebuilt = CompoundDatasetAttackConfiguration.per_dataset(
                 dataset_names=dataset_names, max_dataset_size=per_subharm_cap, filters=filters
@@ -509,29 +513,53 @@ class Psychosocial(Scenario):
             self._dataset_config = rebuilt
         return await super()._resolve_seed_groups_by_dataset_async(apply_sampling=apply_sampling)
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    def _get_run_size_budget(self) -> int | None:
+        """
+        Use the outer limit applied by seed resolution, not compound child budgets.
+
+        Returns:
+            int | None: Per-sub-harm limit, or None for an unlimited population.
+        """
+        return self._dataset_config.max_dataset_size
+
+    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate the independent sub-harm technique sweeps and per-harm baselines.
 
         Returns:
-            ScenarioRunSizeEstimate: Exact per-sub-harm estimate.
+            ScenarioRunSizeEstimate: Configured per-sub-harm budget.
         """
-        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
+        budget = self._get_run_size_budget()
+        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(
+            read_dataset_counts=read_dataset_counts
+        )
+        if budget is not None:
+            datasets = [
+                ScenarioDatasetSummary(
+                    name=harm.dataset_name,
+                    configured_caps=[
+                        ScenarioDatasetSizeCap(label="per-sub-harm cap", count=seed_group_count),
+                    ],
+                )
+                for harm in self._selected_sub_harms()
+            ]
         technique_count = len(self._scenario_techniques)
         components: list[ScenarioRunSizeComponent] = []
-        for dataset_name, seed_groups in selected_groups.items():
-            seed_group_count = len(seed_groups)
+        for dataset in datasets:
+            dataset_name = dataset.name
+            count = dataset.selected_seed_group_count if budget is None else seed_group_count
+            assert count is not None
             components.append(
                 ScenarioRunSizeComponent(
                     label=f"{dataset_name} technique sweep",
-                    count=seed_group_count * technique_count,
+                    count=count * technique_count,
                 )
             )
             if self._include_baseline:
                 components.append(
                     ScenarioRunSizeComponent(
                         label=f"{dataset_name} baseline",
-                        count=seed_group_count,
+                        count=count,
                         is_baseline=True,
                         note="Psychosocial uses a distinct baseline and scorer for each sub-harm.",
                     )
@@ -540,6 +568,7 @@ class Psychosocial(Scenario):
             total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
+            configured_dataset_size=budget * len(datasets) if budget is not None else None,
             note="Each default sub-harm is planned independently; retries and internal turns are excluded.",
         )
 

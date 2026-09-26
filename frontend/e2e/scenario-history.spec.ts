@@ -562,6 +562,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     const expectedEstimateRequest = {
       target_name: "test-target",
       techniques: ["prompt_sending"],
+      max_dataset_size: null,
       include_baseline: false,
       scenario_params: {
         num_jailbreaks: 2,
@@ -582,6 +583,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
       scenario_name: SCENARIO_NAME,
       target_name: "test-target",
       techniques: ["prompt_sending"],
+      max_dataset_size: expectedEstimateRequest.max_dataset_size,
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: false,

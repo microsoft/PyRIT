@@ -4,6 +4,7 @@
 """Offline resume coverage using real scenario persistence and harmless mocked targets."""
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
@@ -18,6 +19,7 @@ from pyrit.backend.services.scenario_run_service import (
     ScenarioRunService,
     _PreparedRun,
 )
+from pyrit.backend.services.scenario_service import ScenarioService
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
@@ -27,8 +29,10 @@ from pyrit.models import (
     Message,
     Parameter,
     ScenarioResult,
+    ScenarioRunSizeEstimateRequest,
     ScenarioRunState,
     SeedObjective,
+    SeedPrompt,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.registry import ScenarioRegistry, TargetRegistry
@@ -126,6 +130,97 @@ async def _wait_for_idle_async(service: ScenarioRunService) -> None:
             await asyncio.sleep(0.01)
 
     await asyncio.wait_for(wait_async(), timeout=10)
+
+
+@pytest.mark.parametrize("unlimited", [False, True])
+async def test_launch_limit_selection_survives_persistence_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], unlimited: bool
+) -> None:
+    service, _ = resume_environment
+    memory = CentralMemory.get_memory_instance()
+    await memory.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value=f"Extra objective {index}", dataset_name=_DATASET_NAME) for index in range(5)],
+        added_by="offline-test",
+    )
+    request = RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME)
+    if unlimited:
+        request.max_dataset_size = None
+    preview_request = ScenarioRunSizeEstimateRequest()
+    if unlimited:
+        preview_request.max_dataset_size = None
+    preview = await ScenarioService().estimate_scenario_run_size_async(
+        scenario_name=_SCENARIO_NAME, request=preview_request
+    )
+    assert preview is not None
+    assert preview.estimated_attack_count == (7 if unlimited else 5)
+    assert preview.status.value == "approximate"
+    assert memory.get_scenario_results() == []
+    summary = await service.start_run_async(request=request)
+    await _wait_for_idle_async(service)
+    [stored] = memory.get_scenario_results(scenario_result_ids=[summary.scenario_result_id])
+    plan = stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
+    assert sum(len(group["seed_group_ids"]) for group in plan["atomic_groups"]) == (7 if unlimited else 5)
+    restored = service._restore_launch_request(stored=stored)
+    assert ("max_dataset_size" in restored.model_fields_set) is unlimited
+
+
+async def test_unlimited_preview_counts_filtered_groups_not_seed_rows_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    memory = CentralMemory.get_memory_instance()
+    objective = SeedObjective(
+        value="Selected objective",
+        dataset_name=_DATASET_NAME,
+        harm_categories=["test"],
+        prompt_group_id=uuid.uuid4(),
+    )
+    prompt = SeedPrompt(
+        value="Selected prompt",
+        dataset_name=_DATASET_NAME,
+        prompt_group_id=objective.prompt_group_id,
+        harm_categories=["test"],
+    )
+    await memory.add_seeds_to_memory_async(seeds=[objective, prompt], added_by="offline-test")
+    with patch.object(
+        DatasetAttackConfiguration, "_fetch_dataset_async", side_effect=AssertionError("Preview fetched datasets")
+    ):
+        preview = await ScenarioService().estimate_scenario_run_size_async(
+            scenario_name=_SCENARIO_NAME,
+            request=ScenarioRunSizeEstimateRequest(
+                max_dataset_size=None, dataset_filters={"harm_categories": ["test"]}
+            ),
+        )
+    assert preview is not None
+    assert preview.estimated_attack_count == 1
+    assert preview.datasets[0].logical_seed_group_count == 1
+    assert preview.datasets[0].selected_seed_group_count == 1
+    assert preview.datasets[0].configured_caps == []
+    assert preview.configured_dataset_size is None
+    assert "max_dataset_size" not in preview.effective_parameters
+    assert "existing database" in preview.note
+    assert memory.get_scenario_results() == []
+
+
+@pytest.mark.parametrize("missing_dataset", [False, True])
+async def test_unlimited_preview_missing_data_never_returns_a_partial_count_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], missing_dataset: bool
+) -> None:
+    request = (
+        ScenarioRunSizeEstimateRequest(max_dataset_size=None, dataset_names=[_DATASET_NAME, "missing"])
+        if missing_dataset
+        else ScenarioRunSizeEstimateRequest(max_dataset_size=None, dataset_filters={"harm_categories": ["missing"]})
+    )
+    with patch.object(
+        DatasetAttackConfiguration, "_fetch_dataset_async", side_effect=AssertionError("Fetched datasets")
+    ):
+        preview = await ScenarioService().estimate_scenario_run_size_async(
+            scenario_name=_SCENARIO_NAME, request=request
+        )
+    assert preview is not None
+    assert preview.status.value == "unavailable"
+    assert preview.estimated_attack_count is None
+    assert "missing" in preview.note
+    assert CentralMemory.get_memory_instance().get_scenario_results() == []
 
 
 async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) -> ScenarioResult:
@@ -472,6 +567,21 @@ async def test_resume_older_launch_record_without_adversarial_selection_async(
     del stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["adversarial_target_name"]
     request = service._restore_launch_request(stored=stored)
     assert request.adversarial_target_name is None
+
+
+@pytest.mark.parametrize("explicit", [None, False, True])
+async def test_resume_preserves_null_versus_omitted_dataset_limit_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], explicit: bool | None
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    saved = stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]
+    assert saved["max_dataset_size"] is None
+    if explicit is not None:
+        saved["max_dataset_size_explicit"] = explicit
+    request = service._restore_launch_request(stored=stored)
+    assert request.max_dataset_size is None
+    assert ("max_dataset_size" in request.model_fields_set) is (explicit is True)
 
 
 async def test_resume_restores_selected_adversarial_target_async(

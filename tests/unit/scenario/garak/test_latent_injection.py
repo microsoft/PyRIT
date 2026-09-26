@@ -96,7 +96,7 @@ class TestLatentDefaults:
         assert {parameter.name for parameter in scenario.additional_parameters()} == {"families"}
 
     async def test_all_families_and_separators_async(self) -> None:
-        config = _config(families=LatentInjectionDatasetConfiguration.FAMILIES)
+        config = _config(families=LatentInjectionDatasetConfiguration.FAMILIES, max_dataset_size=None)
         scenario = LatentInjection(harm_scorer=SubStringScorer(substring="harm"))
         await _initialize_async(scenario, dataset_config=config, scenario_techniques=[LatentInjectionTechnique.ALL])
         assert {key[0] for key in config.coverage_keys} == set(config.FAMILIES)

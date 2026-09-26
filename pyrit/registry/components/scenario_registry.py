@@ -222,6 +222,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         name: str,
         scenario_params: dict[str, Any] | None = None,
         target_is_configured: bool = False,
+        read_dataset_counts: bool = False,
         **estimate_kwargs: Any,
     ) -> ScenarioRunSizeEstimate:
         """
@@ -231,6 +232,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             name: Registered scenario name.
             scenario_params: Scenario-declared parameter values.
             target_is_configured: Whether the estimate has a concrete objective target.
+            read_dataset_counts: Allow read-only dataset counts for unlimited previews.
             **estimate_kwargs: Common resolved values such as techniques, dataset
                 configuration, baseline choice, and an optional objective target.
 
@@ -240,6 +242,10 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         scenario = await asyncio.to_thread(self.create_instance, name)
         scenario.set_scenario_registry_name(scenario_registry_name=name)
         scenario.set_params_from_args(args={**(scenario_params or {}), **estimate_kwargs})
+        if read_dataset_counts:
+            return await scenario.get_run_size_estimate_async(
+                target_is_configured=target_is_configured, read_dataset_counts=True
+            )
         return await scenario.get_run_size_estimate_async(target_is_configured=target_is_configured)
 
     async def create_and_initialize_async(

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults, forward_init_parameters
@@ -261,7 +262,7 @@ class PromptInject(Scenario):
             self._objective_scorer_identifier = self._objective_scorer.get_identifier()
         self._dataset_config = config
         groups = await config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
-        self._technique_templates = self._load_technique_templates()
+        self._technique_templates = await asyncio.to_thread(self._load_technique_templates)
         return groups
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:

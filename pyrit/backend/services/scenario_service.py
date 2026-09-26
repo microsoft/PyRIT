@@ -29,6 +29,7 @@ _ESTIMATE_CACHE_SIZE = 128
 _ESTIMATE_CONCURRENCY = 4
 _CONFIGURED_ESTIMATE_CONCURRENCY = 4
 _DEFAULT_ESTIMATE_TIMEOUT_SECONDS = 3.0
+_DATASET_ESTIMATE_TIMEOUT_SECONDS = 10.0
 _ESTIMATE_INFLIGHT_SIZE = 256
 _UNAVAILABLE_CACHE_TTL_SECONDS = 30.0
 _EstimateCacheKey = tuple[str, int]
@@ -221,7 +222,15 @@ class ScenarioService:
 
                 task.add_done_callback(clear_estimate_task)
 
-        await asyncio.wait({task})
+        read_dataset_counts = "max_dataset_size" in request.model_fields_set and request.max_dataset_size is None
+        completed, _ = await asyncio.wait(
+            {task}, timeout=_DATASET_ESTIMATE_TIMEOUT_SECONDS if read_dataset_counts else None
+        )
+        if not completed:
+            logger.warning("Database-backed run estimate timed out for scenario '%s'", scenario_name)
+            return ScenarioRunSizeEstimate.unavailable(
+                note="Counting the existing dataset groups timed out. You can still launch the run."
+            )
         estimate = task.result()
         assert isinstance(estimate, ScenarioRunSizeEstimate)
         return estimate
@@ -491,12 +500,16 @@ class ScenarioService:
                 techniques=request.techniques,
                 dataset_names=request.dataset_names,
                 max_dataset_size=request.max_dataset_size,
+                max_dataset_size_explicit="max_dataset_size" in request.model_fields_set,
                 dataset_filters=request.dataset_filters,
                 include_baseline=request.include_baseline,
             )
             return await self._registry.create_and_estimate_async(
                 name=scenario_name,
                 scenario_params=request.scenario_params or {},
+                read_dataset_counts=(
+                    "max_dataset_size" in request.model_fields_set and request.max_dataset_size is None
+                ),
                 **estimate_kwargs,
             )
 
@@ -536,8 +549,11 @@ class ScenarioService:
         Returns:
             _ConfiguredEstimateKey: Scenario identity and canonical request JSON.
         """
+        request_data = request.model_dump(mode="json")
+        if "max_dataset_size" not in request.model_fields_set:
+            request_data.pop("max_dataset_size")
         request_json = json.dumps(
-            request.model_dump(mode="json"),
+            request_data,
             sort_keys=True,
             separators=(",", ":"),
         )

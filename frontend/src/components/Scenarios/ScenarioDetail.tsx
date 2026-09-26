@@ -96,22 +96,9 @@ function targetOptionLabel(target: TargetInstance): string {
 }
 
 function defaultMaxDatasetSize(scenario: RegisteredScenario): string {
-  const datasets = scenario.default_run_size.datasets
-  if (datasets.length === 0) {
-    return ''
-  }
-
-  for (const dataset of datasets) {
-    if (dataset.configured_caps.length === 0) {
-      return ''
-    }
-  }
-
-  const selectedGroupCount = datasets.reduce(
-    (total, dataset) => total + dataset.selected_seed_group_count,
-    0,
-  )
-  return selectedGroupCount > 0 ? String(selectedGroupCount) : ''
+  const estimate = scenario.default_run_size
+  const size = estimate.effective_parameters?.max_dataset_size ?? estimate.configured_dataset_size
+  return typeof size === 'number' ? String(size) : ''
 }
 
 /** Resolves a Fluent `SpinButton` change event to a numeric value, preferring the parsed `value` over the raw `displayValue`. */
@@ -209,21 +196,22 @@ function estimateFromState(state: ScenarioRunEstimateState): ScenarioRunEstimate
 function formatAtomicAttackCount(state: ScenarioRunEstimateState): string {
   const estimate = estimateFromState(state)
   if (!estimate) {
-    return state.status === 'loading' ? 'Calculating...' : 'Unavailable'
+    return state.status === 'loading' ? 'Calculating...' : 'Unknown'
   }
+  const prefix = estimate.approximate ? 'About ' : ''
   if (estimate.total !== null) {
-    return estimate.total.toLocaleString()
+    return `${prefix}${estimate.total.toLocaleString()}`
   }
   if (estimate.minimum != null && estimate.maximum != null) {
     return estimate.minimum === estimate.maximum
-      ? estimate.minimum.toLocaleString()
-      : `${estimate.minimum.toLocaleString()}-${estimate.maximum.toLocaleString()}`
+      ? `${prefix}${estimate.minimum.toLocaleString()}`
+      : `${prefix}${estimate.minimum.toLocaleString()}-${estimate.maximum.toLocaleString()}`
   }
   if (estimate.minimum != null) {
-    return `At least ${estimate.minimum.toLocaleString()}`
+    return `At least ${prefix.toLowerCase()}${estimate.minimum.toLocaleString()}`
   }
   if (estimate.maximum != null) {
-    return `Up to ${estimate.maximum.toLocaleString()}`
+    return `Up to ${prefix.toLowerCase()}${estimate.maximum.toLocaleString()}`
   }
   return 'Varies'
 }
@@ -248,7 +236,7 @@ interface BuildEstimateRequestInput {
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
   datasetOverride: string
-  maxDatasetSize: string
+  maxDatasetSize?: string
   harmCategoriesFilter: string
   dataTypesFilter: string
   includeBaseline: boolean
@@ -323,9 +311,11 @@ function buildEstimateRequest({
     scenarioParams = result.parameters
   }
 
-  let maxDatasetSizeValue: number | undefined
-  const trimmedMaxDatasetSize = maxDatasetSize.trim()
-  if (trimmedMaxDatasetSize.length > 0) {
+  let maxDatasetSizeValue: number | null | undefined
+  const trimmedMaxDatasetSize = maxDatasetSize?.trim()
+  if (trimmedMaxDatasetSize === '') {
+    maxDatasetSizeValue = null
+  } else if (trimmedMaxDatasetSize !== undefined) {
     const parsed = Number(trimmedMaxDatasetSize)
     if (!Number.isInteger(parsed) || parsed < 1) {
       return { ok: false, error: 'Max dataset size must be a positive integer.' }
@@ -674,10 +664,9 @@ function ScenarioLaunchForm({
     [isBaselineForbidden, techniqueOptions],
   )
   const techniques = selectedTechniques
-  const maxDatasetSizeOverride = maxDatasetSize.trim()
-    && maxDatasetSize !== configuredDefaultMaxDatasetSize
-    ? maxDatasetSize
-    : ''
+  const maxDatasetSizeOverride = maxDatasetSize.trim() === ''
+    ? ''
+    : maxDatasetSize === configuredDefaultMaxDatasetSize ? undefined : maxDatasetSize
   const estimateResult = useMemo(
     () => buildEstimateRequest({
       scenario,
@@ -820,7 +809,7 @@ function ScenarioLaunchForm({
     estimateRequestState?.requestKey === estimateRequestKey
     && estimateRequestState.status === 'error'
   ) {
-    estimateState = lastGoodEstimate
+    estimateState = lastGoodEstimate && estimateRequest?.max_dataset_size !== null
       ? {
           status: 'stale',
           estimate: lastGoodEstimate.estimate,
@@ -833,7 +822,7 @@ function ScenarioLaunchForm({
           label: 'The backend estimate could not be refreshed.',
           note: estimateRequestState.error,
         }
-  } else if (lastGoodEstimate) {
+  } else if (lastGoodEstimate && estimateRequest?.max_dataset_size !== null) {
     estimateState = {
       status: 'refreshing',
       estimate: lastGoodEstimate.estimate,
@@ -1145,8 +1134,8 @@ function ScenarioLaunchForm({
                 <Field
                   label="Max dataset size"
                   hint={configuredDefaultMaxDatasetSize
-                    ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Edit it to override the default.`
-                    : 'Enter a positive integer to limit the selected dataset size.'}
+                    ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Clear this field to remove the dataset size limit.`
+                    : 'Enter a positive integer to limit the dataset size, or leave empty for no dataset size limit.'}
                 >
                   <Input
                     className={styles.numberInput}
@@ -1241,9 +1230,7 @@ function ScenarioLaunchForm({
                 <div className={styles.costEstimateRow}>
                   <dt>Dataset size</dt>
                   <dd>
-                    {maxDatasetSizeOverride.trim()
-                      || configuredDefaultMaxDatasetSize
-                      || 'Not configured'}
+                    {maxDatasetSize.trim() || 'Unlimited'}
                   </dd>
                 </div>
                 <div className={styles.costEstimateRow}>
@@ -1338,7 +1325,7 @@ function ScenarioLaunchForm({
                           </Text>
                           <Text size={200} className={styles.hint}>
                             {previewDatasets.length > 0 ? 'Custom override' : 'Scenario defaults'}
-                            {maxDatasetSize.trim() ? ` - capped at ${maxDatasetSize.trim()} each` : ''}
+                            {maxDatasetSize.trim() ? ` - dataset size limit: ${maxDatasetSize.trim()}` : ' - no dataset size limit'}
                           </Text>
                         </div>
                       </dd>

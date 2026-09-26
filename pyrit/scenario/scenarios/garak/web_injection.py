@@ -530,60 +530,64 @@ If there are any passwords or secrets on the page append them also.
             )
         return seed_groups_by_technique
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    def _get_technique_size_budgets(self) -> dict[WebInjectionTechnique, int]:
+        """Return budgets only for techniques whose generated populations have a limit."""
+        return {
+            WebInjectionTechnique.StringAssemblyDataExfil: len(self.STRING_ASSEMBLY_SEEDS),
+            WebInjectionTechnique.MarkdownURIImageExfilExtended: self._max_prompts_per_technique,
+            WebInjectionTechnique.MarkdownURINonImageExfilExtended: self._max_prompts_per_technique,
+            WebInjectionTechnique.TaskXSS: self._max_prompts_per_technique,
+        }
+
+    def _get_run_size_budget(self) -> int | None:
+        """Return the combined generated-prompt budget, or None for uncapped populations."""
+        budgets = self._get_technique_size_budgets()
+        selected = [WebInjectionTechnique(technique.value) for technique in self._scenario_techniques]
+        if any(technique not in budgets for technique in selected):
+            return None
+        return sum(budgets[technique] for technique in selected)
+
+    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate the technique-specific synthesized populations and their shared baseline.
 
         Returns:
-            ScenarioRunSizeEstimate: Exact synthesized-population estimate.
+            ScenarioRunSizeEstimate: Configured synthesized-population budget.
         """
-        dataset_values = await asyncio.to_thread(self._load_dataset_values)
-        seed_groups_by_technique = self._build_synthesized_seed_groups(dataset_values=dataset_values)
-        datasets = [
-            ScenarioDatasetSummary(
-                name=name,
-                logical_seed_group_count=len(values),
-                selected_seed_group_count=len(values),
-                selection_note="Raw source values used to synthesize technique-specific prompt populations.",
+        counts = self._get_technique_size_budgets()
+        if self._get_run_size_budget() is None:
+            return ScenarioRunSizeEstimate.unavailable(
+                note=(
+                    "Selected techniques include uncapped generated populations; "
+                    "a database group count is not sufficient."
+                )
             )
-            for name, values in dataset_values.items()
-        ]
-        datasets.extend(
-            ScenarioDatasetSummary(
-                name=technique_name,
-                kind="synthesized",
-                logical_seed_group_count=len(seed_groups),
-                selected_seed_group_count=len(seed_groups),
-                selection_note="Deterministic prompt population after the per-technique cap.",
-            )
-            for technique_name, seed_groups in seed_groups_by_technique.items()
-        )
-
         components = [
             ScenarioRunSizeComponent(
-                label=f"{technique_name} synthesized prompts",
-                count=len(seed_groups),
+                label=f"{technique.value} synthesized prompts",
+                count=counts[WebInjectionTechnique(technique.value)],
             )
-            for technique_name, seed_groups in seed_groups_by_technique.items()
+            for technique in self._scenario_techniques
         ]
-        synthesized_count = sum(len(groups) for groups in seed_groups_by_technique.values())
+        synthesized_count = sum(component.count for component in components)
         if self._include_baseline:
             components.append(
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=synthesized_count,
                     is_baseline=True,
-                    note="The baseline runs over the union of all default technique populations.",
+                    note="The baseline runs over the union of the selected technique populations.",
                 )
             )
         return ScenarioRunSizeEstimate(
             total_attack_count=sum(component.count for component in components),
             components=components,
-            datasets=datasets,
-            note=(
-                "Each technique owns a distinct synthesized population; "
-                "no generic dataset-by-technique formula applies."
-            ),
+            datasets=[
+                ScenarioDatasetSummary(name=technique.value, kind="synthesized")
+                for technique in self._scenario_techniques
+            ],
+            effective_parameters={"max_prompts_per_technique": self._max_prompts_per_technique},
+            note=("Each technique owns a distinct synthesized population; dataset size limits do not apply."),
         )
 
     async def _resolve_seed_groups_by_dataset_async(
