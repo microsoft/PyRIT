@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, cast
 
@@ -10,6 +9,7 @@ if TYPE_CHECKING:
 
     from pyrit.prompt_target import PromptTarget
 
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.models import (
     ComponentIdentifier,
     Scorable,
@@ -126,13 +126,11 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             list[Score]: ``[]`` when every child is non-applicable; otherwise, a list
                 containing one completed or undetermined aggregate score.
         """
-        score_list_results = await asyncio.gather(
-            *(
-                scorer._score_nested_async(
-                    scorable=scorable, expectation=scorer._select_expectation(expectation=expectation)
-                )
-                for scorer in self._scorers
+        score_list_results = await gather_with_cleanup_async(
+            scorer._score_nested_async(
+                scorable=scorable, expectation=scorer._select_expectation(expectation=expectation)
             )
+            for scorer in self._scorers
         )
         applicable_results = [scores for scores in score_list_results if scores]
         skipped_count = len(score_list_results) - len(applicable_results)
