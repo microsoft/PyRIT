@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable, MutableSequence, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
@@ -13,7 +15,7 @@ from typing import (
     cast,
 )
 
-from openai.types.responses import Response, ResponseOutputRefusal, ResponseOutputText
+from openai.types.responses import FunctionToolParam, Response, ResponseOutputRefusal, ResponseOutputText
 from openai.types.shared import ReasoningEffort
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,6 +38,7 @@ from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
+from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider, _ScopedToolProvider, collect_tools_async
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -53,7 +56,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Tool function registry (agentic extension)
 ToolExecutor = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
@@ -126,6 +128,8 @@ class OpenAIResponseTarget(OpenAITarget):
         self,
         *,
         custom_functions: dict[str, ToolExecutor] | None = None,
+        tools: Sequence[Tool] | None = None,
+        tool_providers: Sequence[ToolProvider] | None = None,
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -141,7 +145,10 @@ class OpenAIResponseTarget(OpenAITarget):
         Initialize the OpenAIResponseTarget with the provided parameters.
 
         Args:
-            custom_functions: Mapping of user-defined function names (e.g., "my_func").
+            custom_functions: Mapping of user-defined function names to executors.
+            tools: Tools to advertise to the endpoint and execute on the host.
+            tool_providers: Providers whose tools are discovered before the first request,
+                advertised to the endpoint, and registered for host-side execution.
             model_name (str, Optional): The name of the model (or deployment name in Azure).
                 If no value is provided, the OPENAI_RESPONSES_MODEL environment variable will be used.
             endpoint (str, Optional): The target URL for the OpenAI service.
@@ -171,8 +178,9 @@ class OpenAIResponseTarget(OpenAITarget):
                 wrap it as function_call_output and let the model potentially recover
                 (e.g., pick another tool or ask for clarification).
             execute_tools: Whether to execute returned calls locally. If False, return
-                the first response without running registered functions. This does not
-                disable provider-hosted tools configured in extra_body_parameters.
+                the first response without running registered functions. Tool discovery,
+                provider scopes, and advertisement remain enabled. This does not disable
+                provider-hosted tools configured in extra_body_parameters.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
@@ -204,10 +212,15 @@ class OpenAIResponseTarget(OpenAITarget):
 
         self._extra_body_parameters = extra_body_parameters
 
-        # Per-instance tool/func registries:
         self._custom_functions: dict[str, ToolExecutor] = custom_functions or {}
+        self._direct_tools = tuple(tools or ())
+        self._tools = list(self._direct_tools)
+        self._tool_providers = list(tool_providers or [])
+        self._tools_initialized = False
+        self._tool_initialization_lock = asyncio.Lock()
         self._fail_on_missing_function: bool = fail_on_missing_function
         self._execute_tools = execute_tools
+        self._suppress_tools = False
 
         # Extract the grammar 'tool' if one is present
         # See
@@ -250,7 +263,13 @@ class OpenAIResponseTarget(OpenAITarget):
                 "reasoning_effort": self._reasoning_effort,
                 "reasoning_summary": self._reasoning_summary,
                 "extra_body_parameters": self._extra_body_parameters,
-                "execute_tools": self._execute_tools,
+                "execute_tools": None if self._execute_tools else False,
+                "tools": sorted(
+                    (self._to_openai_function_tool(tool=tool) for tool in self._direct_tools),
+                    key=lambda tool: tool["name"],
+                )
+                or None,
+                "tool_providers": [provider.identifier for provider in self._tool_providers] or None,
             },
         )
 
@@ -422,7 +441,12 @@ class OpenAIResponseTarget(OpenAITarget):
 
         Returns:
             dict: The request body to send to the Responses API.
+
+        Raises:
+            ValueError: If the conversation contains an unsupported input.
         """
+        if not self._suppress_tools:
+            await self._initialize_tools_async()
         input_items = await self._build_input_for_multi_modal_async(conversation)
 
         text_format = self._build_text_format(json_config=json_config)
@@ -442,8 +466,44 @@ class OpenAIResponseTarget(OpenAITarget):
         if self._extra_body_parameters:
             body_parameters.update(self._extra_body_parameters)
 
+        if self._tools and not self._suppress_tools:
+            advertised_tools = [self._to_openai_function_tool(tool=tool) for tool in self._tools]
+            body_parameters["tools"] = [*body_parameters.get("tools", []), *advertised_tools]
+
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
+
+    async def _initialize_tools_async(self) -> None:
+        async with self._tool_initialization_lock:
+            if self._tools_initialized:
+                return
+            tools = await collect_tools_async(tools=self._direct_tools, providers=self._tool_providers)
+            self._validate_tool_registrations(tools)
+            self._tools = tools
+            self._tools_initialized = True
+
+    def _validate_tool_registrations(self, tools: Sequence[Tool]) -> None:
+        declared_functions = {
+            definition["name"]
+            for definition in (self._extra_body_parameters or {}).get("tools", [])
+            if definition.get("type") == "function" and isinstance(definition.get("name"), str)
+        }
+        conflicts = {tool.name for tool in tools} & (set(self._custom_functions) | declared_functions)
+        if conflicts:
+            raise ValueError(
+                "Tools conflict with custom_functions or extra_body_parameters function declarations: "
+                f"{sorted(conflicts)}"
+            )
+
+    @staticmethod
+    def _to_openai_function_tool(*, tool: Tool) -> FunctionToolParam:
+        return {
+            "type": "function",
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.parameters,
+            "strict": tool.strict,
+        }
 
     def _build_reasoning_config(self) -> dict[str, Any] | None:
         """
@@ -546,8 +606,6 @@ class OpenAIResponseTarget(OpenAITarget):
 
         return Message(message_pieces=extracted_response_pieces)
 
-    @pyrit_target_retry
-    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send prompt, handle agentic tool calls (function_call), return all messages.
@@ -565,6 +623,13 @@ class OpenAIResponseTarget(OpenAITarget):
             List of messages generated during the interaction (assistant responses and tool messages).
             The normalizer will persist all of these to memory.
         """
+        async with AsyncExitStack() as provider_stack:
+            for provider in () if self._suppress_tools else self._tool_providers:
+                if isinstance(provider, _ScopedToolProvider):
+                    await provider_stack.enter_async_context(provider.execution_scope_async())
+            return await self._run_tool_call_loop_async(normalized_conversation=normalized_conversation)
+
+    async def _run_tool_call_loop_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
         last_piece = message.message_pieces[-1]
@@ -575,15 +640,12 @@ class OpenAIResponseTarget(OpenAITarget):
         # Track all responses generated during this interaction
         responses_to_return: list[Message] = []
 
-        # Main agentic loop - each back-and-forth creates a new message
-        tool_call_section: dict[str, Any] | None = None
-
         while True:
             logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
 
-            result = await self._send_single_response_async(
-                conversation=working_conversation, json_config=json_config, request=message
-            )
+            body = await self._construct_request_body_async(conversation=working_conversation, json_config=json_config)
+
+            result = await self._send_model_request_async(body=body, request=message)
             if not self._execute_tools:
                 return [result]
 
@@ -591,41 +653,31 @@ class OpenAIResponseTarget(OpenAITarget):
             working_conversation.append(result)
             responses_to_return.append(result)
 
-            # Extract tool call if present
-            tool_call_section = self._find_last_pending_tool_call(result)
+            tool_call_sections = self._find_pending_tool_calls(result)
 
-            # If no tool call, we're done
-            if not tool_call_section:
+            if not tool_call_sections:
                 break
 
-            # Execute the tool/function
-            tool_output = await self._execute_call_section_async(tool_call_section)
-
-            # Create a new message with the tool output
-            tool_piece = self._make_tool_piece(tool_output, tool_call_section["call_id"], reference_piece=message_piece)
-            tool_message = Message(message_pieces=[tool_piece])
-
-            # Add tool output message to conversation and responses list
-            working_conversation.append(tool_message)
-            responses_to_return.append(tool_message)
-
-            # Continue loop to send tool result and get next response
+            for tool_call_section in tool_call_sections:
+                tool_output = await self._execute_call_section_async(tool_call_section)
+                tool_piece = self._make_tool_piece(
+                    tool_output,
+                    tool_call_section["call_id"],
+                    reference_piece=message_piece,
+                )
+                tool_message = Message(message_pieces=[tool_piece])
+                working_conversation.append(tool_message)
+                responses_to_return.append(tool_message)
 
         # Return all responses (normalizer will persist all of them to memory)
         return responses_to_return
 
-    async def _send_single_response_async(
-        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig, request: Message
-    ) -> Message:
-        """
-        Send one request without executing any returned function call.
-
-        Returns:
-            Message: The parsed provider response.
-        """
-        body = await self._construct_request_body_async(conversation=conversation, json_config=json_config)
+    @pyrit_target_retry
+    @limit_requests_per_minute
+    async def _send_model_request_async(self, *, body: dict[str, Any], request: Message) -> Message:
         return await self._handle_openai_request_async(
-            api_call=lambda: self._client.responses.create(**body), request=request
+            api_call=lambda: self._client.responses.create(**body),
+            request=request,
         )
 
     def _parse_response_message_content(
@@ -829,7 +881,13 @@ class OpenAIResponseTarget(OpenAITarget):
         Returns:
             The tool-call section dict, or None if not found.
         """
-        for piece in reversed(reply.message_pieces):
+        calls = self._find_pending_tool_calls(reply)
+        return calls[-1] if calls else None
+
+    def _find_pending_tool_calls(self, reply: Message) -> list[dict[str, Any]]:
+        """Return all function calls in an assistant response in provider order."""
+        calls: list[dict[str, Any]] = []
+        for piece in reply.message_pieces:
             # Filter on data_type to skip reasoning/message pieces that also have api_role "assistant".
             if piece.api_role == "assistant" and piece.original_value_data_type == "function_call":
                 try:
@@ -838,25 +896,25 @@ class OpenAIResponseTarget(OpenAITarget):
                     continue
                 if isinstance(section, dict) and section.get("type") == "function_call":
                     # Do NOT skip function_call even if status == "completed" — we still need to emit the output.
-                    return cast("dict[str, Any]", section)
-        return None
+                    calls.append(cast("dict[str, Any]", section))
+        return calls
 
-    async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> dict[str, Any]:
+    async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> object:
         """
-        Execute a function_call from the custom_functions registry.
+        Execute a function call using the matching tool.
 
         Args:
             tool_call_section: The function_call section dict.
 
         Returns:
-            A dict payload (will be serialized and sent as function_call_output).
+            A JSON-serializable payload that will be sent as function_call_output.
             If fail_on_missing_function=False and a function is missing or no function is not called, returns:
             {"error": "function_not_found", "missing_function": "<name>", "available_functions": [...]}
 
         Raises:
             ValueError: If the function call section is missing a 'name' field.
             ValueError: If the function arguments are malformed.
-            KeyError: If the function name is not registered in custom_functions.
+            KeyError: If the function name is not registered.
         """
         name = tool_call_section.get("name")
         if not name:
@@ -880,23 +938,34 @@ class OpenAIResponseTarget(OpenAITarget):
                 "function": name,
                 "raw_arguments": args_json,
             }
+        await self._initialize_tools_async()
+        configured_tool = next((tool for tool in self._tools if tool.name == name), None)
+        if configured_tool is not None:
+            if not isinstance(args, dict):
+                if self._fail_on_missing_function:
+                    raise ValueError(f"Arguments for function '{name}' must be a JSON object")
+                return {
+                    "error": "malformed_arguments",
+                    "function": name,
+                    "raw_arguments": args_json,
+                }
+            return await configured_tool.execute_async(arguments=args)
 
-        fn = self._custom_functions.get(name)
-        if fn is None:
-            if self._fail_on_missing_function:
-                raise KeyError(f"Function '{name}' is not registered")
-            # Tolerant mode: return a structured error so we can wrap it as function_call_output
-            available = sorted(self._custom_functions.keys())
-            logger.warning("Function '%s' not registered. Available: %s", name, available)
-            return {
-                "error": "function_not_found",
-                "missing_function": name,
-                "available_functions": available,
-            }
+        custom_function = self._custom_functions.get(name)
+        if custom_function is not None:
+            return await custom_function(cast("dict[str, Any]", args))
 
-        return await fn(args)
+        if self._fail_on_missing_function:
+            raise KeyError(f"Function '{name}' is not registered")
+        available_functions = sorted({*(tool.name for tool in self._tools), *self._custom_functions})
+        logger.warning("Function '%s' not registered. Available: %s", name, available_functions)
+        return {
+            "error": "function_not_found",
+            "missing_function": name,
+            "available_functions": available_functions,
+        }
 
-    def _make_tool_piece(self, output: dict[str, Any], call_id: str, *, reference_piece: MessagePiece) -> MessagePiece:
+    def _make_tool_piece(self, output: object, call_id: str, *, reference_piece: MessagePiece) -> MessagePiece:
         """
         Create a function_call_output MessagePiece.
 

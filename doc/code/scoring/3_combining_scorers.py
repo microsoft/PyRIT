@@ -48,6 +48,8 @@
 #         INV["TrueFalseInverterScorer<br/>negates one result"]
 #         CONV["create_conversation_scorer()<br/>scores concatenated history"]
 #         THRESH["FloatScaleThresholdScorer<br/>score ≥ threshold"]
+#         FSFALL["FloatScaleFallbackScorer<br/>alternative float-scale judge"]
+#         TFFALL["TrueFalseFallbackScorer<br/>alternative true/false judge"]
 #         CONV ~~~ THRESH
 #     end
 #
@@ -60,12 +62,16 @@
 #     TF -->|"1+ via scorers="| COMP
 #     TF -->|"1 via scorer="| INV
 #     FS -->|"1 via scorer="| THRESH
+#     FS -->|"2 comparable single-result scorers"| FSFALL
+#     TF -->|"2 comparable single-result scorers"| TFFALL
 #     TF -->|"1 scorer supporting text content"| CONV
 #     FS -->|"1 scorer supporting text content"| CONV
 #
 #     COMP -. is a .-> TFOUT
 #     INV -. is a .-> TFOUT
 #     THRESH -. is a .-> TFOUT
+#     FSFALL -. is a .-> FSOUT
+#     TFFALL -. is a .-> TFOUT
 #     CONV -. "for true/false input" .-> TFOUT
 #     CONV -. "for float-scale input" .-> FSOUT
 #
@@ -73,7 +79,7 @@
 #     classDef wrapper fill:#fff4e5,stroke:#f29900,color:#3d2600;
 #     classDef output fill:#e6f4ea,stroke:#34a853,color:#17351f;
 #     class TF,FS input;
-#     class COMP,INV,THRESH,CONV wrapper;
+#     class COMP,INV,THRESH,CONV,FSFALL,TFFALL wrapper;
 #     class TFOUT,FSOUT output;
 # ```
 
@@ -82,8 +88,11 @@
 # `TrueFalseCompositeScorer` requires at least one `TrueFalseScorer` and combines their
 # single results with `AND`, `OR`, or `MAJORITY`; `TrueFalseInverterScorer` accepts one
 # `TrueFalseScorer`. `FloatScaleThresholdScorer` is the cross-kind adapter: it accepts one
-# `FloatScaleScorer` and produces a `TrueFalseScorer`. These generic wrappers forward the
-# same `Scorable` to their children, so each child must support that evidence kind.
+# `FloatScaleScorer` and produces a `TrueFalseScorer`. `FloatScaleFallbackScorer` accepts two
+# `FloatScaleScorer`s and produces a `FloatScaleScorer`. `TrueFalseFallbackScorer` does the
+# same for two `TrueFalseScorer`s. Each fallback wrapper tries the primary first and calls
+# the fallback only when the primary returns an undetermined score. These wrappers forward the same
+# `Scorable` to their children, so each child must support that evidence kind.
 #
 # `create_conversation_scorer()` accepts a true/false or float-scale scorer that supports
 # text `ContentScorable` evidence. It returns a dynamic wrapper that remains the same scorer
@@ -162,6 +171,53 @@ original = (await copied_enough.score_text_async(text="Solar panels convert sunl
 
 print(f"[threshold] near-copy   -> {near_copy.get_value()}")
 print(f"[threshold] independent -> {original.get_value()}")
+
+# %% [markdown]
+# ## Routing abstentions to a fallback scorer
+#
+# Both float-scale and true/false scorers can return `ScoreStatus.UNDETERMINED`.
+# A fallback wrapper evaluates the same evidence with a second scorer only when the
+# primary returns that status. A completed `False` or `0.0` is a valid judgment and does
+# not trigger fallback. This lets a fast primary handle most inputs without calling an
+# expensive second judge each time.
+#
+# Both children must belong to the same result family, support the same condition types,
+# and return exactly one score when applicable. The wrapper validates both children
+# before scoring and passes each its supported expectation. If fallback runs, the results
+# must refer to the same evidence and expectation; categories must match when both
+# results supply them. An unreadable judgment can have no category labels. Configure equivalent
+# criteria and, for float-scale scorers, comparable numeric meanings: matching types and
+# categories does not prove that two rubrics measure the same thing.
+#
+# With preconfigured scorers that meet these requirements:
+#
+# ```python
+# from pyrit.score import FloatScaleFallbackScorer, TrueFalseFallbackScorer
+#
+# harm_scorer = FloatScaleFallbackScorer(
+#     scorer=primary_harm_scorer,
+#     fallback_scorer=secondary_harm_scorer,
+# )
+# objective_scorer = TrueFalseFallbackScorer(
+#     scorer=primary_objective_scorer,
+#     fallback_scorer=secondary_objective_scorer,
+# )
+# ```
+#
+# A non-applicable primary (`[]`) returns `[]` without calling the fallback. A non-applicable
+# fallback leaves the primary's undetermined judgment in place. If both abstain, the result
+# remains undetermined. Exceptions propagate; they are not treated as abstentions.
+#
+# Multiple child results are rejected rather than paired by position or discarded.
+# Aggregate them explicitly before using fallback if a single aggregate is meaningful.
+#
+# Only the root score is persisted. The wrapper creates a new score without modifying
+# either child result and retains their observation links. Metadata records `resolved_by`
+# as `"primary"` or `"fallback"`. Child metadata keys are prefixed with `primary.` and
+# `fallback.`, so duplicate keys and nested fallback details are not overwritten.
+# When fallback is attempted, `primary_rationale` is retained and `fallback_status` records
+# `"complete"`, `"undetermined"`, or `"not_applicable"`. A fallback judgment also supplies
+# `fallback_rationale`; the combined rationale explains both attempts.
 
 # %% [markdown]
 # ## Scoring a whole conversation

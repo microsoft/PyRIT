@@ -168,8 +168,12 @@ If structured artifacts remain after normalization and their input modalities ar
 supported, the target raises before the provider request.
 
 `OpenAIResponseTarget(execute_tools=False, ...)` returns the first response without
-executing registered functions locally. This setting does not disable provider-hosted
-tools configured in `extra_body_parameters`.
+executing registered functions locally, including when the response contains multiple
+calls. Tool advertisement and provider discovery/scopes remain enabled. This setting
+does not disable provider-hosted tools configured in `extra_body_parameters`.
+The default (`execute_tools=True`) retains the existing target identifier and processes
+every returned function call in order. Each model request, including retries and
+continuations after tool results, uses the shared request-level retry and rate limiter.
 
 ### How consumers use capabilities
 
@@ -256,7 +260,10 @@ function call and matching tool result before a new user message. It tests histo
 acceptance, not whether the model chooses to generate a new call or uses the result
 correctly. Probes use the normal send lifecycle, temporarily disable local Responses
 execution, and remove configured tool declarations and tool-choice settings from the
-supported adapters. This cannot control tools inside an opaque remote agent.
+supported adapters. Responses probes also bypass direct-tool advertisement, provider
+discovery, and provider execution scopes. They do not change registered tools or
+discovery caches, and restore temporary settings after success, failure, timeout, or
+cancellation. This cannot control tools inside an opaque remote agent.
 Other adapters retain their declared tool modalities because there is no verified
 probe path for them. A failed history probe retains existing declarations: a timeout
 or authentication error does not establish that history is unsupported. For an unknown

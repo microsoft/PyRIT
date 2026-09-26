@@ -146,6 +146,8 @@ def _permissive_configuration(
         None: Control returns to the ``with`` block while the permissive
         configuration is in effect.
     """
+    # Probe settings must not become the target's cached identity on first use.
+    target.get_identifier()
     original = target.configuration
     merged_modalities = original.capabilities.input_modalities | _TEXT_MODALITY
     if extra_input_modalities is not None:
@@ -191,7 +193,9 @@ def _disable_probe_tools(*, target: PromptTarget) -> Iterator[None]:
             }
         if isinstance(target, OpenAIResponseTarget):
             stack.callback(setattr, target, "_execute_tools", target._execute_tools)
+            stack.callback(setattr, target, "_suppress_tools", target._suppress_tools)
             target._execute_tools = False
+            target._suppress_tools = True
         yield
 
 

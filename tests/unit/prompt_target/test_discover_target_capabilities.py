@@ -8,10 +8,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from mcp.types import Tool as MCPToolDefinition
 from openai.types.chat import ChatCompletion
 
 from pyrit.models import Message, MessagePiece, PromptDataType, RequestTraceContext
-from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, TargetTraceConfig
+from pyrit.prompt_target import FunctionTool, MCPToolProvider, OpenAIChatTarget, OpenAIResponseTarget, TargetTraceConfig
 from pyrit.prompt_target.common.discover_target_capabilities import (
     _CAPABILITY_PROBES,
     DEFAULT_TEST_ASSETS,
@@ -733,6 +734,101 @@ class TestToolCallHistoryDiscovery:
         assert all(
             piece.prompt_metadata["capability_probe"] == "1" for message in history for piece in message.message_pieces
         )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("initialized", [False, True])
+@pytest.mark.parametrize("identity_cached", [False, True])
+@pytest.mark.parametrize("outcome", ["success", "error", "timeout", "cancel"])
+async def test_responses_probes_suppress_provider_io_and_preserve_state(
+    *, initialized: bool, identity_cached: bool, outcome: str
+) -> None:
+    async def direct_async() -> str:
+        raise AssertionError("Probe must not execute a direct tool")
+
+    direct = FunctionTool(function=direct_async)
+    provider = MCPToolProvider.from_config(
+        config={"servers": {"test": {"type": "http", "url": "https://example.invalid/mcp"}}},
+        server_name="test",
+    )
+    if initialized:
+        provider._tools = [MCPToolDefinition(name="remote", inputSchema={"type": "object", "properties": {}})]
+    body = {"tools": [{"type": "web_search_preview"}], "tool_choice": "required", "parallel_tool_calls": True}
+    target = OpenAIResponseTarget(
+        model_name="unknown",
+        endpoint="https://example.invalid",
+        api_key="not-a-key",
+        tools=[direct],
+        tool_providers=[provider],
+        extra_body_parameters=body,
+    )
+    if initialized:
+        await target._initialize_tools_async()
+    tools = target._tools
+    providers = target._tool_providers
+    provider_cache = provider._tools
+    configuration = target.configuration
+    expected_identifier = target._build_identifier()
+    assert target._identifier is None
+    cached_identifier = target.get_identifier() if identity_cached else None
+    response = MessagePiece(
+        role="assistant",
+        original_value='{"type":"function_call","call_id":"new","name":"direct_async","arguments":"{}"}',
+        original_value_data_type="function_call",
+    ).to_message()
+
+    async def finish_async(**kwargs: object) -> Message:
+        if outcome == "error":
+            raise ValueError("Probe request failed")
+        if outcome == "cancel":
+            raise asyncio.CancelledError
+        if outcome == "timeout":
+            await asyncio.Event().wait()
+        return response
+
+    with (
+        patch.object(provider, "execution_scope_async") as scope,
+        patch.object(provider, "get_tools_async", new_callable=AsyncMock) as discover,
+        patch.object(provider, "call_tool_async", new_callable=AsyncMock) as remote_call,
+        patch.object(target, "_execute_call_section_async", new_callable=AsyncMock) as execute,
+        patch.object(target, "_handle_openai_request_async", new_callable=AsyncMock, side_effect=finish_async) as send,
+        patch.object(target._client.responses, "create", new_callable=AsyncMock) as create,
+    ):
+
+        async def probe_async() -> None:
+            await discover_target_capabilities_async(
+                target=target,
+                capabilities=[CapabilityName.JSON_OUTPUT],
+                test_modalities=set(),
+                retries=0,
+                per_probe_timeout_s=0.2,
+            )
+
+        if outcome == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await probe_async()
+        else:
+            await probe_async()
+        send.assert_awaited_once()
+        await send.call_args.kwargs["api_call"]()
+        assert not {"tools", "tool_choice", "parallel_tool_calls"} & create.call_args.kwargs.keys()
+        scope.assert_not_called()
+        discover.assert_not_called()
+        remote_call.assert_not_called()
+        execute.assert_not_called()
+
+    assert target._tools is tools
+    assert target._direct_tools == (direct,)
+    assert target._tool_providers is providers
+    assert target._tools_initialized is initialized
+    assert provider._tools is provider_cache
+    assert target._extra_body_parameters is body
+    assert target.configuration is configuration
+    assert target._execute_tools
+    assert not target._suppress_tools
+    assert target.get_identifier().hash == target._build_identifier().hash == expected_identifier.hash
+    if identity_cached:
+        assert target.get_identifier() is cached_identifier
 
 
 # ---------------------------------------------------------------------------
