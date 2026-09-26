@@ -60,7 +60,8 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             scorer (FloatScaleScorer): The underlying float scale scorer to use.
             threshold (float): A finite threshold in (0, 1]. Scores >= threshold are True, otherwise False.
             float_scale_aggregator (FloatScaleAggregatorFunc): The aggregator function to use for combining
-                multiple float scale scores. Defaults to FloatScaleScoreAggregator.MAX.
+                multiple float scale scores. Defaults to FloatScaleScoreAggregator.MAX. It must combine the
+                scores into exactly one result; a by-category aggregator is rejected when scoring.
 
         Raises:
             ValueError: If the threshold is non-finite or not in (0, 1].
@@ -151,11 +152,24 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
 
         Returns:
             list[Score]: A list containing one completed or undetermined true/false score.
+
+        Raises:
+            ValueError: If the configured aggregator does not combine the scores into exactly one result.
         """
         objective = expectation.objective if expectation else None
 
         # The wrapped scorer's non-applicable result returns before aggregation.
         aggregate_results = self._float_scale_aggregator(scores)
+        if len(aggregate_results) != 1:
+            # A by-category aggregator returns one result per category, and the
+            # threshold can only be applied to a single value. Silently taking the
+            # first one would decide the verdict from one category and drop the rest.
+            raise ValueError(
+                f"{self._float_scale_aggregator.__name__} returned {len(aggregate_results)} results. "
+                "FloatScaleThresholdScorer requires an aggregator that combines the scores into exactly "
+                "one result, such as FloatScaleScoreAggregator.MAX; a by-category aggregator such as "
+                "FloatScaleScorerByCategory.MAX cannot be thresholded."
+            )
         aggregate_score = aggregate_results[0]
         aggregate_value = aggregate_score.value
         scorer_type = self._scorer.get_identifier().class_name

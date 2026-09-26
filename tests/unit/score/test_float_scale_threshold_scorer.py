@@ -264,6 +264,78 @@ async def test_float_scale_threshold_scorer_attributes_result_to_aggregate_not_f
     assert "azure_severity" not in score.score_metadata
 
 
+async def test_float_scale_threshold_scorer_rejects_aggregator_that_does_not_combine():
+    """
+    A by-category aggregator returns one result per category, and the threshold can only be
+    applied to a single value. It used to be accepted and only the first result was used, so
+    the verdict came from whichever category sorted first and the others were dropped without
+    a log: with Hate at 0.0 and Violence at 0.9 the caller received False.
+    """
+    from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleScorerByCategory
+
+    memory = MagicMock(MemoryInterface)
+    mock_identifier = ComponentIdentifier(class_name="MockScorer", class_module="test.mock")
+
+    prompt_id = uuid.uuid4()
+    scorer = MagicMock(spec=MessageFloatScaleScorer)
+    scorer._score_nested_async = AsyncMock(
+        return_value=[
+            Score(
+                score_value=value,
+                score_type="float_scale",
+                score_category=[category],
+                score_rationale=f"{category} rationale",
+                score_metadata=None,
+                message_piece_id=prompt_id,
+                score_value_description="",
+                scorer_class_identifier=mock_identifier,
+                id=uuid.uuid4(),
+            )
+            for category, value in (("Hate", "0.0"), ("Violence", "0.9"))
+        ]
+    )
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        threshold_scorer = FloatScaleThresholdScorer(
+            scorer=scorer,
+            threshold=0.5,
+            float_scale_aggregator=FloatScaleScorerByCategory.MAX,
+        )
+
+        with pytest.raises(RuntimeError, match="returned 2 results") as exc_info:
+            await threshold_scorer.score_text_async(text="mock example")
+
+    # The message has to name the aggregator that cannot be thresholded, so the caller
+    # knows to pick a combining one instead of guessing why no score came back.
+    assert "FloatScaleScorerByCategory.MAX cannot be thresholded" in str(exc_info.value)
+    memory.add_scores_to_memory.assert_not_called()
+
+
+async def test_float_scale_threshold_scorer_rejects_aggregator_that_returns_nothing():
+    """An aggregator that returns no result is a configuration error, not an IndexError."""
+
+    def empty_aggregator(scores):
+        return []
+
+    empty_aggregator.__name__ = "empty_aggregator"
+
+    memory = MagicMock(MemoryInterface)
+    scorer = create_mock_float_scorer(0.9)
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        threshold_scorer = FloatScaleThresholdScorer(
+            scorer=scorer,
+            threshold=0.5,
+            float_scale_aggregator=empty_aggregator,
+        )
+
+        with pytest.raises(RuntimeError, match="empty_aggregator returned 0 results"):
+            await threshold_scorer.score_text_async(text="mock example")
+
+    memory.add_scores_to_memory.assert_not_called()
+
+
 async def test_float_scale_threshold_scorer_single_score_attribution_unchanged():
     """A single wrapped score must keep its own category and rationale, as before."""
 
