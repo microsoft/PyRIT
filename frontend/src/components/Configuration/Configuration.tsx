@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Button,
@@ -15,6 +15,7 @@ import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
 import { useBeforeUnload, useBlocker, useSearchParams } from 'react-router'
 
 import { configurationApi } from '@/services/api'
+import { useRuntime } from '@/hooks/useRuntime'
 import { toApiError } from '@/services/errors'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import EditorWorkspace from '@/components/EditorWorkspace'
@@ -24,6 +25,7 @@ import { useConfigurationStyles } from './Configuration.styles'
 import CustomInitializerFiles from './CustomInitializerFiles'
 import EnvironmentFiles from './EnvironmentFiles'
 import YamlEditor from './YamlEditor'
+import Reinitialize from './Reinitialize'
 
 interface StatusMessage {
   intent: 'success' | 'error' | 'warning'
@@ -45,15 +47,18 @@ function configurationTabFromSearchParams(searchParams: URLSearchParams): Config
 }
 
 export default function Configuration() {
+  const { generation } = useRuntime()
   const styles = useConfigurationStyles()
   const [searchParams, setSearchParams] = useSearchParams()
   const [content, setContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
   const [source, setSource] = useState('')
   const [version, setVersion] = useState('')
+  const [liveReinitializationEnabled, setLiveReinitializationEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
+  const loadedSnapshot = useRef<{ generation: string; reloadCount: number } | null>(null)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [environmentHasUnsavedChanges, setEnvironmentHasUnsavedChanges] = useState(false)
   const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null)
@@ -72,18 +77,22 @@ export default function Configuration() {
   }, [hasUnsavedChanges]))
 
   useEffect(() => {
+    const manualReload = reloadCount !== (loadedSnapshot.current?.reloadCount ?? 0)
+    if (((configurationHasUnsavedChanges || environmentHasUnsavedChanges) && !manualReload) || saving) return
+    if (loadedSnapshot.current?.generation === generation && loadedSnapshot.current.reloadCount === reloadCount) return
     let cancelled = false
 
     const loadContentAsync = async (): Promise<void> => {
-      setLoading(true)
       setStatusMessage(null)
       try {
         const response = await configurationApi.getContent()
         if (!cancelled) {
+          loadedSnapshot.current = { generation, reloadCount }
           setContent(response.content)
           setSavedContent(response.content)
           setSource(response.source)
           setVersion(response.version)
+          setLiveReinitializationEnabled(response.live_reinitialization_enabled)
         }
       } catch (error) {
         if (!cancelled) {
@@ -100,10 +109,11 @@ export default function Configuration() {
     return () => {
       cancelled = true
     }
-  }, [reloadCount])
+  }, [reloadCount, generation, configurationHasUnsavedChanges, environmentHasUnsavedChanges, saving])
 
   const handleReload = (): void => {
     const reload = (): void => {
+      setLoading(true)
       setReloadCount((currentCount: number) => currentCount + 1)
     }
 
@@ -123,9 +133,10 @@ export default function Configuration() {
       setSavedContent(response.content)
       setSource(response.source)
       setVersion(response.version)
+      setLiveReinitializationEnabled(response.live_reinitialization_enabled)
       setStatusMessage({
         intent: 'success',
-        text: 'Configuration saved. Restart PyRIT to apply these changes.',
+        text: 'Configuration saved. Reinitialize PyRIT to apply these changes.',
       })
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
@@ -171,6 +182,11 @@ export default function Configuration() {
       <div className={styles.header}>
         <Text as="h1" size={600} weight="semibold">Configuration</Text>
       </div>
+      <Reinitialize
+        version={version}
+        hasUnsavedChanges={configurationHasUnsavedChanges || environmentHasUnsavedChanges || saving}
+        liveReinitializationEnabled={liveReinitializationEnabled}
+      />
 
       <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>
         <Tab value="configuration">PyRIT Configuration</Tab>
@@ -216,7 +232,7 @@ export default function Configuration() {
                 disabled={loading || saving}
                 onClick={handleReload}
               >
-                Reload
+                Reload file
               </Button>
               <Button
                 appearance="primary"
@@ -233,7 +249,7 @@ export default function Configuration() {
           <Field
             className={styles.editorField}
             label={source}
-            hint={hasUnsavedChanges ? 'Unsaved changes' : 'Changes take effect after PyRIT restarts.'}
+            hint={hasUnsavedChanges ? 'Unsaved changes' : 'Changes take effect after Reinitialize PyRIT.'}
           >
             <YamlEditor
               value={content}

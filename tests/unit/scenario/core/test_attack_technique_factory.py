@@ -379,6 +379,39 @@ class TestFactoryCreate:
         assert not technique.attack.adversarial_was_passed
         assert not technique.attack.converter_was_passed
 
+    @pytest.mark.parametrize("extra_request_converters", [None, []])
+    def test_create_preserves_explicit_baked_none_converter_config(self, extra_request_converters):
+        """An explicitly baked None remains distinct from an omitted converter config."""
+        unset = object()
+
+        class _RequiredNullableConverterAttack:
+            def __init__(
+                self,
+                *,
+                objective_target,
+                attack_scoring_config,
+                attack_converter_config=unset,
+            ):
+                self.objective_target = objective_target
+                self.attack_converter_config = attack_converter_config
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_RequiredNullableConverterAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_RequiredNullableConverterAttack,
+            attack_kwargs={"attack_converter_config": None},
+        )
+
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            extra_request_converters=extra_request_converters,
+        )
+
+        assert technique.attack.attack_converter_config is None
+
     def test_create_appends_extra_request_converters_without_baked(self):
         """``extra_request_converters`` become the request converters when none are baked."""
         factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)

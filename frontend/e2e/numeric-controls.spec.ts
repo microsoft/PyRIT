@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 
 import type { RegisteredScenario } from '../src/types'
 
+import { READY_RUNTIME } from './_runtime'
 import { makeTarget } from './_targets'
 
 const SCENARIO: RegisteredScenario = {
@@ -40,6 +41,7 @@ async function mockNumericControlApis(page: Page): Promise<void> {
       '/api/auth/config': { clientId: '', tenantId: '', allowedGroupIds: '' },
       '/api/auth/access': { isAdmin: true },
       '/api/health': { status: 'healthy' },
+      '/api/runtime': READY_RUNTIME,
       '/api/version': { version: '1.2.0', display: 'Mock PyRIT', default_labels: { operator: 'test' } },
       '/api/targets': {
         items: [makeTarget({ target_registry_name: 'mock-target' })],
