@@ -16,6 +16,7 @@ from sqlalchemy import (
     INTEGER,
     JSON,
     Boolean,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     TypeDecorator,
     Unicode,
     UniqueConstraint,
+    column,
 )
 from sqlalchemy.dialects.sqlite import CHAR
 from sqlalchemy.orm import (
@@ -36,6 +38,7 @@ from sqlalchemy.types import Uuid
 
 import pyrit
 from pyrit.common.utils import to_sha256
+from pyrit.memory.analytics_sql import ResolvedAttackIdentifierHash
 from pyrit.models import (
     SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
     AtomicAttackEvaluationIdentifier,
@@ -1763,6 +1766,33 @@ class AttackResultEntry(Base):
 
     __tablename__ = "AttackResultEntries"
     __table_args__ = (
+        Index(
+            "ix_AttackResultEntries_analytics_facts_sqlite",
+            "resolved_atomic_attack_identifier_hash",
+            "outcome",
+            "targeted_harm_categories",
+            "operation",
+            "operator",
+            info={"dialect": "sqlite"},
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "ix_AttackResultEntries_analytics_facts_mssql",
+            "resolved_atomic_attack_identifier_hash",
+            "outcome",
+            "operation",
+            "operator",
+            mssql_include=["targeted_harm_categories"],
+            info={"dialect": "mssql"},
+        ).ddl_if(dialect="mssql"),
+        Index(
+            "ix_AttackResultEntries_analytics_labels_sqlite", "operation", "labels", info={"dialect": "sqlite"}
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "ix_AttackResultEntries_analytics_labels_mssql",
+            "operation",
+            mssql_include=["labels"],
+            info={"dialect": "mssql"},
+        ).ddl_if(dialect="mssql"),
         # Serves the PARTITION BY conversation_id dedup window in _query_paginated_attack_results.
         Index(
             "ix_AttackResultEntries_conversation_timestamp_id",
@@ -1802,6 +1832,14 @@ class AttackResultEntry(Base):
     atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
         String(64), ForeignKey(f"{AtomicAttackIdentifierEntry.__tablename__}.hash"), nullable=True
     )
+    resolved_atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        Computed(
+            ResolvedAttackIdentifierHash(column("atomic_attack_identifier_hash"), column("atomic_attack_identifier")),
+            persisted=False,
+        ),
+        nullable=True,
+    )
     objective_sha256 = mapped_column(String, nullable=True)
     last_response_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=True
@@ -1815,7 +1853,7 @@ class AttackResultEntry(Base):
     executed_turns = mapped_column(INTEGER, nullable=False, default=0)
     execution_time_ms = mapped_column(INTEGER, nullable=False, default=0)
     outcome: Mapped[Literal["success", "failure", "error", "undetermined"]] = mapped_column(
-        String, nullable=False, default="undetermined"
+        String(16), nullable=False, default="undetermined"
     )
     outcome_reason = mapped_column(String, nullable=True)
     attack_metadata: Mapped[dict[str, str | int | float | bool] | None] = mapped_column(JSON, nullable=True)

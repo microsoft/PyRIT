@@ -89,6 +89,74 @@ await initialize_pyrit_async("SQLite", skip_schema_migration=True)
 
 ## Important Rules
 
+### Stored-result analytics queries
+
+`pyrit.memory.attack_analytics.AttackAnalyticsReader` reads raw saved-outcome
+counts, grouped metadata, lightweight result pages, and bounded facets.
+`AttackAnalyticsQueryCompiler` builds the SQLite or SQL Server statements;
+`analytics_sql` supplies dialect-specific JSON expressions. These internal memory
+modules do not import an analytics SDK, calculate success rates, rescore outcomes,
+or load scores, conversations, media, or complete `AttackResult` objects.
+
+The query grain is a distinct stored `AttackResultEntry.id`. Different result IDs
+sharing a conversation remain different results. For callers that need full result
+objects, `MemoryInterface.get_attack_results(result_selection=AttackResultSelection.ALL_RESULTS)`
+opts into the same identity rule. Its default remains `LATEST_PER_CONVERSATION`,
+including existing History callers. Turn bounds apply after the selected identity
+rule, and neither mode deletes or rewrites stored duplicates.
+
+Revision `b6d8f0a2c4e1`, following `7a9c1e3f5b2d`, bounds `outcome` to 16 characters
+and adds the computed `resolved_atomic_attack_identifier_hash` lookup. The lookup
+prefers the canonical reference and falls back to the saved legacy JSON hash.
+SQLite indexes the relevant JSON text with the scalar facts; SQL Server uses
+bounded scalar index keys and includes the JSON columns. The migration rejects
+oversized existing outcomes before altering the schema. It does not generate
+result IDs or repair historical metadata.
+
+Filters OR values within each predicate (converter `ALL` is the exception) and AND
+separate predicates, including repeated dimensions. Missing metadata, recorded
+empty converter pipelines, and real empty strings retain different typed keys.
+Request and response converter membership remains separate. Repeated members
+contribute once per result to a group or cell; different groups may overlap.
+Canonical identifier tables and supported legacy JSON layouts remain queryable.
+Where a converter pipeline is retained in identifier JSON, that recorded list
+takes precedence over normalized edges: the published identifier backfill can
+omit edges for individual hashless converters without removing those converters
+from the saved list. Edges supply names only when no retained list exists.
+Legacy `__type__` names are read when the canonical `class_name` key is absent.
+Indexed fact compaction omits a result's embedded identifier only when doing so
+preserves the requested metadata keys and display labels; incomplete normalized
+documents continue to use the embedded fallback.
+SQL Server uses full-width `OPENJSON` scalar projections before grouping, preserving
+the shared 4096-character metadata contract.
+
+A raw report and its first result page share a short consistent read transaction.
+Later pages and facets use fresh reads. Cursors are bound to the current filters
+and result-ID selection; updated bounds use a half-open UTC interval. Each request
+is copied and revalidated before acquiring a session, so changes to the caller's
+query during execution cannot mix different filters or axes in one report.
+`QueryControl` supplies a monotonic deadline and request-local cancellation signal.
+SQLite shared-connection acquisition accepts an optional timeout. Its per-connection
+busy timeout is also bounded by the remaining budget before each statement and
+restored afterward, so lock waits cannot use the full default busy timeout after
+the analytics deadline. SQL Server connection acquisition remains governed by
+its pool; ODBC query timeouts are set before statement cursors are created and
+restored when the session closes. SQL Server reports require SNAPSHOT support;
+analytics never changes server isolation settings or enables SQLite WAL
+automatically. Query errors propagate rather than returning empty reports.
+
+The optional SQLite compact-profile probe returns typed raw `RawAnalyticsProfile`
+dictionaries with `source0` and optional `source1`/display fields, stored
+`outcome`, and result-ID `weight` for a caller to aggregate, not statistics.
+For converter axes, the bounded probe emits canonical name arrays so supported
+legacy converter objects have the same memberships as SQL grouping.
+Its row and per-value limits bound returned
+metadata, not SQL scans or intermediate work. The combined-text cap is checked
+after fetching the bounded probe, so it is not a peak-memory or network-byte
+guarantee. Any overflow uses complete SQL aggregation, never partial counts.
+Live Azure SQL validation, malformed legacy converter-name policy, and SQL Server
+trailing-space comparison policy remain separate follow-ups.
+
 ### Migration revisions are immutable
 
 Once a migration revision is committed, it **must not be modified or deleted**. This is enforced by a pre-commit hook (`enforce_alembic_revision_immutability`). If you need to fix a migration, create a new revision instead.

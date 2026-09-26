@@ -21,6 +21,7 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
@@ -125,6 +126,7 @@ def test_attack_result_query_snapshots_mutable_inputs():
     assert query.attack_classes == ("CrescendoAttack",)
     assert query.operator == ("alice",)
     assert query.labels == {"team": ("red",)}
+    assert query.result_selection is AttackResultSelection.LATEST_PER_CONVERSATION
     field_name = "limit"
     with pytest.raises(FrozenInstanceError):
         setattr(query, field_name, 10)
@@ -164,6 +166,7 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
             targeted_harm_categories=["violence"],
             identifier_filters=[identifier_filter],
             scenario_result_id=str(uuid.uuid4()),
+            result_selection=AttackResultSelection.ALL_RESULTS,
             min_turns=1,
             max_turns=5,
             limit=10,
@@ -189,6 +192,7 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
     assert query.targeted_harm_categories == ("violence",)
     assert query.identifier_filters == (identifier_filter,)
     assert query.scenario_result_id is not None
+    assert query.result_selection is AttackResultSelection.ALL_RESULTS
     assert query.min_turns == 1
     assert query.max_turns == 5
     assert query.limit == 10
@@ -2050,13 +2054,18 @@ def test_get_attack_results_paginated_empty_metadata_orders_newest_first(sqlite_
     assert page == ["conv-c", "conv-b", "conv-a"]
 
 
-def test_get_attack_results_pagination_with_ids_raises(sqlite_instance: MemoryInterface):
+@pytest.mark.parametrize("result_selection", list(AttackResultSelection))
+def test_get_attack_results_pagination_with_ids_raises(
+    *, sqlite_instance: MemoryInterface, result_selection: AttackResultSelection
+) -> None:
     """limit/keyset pagination cannot be combined with id-batched lookups."""
     anchor = AttackResultKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
     with pytest.raises(ValueError, match="pagination cannot be combined"):
-        sqlite_instance.get_attack_results(attack_result_ids=[str(uuid.uuid4())], limit=10)
+        sqlite_instance.get_attack_results(
+            attack_result_ids=[str(uuid.uuid4())], limit=10, result_selection=result_selection
+        )
     with pytest.raises(ValueError, match="pagination cannot be combined"):
-        sqlite_instance.get_attack_results(objective_sha256=["abc"], after=anchor)
+        sqlite_instance.get_attack_results(objective_sha256=["abc"], after=anchor, result_selection=result_selection)
 
 
 def test_get_attack_results_unpaginated_turns_filter(sqlite_instance: MemoryInterface):
@@ -2215,3 +2224,209 @@ def test_attack_result_keyset_order_matches_sql_order(sqlite_instance: MemoryInt
         reverse=True,
     )
     assert [r.conversation_id for r in sql_order] == [r.conversation_id for r in python_order]
+
+
+def test_attack_result_query_rejects_invalid_result_selection() -> None:
+    with pytest.raises(ValueError, match="not a valid AttackResultSelection"):
+        _AttackResultQuery(result_selection="invalid")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAttackResultSelection:
+    @pytest.mark.parametrize("limit", [None, 10])
+    @pytest.mark.parametrize("newer_outcome", [AttackOutcome.SUCCESS, AttackOutcome.FAILURE])
+    @pytest.mark.parametrize("outcome", [None, AttackOutcome.SUCCESS, AttackOutcome.FAILURE])
+    def test_all_results_keeps_distinct_ids_and_filters_each_outcome(
+        self,
+        *,
+        sqlite_instance: MemoryInterface,
+        limit: int | None,
+        newer_outcome: AttackOutcome,
+        outcome: AttackOutcome | None,
+    ) -> None:
+        older_outcome = AttackOutcome.FAILURE if newer_outcome is AttackOutcome.SUCCESS else AttackOutcome.SUCCESS
+        seeded = [
+            _make_attack_result("shared", outcome=older_outcome, ts_offset=1),
+            _make_attack_result("shared", outcome=newer_outcome, ts_offset=2),
+        ]
+        sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+
+        results = sqlite_instance.get_attack_results(
+            result_selection=AttackResultSelection.ALL_RESULTS,
+            outcome=outcome.value if outcome is not None else None,
+            limit=limit,
+        )
+
+        expected_ids = {result.attack_result_id for result in seeded if outcome is None or result.outcome is outcome}
+        assert {result.attack_result_id for result in results} == expected_ids
+        assert len(results) == len(expected_ids)
+
+    @pytest.mark.parametrize("limit", [None, 10])
+    def test_default_selection_preserves_latest_matching_result(
+        self, *, sqlite_instance: MemoryInterface, limit: int | None
+    ) -> None:
+        older = _make_attack_result("shared", executed_turns=2, outcome=AttackOutcome.FAILURE, ts_offset=1)
+        newer = _make_attack_result("shared", executed_turns=5, outcome=AttackOutcome.SUCCESS, ts_offset=2)
+        sqlite_instance.add_attack_results_to_memory(attack_results=[older, newer])
+
+        default = sqlite_instance.get_attack_results(limit=limit)
+        explicit = sqlite_instance.get_attack_results(
+            result_selection=AttackResultSelection.LATEST_PER_CONVERSATION, limit=limit
+        )
+        failures = sqlite_instance.get_attack_results(outcome=AttackOutcome.FAILURE.value, limit=limit)
+
+        assert [result.attack_result_id for result in default] == [newer.attack_result_id]
+        assert [result.attack_result_id for result in explicit] == [newer.attack_result_id]
+        assert [result.attack_result_id for result in failures] == [older.attack_result_id]
+        assert sqlite_instance.get_attack_results(max_turns=2, limit=limit) == []
+
+    @pytest.mark.parametrize("page_size", [1, 3, 4])
+    def test_all_results_keyset_pages_are_ordered_disjoint_and_complete(
+        self, *, sqlite_instance: MemoryInterface, page_size: int
+    ) -> None:
+        seeded = [
+            _make_attack_result(
+                "shared",
+                ts_offset=i % 3,
+                updated_at_offset=100 - i,
+                attack_result_id=f"00000000-0000-4000-8000-{i:012d}",
+            )
+            for i in range(9)
+        ]
+        sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+        expected = sorted(seeded, key=lambda result: (result.timestamp, result.attack_result_id), reverse=True)
+        expected_ids = [result.attack_result_id for result in expected]
+
+        paged = _drain_keyset(sqlite_instance, page_size=page_size, result_selection=AttackResultSelection.ALL_RESULTS)
+        first_page = sqlite_instance.get_attack_results(
+            result_selection=AttackResultSelection.ALL_RESULTS, limit=page_size
+        )
+        remaining = sqlite_instance.get_attack_results(
+            result_selection=AttackResultSelection.ALL_RESULTS, after=_after(first_page)
+        )
+
+        assert [result.attack_result_id for result in paged] == expected_ids
+        assert len({result.attack_result_id for result in paged}) == len(seeded)
+        assert [result.attack_result_id for result in remaining] == expected_ids[page_size:]
+
+    @pytest.mark.parametrize("limit", [None, 10])
+    @pytest.mark.parametrize(
+        ("min_turns", "max_turns", "expected_turns"),
+        [
+            (0, 0, {0}),
+            (2, None, {2, 5, 8}),
+            (None, 5, {0, 2, 5}),
+            (2, 5, {2, 5}),
+            (5, 5, {5}),
+            (8, 8, {8}),
+            (9, None, set()),
+        ],
+    )
+    def test_all_results_applies_inclusive_turn_bounds_to_each_id(
+        self,
+        *,
+        sqlite_instance: MemoryInterface,
+        limit: int | None,
+        min_turns: int | None,
+        max_turns: int | None,
+        expected_turns: set[int],
+    ) -> None:
+        seeded = [_make_attack_result("shared", executed_turns=turns, ts_offset=turns) for turns in [0, 2, 5, 8]]
+        sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+
+        results = sqlite_instance.get_attack_results(
+            result_selection=AttackResultSelection.ALL_RESULTS,
+            min_turns=min_turns,
+            max_turns=max_turns,
+            limit=limit,
+        )
+
+        assert {result.executed_turns for result in results} == expected_turns
+        assert len(results) == len(expected_turns)
+
+    @pytest.mark.parametrize("lookup", ["attack_result_ids", "objective_sha256", "both"])
+    def test_all_results_batched_lookups_do_not_repeat_result_ids(
+        self, *, sqlite_instance: MemoryInterface, lookup: str
+    ) -> None:
+        selected = [
+            _make_attack_result("shared", outcome=AttackOutcome.FAILURE, ts_offset=1),
+            _make_attack_result("shared", outcome=AttackOutcome.SUCCESS, ts_offset=2),
+            _make_attack_result("other", ts_offset=3),
+        ]
+        sqlite_instance.add_attack_results_to_memory(
+            attack_results=[*selected, _make_attack_result("excluded", ts_offset=4)]
+        )
+        repeated_ids = [result.attack_result_id for result in selected] * 2
+        repeated_hashes = [to_sha256(result.objective) for result in selected] * 2
+        with (
+            patch.object(sqlite_instance, "_MAX_BIND_VARS", 2),
+            patch.object(
+                sqlite_instance, "_execute_batched_query", wraps=sqlite_instance._execute_batched_query
+            ) as batched_query,
+        ):
+            results = sqlite_instance.get_attack_results(
+                result_selection=AttackResultSelection.ALL_RESULTS,
+                attack_result_ids=repeated_ids if lookup in {"attack_result_ids", "both"} else None,
+                objective_sha256=repeated_hashes if lookup in {"objective_sha256", "both"} else None,
+            )
+
+        batched_query.assert_called_once()
+        assert {result.attack_result_id for result in results} == {result.attack_result_id for result in selected}
+        assert len(results) == len(selected)
+
+    @pytest.mark.parametrize("limit", [None, 10])
+    def test_all_results_bypasses_conversation_deduplication(
+        self, *, sqlite_instance: MemoryInterface, limit: int | None
+    ) -> None:
+        sqlite_instance.add_attack_results_to_memory(
+            attack_results=[_make_attack_result("shared", ts_offset=1), _make_attack_result("shared", ts_offset=2)]
+        )
+        with (
+            patch.object(
+                sqlite_instance, "_dedup_attack_entries", wraps=sqlite_instance._dedup_attack_entries
+            ) as python_dedup,
+            patch.object(
+                sqlite_instance,
+                "_attack_results_not_superseded_condition",
+                wraps=sqlite_instance._attack_results_not_superseded_condition,
+            ) as sql_dedup,
+            patch.object(sqlite_instance, "_query_entries", wraps=sqlite_instance._query_entries) as query_entries,
+        ):
+            results = sqlite_instance.get_attack_results(
+                result_selection=AttackResultSelection.ALL_RESULTS, limit=limit
+            )
+
+        python_dedup.assert_not_called()
+        sql_dedup.assert_not_called()
+        assert len(results) == 2
+        conditions = query_entries.call_args.kwargs["conditions"]
+        statement = select(AttackResultEntry.id)
+        if conditions is not None:
+            statement = statement.where(conditions)
+        sql = str(statement.compile(dialect=mssql.dialect())).upper()
+        assert "NOT (EXISTS" not in sql
+        assert "ROW_NUMBER" not in sql
+        assert "PARTITION BY" not in sql
+
+    def test_all_results_updates_existing_id_without_adding_a_row(self, *, sqlite_instance: MemoryInterface) -> None:
+        older = _make_attack_result("shared", outcome=AttackOutcome.FAILURE, ts_offset=1)
+        newer = _make_attack_result("shared", outcome=AttackOutcome.SUCCESS, ts_offset=2)
+        sqlite_instance.add_attack_results_to_memory(attack_results=[older, newer])
+
+        for turns in [2, 3]:
+            assert sqlite_instance.update_attack_result_by_id(
+                attack_result_id=older.attack_result_id,
+                update_fields={"executed_turns": turns, "outcome": AttackOutcome.SUCCESS.value},
+            )
+
+        results = sqlite_instance.get_attack_results(result_selection=AttackResultSelection.ALL_RESULTS)
+        by_id = {result.attack_result_id: result for result in results}
+        assert len(results) == 2
+        assert set(by_id) == {older.attack_result_id, newer.attack_result_id}
+        assert by_id[older.attack_result_id].executed_turns == 3
+        assert by_id[older.attack_result_id].outcome is AttackOutcome.SUCCESS
+        assert by_id[newer.attack_result_id].executed_turns == newer.executed_turns
+        lookup = sqlite_instance.get_attack_results(attack_result_ids=[older.attack_result_id])
+        assert len(lookup) == 1
+        assert lookup[0].attack_result_id == older.attack_result_id
+        assert lookup[0].executed_turns == 3

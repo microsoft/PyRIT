@@ -290,7 +290,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         # The '__subclasses__()' method returns a list of all subclasses of Base, which includes table models
         return Base.__subclasses__()
 
-    def get_session(self) -> Session:
+    def get_session(self, *, timeout: float | None = None) -> Session:
         """
         Provide a SQLAlchemy session for transactional operations.
 
@@ -298,15 +298,25 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         session is handed out under a lock that is only released when it is closed. That keeps
         a whole transaction, not just a single statement, isolated from the other threads.
 
+        Args:
+            timeout (float | None): Maximum wait for the shared in-memory connection.
+                None preserves the existing unbounded wait.
+
         Returns:
             Session: A SQLAlchemy session bound to the engine.
+
+        Raises:
+            TimeoutError: If the shared connection cannot be acquired within the timeout.
         """
         session = self.SessionFactory()
         connection_lock = self._connection_lock
         if connection_lock is None:
             return session
 
-        connection_lock.acquire()
+        acquired = connection_lock.acquire() if timeout is None else connection_lock.acquire(timeout=max(0.0, timeout))
+        if not acquired:
+            session.close()
+            raise TimeoutError("Timed out waiting for the shared SQLite connection")
         close_session = session.close
         released = False
 

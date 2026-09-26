@@ -67,6 +67,7 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ContentEntryScorable,
@@ -289,6 +290,7 @@ class _AttackResultQuery:
     targeted_harm_categories: Sequence[str] | None = None
     identifier_filters: Sequence[IdentifierFilter] | None = None
     scenario_result_id: str | None = None
+    result_selection: AttackResultSelection = AttackResultSelection.LATEST_PER_CONVERSATION
     min_turns: int | None = None
     max_turns: int | None = None
     limit: int | None = None
@@ -301,8 +303,10 @@ class _AttackResultQuery:
         TODO(PyRIT 1.4): Remove attribution handling in ``labels``.
 
         Raises:
-            ValueError: If attribution aliases conflict or exceed their maximum length.
+            ValueError: If result selection is invalid, or attribution aliases conflict
+                or exceed their maximum length.
         """
+        object.__setattr__(self, "result_selection", AttackResultSelection(self.result_selection))
         for field_name in self._SEQUENCE_FIELDS:
             value = getattr(self, field_name)
             if value is not None:
@@ -1597,12 +1601,20 @@ class MemoryInterface(abc.ABC):
                 raise
 
     @abc.abstractmethod
-    def get_session(self) -> Session:
+    def get_session(self, *, timeout: float | None = None) -> Session:
         """
         Provide a SQLAlchemy session for transactional operations.
 
+        Args:
+            timeout (float | None): Optional maximum seconds to wait when acquiring a
+                shared connection. Does not limit query execution. None preserves the
+                backend's normal acquisition behavior.
+
         Returns:
             Session: A SQLAlchemy session bound to the engine.
+
+        Raises:
+            TimeoutError: If shared-connection acquisition exceeds the timeout.
         """
 
     def _update_entry(self, entry: Base) -> None:
@@ -4258,6 +4270,7 @@ class MemoryInterface(abc.ABC):
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
+        result_selection: AttackResultSelection = AttackResultSelection.LATEST_PER_CONVERSATION,
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int | None = None,
@@ -4319,17 +4332,22 @@ class MemoryInterface(abc.ABC):
                 specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
                 Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
                 removed per-scenario error_attack_result_ids manifest. Defaults to None.
+            result_selection (AttackResultSelection): Whether to return every distinct result ID
+                or only the newest matching result per conversation. Defaults to
+                ``LATEST_PER_CONVERSATION`` for compatibility. ``ALL_RESULTS`` preserves
+                different result IDs sharing a conversation without conversation deduplication.
             min_turns (int | None, optional): If set, only return attacks whose
                 ``executed_turns`` is greater than or equal to this value. Applied after
-                per-conversation deduplication (i.e. to the surviving newest row per
-                conversation), so it never resurfaces an older duplicate. Defaults to None.
+                result selection, so ``LATEST_PER_CONVERSATION`` never resurfaces an older
+                result, while ``ALL_RESULTS`` checks each result independently. Defaults to None.
             max_turns (int | None, optional): If set, only return attacks whose
                 ``executed_turns`` is less than or equal to this value. Applied after
-                deduplication, mirroring ``min_turns``. Defaults to None.
-            limit (int | None, optional): Maximum number of deduplicated attack results to
+                result selection, mirroring ``min_turns``. Defaults to None.
+            limit (int | None, optional): Maximum number of selected attack results to
                 return, ordered by recency. When either ``limit`` or ``after`` is provided,
-                deduplication and pagination happen in the database (via a ``NOT EXISTS`` anti-join)
-                instead of loading every row into memory. Defaults to None (return all).
+                selection and pagination happen in the database instead of loading every row
+                into memory. Only ``LATEST_PER_CONVERSATION`` uses a ``NOT EXISTS`` anti-join.
+                Defaults to None (return all selected results).
             after (AttackResultKeysetCursor | None, optional): Keyset (seek) anchor from a
                 previous page. When provided, only results ordered strictly after the anchor
                 under the recency sort are returned, giving insert/delete-stable pagination
@@ -4339,6 +4357,7 @@ class MemoryInterface(abc.ABC):
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
 
         Raises:
+            ValueError: If ``result_selection`` is not a supported selection mode.
             ValueError: If any label key contains characters outside the allowlist
                 ``[A-Za-z0-9_.-]+``.
             ValueError: If ``limit`` or ``after`` is combined with ``attack_result_ids`` or
@@ -4362,6 +4381,7 @@ class MemoryInterface(abc.ABC):
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
             scenario_result_id=scenario_result_id,
+            result_selection=result_selection,
             min_turns=min_turns,
             max_turns=max_turns,
             limit=limit,
@@ -4394,6 +4414,7 @@ class MemoryInterface(abc.ABC):
             if paginating:
                 return self._query_paginated_attack_results(
                     conditions=conditions,
+                    result_selection=query.result_selection,
                     min_turns=query.min_turns,
                     max_turns=query.max_turns,
                     limit=query.limit,
@@ -4403,7 +4424,11 @@ class MemoryInterface(abc.ABC):
             entries = self._query_with_list_params(
                 AttackResultEntry, conditions=conditions, list_params=self._build_attack_result_list_params(query=query)
             )
-            results = self._dedup_attack_entries(entries)
+            results = (
+                [entry.get_attack_result() for entry in entries]
+                if query.result_selection is AttackResultSelection.ALL_RESULTS
+                else self._dedup_attack_entries(entries)
+            )
             return self._filter_attack_results_by_turns(
                 results,
                 min_turns=query.min_turns,
@@ -4621,15 +4646,17 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         conditions: list[Any],
+        result_selection: AttackResultSelection,
         min_turns: int | None,
         max_turns: int | None,
         limit: int | None,
         after: AttackResultKeysetCursor | None,
     ) -> list[AttackResult]:
         """
-        Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
+        Apply result selection in SQL and return one recency-ordered page of results.
 
-        Keeps only the newest row per ``conversation_id`` with a correlated ``NOT EXISTS``
+        ``ALL_RESULTS`` returns every matching result ID without conversation deduplication.
+        ``LATEST_PER_CONVERSATION`` keeps only the newest row per ``conversation_id`` with a correlated ``NOT EXISTS``
         anti-join: a row survives when no other row that passes the same ``conditions``
         shares its conversation and sorts later on ``(timestamp, id)``. This reproduces the
         post-fetch Python dedup but *before* pagination so page sizes stay correct. The
@@ -4653,18 +4680,21 @@ class MemoryInterface(abc.ABC):
         suppress a valid winner.
 
         Args:
-            conditions (list[Any]): Scalar WHERE filters applied before deduplication.
-            min_turns (int | None): Inclusive lower bound on ``executed_turns`` for winners.
-            max_turns (int | None): Inclusive upper bound on ``executed_turns`` for winners.
+            conditions (list[Any]): Scalar WHERE filters applied before result selection.
+            result_selection (AttackResultSelection): Whether to keep all result IDs or only
+                the newest matching result per conversation.
+            min_turns (int | None): Inclusive lower bound on ``executed_turns`` for selected results.
+            max_turns (int | None): Inclusive upper bound on ``executed_turns`` for selected results.
             limit (int | None): Maximum number of results to return.
             after (AttackResultKeysetCursor | None): Keyset anchor; only rows ordered strictly
                 after it are returned. ``None`` starts at the first page.
 
         Returns:
-            list[AttackResult]: The deduplicated, recency-ordered page of attack results.
+            list[AttackResult]: The selected, recency-ordered page of attack results.
         """
         page_conditions: list[Any] = list(conditions)
-        page_conditions.append(self._attack_results_not_superseded_condition(conditions=conditions))
+        if result_selection is AttackResultSelection.LATEST_PER_CONVERSATION:
+            page_conditions.append(self._attack_results_not_superseded_condition(conditions=conditions))
         if min_turns is not None:
             page_conditions.append(AttackResultEntry.executed_turns >= min_turns)
         if max_turns is not None:
@@ -4674,7 +4704,7 @@ class MemoryInterface(abc.ABC):
 
         entries = self._query_entries(
             AttackResultEntry,
-            conditions=and_(*page_conditions),
+            conditions=and_(*page_conditions) if page_conditions else None,
             order_by=self._attack_results_recency_order_by(),
             limit=limit,
         )
@@ -4727,14 +4757,14 @@ class MemoryInterface(abc.ABC):
         results: list[AttackResult], *, min_turns: int | None, max_turns: int | None
     ) -> list[AttackResult]:
         """
-        Filter already-deduplicated attack results by their ``executed_turns`` bounds.
+        Filter selected attack results by their ``executed_turns`` bounds.
 
-        Applied after per-conversation dedup (matching the SQL paginated path) so the bounds
-        act on the surviving newest row per conversation, never resurfacing an older
-        duplicate that falls within range.
+        Applied after result selection, matching the SQL paginated path. With
+        ``LATEST_PER_CONVERSATION``, bounds never resurface an older result; with
+        ``ALL_RESULTS``, bounds apply independently to every matching result ID.
 
         Args:
-            results (list[AttackResult]): Deduplicated attack results to filter.
+            results (list[AttackResult]): Selected attack results to filter.
             min_turns (int | None): Inclusive lower bound on executed turns, or None.
             max_turns (int | None): Inclusive upper bound on executed turns, or None.
 

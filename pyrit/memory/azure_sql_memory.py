@@ -834,9 +834,13 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         )
         return planned_units, plan_seeds
 
-    def get_session(self) -> Session:
+    def get_session(self, *, timeout: float | None = None) -> Session:
         """
         Provide a session for database operations.
+
+        Args:
+            timeout (float | None): Shared-connection acquisition timeout. Azure SQL
+                uses independent pooled connections, so acquisition is governed by its pool.
 
         Returns:
             Session: A new SQLAlchemy session bound to the configured engine.
