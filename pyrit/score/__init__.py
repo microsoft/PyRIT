@@ -88,6 +88,7 @@ if TYPE_CHECKING:
         LlamaGuardScorer,
         render_llamaguard_prompt,
     )
+    from pyrit.score.true_false.local_refusal_classifier_scorer import LocalRefusalClassifierScorer
     from pyrit.score.true_false.manual_scorer import ManualScorer
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
@@ -193,6 +194,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TraceAcquisitionError": "pyrit.score.observation.trace_client",
     "TraceClient": "pyrit.score.observation.trace_client",
     "JsonSchemaResponseHandler": "pyrit.score.response_handler",
+    "LocalRefusalClassifierScorer": "pyrit.score.true_false.local_refusal_classifier_scorer",
     "LDAPInjectionOutputScorer": "pyrit.score.true_false.regex.ldap_injection_output_scorer",
     "LikertScaleEvalFiles": "pyrit.score.float_scale.self_ask_likert_scorer",
     "LikertScale": "pyrit.score.float_scale.likert_scale",
