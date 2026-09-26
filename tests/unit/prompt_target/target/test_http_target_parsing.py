@@ -191,3 +191,24 @@ def test_parse_json_response_keys_with_digits_and_hyphens(key: str, expected: st
     )
     parse_json_response = get_http_target_json_response_callback_function(key=key)
     assert parse_json_response(mock_response) == expected
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        'choices[0]["message"]["content"]',
+        "choices[0]['message']['content']",
+        'choices[0][ "message" ].content',
+        "choices[-1].message.content",
+    ],
+)
+def test_parse_json_response_quoted_bracket_keys(key: str):
+    mock_response = httpx.Response(200, content=b'{"choices": [{"message": {"content": "hello"}}]}')
+    parse_json_response = get_http_target_json_response_callback_function(key=key)
+    assert parse_json_response(mock_response) == "hello"
+
+
+def test_parse_json_response_quoted_key_may_contain_dots():
+    mock_response = httpx.Response(200, content=b'{"data": {"model.name": "gpt"}}')
+    parse_json_response = get_http_target_json_response_callback_function(key='data["model.name"]')
+    assert parse_json_response(mock_response) == "gpt"

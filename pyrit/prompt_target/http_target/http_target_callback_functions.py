@@ -96,16 +96,17 @@ def _fetch_key(data: dict[str, Any], key: str) -> Any:
         ValueError: If any path segment is missing, so a misconfigured key
             surfaces immediately instead of silently degrading to "".
     """
-    # A key segment is any run of characters other than ".", "[" and "]", so keys such as
-    # "output2" or "generated-text" are kept whole.
-    pattern = re.compile(r"([^.\[\]]+)|\[(-?\d+)\]")
+    # A key segment is a quoted bracket lookup, or any run of characters other than
+    # ".", "[" and "]", so keys such as "output2" or "generated-text" are kept whole.
+    pattern = re.compile(r"\[\s*[\"']([^\"']+)[\"']\s*\]|([^.\[\]]+)|\[(-?\d+)\]")
     keys = pattern.findall(key)
     result: Any = data
-    for key_part, index_part in keys:
-        if key_part:
-            if not isinstance(result, dict) or key_part not in result:
-                raise ValueError(f"Key path {key!r} not found in HTTP JSON response: missing segment {key_part!r}.")
-            result = result[key_part]
+    for quoted_part, key_part, index_part in keys:
+        name = quoted_part or key_part
+        if name:
+            if not isinstance(result, dict) or name not in result:
+                raise ValueError(f"Key path {key!r} not found in HTTP JSON response: missing segment {name!r}.")
+            result = result[name]
         elif index_part:
             index = int(index_part)
             if not isinstance(result, list) or not -len(result) <= index < len(result):
