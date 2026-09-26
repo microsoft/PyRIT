@@ -1752,7 +1752,12 @@ class TestEdgeCasesAndErrorHandling:
         stored = manager.get_conversation(conversation_id)
         assert len(stored) == 1
         processed_piece = stored[0].message_pieces[0]
-        assert processed_piece.prompt_metadata == {"key": "value", "count": 1}
+        assert processed_piece.prompt_metadata == {
+            "key": "value",
+            "count": 1,
+            MessagePiece.PREPENDED_HISTORY_METADATA_KEY: True,
+        }
+        assert sample_user_piece.prompt_metadata == {"key": "value", "count": 1}
 
     async def test_preserves_original_and_converted_values(
         self,

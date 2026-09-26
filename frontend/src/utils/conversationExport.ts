@@ -19,6 +19,8 @@ const ROLE_LABELS: Record<Message['role'], string> = {
   user: 'User',
   assistant: 'Assistant',
   simulated_assistant: 'Simulated Assistant',
+  tool: 'Tool',
+  simulated_tool: 'Simulated Tool',
   system: 'System',
 }
 

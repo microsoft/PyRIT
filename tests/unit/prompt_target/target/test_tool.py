@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +14,7 @@ from pyrit.exceptions import RateLimitException
 from pyrit.models import JsonResponseConfig, Message, MessagePiece
 from pyrit.prompt_target import (
     FunctionTool,
+    MCPToolProvider,
     OpenAIResponseTarget,
     ToolProvider,
     collect_tools_async,
@@ -115,6 +118,17 @@ def test_openai_response_target_without_tools_preserves_identifier(patch_central
 
     assert "tools" not in identifier.params
     assert "tool_providers" not in identifier.params
+    assert "execute_tools" not in identifier.params
+
+
+def test_single_response_mode_has_distinct_identity(patch_central_database) -> None:
+    kwargs = {"model_name": "gpt-4", "endpoint": "https://mock.azure.com", "api_key": "mock-key"}
+    default = OpenAIResponseTarget(**kwargs).get_identifier()
+    enabled = OpenAIResponseTarget(**kwargs, execute_tools=True).get_identifier()
+    disabled = OpenAIResponseTarget(**kwargs, execute_tools=False).get_identifier()
+    assert default.hash == enabled.hash
+    assert disabled.hash != default.hash
+    assert disabled.params["execute_tools"] is False
 
 
 def test_openai_response_target_identifier_includes_advertised_tool_definition(patch_central_database) -> None:
@@ -265,6 +279,63 @@ async def test_model_retries_pace_each_request_without_repeating_tools(patch_cen
     ]
     assert send.await_count == 3
     assert sum(call.args == (2,) for call in sleep.await_args_list) == 3
+    target.validate_tool_history(result)
+    replay = await target._build_input_for_multi_modal_async(result)
+    assert [item["call_id"] for item in replay if item.get("type") == "function_call_output"] == [
+        "call-1",
+        "call-2",
+    ]
+
+
+async def test_single_response_advertises_tools_without_executing_calls(patch_central_database) -> None:
+    lifecycle: list[str] = []
+    provider = MagicMock(spec=MCPToolProvider)
+    provider.identifier = {"type": "test"}
+    provider.get_tools_async = AsyncMock(return_value=[add])
+
+    @asynccontextmanager
+    async def scope_async() -> AsyncIterator[None]:
+        lifecycle.append("enter")
+        try:
+            yield
+        finally:
+            lifecycle.append("exit")
+
+    provider.execution_scope_async = scope_async
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tool_providers=[provider],
+        execute_tools=False,
+        extra_body_parameters={"tools": [{"type": "web_search_preview"}]},
+    )
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value=json.dumps(
+                    {"type": "function_call", "call_id": f"call-{index}", "name": "add", "arguments": '{"x":2}'}
+                ),
+                original_value_data_type="function_call",
+            )
+            for index in (1, 2)
+        ]
+    )
+    with (
+        patch.object(target, "_handle_openai_request_async", new_callable=AsyncMock, return_value=response) as send,
+        patch.object(add, "execute_async", new_callable=AsyncMock) as execute,
+        patch.object(target._client.responses, "create", new_callable=AsyncMock) as create,
+    ):
+        result = await target.send_prompt_async(message=Message.from_prompt(prompt="Add", role="user"))
+        await send.call_args.kwargs["api_call"]()
+    assert result == [response]
+    assert len(result[0].message_pieces) == 2
+    send.assert_awaited_once()
+    execute.assert_not_called()
+    provider.get_tools_async.assert_awaited_once()
+    assert lifecycle == ["enter", "exit"]
+    assert [item["type"] for item in create.call_args.kwargs["tools"]] == ["web_search_preview", "function"]
 
 
 async def test_collect_tools_async_preserves_direct_and_provider_order() -> None:

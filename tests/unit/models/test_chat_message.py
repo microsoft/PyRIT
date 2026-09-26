@@ -21,6 +21,17 @@ def test_tool_call_forbids_extra_fields():
         ToolCall(id="call_1", type="function", function="get_weather", extra="bad")
 
 
+def test_chat_message_structured_tool_call_without_content() -> None:
+    payload = {
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "lookup", "arguments": '{"key":"value"}'},
+    }
+    message = ChatMessage(role="assistant", tool_calls=[ToolCall.model_validate(payload)])
+    assert message.to_dict() == {"role": "assistant", "tool_calls": [payload]}
+    assert ChatMessage.model_validate_json(message.model_dump_json()) == message
+
+
 def test_chat_message_init_with_string_content():
     msg = ChatMessage(role="user", content="hello")
     assert msg.role == "user"

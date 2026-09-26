@@ -24,6 +24,7 @@ from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydanti
 from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifierField,
 )
+from pyrit.models.target.request_trace_context import RequestTraceContext
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
@@ -45,6 +46,7 @@ class MessagePiece(BaseModel):
 
     STRUCTURED_REFUSAL_METADATA_KEY: ClassVar[str] = "structured_refusal"
     TRUNCATED_METADATA_KEY: ClassVar[str] = "truncated"
+    PREPENDED_HISTORY_METADATA_KEY: ClassVar[str] = "prepended_history"
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -114,15 +116,27 @@ class MessagePiece(BaseModel):
         """
         Role to use for API calls.
 
-        Maps ``simulated_assistant`` to ``assistant`` for API compatibility.
+        Maps simulated assistant and tool roles to their API roles.
         Use this property when sending messages to external APIs.
         """
-        return "assistant" if self.role == "simulated_assistant" else self.role
+        if self.role == "simulated_assistant":
+            return "assistant"
+        return "tool" if self.role == "simulated_tool" else self.role
 
     @property
     def is_simulated(self) -> bool:
-        """Whether this piece represents a simulated assistant response."""
-        return self.role == "simulated_assistant"
+        """Whether this piece represents a simulated assistant response or tool result."""
+        return self.role in {"simulated_assistant", "simulated_tool"}
+
+    def set_simulated_role(self) -> None:
+        """Mark injected history without retaining evidence of a previous live send."""
+        if self.role == "assistant":
+            self.role = "simulated_assistant"
+        elif self.role == "tool":
+            self.role = "simulated_tool"
+        self.prompt_metadata[self.PREPENDED_HISTORY_METADATA_KEY] = True
+        self.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+        self.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
 
     def to_message(self) -> Message:
         """

@@ -272,6 +272,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A scorer is not limited to a message, it could be anything (e.g. was this tool called or was this file written). It receives a `Scorable`, which identifies that evidence, and an optional `ScoringExpectation`.
 - `TrueFalseScorer` and `FloatScaleScorer` define result families. `MessageScorer` adds message resolution and message-only policy on top of them.
 - A scorer declares which evidence it reads, rather than the caller filtering evidence for it. A `MessageScorer` states the conversation roles and data types it reads on its `ScorerPromptValidator`.
+- Injected calls and results use simulated response roles and are excluded from message scoring
+  unless explicitly selected. Prepended history is not an outbound request; execution scoring
+  uses live request traces, not injected message content.
 - Target-backed scorers over text evidence persist an `Observation` that references and hashes the retained SCORE-conversation response. The observation and its first score are committed atomically.
 - Trace sources acquire and normalize execution evidence for
   `TraceScorable` IDs through an injected `TraceClient`. `OtelToolCallScorer`

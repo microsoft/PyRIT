@@ -198,7 +198,7 @@ class Message(BaseModel):
         """
         The API-compatible role of the first message piece.
 
-        Maps simulated_assistant to assistant for API compatibility.
+        Maps simulated assistant and tool roles to their API roles.
         All message pieces in a Message should have the same role.
 
         Returns:
@@ -215,7 +215,7 @@ class Message(BaseModel):
     @property
     def is_simulated(self) -> bool:
         """
-        Check if this is a simulated assistant response.
+        Check if this is a simulated assistant response or tool result.
 
         Simulated responses come from prepended conversations or generated
         simulated conversations, not from actual target responses.
@@ -281,14 +281,13 @@ class Message(BaseModel):
 
     def set_simulated_role(self) -> None:
         """
-        Set the role of all message pieces to simulated_assistant.
+        Mark all message pieces as injected history with simulated response roles.
 
         This marks the message as coming from a simulated conversation
         rather than an actual target response.
         """
         for piece in self.message_pieces:
-            if piece.role == "assistant":
-                piece.role = "simulated_assistant"
+            piece.set_simulated_role()
 
     def __str__(self) -> str:
         """

@@ -21,7 +21,9 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    ToolCall,
 )
+from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
 
 # Data types that render as a plain text content part.
 _TEXT_DATA_TYPES = ("text", "error")
@@ -180,13 +182,27 @@ def should_skip_audio_piece(
     )
 
 
+def validate_chat_tool_message(message: Message) -> None:
+    """
+    Check Chat Completions tool-message structure without loading other content.
+
+    Raises:
+        ValueError: Tool results are mixed with other pieces or a provider tool is unsupported.
+    """
+    data_types = {piece.converted_value_data_type for piece in message.message_pieces}
+    if "function_call_output" in data_types and data_types != {"function_call_output"}:
+        raise ValueError("Tool result messages must contain only function_call_output pieces.")
+    if "tool_call" in data_types:
+        raise ValueError("Provider tool_call pieces are not supported by Chat Completions.")
+
+
 async def build_multimodal_chat_messages_async(
     conversation: MutableSequence[Message],
     *,
     prefer_transcript_for_history: bool = False,
 ) -> list[dict[str, Any]]:
     """
-    Build chat messages using the multipart ``content`` format (text, image, and audio parts).
+    Build multipart chat messages and structured function-call/result history.
 
     Args:
         conversation (MutableSequence[Message]): The conversation to convert.
@@ -203,11 +219,20 @@ async def build_multimodal_chat_messages_async(
     last_message_index = len(conversation) - 1
 
     for message_index, message in enumerate(conversation):
+        validate_chat_tool_message(message)
         message_pieces = message.message_pieces
         is_last_message = message_index == last_message_index
         has_text_piece = any(mp.converted_value_data_type == "text" for mp in message_pieces)
 
         content: list[dict[str, Any]] = []
+        tool_calls: list[ToolCall] = []
+        if any(piece.converted_value_data_type == "function_call_output" for piece in message_pieces):
+            for piece in message_pieces:
+                if piece.api_role != "tool":
+                    raise ValueError("Function call outputs must have the tool role.")
+                call_id, output = parse_function_call_output(piece)
+                chat_messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
+            continue
         role = None
         for message_piece in message_pieces:
             role = message_piece.api_role
@@ -227,13 +252,19 @@ async def build_multimodal_chat_messages_async(
                 content.append(await build_image_content_entry_async(message_piece=message_piece))
             elif data_type == "audio_path":
                 content.append(await build_audio_content_entry_async(message_piece=message_piece))
+            elif data_type == "function_call":
+                tool_calls.append(parse_function_call(message_piece))
             else:
                 raise ValueError(f"Multimodal data type {data_type} is not yet supported.")
 
         if not role:
             raise ValueError("No role could be determined from the message pieces.")
 
-        chat_messages.append(ChatMessage(role=role, content=content).model_dump(exclude_none=True))
+        chat_messages.append(
+            ChatMessage(
+                role=role, content=None if tool_calls and not content else content, tool_calls=tool_calls or None
+            ).model_dump(exclude_none=True)
+        )
 
     return chat_messages
 

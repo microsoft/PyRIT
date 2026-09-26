@@ -758,8 +758,8 @@ class AttackService:
 
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:
-            if remap_assistant_to_simulated and piece.api_role == "assistant":
-                piece.role = "simulated_assistant"
+            if remap_assistant_to_simulated:
+                piece.set_simulated_role()
 
         if all_pieces:
             self._memory.add_conversation_to_memory(conversation=conversation)

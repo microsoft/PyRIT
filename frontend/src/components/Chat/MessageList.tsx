@@ -616,9 +616,10 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
       {messages.map((message, index) => {
         if (message.role === 'system') return null
         const isUser = message.role === 'user'
-        const isSimulated = message.role === 'simulated_assistant'
+        const isSimulated = message.role === 'simulated_assistant' || message.role === 'simulated_tool'
         const timestamp = new Date(message.timestamp).toLocaleTimeString()
-        const avatarName = isUser ? 'User' : isSimulated ? 'Simulated' : 'Assistant'
+        const avatarName = message.role === 'simulated_tool' ? 'Simulated Tool'
+          : message.role === 'tool' ? 'Tool' : isUser ? 'User' : isSimulated ? 'Simulated' : 'Assistant'
         const canRecoverProcessingError = message.error?.type === 'processing'
           && processingErrorRecovery?.messageIndex === index
         const renderPieces = getRenderMessagePieces(message, index)

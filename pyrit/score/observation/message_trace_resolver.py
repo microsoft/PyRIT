@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import MessageScorable, RequestTraceContext, TraceScorable
+from pyrit.models import MessagePiece, MessageScorable, RequestTraceContext, TraceScorable
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ def resolve_message_trace_scope(
         and (
             request.prompt_metadata.get(RequestTraceContext.REQUEST_METADATA_KEY) == 1
             or RequestTraceContext.METADATA_KEY in request.prompt_metadata
-            or request.role == "user"
+            or (request.role == "user" and not request.prompt_metadata.get(MessagePiece.PREPENDED_HISTORY_METADATA_KEY))
         )
     ]
     links = [RequestTraceContext.from_metadata(request.prompt_metadata) for request in requests]

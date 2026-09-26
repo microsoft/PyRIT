@@ -8,8 +8,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from mcp.types import Tool as MCPToolDefinition
+from openai.types.chat import ChatCompletion
 
-from pyrit.models import Message, MessagePiece, PromptDataType
+from pyrit.models import Message, MessagePiece, PromptDataType, RequestTraceContext
+from pyrit.prompt_target import FunctionTool, MCPToolProvider, OpenAIChatTarget, OpenAIResponseTarget, TargetTraceConfig
 from pyrit.prompt_target.common.discover_target_capabilities import (
     _CAPABILITY_PROBES,
     DEFAULT_TEST_ASSETS,
@@ -561,6 +564,271 @@ class TestDiscoverTargetCapabilitiesIsolatedTarget:
 
         for capability in _CAPABILITY_PROBES:
             assert capability in result
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestToolCallHistoryDiscovery:
+    MODALITIES: set[frozenset[PromptDataType]] = {frozenset({"function_call"}), frozenset({"function_call_output"})}
+
+    @staticmethod
+    def _target() -> OpenAIChatTarget:
+        return OpenAIChatTarget(model_name="unknown", endpoint="https://example.invalid", api_key="not-a-key")
+
+    async def test_probes_real_chat_payload_and_applies_only_when_requested(self) -> None:
+        target = self._target()
+        original = target.configuration
+        response = ChatCompletion(
+            id="probe",
+            object="chat.completion",
+            created=0,
+            model="unknown",
+            choices=[{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "OK"}}],
+        )
+        with patch.object(
+            target._client.chat.completions, "create", new_callable=AsyncMock, return_value=response
+        ) as send:
+            result = await discover_target_capabilities_async(
+                target=target, capabilities=[], test_modalities=self.MODALITIES, retries=0
+            )
+            assert result.input_modalities >= self.MODALITIES
+            assert target.configuration is original
+            assert "function_call" not in target.capabilities.supported_input_modalities
+            send.assert_called_once()
+            messages = send.call_args.kwargs["messages"]
+            assert [message["role"] for message in messages] == ["user", "assistant", "tool", "user"]
+            call = messages[1]["tool_calls"][0]
+            assert call["function"] == {"name": "pyrit_probe", "arguments": "{}"}
+            assert messages[2]["tool_call_id"] == call["id"]
+            await discover_target_capabilities_async(
+                target=target, capabilities=[], test_modalities=self.MODALITIES, retries=0, apply=True
+            )
+        assert target.capabilities.input_modalities >= self.MODALITIES
+        assert "function_call_output" in target.capabilities.supported_input_modalities
+
+    @pytest.mark.parametrize("error", [ValueError("unsupported history"), TimeoutError("timeout")])
+    @pytest.mark.parametrize("declared", [False, True])
+    async def test_probe_failure_restores_configuration(self, error: Exception, declared: bool) -> None:
+        target = self._target()
+        if declared:
+            target.apply_capabilities(capabilities=TargetCapabilities(input_modalities=frozenset(self.MODALITIES)))
+        original = target.configuration
+        with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=error):
+            result = await discover_target_capabilities_async(
+                target=target, capabilities=[], test_modalities=self.MODALITIES, retries=0, apply=True
+            )
+        assert (result.input_modalities >= self.MODALITIES) is declared
+        assert target.configuration.capabilities == original.capabilities
+
+    @pytest.mark.parametrize("response", [[], _error_response()])
+    async def test_empty_or_error_response_does_not_confirm_support(self, response: list[Message]) -> None:
+        target = self._target()
+        with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=response):
+            result = await discover_target_capabilities_async(
+                target=target, capabilities=[], test_modalities=self.MODALITIES
+            )
+        assert not self.MODALITIES & result.input_modalities
+
+    async def test_mixed_tool_modality_probes_text_and_call_together(self) -> None:
+        target = self._target()
+        response = [MessagePiece(role="assistant", original_value="OK").to_message()]
+        modalities: set[frozenset[PromptDataType]] = {frozenset({"text", "function_call"})}
+        with patch.object(
+            target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=response
+        ) as send:
+            result = await discover_target_capabilities_async(
+                target=target, capabilities=[], test_modalities=modalities, retries=0
+            )
+        assert modalities <= result.input_modalities
+        send.assert_awaited_once()
+        conversation = send.call_args.kwargs["normalized_conversation"]
+        assert [piece.converted_value_data_type for piece in conversation[1].message_pieces] == [
+            "text",
+            "function_call",
+        ]
+
+    async def test_cancellation_restores_tool_settings(self) -> None:
+        target = OpenAIResponseTarget(model_name="unknown", endpoint="https://example.invalid", api_key="not-a-key")
+        configuration = target.configuration
+        body = {"tools": [{"type": "web_search_preview"}], "tool_choice": "required"}
+        target._extra_body_parameters = body
+        with patch.object(
+            target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=asyncio.CancelledError
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await discover_target_capabilities_async(
+                    target=target, capabilities=[], test_modalities=self.MODALITIES
+                )
+        assert target.configuration is configuration
+        assert target._extra_body_parameters is body
+        assert target._execute_tools
+
+    async def test_unregistered_adapter_retains_declaration_without_false_positive(self) -> None:
+        target = _RealValidationTarget()
+        for enabled in (False, True):
+            modalities = frozenset(self.MODALITIES) if enabled else frozenset()
+            target.apply_capabilities(capabilities=TargetCapabilities(input_modalities=modalities))
+            with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send:
+                result = await discover_target_capabilities_async(
+                    target=target, capabilities=[], test_modalities=self.MODALITIES
+                )
+            assert (result.input_modalities >= self.MODALITIES) is enabled
+            send.assert_not_called()
+
+    async def test_unselected_flags_and_tool_modalities_are_preserved(self) -> None:
+        target = self._target()
+        target.apply_capabilities(
+            capabilities=TargetCapabilities(input_modalities=frozenset(self.MODALITIES), supports_streaming_audio=True)
+        )
+        with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send:
+            result = await discover_target_capabilities_async(target=target, capabilities=[], test_modalities=set())
+        assert result.input_modalities >= self.MODALITIES
+        assert result.supports_streaming_audio
+        send.assert_not_called()
+
+    @pytest.mark.parametrize("probe_tools", [False, True])
+    async def test_responses_probe_uses_send_lifecycle_without_tools(self, probe_tools: bool) -> None:
+        function = AsyncMock(side_effect=AssertionError("Discovery must not execute tools"))
+        body_parameters = {"tools": [{"type": "web_search_preview"}], "tool_choice": "required"}
+        target = OpenAIResponseTarget(
+            model_name="unknown",
+            endpoint="https://example.invalid",
+            api_key="not-a-key",
+            custom_functions={"lookup": function},
+            extra_body_parameters=body_parameters,
+        )
+        target._trace_config = TargetTraceConfig(enabled=True)
+        response = MessagePiece(
+            role="assistant",
+            original_value='{"type":"function_call","call_id":"new","name":"lookup","arguments":"{}"}',
+            original_value_data_type="function_call",
+        ).to_message()
+        original = target.configuration
+        with (
+            patch.object(target, "_handle_openai_request_async", new_callable=AsyncMock, return_value=response) as send,
+            patch.object(target, "_construct_request_body_async", wraps=target._construct_request_body_async) as build,
+        ):
+            result = await discover_target_capabilities_async(
+                target=target,
+                capabilities=[] if probe_tools else [CapabilityName.JSON_OUTPUT],
+                test_modalities=self.MODALITIES if probe_tools else set(),
+                retries=0,
+            )
+        assert result.input_modalities >= self.MODALITIES
+        assert target.configuration is original
+        assert target._execute_tools
+        assert target._extra_body_parameters is body_parameters
+        function.assert_not_called()
+        send.assert_called_once()
+        build.assert_called_once()
+        request = send.call_args.kwargs["request"]
+        assert request.get_piece().prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] == 1
+        assert RequestTraceContext.from_metadata(request.get_piece().prompt_metadata) is not None
+        api_call = send.call_args.kwargs["api_call"]
+        with patch.object(target._client.responses, "create", new_callable=AsyncMock) as create:
+            await api_call()
+        assert "tools" not in create.call_args.kwargs
+        assert "tool_choice" not in create.call_args.kwargs
+        history = build.call_args.kwargs["conversation"]
+        expected_roles = ["user", "assistant", "tool", "user"] if probe_tools else ["user"]
+        assert [message.api_role for message in history] == expected_roles
+        assert all(
+            piece.prompt_metadata["capability_probe"] == "1" for message in history for piece in message.message_pieces
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("initialized", [False, True])
+@pytest.mark.parametrize("identity_cached", [False, True])
+@pytest.mark.parametrize("outcome", ["success", "error", "timeout", "cancel"])
+async def test_responses_probes_suppress_provider_io_and_preserve_state(
+    *, initialized: bool, identity_cached: bool, outcome: str
+) -> None:
+    async def direct_async() -> str:
+        raise AssertionError("Probe must not execute a direct tool")
+
+    direct = FunctionTool(function=direct_async)
+    provider = MCPToolProvider.from_config(
+        config={"servers": {"test": {"type": "http", "url": "https://example.invalid/mcp"}}},
+        server_name="test",
+    )
+    if initialized:
+        provider._tools = [MCPToolDefinition(name="remote", inputSchema={"type": "object", "properties": {}})]
+    body = {"tools": [{"type": "web_search_preview"}], "tool_choice": "required", "parallel_tool_calls": True}
+    target = OpenAIResponseTarget(
+        model_name="unknown",
+        endpoint="https://example.invalid",
+        api_key="not-a-key",
+        tools=[direct],
+        tool_providers=[provider],
+        extra_body_parameters=body,
+    )
+    if initialized:
+        await target._initialize_tools_async()
+    tools = target._tools
+    providers = target._tool_providers
+    provider_cache = provider._tools
+    configuration = target.configuration
+    expected_identifier = target._build_identifier()
+    assert target._identifier is None
+    cached_identifier = target.get_identifier() if identity_cached else None
+    response = MessagePiece(
+        role="assistant",
+        original_value='{"type":"function_call","call_id":"new","name":"direct_async","arguments":"{}"}',
+        original_value_data_type="function_call",
+    ).to_message()
+
+    async def finish_async(**kwargs: object) -> Message:
+        if outcome == "error":
+            raise ValueError("Probe request failed")
+        if outcome == "cancel":
+            raise asyncio.CancelledError
+        if outcome == "timeout":
+            await asyncio.Event().wait()
+        return response
+
+    with (
+        patch.object(provider, "execution_scope_async") as scope,
+        patch.object(provider, "get_tools_async", new_callable=AsyncMock) as discover,
+        patch.object(provider, "call_tool_async", new_callable=AsyncMock) as remote_call,
+        patch.object(target, "_execute_call_section_async", new_callable=AsyncMock) as execute,
+        patch.object(target, "_handle_openai_request_async", new_callable=AsyncMock, side_effect=finish_async) as send,
+        patch.object(target._client.responses, "create", new_callable=AsyncMock) as create,
+    ):
+
+        async def probe_async() -> None:
+            await discover_target_capabilities_async(
+                target=target,
+                capabilities=[CapabilityName.JSON_OUTPUT],
+                test_modalities=set(),
+                retries=0,
+                per_probe_timeout_s=0.2,
+            )
+
+        if outcome == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await probe_async()
+        else:
+            await probe_async()
+        send.assert_awaited_once()
+        await send.call_args.kwargs["api_call"]()
+        assert not {"tools", "tool_choice", "parallel_tool_calls"} & create.call_args.kwargs.keys()
+        scope.assert_not_called()
+        discover.assert_not_called()
+        remote_call.assert_not_called()
+        execute.assert_not_called()
+
+    assert target._tools is tools
+    assert target._direct_tools == (direct,)
+    assert target._tool_providers is providers
+    assert target._tools_initialized is initialized
+    assert provider._tools is provider_cache
+    assert target._extra_body_parameters is body
+    assert target.configuration is configuration
+    assert target._execute_tools
+    assert not target._suppress_tools
+    assert target.get_identifier().hash == target._build_identifier().hash == expected_identifier.hash
+    if identity_cached:
+        assert target.get_identifier() is cached_identifier
 
 
 # ---------------------------------------------------------------------------

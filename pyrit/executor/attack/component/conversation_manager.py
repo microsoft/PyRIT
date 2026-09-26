@@ -24,7 +24,6 @@ from pyrit.models import (
     Conversation,
     Message,
     MessagePiece,
-    RequestTraceContext,
     Score,
     UndeterminedScoreError,
 )
@@ -45,9 +44,9 @@ logger = logging.getLogger(__name__)
 
 def mark_messages_as_simulated(messages: Sequence[Message]) -> list[Message]:
     """
-    Mark assistant messages as simulated_assistant for traceability.
+    Mark injected history with simulated assistant and tool roles.
 
-    This function converts all assistant roles to simulated_assistant in the
+    This function converts assistant and tool roles to their simulated roles in the
     provided messages. This is useful when loading conversations from YAML files
     or other sources where the responses are not from actual targets.
 
@@ -55,14 +54,12 @@ def mark_messages_as_simulated(messages: Sequence[Message]) -> list[Message]:
         messages (Sequence[Message]): The messages to mark as simulated.
 
     Returns:
-        list[Message]: The same messages with assistant roles converted to simulated_assistant.
+        list[Message]: The same messages with synthetic history provenance.
             Modifies the messages in place and also returns them for convenience.
     """
     result = list(messages)
     for message in result:
-        for piece in message.message_pieces:
-            if piece.role == "assistant":
-                piece.role = "simulated_assistant"
+        message.set_simulated_role()
     return result
 
 
@@ -392,9 +389,6 @@ class ConversationManager:
 
             for piece in message_copy.message_pieces:
                 piece.conversation_id = conversation_id
-                # Copied history did not produce a trace in this conversation.
-                piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
-                piece.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
 
             # Count turns at message level (only assistant/simulated_assistant messages)
             # A multi-part response still counts as one turn

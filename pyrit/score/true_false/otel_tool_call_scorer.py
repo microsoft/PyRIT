@@ -61,7 +61,7 @@ class OtelToolCallScorer(TrueFalseScorer):
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
-            params={"matching_version": 1, "message_scope_version": 1},
+            params={"matching_version": 1, "message_scope_version": 2},
             children={"source": self._source.get_identifier()},
         )
 
