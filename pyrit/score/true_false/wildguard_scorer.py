@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 from contextvars import ContextVar
 from functools import partial
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import (
@@ -30,6 +30,9 @@ from pyrit.score.true_false.true_false_score_aggregator import (
 )
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 from pyrit.score.true_false.wildguard_parser import WildGuardLabel, parse_wildguard_response
+
+if TYPE_CHECKING:
+    from pyrit.memory import MemoryInterface
 
 _DEFAULT_WILDGUARD_PROMPT_PATH = SCORER_SEED_PROMPT_PATH / "wildguard" / "wildguard_prompt.yaml"
 _PROMPT_PARAMETERS = ("user_prompt", "response")
@@ -238,33 +241,9 @@ class WildGuardScorer(MessageTrueFalseScorer):
             str | None: The configured prompt, otherwise the latest earlier user turn of
                 the scored conversation, otherwise None. Blank context also returns None.
         """
-        if self._user_prompt is not None:
-            return self._user_prompt if self._user_prompt.strip() else None
-        if not message_piece.conversation_id or message_piece.sequence < 1:
-            return None
-
-        conversation = await asyncio.to_thread(
-            self._memory.get_message_pieces, conversation_id=message_piece.conversation_id
+        return await _resolve_wildguard_user_prompt_async(
+            memory=self._memory, user_prompt=self._user_prompt, message_piece=message_piece
         )
-        prior_user_pieces = [
-            piece for piece in conversation if piece.sequence < message_piece.sequence and piece.api_role == "user"
-        ]
-        if not prior_user_pieces:
-            return None
-
-        # Select the latest user turn before filtering by data type. If that turn contains no
-        # text, WildGuard cannot build the prompt/response pair and must not silently fall back
-        # to text from an older user turn.
-        user_sequence = max(piece.sequence for piece in prior_user_pieces)
-        # The converted value is what the target actually received. After a converter runs, the
-        # original value can be the seed prompt, which the target never saw.
-        latest_user_turn = [
-            piece.converted_value
-            for piece in prior_user_pieces
-            if piece.sequence == user_sequence and piece.converted_value_data_type == "text"
-        ]
-        prompt = "\n".join(latest_user_turn)
-        return prompt if prompt.strip() else None
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
@@ -361,6 +340,36 @@ class WildGuardScorer(MessageTrueFalseScorer):
             f"wildguard_{self._label.metadata_key}_verdict": ("yes" if aggregate.get_value() else "no"),
         }
         return scores
+
+
+async def _resolve_wildguard_user_prompt_async(
+    *, memory: MemoryInterface, user_prompt: str | None, message_piece: MessagePiece
+) -> str | None:
+    """
+    Resolve the configured prompt or the latest earlier user turn for either WildGuard API.
+
+    Returns:
+        str | None: Nonblank user context, or None when no suitable user turn exists.
+    """
+    if user_prompt is not None:
+        return user_prompt if user_prompt.strip() else None
+    if not message_piece.conversation_id or message_piece.sequence < 1:
+        return None
+    conversation = await asyncio.to_thread(memory.get_message_pieces, conversation_id=message_piece.conversation_id)
+    prior_user_pieces = [
+        piece for piece in conversation if piece.sequence < message_piece.sequence and piece.api_role == "user"
+    ]
+    if not prior_user_pieces:
+        return None
+    # Select the latest turn before filtering modalities; never borrow older context.
+    user_sequence = max(piece.sequence for piece in prior_user_pieces)
+    # Converted text is what the target received, unlike the original seed prompt.
+    prompt = "\n".join(
+        piece.converted_value
+        for piece in prior_user_pieces
+        if piece.sequence == user_sequence and piece.converted_value_data_type == "text"
+    )
+    return prompt if prompt.strip() else None
 
 
 def _resolve_prompt_template(*, prompt_template: SeedPrompt | str | None) -> SeedPrompt:

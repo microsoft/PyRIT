@@ -21,6 +21,7 @@ from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer import Scorer
+from pyrit.score.true_false.multi_label_true_false_scorer import MultiLabelTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
@@ -64,7 +65,10 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
 
         Raises:
             ValueError: If the threshold is non-finite or not in (0, 1].
+            ValueError: If the source contains independent boolean labels rather than scale scores.
         """
+        if isinstance(scorer, MultiLabelTrueFalseScorer):
+            raise ValueError("Use TrueFalseScoreSelector to select a boolean label; float thresholds do not apply.")
         self._scorer = scorer
         self._threshold = threshold
         self._float_scale_aggregator = float_scale_aggregator

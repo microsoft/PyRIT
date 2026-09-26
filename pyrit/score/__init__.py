@@ -89,6 +89,10 @@ if TYPE_CHECKING:
         render_llamaguard_prompt,
     )
     from pyrit.score.true_false.manual_scorer import ManualScorer
+    from pyrit.score.true_false.multi_label_true_false_scorer import (
+        MessageMultiLabelTrueFalseScorer,
+        MultiLabelTrueFalseScorer,
+    )
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
@@ -143,12 +147,18 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.true_false_fallback_scorer import TrueFalseFallbackScorer
     from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
     from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
+    from pyrit.score.true_false.true_false_score_selector import TrueFalseScoreSelector
     from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
     from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
+    from pyrit.score.true_false.wildguard_multi_label_scorer import WildGuardMultiLabelScorer
     from pyrit.score.true_false.wildguard_parser import WildGuardLabel, parse_wildguard_response
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "MultiLabelTrueFalseScorer": "pyrit.score.true_false.multi_label_true_false_scorer",
+    "MessageMultiLabelTrueFalseScorer": "pyrit.score.true_false.multi_label_true_false_scorer",
+    "TrueFalseScoreSelector": "pyrit.score.true_false.true_false_score_selector",
+    "WildGuardMultiLabelScorer": "pyrit.score.true_false.wildguard_multi_label_scorer",
     "AnsiEscapeOutputScorer": "pyrit.score.true_false.regex.ansi_escape_output_scorer",
     "AnthraxKeywordScorer": "pyrit.score.true_false.regex.anthrax_keyword_scorer",
     "AudioFloatScaleScorer": "pyrit.score.float_scale.audio_float_scale_scorer",
