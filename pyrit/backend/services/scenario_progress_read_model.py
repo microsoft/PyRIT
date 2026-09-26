@@ -7,16 +7,21 @@ import logging
 from collections import OrderedDict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from threading import Lock
 from typing import Literal
 
+from pyrit.analytics.scenario_statistics import (
+    ScenarioPlanLookup,
+    compute_scenario_statistics,
+    count_execution_units,
+    resolve_attack_result_attempt,
+    resolve_execution_unit,
+    retry_pressure,
+)
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
-    AtomicAttackIdentifier,
-    AttackOutcome,
     AttackResult,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
@@ -25,6 +30,7 @@ from pyrit.models import (
     ScenarioAttackTechniqueDetails,
     ScenarioComponentIdentity,
     ScenarioDisplayGroupProgress,
+    ScenarioExecutionUnit,
     ScenarioObjectiveScorer,
     ScenarioObjectiveScorerMetrics,
     ScenarioProgressCounts,
@@ -39,26 +45,22 @@ from pyrit.models import (
     ScenarioTechniqueProgress,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
-    config_hash,
     project_behavioral_identity,
 )
 from pyrit.score.scorer_evaluation.scorer_metrics_io import find_objective_metrics_by_eval_hash
 
 logger = logging.getLogger(__name__)
 
+# Execution-unit identity and plan lookup live in ``pyrit.analytics`` so the SDK, backend, and reports
+# share one implementation. These names remain importable from here for compatibility.
+ResultUnitIdentity = ScenarioExecutionUnit
+__all__ = ["ResultUnitIdentity", "ScenarioPlanLookup", "ScenarioProgressReadModel", "ScenarioProgressSnapshot"]
+
 # Technique seeds are rendered as content, so the REST payload carries only the
 # fields the UI displays. All other narrowing is declared by identifier types and
 # applied by ``project_behavioral_identity``.
 _TECHNIQUE_SEEDS_CHILD = "technique_seeds"
 _TECHNIQUE_SEED_DISPLAY_PARAMS = ("value", "data_type")
-
-
-@dataclass(frozen=True, slots=True)
-class ResultUnitIdentity:
-    """Stable identity of one planned scenario execution unit."""
-
-    atomic_group_id: str
-    seed_group_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,79 +92,6 @@ class _ProgressCacheEntry:
     cursor: AttackResultKeysetCursor | None = None
     summary: ScenarioProgressSummary | None = None
     summary_state: _ProgressSummaryState | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ScenarioPlanLookup:
-    """Pre-indexed run-plan data used while mapping persisted results."""
-
-    groups_by_identity: dict[tuple[str, str], ScenarioRunPlanAtomicGroup]
-    groups_by_name: dict[str, tuple[ScenarioRunPlanAtomicGroup, ...]]
-    seed_ids_by_group_and_objective: dict[tuple[str, str], tuple[str, ...]]
-    planned_units: frozenset[ResultUnitIdentity]
-
-    @classmethod
-    def from_plan(cls, *, plan: ScenarioRunPlan | None) -> "ScenarioPlanLookup":
-        """
-        Build constant-time lookup tables for one run plan.
-
-        Returns:
-            ScenarioPlanLookup: Indexed plan data.
-        """
-        if plan is None:
-            return cls(
-                groups_by_identity={},
-                groups_by_name={},
-                seed_ids_by_group_and_objective={},
-                planned_units=frozenset(),
-            )
-
-        groups_by_identity: dict[tuple[str, str], ScenarioRunPlanAtomicGroup] = {}
-        grouped_by_name: dict[str, list[ScenarioRunPlanAtomicGroup]] = {}
-        seeds_by_id = {seed.id: seed for seed in plan.seed_groups}
-        seed_ids_by_group_and_objective: dict[tuple[str, str], tuple[str, ...]] = {}
-        planned_units: set[ResultUnitIdentity] = set()
-        for group in plan.atomic_groups:
-            groups_by_identity[(group.atomic_attack_name, group.technique_eval_hash)] = group
-            grouped_by_name.setdefault(group.atomic_attack_name, []).append(group)
-            seed_ids_by_objective: dict[str, list[str]] = {}
-            for seed_id in group.seed_group_ids:
-                seed = seeds_by_id[seed_id]
-                seed_ids_by_objective.setdefault(seed.objective_sha256, []).append(seed_id)
-            seed_ids_by_group_and_objective.update(
-                {
-                    (group.id, objective_sha256): tuple(seed_ids)
-                    for objective_sha256, seed_ids in seed_ids_by_objective.items()
-                }
-            )
-            planned_units.update(
-                ResultUnitIdentity(atomic_group_id=group.id, seed_group_id=seed_group_id)
-                for seed_group_id in group.seed_group_ids
-            )
-
-        return cls(
-            groups_by_identity=groups_by_identity,
-            groups_by_name={name: tuple(groups) for name, groups in grouped_by_name.items()},
-            seed_ids_by_group_and_objective=seed_ids_by_group_and_objective,
-            planned_units=frozenset(planned_units),
-        )
-
-    def resolve_group(
-        self,
-        *,
-        atomic_attack_name: str,
-        technique_eval_hash: str | None,
-    ) -> ScenarioRunPlanAtomicGroup | None:
-        """
-        Resolve one planned group from persisted attribution.
-
-        Returns:
-            ScenarioRunPlanAtomicGroup | None: The uniquely matching group.
-        """
-        if technique_eval_hash is not None:
-            return self.groups_by_identity.get((atomic_attack_name, technique_eval_hash))
-        matching_groups = self.groups_by_name.get(atomic_attack_name, ())
-        return matching_groups[0] if len(matching_groups) == 1 else None
 
 
 class ScenarioProgressReadModel:
@@ -293,42 +222,14 @@ class ScenarioProgressReadModel:
         Returns:
             ResultUnitIdentity: The atomic-group and seed-group IDs.
         """
-        atomic_identifier = attack_result.atomic_attack_identifier
-        typed_identifier = (
-            AtomicAttackIdentifier.from_component_identifier(atomic_identifier)
-            if isinstance(atomic_identifier, ComponentIdentifier)
-            else None
-        )
-        objective = str(attack_result.objective)
-        attribution_data = attack_result.attribution_data
-        attributed_seed_group_id = attribution_data.get("seed_group_id") if isinstance(attribution_data, dict) else None
-        seed_group_id = str(attributed_seed_group_id) if attributed_seed_group_id else ""
-        if not seed_group_id and typed_identifier is not None and typed_identifier.seed_identifiers:
-            seed_group_id = typed_identifier.logical_seed_group_id
-
-        atomic_group_id = atomic_attack_name
-        eval_hash = attribution_data.get("parent_eval_hash") if isinstance(attribution_data, dict) else None
-        planned_group = plan_lookup.resolve_group(
+        return resolve_attack_result_attempt(
             atomic_attack_name=atomic_attack_name,
-            technique_eval_hash=str(eval_hash) if eval_hash is not None else None,
-        )
-        if planned_group is not None:
-            atomic_group_id = planned_group.id
-            if not seed_group_id:
-                objective_sha256 = to_sha256(objective)
-                matching_seed_ids = plan_lookup.seed_ids_by_group_and_objective.get(
-                    (planned_group.id, objective_sha256),
-                    (),
-                )
-                if len(matching_seed_ids) == 1:
-                    seed_group_id = matching_seed_ids[0]
-        if not seed_group_id:
-            seed_group_id = config_hash({"objective": objective})
-        return ResultUnitIdentity(atomic_group_id=atomic_group_id, seed_group_id=seed_group_id)
+            attack_result=attack_result,
+            plan_lookup=plan_lookup,
+        ).unit
 
-    @classmethod
+    @staticmethod
     def calculate_progress_counts(
-        cls,
         *,
         scenario_result: ScenarioResult,
         plan: ScenarioRunPlan | None,
@@ -337,46 +238,15 @@ class ScenarioProgressReadModel:
         """
         Calculate planned-unit totals without inflating retries or error attempts.
 
+        Delegates to ``pyrit.analytics.scenario_statistics`` so run details match the SDK and reports.
+
         Returns:
             tuple[int, int, int, int]: Total, completed, success-rate percentage,
                 and successful-unit count.
         """
-        latest_result_by_unit: dict[ResultUnitIdentity, AttackResult] = {}
-        for atomic_attack_name, results in scenario_result.attack_results.items():
-            for attack_result in results:
-                unit_identity = cls.resolve_result_unit_identity(
-                    atomic_attack_name=atomic_attack_name,
-                    attack_result=attack_result,
-                    plan_lookup=plan_lookup,
-                )
-                previous = latest_result_by_unit.get(unit_identity)
-                if previous is None or cls._result_order_key(attack_result) > cls._result_order_key(previous):
-                    latest_result_by_unit[unit_identity] = attack_result
-
-        planned_units = plan_lookup.planned_units if plan is not None else frozenset(latest_result_by_unit)
-        total = len(planned_units)
-        completed_results = [result for unit, result in latest_result_by_unit.items() if unit in planned_units]
-        completed = len(completed_results)
-        succeeded = sum(result.outcome == AttackOutcome.SUCCESS for result in completed_results)
-        rate = int((succeeded / completed) * 100) if completed else 0
-        return total, completed, rate, succeeded
-
-    @staticmethod
-    def _result_order_key(attack_result: AttackResult) -> tuple[datetime, str]:
-        """Return a deterministic chronological key for one hydrated result attempt."""
-        return ScenarioProgressReadModel._timestamp_order_key(attack_result.timestamp), str(
-            attack_result.attack_result_id
-        )
-
-    @staticmethod
-    def _timestamp_order_key(timestamp: object) -> datetime:
-        """
-        Normalize potentially malformed timestamps from mutable result objects.
-
-        Returns:
-            datetime: The timestamp or a stable earliest-time fallback.
-        """
-        return timestamp if isinstance(timestamp, datetime) else datetime.min.replace(tzinfo=UTC)
+        overall = compute_scenario_statistics(scenario_result, plan=plan, use_saved_plan=False).overall
+        total = overall.planned if overall.planned is not None else overall.completed
+        return total, overall.completed, overall.success_percentage or 0, overall.succeeded
 
     @staticmethod
     def total_retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Iterable[int]) -> int:
@@ -386,9 +256,7 @@ class ScenarioProgressReadModel:
         Returns:
             int: Total retry pressure.
         """
-        within_attempts = sum(max(0, retries) for retries in persisted_retries)
-        repeated_units = sum(max(0, count - 1) for count in attempts_per_unit)
-        return within_attempts + repeated_units
+        return retry_pressure(attempts_per_unit=attempts_per_unit, persisted_retries=persisted_retries)
 
     @staticmethod
     def _build_technique_details_by_group(
@@ -443,28 +311,7 @@ class ScenarioProgressReadModel:
             attempts_by_unit.setdefault(identity, []).append(result)
 
         def aggregate(*, units: Sequence[ResultUnitIdentity], planned: int | None) -> ScenarioProgressCounts:
-            completed = 0
-            succeeded = 0
-            errors = 0
-            retries = 0
-            for unit in units:
-                attempts = attempts_by_unit.get(unit, [])
-                if attempts:
-                    completed += 1
-                    succeeded += int(attempts[-1].outcome == AttackOutcome.SUCCESS)
-                    errors += sum(int(attempt.outcome == AttackOutcome.ERROR) for attempt in attempts)
-                    retries += ScenarioProgressReadModel.total_retry_pressure(
-                        attempts_per_unit=[len(attempts)],
-                        persisted_retries=[attempt.total_retries for attempt in attempts],
-                    )
-            return ScenarioProgressCounts(
-                completed=completed,
-                planned=planned,
-                succeeded=succeeded,
-                success_percentage=int((succeeded / completed) * 100) if completed else None,
-                errors=errors,
-                retries=retries,
-            )
+            return count_execution_units(units=units, attempts_by_unit=attempts_by_unit, planned=planned)
 
         group_units: dict[str, list[ResultUnitIdentity]] = {
             group.id: [
@@ -769,32 +616,18 @@ class ScenarioProgressReadModel:
         """
         atomic_attack_name = str(delta.attribution_data.get("parent_collection") or "")
         eval_hash = delta.attribution_data.get("parent_eval_hash")
-        atomic_group_id = config_hash(
-            {"atomic_attack_name": atomic_attack_name, "technique_eval_hash": eval_hash or ""}
-        )
-        planned_group = plan_lookup.resolve_group(
+        attributed_seed_group_id = delta.attribution_data.get("seed_group_id")
+        unit = resolve_execution_unit(
             atomic_attack_name=atomic_attack_name,
             technique_eval_hash=str(eval_hash) if eval_hash is not None else None,
+            attributed_seed_group_id=str(attributed_seed_group_id) if attributed_seed_group_id else None,
+            atomic_attack_identifier=delta.atomic_attack_identifier,
+            objective=delta.objective,
+            objective_sha256=delta.objective_sha256,
+            plan_lookup=plan_lookup,
         )
-        if planned_group is not None:
-            atomic_group_id = planned_group.id
-        attributed_seed_group_id = delta.attribution_data.get("seed_group_id")
-        seed_group_id = str(attributed_seed_group_id) if attributed_seed_group_id else ""
-        if (
-            not seed_group_id
-            and delta.atomic_attack_identifier is not None
-            and delta.atomic_attack_identifier.seed_identifiers
-        ):
-            seed_group_id = delta.atomic_attack_identifier.logical_seed_group_id
-        if not seed_group_id and delta.objective_sha256:
-            matching_seed_ids = plan_lookup.seed_ids_by_group_and_objective.get(
-                (atomic_group_id, delta.objective_sha256),
-                (),
-            )
-            if len(matching_seed_ids) == 1:
-                seed_group_id = matching_seed_ids[0]
-        if not seed_group_id:
-            seed_group_id = config_hash({"objective": delta.objective})
+        atomic_group_id = unit.atomic_group_id
+        seed_group_id = unit.seed_group_id
         return ScenarioProgressResult(
             attack_result_id=delta.attack_result_id,
             conversation_id=delta.conversation_id,

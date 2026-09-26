@@ -170,6 +170,8 @@ filterwarnings = [
     # Keep the in-repo suite on the scorable/expectation contract. Tests that cover the
     # shim itself opt back in with pytest.warns.
     "error:Scorer\\.score_async:DeprecationWarning",
+    # Rates come from pyrit.analytics; tests that cover the deprecated method opt back in with pytest.warns.
+    "error:ScenarioResult\\.objective_achieved_rate:DeprecationWarning",
 ]
 
 [tool.ty]

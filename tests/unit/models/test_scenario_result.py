@@ -4,6 +4,8 @@
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+
 from pyrit.models import (
     ComponentIdentifier,
     ConversationReference,
@@ -109,10 +111,10 @@ class TestScenarioResult:
 
     def test_objective_achieved_rate_all(self):
         results = [
-            _make_attack_result(outcome=AttackOutcome.SUCCESS),
-            _make_attack_result(outcome=AttackOutcome.FAILURE),
-            _make_attack_result(outcome=AttackOutcome.SUCCESS),
-            _make_attack_result(outcome=AttackOutcome.UNDETERMINED),
+            _make_attack_result(objective="obj1", outcome=AttackOutcome.SUCCESS),
+            _make_attack_result(objective="obj2", outcome=AttackOutcome.FAILURE),
+            _make_attack_result(objective="obj3", outcome=AttackOutcome.SUCCESS),
+            _make_attack_result(objective="obj4", outcome=AttackOutcome.UNDETERMINED),
         ]
         sr = make_scenario_result(
             scenario_name="TestScenario",
@@ -120,7 +122,8 @@ class TestScenarioResult:
             attack_results={"s1": results},
             objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
-        assert sr.objective_achieved_rate() == 50
+        with pytest.warns(DeprecationWarning, match="compute_scenario_statistics"):
+            assert sr.objective_achieved_rate() == 50
 
     def test_objective_achieved_rate_empty(self):
         sr = make_scenario_result(
@@ -129,7 +132,8 @@ class TestScenarioResult:
             attack_results={"s1": []},
             objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
-        assert sr.objective_achieved_rate() == 0
+        with pytest.warns(DeprecationWarning, match="compute_scenario_statistics"):
+            assert sr.objective_achieved_rate() == 0
 
     def test_objective_achieved_rate_by_name(self):
         sr = make_scenario_result(
@@ -141,9 +145,10 @@ class TestScenarioResult:
             },
             objective_scorer_identifier=ComponentIdentifier.model_validate({}),
         )
-        assert sr.objective_achieved_rate(atomic_attack_name="s1") == 100
-        assert sr.objective_achieved_rate(atomic_attack_name="s2") == 0
-        assert sr.objective_achieved_rate(atomic_attack_name="missing") == 0
+        with pytest.warns(DeprecationWarning, match="compute_scenario_statistics"):
+            assert sr.objective_achieved_rate(atomic_attack_name="s1") == 100
+            assert sr.objective_achieved_rate(atomic_attack_name="s2") == 0
+            assert sr.objective_achieved_rate(atomic_attack_name="missing") == 0
 
     def test_normalize_scenario_name_snake_case(self):
         assert ScenarioResult.normalize_scenario_name("content_harms") == "ContentHarms"

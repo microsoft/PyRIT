@@ -5,12 +5,24 @@ from types import SimpleNamespace
 
 from unit.mocks import make_scenario_result
 
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, Score, ScoreStatus
+from pyrit.common.utils import to_sha256
+from pyrit.models import (
+    SCENARIO_RUN_PLAN_METADATA_KEY,
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    ScenarioRunPlan,
+    ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanSeedGroup,
+    Score,
+    ScoreStatus,
+)
 from pyrit.output._derivation import (
+    GroupStatistics,
     attack_score_display,
-    group_success_rate,
     resolve_scorer_name,
     resolve_target_info,
+    scenario_overview,
     select_attacks,
 )
 
@@ -47,21 +59,71 @@ def test_resolve_target_info_missing_fields_are_none():
     assert info.endpoint is None
 
 
-# --- group_success_rate ---
+# --- scenario_overview ---
 
 
-def test_group_success_rate_empty_is_zero():
-    assert group_success_rate([]) == 0
+def test_scenario_overview_empty_is_zero():
+    result = make_scenario_result(scenario_name="S", attack_results={"s1": []})
+
+    overview = scenario_overview(result)
+
+    assert (overview.units, overview.attempts, overview.success_rate) == (0, 0, 0)
+    assert overview.groups == [GroupStatistics(name="s1", units=0, attempts=0, success_rate=0)]
 
 
-def test_group_success_rate_counts_success():
-    attacks = [
-        _attack(outcome=AttackOutcome.SUCCESS),
-        _attack(outcome=AttackOutcome.FAILURE),
-        _attack(outcome=AttackOutcome.SUCCESS),
-        _attack(outcome=AttackOutcome.UNDETERMINED),
-    ]
-    assert group_success_rate(attacks) == 50
+def test_scenario_overview_folds_atomic_attacks_by_display_group():
+    result = make_scenario_result(
+        scenario_name="S",
+        attack_results={
+            "base64": [
+                AttackResult(conversation_id="c1", objective="o1", outcome=AttackOutcome.SUCCESS),
+                AttackResult(conversation_id="c2", objective="o2", outcome=AttackOutcome.FAILURE),
+            ],
+            "rot13": [AttackResult(conversation_id="c3", objective="o1", outcome=AttackOutcome.SUCCESS)],
+        },
+        display_group_map={"base64": "encoding", "rot13": "encoding"},
+    )
+
+    overview = scenario_overview(result)
+
+    assert overview.success_rate == 66
+    assert overview.groups == [GroupStatistics(name="encoding", units=3, attempts=3, success_rate=66)]
+
+
+def test_scenario_overview_uses_display_group_map_even_when_plan_labels_differ():
+    # The saved plan labels the group differently from display_group_map; the report must still
+    # key its rates the way it groups results (by display_group_map) instead of showing 0%.
+    plan = ScenarioRunPlan(
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id="g",
+                atomic_attack_name="base64",
+                display_group="Plan Label",
+                technique_eval_hash="e",
+                seed_group_ids=["s"],
+            )
+        ],
+        seed_groups=[ScenarioRunPlanSeedGroup(id="s", objective_sha256=to_sha256("o"), objective="o")],
+    )
+    result = make_scenario_result(
+        scenario_name="S",
+        attack_results={
+            "base64": [
+                AttackResult(
+                    conversation_id="c1",
+                    objective="o",
+                    outcome=AttackOutcome.SUCCESS,
+                    attribution_data={"parent_collection": "base64", "parent_eval_hash": "e", "seed_group_id": "s"},
+                )
+            ]
+        },
+        display_group_map={"base64": "encoding"},
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+    )
+
+    overview = scenario_overview(result)
+
+    assert overview.groups == [GroupStatistics(name="encoding", units=1, attempts=1, success_rate=100)]
 
 
 # --- attack_score_display ---

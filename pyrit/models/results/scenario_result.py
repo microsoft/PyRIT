@@ -11,6 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from pyrit.common.deprecation import print_deprecation_message
+
 # Runtime-required by Pydantic field / computed-field annotations.
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier  # noqa: TC001
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier  # noqa: TC001
@@ -229,7 +231,16 @@ class ScenarioResult(BaseModel):
         Returns:
             int: Success rate as a percentage (0-100).
 
+        .. deprecated:: 1.2.0
+            Counts every persisted attempt, including ERROR attempts that were later retried or resumed.
+            Use ``pyrit.analytics.compute_scenario_statistics(result)``, which counts each execution unit
+            once and is shared with the GUI backend and the reports. Removed in 1.4.0.
         """
+        print_deprecation_message(
+            old_item="ScenarioResult.objective_achieved_rate",
+            new_item="pyrit.analytics.compute_scenario_statistics",
+            removed_in="1.4.0",
+        )
         if not atomic_attack_name:
             # Calculate rate across all atomic attacks
             all_results = []

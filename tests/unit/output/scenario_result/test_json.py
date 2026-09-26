@@ -3,6 +3,7 @@
 
 import json
 import uuid
+from datetime import timedelta
 
 import pytest
 from unit.mocks import make_scenario_result
@@ -65,8 +66,8 @@ async def test_overview_reports_scenario_and_stats(printer):
         target_params={"model_name": "gpt-test", "endpoint": "https://example.com"},
         attack_results={
             "technique_a": [
-                _attack_result(outcome=AttackOutcome.SUCCESS),
-                _attack_result(outcome=AttackOutcome.FAILURE),
+                _attack_result(outcome=AttackOutcome.SUCCESS, objective="obj1"),
+                _attack_result(outcome=AttackOutcome.FAILURE, objective="obj2"),
             ],
             "technique_b": [_attack_result(outcome=AttackOutcome.SUCCESS)],
         },
@@ -82,7 +83,8 @@ async def test_overview_reports_scenario_and_stats(printer):
     assert payload["target"]["endpoint"] == "https://example.com"
     assert payload["stats"]["total_techniques"] == 2
     assert payload["stats"]["total_results"] == 3
-    assert payload["stats"]["unique_objectives"] == 1
+    assert payload["stats"]["total_attempts"] == 3
+    assert payload["stats"]["unique_objectives"] == 3
     assert {g["name"] for g in payload["groups"]} == {"technique_a", "technique_b"}
 
 
@@ -209,3 +211,19 @@ def test_build_conversations_empty_entries():
 
 async def test_memory_printer_constructs_without_args(patch_central_database):
     assert isinstance(JsonScenarioResultMemoryPrinter(), JsonScenarioResultPrinter)
+
+
+async def test_overview_separates_units_from_attempts(printer):
+    retried = [
+        AttackResult(conversation_id=str(uuid.uuid4()), objective="obj", outcome=AttackOutcome.ERROR),
+        AttackResult(conversation_id=str(uuid.uuid4()), objective="obj", outcome=AttackOutcome.SUCCESS),
+    ]
+    retried[1].timestamp = retried[0].timestamp + timedelta(seconds=1)
+    result = _scenario_result(attack_results={"technique_a": retried})
+
+    payload = json.loads(await printer.render_async(result))
+
+    assert payload["stats"]["total_results"] == 1
+    assert payload["stats"]["total_attempts"] == 2
+    assert payload["stats"]["overall_success_rate"] == 100
+    assert payload["groups"] == [{"name": "technique_a", "num_results": 1, "num_attempts": 2, "success_rate": 100}]

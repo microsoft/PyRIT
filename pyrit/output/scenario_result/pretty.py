@@ -6,7 +6,12 @@ import textwrap
 from colorama import Fore, Style
 
 from pyrit.models import AttackOutcome, ScenarioResult
-from pyrit.output._derivation import attack_score_display, group_success_rate, resolve_target_info, select_attacks
+from pyrit.output._derivation import (
+    attack_score_display,
+    resolve_target_info,
+    scenario_overview,
+    select_attacks,
+)
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase, ScenarioView
 from pyrit.output.scorer.base import ScorerPrinterBase
@@ -196,13 +201,14 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
 
         lines = []
         lines.append(self._render_section_header("Overall Statistics"))
-        total_results = sum(len(results) for results in result.attack_results.values())
         total_techniques = len(result.get_techniques_used())
-        overall_rate = result.objective_achieved_rate()
+        overview = scenario_overview(result)
+        overall_rate = overview.success_rate
 
         lines.append(self._format_colored(f"{self._indent}📈 Summary", Style.BRIGHT))
         lines.append(self._format_colored(f"{self._indent * 2}• Total Techniques: {total_techniques}", Fore.GREEN))
-        lines.append(self._format_colored(f"{self._indent * 2}• Total Attack Results: {total_results}", Fore.GREEN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Total Attack Results: {overview.units}", Fore.GREEN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Total Attempts: {overview.attempts}", Fore.GREEN))
         lines.append(
             self._format_colored(
                 f"{self._indent * 2}• Overall Success Rate: {overall_rate}%", self._get_rate_color(overall_rate)
@@ -213,24 +219,20 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         lines.append(self._format_colored(f"{self._indent * 2}• Unique Objectives: {len(objectives)}", Fore.GREEN))
 
         lines.append(self._render_section_header("Per-Group Breakdown"))
-        display_groups = result.get_display_groups()
-
-        group_summaries: list[tuple[str, int, int]] = [
-            (group_name, len(group_results), group_success_rate(group_results))
-            for group_name, group_results in display_groups.items()
-        ]
+        group_summaries = list(overview.groups)
 
         if self._sort_groups_by_success_rate:
             # Stable sort so groups with equal rates retain their original relative order.
-            group_summaries.sort(key=lambda item: item[2], reverse=True)
+            group_summaries.sort(key=lambda group: group.success_rate, reverse=True)
 
-        for group_name, total_group, group_rate in group_summaries:
+        for group in group_summaries:
             lines.append("\n")
-            lines.append(self._format_colored(f"{self._indent}🔸 Group: {group_name}", Style.BRIGHT))
-            lines.append(self._format_colored(f"{self._indent * 2}• Number of Results: {total_group}", Fore.YELLOW))
+            lines.append(self._format_colored(f"{self._indent}🔸 Group: {group.name}", Style.BRIGHT))
+            lines.append(self._format_colored(f"{self._indent * 2}• Number of Results: {group.units}", Fore.YELLOW))
+            lines.append(self._format_colored(f"{self._indent * 2}• Attempts: {group.attempts}", Fore.YELLOW))
             lines.append(
                 self._format_colored(
-                    f"{self._indent * 2}• Success Rate: {group_rate}%", self._get_rate_color(group_rate)
+                    f"{self._indent * 2}• Success Rate: {group.success_rate}%", self._get_rate_color(group.success_rate)
                 )
             )
 
