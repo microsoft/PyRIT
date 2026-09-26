@@ -256,14 +256,19 @@ class DigitBijectionConverter(BijectionConverter):
             str: Instructions for using this digit mapping and its markers.
         """
         mapping_str = ", ".join(f"{key}={value}" for key, value in self._mapping.items())
-        examples = "; ".join(f'"{text}" encodes to "{self.encode(prompt=text)}"' for text in ("it's", "I'm"))
+        examples = "; ".join(f'"{text}" encodes to "{self.encode(prompt=text)}"' for text in ("it's", "I'm", "top 10"))
         return (
             "Use this substitution notation for the rest of the conversation. Replace each lowercase English "
             f"letter using this table of {self._num_digits}-digit tokens: {mapping_str}. "
             "For uppercase letters, prefix the lowercase letter's token with one apostrophe "
             f"({self._CASE_MARKER}). Encode each literal apostrophe as two apostrophes "
-            f"({self._CASE_MARKER * 2}). Preserve spaces and all other punctuation. "
+            f"({self._CASE_MARKER * 2}). Encode each literal digit as one tilde "
+            f"({self._LITERAL_MARKER}) followed by that digit, and each literal tilde as two tildes "
+            f"({self._LITERAL_MARKER * 2}), so that every unescaped run of digits is made only of table tokens. "
+            "Preserve spaces and all other punctuation. "
             "Join adjacent digit tokens without separators. To decode, scan from left to right. "
+            "Consume a tilde together with the single character after it first: two tildes are one literal tilde, "
+            "and a tilde before a digit is that literal digit. "
             "Consume doubled apostrophes as one literal apostrophe before checking for a single uppercase marker. "
             "Reverse the table for each digit token, making its letter uppercase only when preceded by that marker. "
             f"Examples: {examples}. When a user message is in this notation, read it by reversing these rules, "
@@ -299,9 +304,19 @@ class DigitBijectionConverter(BijectionConverter):
     # doubled on encode and collapsed back on decode.
     _CASE_MARKER = "'"
 
+    # A digit in the plaintext collides with the digit tokens the same way a literal
+    # apostrophe collides with _CASE_MARKER. Tokens are bare digit runs joined without
+    # separators, so a passed-through "123" is indistinguishable from encoded letters:
+    # decode() reads num_digits characters at a time and consumes whatever prefix of the
+    # literal number happens to be in the mapping ("abc 123 xyz" round-trips to
+    # "abc w3 xyz" whenever "12" is some letter's token). Every literal digit is therefore
+    # escaped with a marker that can never appear inside a token, which leaves every bare
+    # digit run in the encoded text a pure concatenation of tokens.
+    _LITERAL_MARKER = "~"
+
     def encode(self, *, prompt: str) -> str:
         """
-        Encode text using digit tokens and uppercase markers.
+        Encode text using digit tokens, uppercase markers, and literal-digit escapes.
 
         Args:
             prompt (str): The prompt to encode.
@@ -316,6 +331,10 @@ class DigitBijectionConverter(BijectionConverter):
                 encoded += (self._CASE_MARKER + token) if char.isupper() else token
             elif char == self._CASE_MARKER:
                 encoded += self._CASE_MARKER * 2
+            elif char == self._LITERAL_MARKER:
+                encoded += self._LITERAL_MARKER * 2
+            elif char in string.digits:
+                encoded += self._LITERAL_MARKER + char
             else:
                 encoded += char
         return encoded
@@ -352,6 +371,14 @@ class DigitBijectionConverter(BijectionConverter):
         decoded = ""
         i = 0
         while i < len(encoded_text):
+            # Literal escapes bind to exactly one following character, so they are resolved
+            # before any digit run is considered for token lookup.
+            if encoded_text[i] == self._LITERAL_MARKER:
+                escaped = encoded_text[i + 1 : i + 2]
+                if escaped == self._LITERAL_MARKER or escaped in string.digits:
+                    decoded += escaped
+                    i += 2
+                    continue
             if encoded_text[i] == self._CASE_MARKER and encoded_text[i + 1 : i + 2] == self._CASE_MARKER:
                 decoded += self._CASE_MARKER
                 i += 2

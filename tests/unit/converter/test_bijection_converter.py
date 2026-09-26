@@ -128,6 +128,49 @@ async def test_digit_converter_literal_apostrophe_round_trip():
     assert converter.decode(encoded.output_text) == "it's"
 
 
+async def test_digit_converter_literal_digit_round_trip():
+    """A literal number survives encoding instead of being read back as letter tokens."""
+    custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
+    converter = DigitBijectionConverter(mapping=custom_mapping)
+
+    encoded = await converter.convert_async(prompt="abc 123 xyz")
+
+    # Unescaped, "12" is c's token and the literal number would decode as "w3"/"c3".
+    assert encoded.output_text == "101112 ~1~2~3 333435"
+    assert converter.decode(encoded.output_text) == "abc 123 xyz"
+
+
+async def test_digit_converter_literal_marker_round_trip():
+    """The escape character itself is doubled so it can still be sent literally."""
+    custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
+    converter = DigitBijectionConverter(mapping=custom_mapping)
+
+    encoded = await converter.convert_async(prompt="a~b")
+
+    assert encoded.output_text == "10~~11"
+    assert converter.decode(encoded.output_text) == "a~b"
+
+
+@pytest.mark.parametrize("num_digits", [2, 3, 4])
+@pytest.mark.parametrize(
+    "prompt",
+    ["abc 123 xyz", "CVE-2021-44228", "pi is 3.14159", "BOB's 7 cats~", "~12", "0000000000"],
+)
+def test_digit_converter_round_trips_digit_bearing_prompts(num_digits: int, prompt: str):
+    """Digit-bearing prompts round-trip for every mapping width, not just lucky mappings."""
+    for seed in range(12):
+        converter = DigitBijectionConverter(num_digits=num_digits, seed=seed)
+        assert converter.decode(converter.encode(prompt=prompt)) == prompt
+
+
+def test_digit_converter_teaching_instructions_cover_literal_digits():
+    """The target is told the escape rule, since it has to apply the same one."""
+    instructions = DigitBijectionConverter(seed=42).get_teaching_instructions()
+
+    assert "literal digit" in instructions
+    assert "~" in instructions
+
+
 async def test_digit_converter_uppercase_letter_after_apostrophe_round_trip():
     custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
     converter = DigitBijectionConverter(mapping=custom_mapping)
