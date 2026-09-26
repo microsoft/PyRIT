@@ -14,8 +14,8 @@ class CaesarConverter(Converter):
     Encodes text using the Caesar cipher with a specified offset.
 
     Using ``offset=1``, 'Hello 123' would encode to 'Ifmmp 234', as each character would shift by 1.
-    Shifts for digits 0-9 only work if the offset is less than 10, if the offset is equal to or greater than 10,
-    any numeric values will not be shifted.
+    Letters shift by the offset modulo 26 and ASCII digits 0-9 by the offset modulo 10, so negative
+    offsets shift backwards and ``offset=13`` encodes 'Room 12' to 'Ebbz 45'.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -89,7 +89,10 @@ class CaesarConverter(Converter):
 
     def _caesar(self, text: str) -> str:
         def shift(alphabet: str) -> str:
-            return alphabet[self.caesar_offset :] + alphabet[: self.caesar_offset]
+            # Wrap the offset per alphabet: slicing the 10 digits by an offset of 10 or more
+            # would leave them unshifted.
+            offset = self.caesar_offset % len(alphabet)
+            return alphabet[offset:] + alphabet[:offset]
 
         alphabet = (string.ascii_lowercase, string.ascii_uppercase, string.digits)
         shifted_alphabet = tuple(map(shift, alphabet))

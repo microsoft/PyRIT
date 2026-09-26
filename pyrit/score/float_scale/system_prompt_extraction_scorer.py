@@ -4,6 +4,7 @@
 # Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
 # See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
+import math
 import re
 
 from pyrit.analytics.text_matching import ApproximateTextMatching
@@ -59,7 +60,14 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
             categories (list[str] | None): Optional categories to attach to the score. Defaults to None.
             validator (ScorerPromptValidator | None): Custom validator. Defaults to a validator that
                 accepts text assistant responses.
+
+        Raises:
+            ValueError: If ``excerpt_threshold`` is not finite or is outside [0.0, 1.0].
         """
+        # The excerpt rule returns this value as the score itself, so it must be a valid
+        # float_scale value; otherwise only a verbatim leak would fail, and only mid-scan.
+        if not math.isfinite(excerpt_threshold) or not 0.0 <= excerpt_threshold <= 1.0:
+            raise ValueError(f"excerpt_threshold must be finite and between 0.0 and 1.0, got {excerpt_threshold}")
         self._n = n
         self._excerpt_threshold = excerpt_threshold
         self._min_prompt_len = min_prompt_len

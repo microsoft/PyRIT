@@ -271,6 +271,23 @@ async def test_azure_content_filter_scorer_accepts_short_text(patch_central_data
         mock_client.analyze_text.assert_called_once()
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("length", [0, 9999, 10000, 10001, 20000, 20001])
+async def test_shared_chunking_preserves_request_slices_async(length: int) -> None:
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.VIOLENCE])
+    text = ("0123456789" * 2001)[:length]
+    piece = MessagePiece(role="assistant", original_value=text)
+    with patch.object(scorer._azure_cf_client, "analyze_text", new_callable=AsyncMock) as analyze:
+        analyze.return_value = {"categoriesAnalysis": [{"severity": "2", "category": "Violence"}]}
+        scores = await scorer._score_piece_async(piece)
+    expected = [text[i : i + 10000] for i in range(0, length, 10000)] or [""]
+    assert [call.args[0].text for call in analyze.await_args_list] == expected
+    assert "".join(expected) == text
+    assert len(scores) == 1
+    assert scores[0].message_piece_id == piece.id
+    assert scores[0].score_metadata == {"azure_severity": 2}
+
+
 async def test_evaluate_async_raises_for_multiple_categories():
     """Test that evaluate_async raises ValueError when multiple harm categories are configured."""
     scorer = AzureContentFilterScorer(

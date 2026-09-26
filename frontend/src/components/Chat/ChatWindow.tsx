@@ -42,6 +42,7 @@ import { sameTarget } from '@/utils/targetIdentity'
 import ObjectiveHeader from './ObjectiveHeader'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
+import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import TargetSelect from '@/components/Config/TargetSelect'
 import {
@@ -301,6 +302,7 @@ export default function ChatWindow({
   const isExportingRef = useRef(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
+  const runtime = useRuntime()
   // Conversation-wide preference for rendering message text as Markdown.
   const { preferences, updatePreferences } = useUserPreferences()
   const globalMarkdown = preferences.chatMarkdown
@@ -517,12 +519,17 @@ export default function ChatWindow({
   // Reload messages when activeConversationId changes
   useEffect(() => {
     if (!attackResultId || !activeConversationId) { return }
-    // Allow user-initiated switches (forceLoadRef), but skip re-loading when
-    // handleSend internally updated activeConversationId during an in-flight
-    // send — the optimistic messages are already displayed.
+    // A created-attack route can commit after its first send completes.
+    // Preserve that local result unless the user explicitly requests a refresh.
     const force = forceLoadRef.current
     forceLoadRef.current = false
-    if (!force && sendingConvIdsRef.current.has(activeConversationId)) { return }
+    if (!force && (
+      sendingConvIdsRef.current.has(activeConversationId)
+      || (
+        loadedConversationIdRef.current === activeConversationId
+        && activeConversationLoadRequestRef.current === null
+      )
+    )) { return }
     loadConversation(attackResultId, activeConversationId)
   }, [activeConversationId, attackResultId, loadConversation])
 
@@ -556,7 +563,8 @@ export default function ChatWindow({
     attachments: MessageAttachment[],
   ): Promise<ChatSendOutcome> => {
     if (
-      !activeTarget
+      !runtime.ready
+      || !activeTarget
       || isLoadingAttack
       || isLoadingMessages
       || awaitingConversationLoad
@@ -1422,7 +1430,8 @@ export default function ChatWindow({
           systemPrompt={systemPrompt}
           onSystemPromptChange={setSystemPrompt}
           disabled={
-            isSending
+            !runtime.ready
+            || isSending
             || !activeTarget
             || isLoadingAttack
             || singleTurnLimitReached

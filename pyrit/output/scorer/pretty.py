@@ -246,6 +246,27 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
                 self._format_colored(f"{self._indent * 3}• MAE Std Error: ±{metrics.mae_standard_error:.4f}", Fore.CYAN)
             )
 
+        if metrics.mean_absolute_error_unanimous is not None:
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• MAE on unanimous rows: {metrics.mean_absolute_error_unanimous:.4f}"
+                    f" (n={metrics.num_unanimous_responses})",
+                    Fore.CYAN,
+                )
+            )
+
+        if metrics.mean_absolute_error_contested is not None:
+            contested_color = self._get_quality_color(
+                metrics.mean_absolute_error_contested, higher_is_better=False, good_threshold=0.1, bad_threshold=0.25
+            )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• MAE on contested rows: {metrics.mean_absolute_error_contested:.4f}"
+                    f" (n={metrics.num_contested_responses})",
+                    contested_color,
+                )
+            )
+
         baseline_mae = getattr(metrics, "baseline_mean_absolute_error", None)
         if baseline_mae is not None:
             beats_baseline = metrics.mean_absolute_error < baseline_mae - _BASELINE_TIE_TOLERANCE
