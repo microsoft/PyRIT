@@ -75,6 +75,7 @@ def test_all_converters_are_documented():
         "LLMGenericTextConverter",  # Base class
         "WordLevelConverter",  # Base class
         "SmugglerConverter",  # Base class (in subdirectory)
+        "TaskFramingConverter",  # Deprecated alias of PromptTemplateConverter, removed in 1.4.0
         "get_converter_modalities",  # Function, not a converter class
     }
 
