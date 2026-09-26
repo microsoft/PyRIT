@@ -268,3 +268,20 @@ memory.dispose_engine()
 # Other sources can use the same protocol with their own scorable types.
 # The caller owns instrumentation and trace retrieval. Automatic request
 # correlation does not install a remote collector or a backend adapter.
+
+# %% [markdown]
+# ## Score tool calls without traces
+#
+# `MessageToolCallScorer` reads the same `ToolsCalled` condition from stored
+# messages instead of spans. A tool counts only when a model-authored
+# `function_call` piece is paired, by call ID, with a later `function_call_output`
+# piece in the conversation through the scored response. PyRIT's own
+# "function not found" and "malformed arguments" outputs do not count, because
+# the function never ran.
+#
+# Stored messages are partial evidence. Hosted tools, several response section
+# types, and targets that execute tools themselves leave no output pieces, so the
+# scorer returns true or undetermined and never false. `OpenAIResponseTarget`
+# records these pieces when it runs `custom_functions`. Combine it with
+# `OtelToolCallScorer` under `TrueFalseScoreAggregator.OR` when trace evidence is
+# also available.

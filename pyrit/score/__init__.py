@@ -89,6 +89,7 @@ if TYPE_CHECKING:
         render_llamaguard_prompt,
     )
     from pyrit.score.true_false.manual_scorer import ManualScorer
+    from pyrit.score.true_false.message_tool_call_scorer import MessageToolCallScorer
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
@@ -205,6 +206,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "LlamaGuardScorer": "pyrit.score.true_false.llamaguard_scorer",
     "MarkdownInjectionScorer": "pyrit.score.true_false.regex.markdown_injection",
     "ManualScorer": "pyrit.score.true_false.manual_scorer",
+    "MessageToolCallScorer": "pyrit.score.true_false.message_tool_call_scorer",
     "MessageScorableResolver": "pyrit.score.message_scorable_resolver",
     "MessageScorable": "pyrit.score.scorable",
     "MessageScorer": "pyrit.score.message_scorer",
