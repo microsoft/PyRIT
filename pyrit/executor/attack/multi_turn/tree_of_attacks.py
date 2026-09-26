@@ -40,6 +40,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
 )
+from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy, attack_outcome_from_score
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
 from pyrit.memory import CentralMemory
@@ -63,7 +64,6 @@ from pyrit.prompt_target.common.target_history import filter_non_replayable_mess
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
-    MessageScorer,
     NumericRubric,
     Scorer,
     SelfAskScaleScorer,
@@ -470,6 +470,9 @@ class _TreeOfAttacksNode:
         self._prepended_history_send_context: PrependedHistorySendContext | None = None
         # Context from prepended conversation (for adversarial chat system prompt)
         self._conversation_context: str | None = None
+        # Number of prepended messages persisted in the objective target conversation. They are
+        # history, not attack turns, so they do not count when deciding whether this is the first turn.
+        self._prepended_message_count = 0
 
         # Initial prompt for first turn (bypasses adversarial chat generation)
         # This supports multimodal messages
@@ -529,6 +532,7 @@ class _TreeOfAttacksNode:
         persisted_messages = list(
             self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
         )
+        self._prepended_message_count = len(persisted_messages)
         self._prepended_history_send_context = conversation_manager.create_prepended_history_send_context(
             target=self._objective_target,
             conversation_id=self.objective_target_conversation_id,
@@ -842,7 +846,7 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=objective,
         ):
-            scoring_results = await MessageScorer.score_response_async(
+            scoring_results = await score_attack_response_async(
                 response=response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
@@ -1021,6 +1025,7 @@ class _TreeOfAttacksNode:
 
         # Copy conversation context for adversarial chat system prompt
         duplicate_node._conversation_context = self._conversation_context
+        duplicate_node._prepended_message_count = self._prepended_message_count
         duplicate_node.last_response = copy.deepcopy(self.last_response)
 
         # Copy visualization position so the clone starts from the same tree position
@@ -1210,14 +1215,15 @@ class _TreeOfAttacksNode:
         Check if this is the first turn of the conversation.
 
         This method determines whether the node is executing its initial attack turn by
-        examining the objective target conversation history.
+        examining the objective target conversation history. Prepended messages are history
+        rather than attack turns, so they are not counted.
 
         Returns:
-            bool: True if no messages exist in the objective target conversation (first turn),
-                False if the conversation already contains messages (subsequent turns).
+            bool: True if the objective target conversation contains no messages beyond the
+                prepended conversation (first turn), False otherwise (subsequent turns).
         """
         target_messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
-        return not target_messages
+        return len(target_messages) <= self._prepended_message_count
 
     async def _generate_first_turn_prompt_async(self, objective: str) -> str:
         """

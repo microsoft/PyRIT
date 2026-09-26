@@ -96,6 +96,7 @@ from pyrit.models import (
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
+    SeedObjective,
     SeedType,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
@@ -107,6 +108,9 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+#: Canonical criteria key of a seed that carries no conditions.
+_NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
 
 
 Model = TypeVar("Model")
@@ -2815,7 +2819,13 @@ class MemoryInterface(abc.ABC):
         self.add_message_pieces_to_memory(message_pieces=message_pieces)
 
         if self.memory_embedding:
-            for piece in message_pieces:
+            # Embeddings power text similarity search and only describe text pieces.
+            # A multimodal message (e.g. text plus an image_path piece) must still
+            # persist instead of failing the whole write, and pieces flagged
+            # not_in_memory are never persisted, so no embedding row may reference them.
+            for piece in pieces_to_persist:
+                if piece.converted_value_data_type != "text":
+                    continue
                 embedding_entry = self.memory_embedding.generate_embedding_memory_data(message_piece=piece)
                 embedding_entries.append(embedding_entry)
 
@@ -3043,8 +3053,10 @@ class MemoryInterface(abc.ABC):
         Args:
             value (str): The value to match. By default this matches by substring; pass exact=True to
                 require full-string equality instead. If None, all values are returned.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to False (substring matching).
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
+                and ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list
+                elements (case-insensitive) rather than substrings of the stored list. Defaults to False
+                (substring matching).
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -3100,12 +3112,14 @@ class MemoryInterface(abc.ABC):
         elif seed_type is not None:
             conditions.append(SeedEntry.seed_type == seed_type)
 
-        self._add_list_conditions(field=SeedEntry.harm_categories, values=harm_categories, conditions=conditions)
-        self._add_list_conditions(field=SeedEntry.authors, values=authors, conditions=conditions)
-        self._add_list_conditions(field=SeedEntry.groups, values=groups, conditions=conditions)
+        self._add_list_conditions(
+            field=SeedEntry.harm_categories, values=harm_categories, conditions=conditions, exact=exact
+        )
+        self._add_list_conditions(field=SeedEntry.authors, values=authors, conditions=conditions, exact=exact)
+        self._add_list_conditions(field=SeedEntry.groups, values=groups, conditions=conditions, exact=exact)
 
         if parameters:
-            self._add_list_conditions(field=SeedEntry.parameters, values=parameters, conditions=conditions)
+            self._add_list_conditions(field=SeedEntry.parameters, values=parameters, conditions=conditions, exact=exact)
 
         if metadata:
             conditions.append(self._get_seed_metadata_conditions(metadata=metadata))
@@ -3225,10 +3239,11 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
-                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
-                by substring.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring, and
+                ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list elements
+                (case-insensitive), so ``harm_categories=["hate"]`` does not also remove seeds tagged
+                ``"hate_speech"``. Defaults to True for the remove methods (the safer choice for deletion).
+                Note this differs from get_seeds, which always matches these filters by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -3242,9 +3257,9 @@ class MemoryInterface(abc.ABC):
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             added_by (str): The user who added the prompts.
-            authors (Sequence[str]): A list of authors to filter by.
-                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
-                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors (Sequence[str]): A list of authors to filter by. With exact=True (the default) each author
+                must match a stored author exactly (case-insensitive); with exact=False this filters by substring.
+                If None, all authors are considered.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
@@ -3340,10 +3355,11 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
-                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
-                by substring.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring, and
+                ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list elements
+                (case-insensitive), so ``harm_categories=["hate"]`` does not also remove seeds tagged
+                ``"hate_speech"``. Defaults to True for the remove methods (the safer choice for deletion).
+                Note this differs from get_seeds, which always matches these filters by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -3357,9 +3373,9 @@ class MemoryInterface(abc.ABC):
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             added_by (str): The user who added the prompts.
-            authors (Sequence[str]): A list of authors to filter by.
-                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
-                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors (Sequence[str]): A list of authors to filter by. With exact=True (the default) each author
+                must match a stored author exactly (case-insensitive); with exact=False this filters by substring.
+                If None, all authors are considered.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
@@ -3427,11 +3443,25 @@ class MemoryInterface(abc.ABC):
 
     def _add_list_conditions(
         self,
+        *,
         field: InstrumentedAttribute[Any],
         conditions: "list[ColumnElement[bool]]",
         values: Sequence[str] | None = None,
+        exact: bool = False,
     ) -> None:
-        if values:
+        if not values:
+            return
+        if exact:
+            # Match whole list elements (case-insensitive) so "hate" does not match "hate_speech" or "whatever".
+            conditions.append(
+                self._get_condition_json_array_match(
+                    json_column=field,
+                    property_path="$",
+                    array_to_match=list(values),
+                    match_mode="all",
+                )
+            )
+        else:
             conditions.extend(field.contains(value) for value in values)
 
     async def _serialize_seed_value_async(self, prompt: Seed) -> str:
@@ -3508,8 +3538,12 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Seeds already present in storage are skipped. Duplicates *within* ``seeds`` are all
-        inserted, because the check looks at what storage held when the call started.
+        Seeds with the same value hash, dataset, and canonical conditions already present
+        in storage are skipped. Duplicates *within* ``seeds`` are all inserted, because the
+        check looks at what storage held when the call started.
+        Groups introducing new objective criteria retain the other seeds in the same group
+        even when their content is already stored in another group. When a stored seed is
+        copied to a new group, its caller-visible ID is updated after successful insertion.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -3523,25 +3557,101 @@ class MemoryInterface(abc.ABC):
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
         existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
+        new_condition_group_ids = self._get_new_condition_group_ids(
+            seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
+        )
+        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in new_condition_group_ids]
+        stored_groups = (
+            {
+                entry.id: entry.prompt_group_id
+                for entry in self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.id, batch_values=retained_seed_ids
+                )
+            }
+            if retained_seed_ids
+            else {}
+        )
 
         entries: MutableSequence[SeedEntry] = []
+        copied_seed_ids: list[tuple[Seed, uuid.UUID]] = []
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
+            conditions_key = self._seed_conditions_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
-            if prompt.dataset_name:
-                if (prompt.value_sha256, prompt.dataset_name) in existing_pairs:
+            if prompt.prompt_group_id in new_condition_group_ids:
+                if prompt.id in stored_groups and stored_groups[prompt.id] == prompt.prompt_group_id:
                     continue
-            elif prompt.value_sha256 in existing_hashes:
+                entry = SeedEntry(entry=prompt)
+                if prompt.id in stored_groups:
+                    entry.id = uuid.uuid4()
+                    copied_seed_ids.append((prompt, entry.id))
+                entries.append(entry)
+                continue
+            if prompt.dataset_name:
+                if (prompt.value_sha256, prompt.dataset_name, conditions_key) in existing_pairs:
+                    continue
+            elif (prompt.value_sha256, conditions_key) in existing_hashes:
                 continue
             entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
+        for prompt, new_id in copied_seed_ids:
+            prompt.id = new_id
 
-    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed]) -> tuple[set[tuple[str, str]], set[str]]:
+    @staticmethod
+    def _seed_conditions_key(seed: Seed) -> str:
         """
-        Look up which of these seeds' hashes are already stored.
+        Serialize criteria canonically, preserving condition order.
+
+        Returns:
+            str: Canonical JSON used for criteria identity.
+        """
+        conditions = seed.model_dump(mode="json", include={"conditions"}).get("conditions", [])
+        if not conditions:
+            return _NO_CONDITIONS_KEY
+        return json.dumps(conditions, sort_keys=True, separators=(",", ":"))
+
+    def _get_new_condition_group_ids(
+        self,
+        *,
+        seeds: Sequence[Seed],
+        existing_pairs: set[tuple[str, str, str]],
+        existing_hashes: set[tuple[str, str]],
+    ) -> set[uuid.UUID]:
+        """
+        Identify groups whose newly authored criteria require retaining all input seeds.
+
+        Other seeds in the same group do not own conditions. Their ordinary content
+        deduplication must not strip them from a new condition-bearing group, or from a group that
+        removes previously stored criteria. Purely condition-free loading is unchanged.
+
+        Returns:
+            set[uuid.UUID]: Group IDs whose complete input membership must be retained.
+        """
+        conditions_by_value: dict[tuple[str, str | None], set[str]] = {}
+        for value_hash, dataset, conditions in existing_pairs:
+            conditions_by_value.setdefault((value_hash, dataset), set()).add(conditions)
+        for value_hash, conditions in existing_hashes:
+            conditions_by_value.setdefault((value_hash, None), set()).add(conditions)
+
+        group_ids: set[uuid.UUID] = set()
+        for seed in seeds:
+            if not isinstance(seed, SeedObjective) or seed.prompt_group_id is None or not seed.value_sha256:
+                continue
+            stored_conditions = conditions_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
+            if self._seed_conditions_key(seed) in stored_conditions:
+                continue
+            if seed.conditions or stored_conditions - {_NO_CONDITIONS_KEY}:
+                group_ids.add(seed.prompt_group_id)
+        return group_ids
+
+    def _get_existing_seed_keys(
+        self, *, seeds: Sequence[Seed]
+    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
+        """
+        Look up which value hashes and canonical conditions are already stored.
 
         Queries in chunks rather than once per seed, which otherwise dominates the cost of
         loading a large dataset. ``get_seeds`` issues the statement directly instead of going
@@ -3558,9 +3668,9 @@ class MemoryInterface(abc.ABC):
             seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
 
         Returns:
-            tuple[set[tuple[str, str]], set[str]]: The stored (value_sha256, dataset_name)
-                pairs keyed by the requested dataset name, and the stored hashes irrespective
-                of dataset.
+            tuple[set[tuple[str, str, str]], set[tuple[str, str]]]: The stored
+                (value_sha256, dataset_name, conditions) keys, using the requested
+                dataset name, and (value_sha256, conditions) keys irrespective of dataset.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
         for prompt in seeds:
@@ -3570,8 +3680,8 @@ class MemoryInterface(abc.ABC):
                 # cannot disagree.
                 hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
 
-        existing_pairs: set[tuple[str, str]] = set()
-        existing_hashes: set[str] = set()
+        existing_pairs: set[tuple[str, str, str]] = set()
+        existing_hashes: set[tuple[str, str]] = set()
         for dataset_name, dataset_hashes in hashes_by_dataset.items():
             hashes = sorted(dataset_hashes)
             # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
@@ -3582,13 +3692,14 @@ class MemoryInterface(abc.ABC):
                 for existing in self.get_seeds(value_sha256=chunk, dataset_name=dataset_name):
                     if not existing.value_sha256:
                         continue
+                    conditions_key = self._seed_conditions_key(existing)
                     if dataset_name:
                         # The database decided the name matched, so record the name that was
                         # asked for; the stored spelling can differ under a case-insensitive
                         # collation.
-                        existing_pairs.add((existing.value_sha256, dataset_name))
+                        existing_pairs.add((existing.value_sha256, dataset_name, conditions_key))
                     else:
-                        existing_hashes.add(existing.value_sha256)
+                        existing_hashes.add((existing.value_sha256, conditions_key))
 
         return existing_pairs, existing_hashes
 
@@ -4996,106 +5107,23 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the limit, cursor ID, or label keys are invalid.
         """
-        if limit < 1 or limit > 100:
-            raise ValueError("Scenario history limit must be between 1 and 100.")
+        from pyrit.memory._scenario_history import _ScenarioHistoryQueries
 
-        conditions: list[Any] = []
-        effective_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
-        if effective_names:
-            conditions.append(
-                or_(
-                    ScenarioResultEntry.scenario_name.in_(effective_names),
-                    self._get_scenario_registry_name_condition(scenario_names=effective_names),
-                )
-            )
-        effective_statuses = sorted({status.strip().upper() for status in statuses or [] if status.strip()})
-        if effective_statuses:
-            conditions.append(ScenarioResultEntry.scenario_run_state.in_(effective_statuses))
-        effective_labels = {
-            key: value
-            for key, value in (labels or {}).items()
-            if (isinstance(value, str) and value) or (not isinstance(value, str) and len(value) > 0)
-        }
-        invalid_keys = sorted(key for key in effective_labels if not self._LABEL_KEY_PATTERN.fullmatch(key))
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
-            )
-        if effective_labels:
-            conditions.append(self._get_scenario_result_labels_condition(labels=effective_labels))
-        if cursor is not None:
-            cursor_id = uuid.UUID(cursor.scenario_result_id)
-            conditions.append(
-                or_(
-                    ScenarioResultEntry.timestamp < cursor.timestamp,
-                    and_(
-                        ScenarioResultEntry.timestamp == cursor.timestamp,
-                        ScenarioResultEntry.id < cursor_id,
-                    ),
-                )
-            )
-
-        statement = select(
-            ScenarioResultEntry.id,
-            ScenarioResultEntry.scenario_name,
-            ScenarioResultEntry.scenario_version,
-            ScenarioResultEntry.pyrit_version,
-            ScenarioResultEntry.scenario_identifier,
-            ScenarioResultEntry.objective_target_identifier,
-            ScenarioResultEntry.scenario_run_state,
-            ScenarioResultEntry.labels,
-            ScenarioResultEntry.timestamp,
-            self._get_scenario_started_at_expression().label("started_at"),
-            ScenarioResultEntry.completion_time,
-            ScenarioResultEntry.error_message,
-            ScenarioResultEntry.error_type,
-            *(
-                expression.label(label)
-                for expression, label in zip(
-                    self._get_scenario_history_plan_expressions(),
-                    ("scenario_registry_name", "plan_atomic_groups", "plan_seed_id_map"),
-                    strict=True,
-                )
-            ),
+        queries = _ScenarioHistoryQueries(memory=self)
+        records, has_more = queries.get_page(
+            scenario_names=scenario_names,
+            statuses=statuses,
+            labels=labels,
+            cursor=cursor,
+            limit=limit,
         )
-        if conditions:
-            statement = statement.where(and_(*conditions))
-        statement = statement.order_by(
-            ScenarioResultEntry.timestamp.desc(),
-            ScenarioResultEntry.id.desc(),
-        ).limit(limit + 1)
-        with closing(self.get_session()) as session:
-            rows = session.execute(statement).all()
-        page_rows = rows[:limit]
-
-        records = [
-            ScenarioHistoryRunRecord(
-                scenario_result_id=str(row.id),
-                scenario_name=row.scenario_name,
-                scenario_version=row.scenario_version,
-                pyrit_version=row.pyrit_version,
-                scenario_identifier=row.scenario_identifier or {},
-                objective_target_identifier=row.objective_target_identifier or {},
-                status=row.scenario_run_state,
-                labels=row.labels or {},
-                created_at=row.timestamp,
-                started_at=self._parse_scenario_started_at(raw_value=row.started_at),
-                completed_at=row.completion_time,
-                error_message=row.error_message,
-                error_type=row.error_type,
-                scenario_registry_name=row.scenario_registry_name,
-                plan_atomic_groups=row.plan_atomic_groups,
-                plan_seed_id_map=row.plan_seed_id_map,
-            )
-            for row in page_rows
-        ]
         aggregates = self.get_scenario_history_aggregates(
             scenario_result_ids=[record.scenario_result_id for record in records],
             plan_scenario_ids=[
                 record.scenario_result_id for record in records if record.plan_atomic_groups is not None
             ],
         )
-        return records, aggregates, len(rows) > limit
+        return records, aggregates, has_more
 
     def get_scenario_history_aggregates(
         self,
@@ -5356,13 +5384,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             datetime | None: Aware start timestamp, or None for legacy or malformed values.
         """
-        if not isinstance(raw_value, str):
-            return None
-        try:
-            value = datetime.fromisoformat(raw_value)
-        except ValueError:
-            return None
-        return value if value.tzinfo is not None else None
+        from pyrit.memory._scenario_history import _parse_scenario_started_at
+
+        return _parse_scenario_started_at(raw_value=raw_value)
 
     def get_unique_scenario_labels(self) -> dict[str, list[str]]:
         """Return all unique label values across scenario results."""

@@ -539,7 +539,10 @@ class ScenarioRunListItem(BaseModel):
     updated_at: datetime = Field(..., description="When the run status last changed")
     error: str | None = Field(None, description="Persisted run-level error message")
     error_type: str | None = Field(None, description="Persisted run-level exception class")
-    techniques_used: list[str] = Field(default_factory=list, description="Planned technique display groups")
+    techniques_used: list[str] = Field(
+        default_factory=list,
+        description="Canonical technique names, with display-group or attack-name fallbacks for legacy runs",
+    )
     total_attacks: int | None = Field(None, ge=0, description="Number of planned execution units when known")
     completed_attacks: int = Field(0, ge=0, description="Latest completed planned units")
     objective_achieved_rate: int = Field(0, ge=0, le=100, description="Success rate as percentage (0-100)")

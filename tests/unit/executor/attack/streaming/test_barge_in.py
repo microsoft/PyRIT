@@ -109,7 +109,7 @@ async def test_execute_rejects_conditions_before_opening_stream(vad_target):
     )
     with (
         patch.object(attack, "_setup_async", new_callable=AsyncMock) as setup,
-        pytest.raises(ValueError, match="does not match the condition"),
+        pytest.raises(ValueError, match="objective scorer is required"),
     ):
         await attack.execute_with_context_async(context=ctx)
     setup.assert_not_awaited()

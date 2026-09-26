@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 
-from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoringExpectation
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
+from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
@@ -51,38 +52,21 @@ class AudioFloatScaleScorer(MessageFloatScaleScorer):
             sub_scorers=[self._audio_helper.text_scorer.get_identifier()],
         )
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the conditions matched by the transcript scorer.
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the scorer that evaluates the transcript."""
+        return (self._audio_helper.text_scorer,)
 
-        Returns:
-            frozenset[type[Condition]]: The matched condition types.
-        """
-        return self._audio_helper.text_scorer.matched_conditions()
-
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the conditions required by the transcript scorer.
-
-        Returns:
-            frozenset[type[Condition]]: The required condition types.
-        """
-        return self._audio_helper.text_scorer.required_conditions()
-
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        """Validate transcript scorer criteria before transcription or target I/O."""
-        super()._validate_expectation(expectation=expectation)
-        self._audio_helper.text_scorer._validate_expectation(expectation=expectation)
-
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score an audio file by transcribing it and scoring the transcript.
 
         Args:
             message_piece: The message piece containing the audio file path.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the transcript scorer.
 
         Returns:
             List of scores from evaluating the transcribed audio.
         """
-        return await self._audio_helper._score_audio_async(message_piece=message_piece, objective=objective)
+        return await self._audio_helper._score_audio_async(message_piece=message_piece, expectation=expectation)

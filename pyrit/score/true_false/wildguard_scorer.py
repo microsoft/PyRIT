@@ -9,7 +9,15 @@ from functools import partial
 from typing import Any, ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import ComponentIdentifier, ContentScorable, Message, MessagePiece, Score, SeedPrompt
+from pyrit.models import (
+    ComponentIdentifier,
+    ContentScorable,
+    Message,
+    MessagePiece,
+    Score,
+    ScoringExpectation,
+    SeedPrompt,
+)
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
@@ -303,7 +311,9 @@ class WildGuardScorer(MessageTrueFalseScorer):
             )
         ]
 
-    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+    async def _score_async(
+        self, message: Message, *, objective: str | None = None, expectation: ScoringExpectation | None = None
+    ) -> list[Score]:
         """
         Score every supported piece and record the aggregated verdict.
 
@@ -318,6 +328,7 @@ class WildGuardScorer(MessageTrueFalseScorer):
         Args:
             message (Message): The message to score.
             objective (str | None): Objective retained on the resulting score. Defaults to None.
+            expectation (ScoringExpectation | None): Complete criteria passed through aggregation.
 
         Returns:
             list[Score]: A single aggregated true/false score, or an empty list when no piece
@@ -337,7 +348,7 @@ class WildGuardScorer(MessageTrueFalseScorer):
         scoring_message = Message(message_pieces=pieces)
         token = _RESOLVED_USER_PROMPT.set(await self._resolve_user_prompt_async(pieces[0]))
         try:
-            scores = await super()._score_async(scoring_message, objective=objective)
+            scores = await super()._score_async(scoring_message, objective=objective, expectation=expectation)
         finally:
             _RESOLVED_USER_PROMPT.reset(token)
 

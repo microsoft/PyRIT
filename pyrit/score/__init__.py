@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
     from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
+    from pyrit.score.float_scale.float_scale_fallback_scorer import FloatScaleFallbackScorer
     from pyrit.score.float_scale.float_scale_score_aggregator import (
         FloatScaleScoreAggregator,
         FloatScaleScorerAllCategories,
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
     from pyrit.score.float_scale.insecure_code_scorer import InsecureCodeScorer, render_insecure_code_system_prompt
     from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
+    from pyrit.score.float_scale.local_violence_classifier_scorer import LocalViolenceClassifierScorer
     from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
     from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
     from pyrit.score.float_scale.roblox_pii_scorer import RobloxPiiCategory, RobloxPiiScorer
@@ -78,6 +80,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
     from pyrit.score.true_false.gandalf_scorer import GandalfScorer
+    from pyrit.score.true_false.garak_exploitation_scorer import GarakExploitationDetector, GarakExploitationScorer
     from pyrit.score.true_false.llamaguard_parser import LLAMAGUARD_3_CATEGORY_CODES, parse_llamaguard_response
     from pyrit.score.true_false.llamaguard_policy import LlamaGuardCategory, LlamaGuardPolicy
     from pyrit.score.true_false.llamaguard_scorer import (
@@ -89,6 +92,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
+    from pyrit.score.true_false.regex.agent_threat_rules_scorer import AgentThreatRulesScorer
     from pyrit.score.true_false.regex.ansi_escape_output_scorer import AnsiEscapeOutputScorer
     from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
     from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
@@ -136,6 +140,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.shieldgemma_scorer import ShieldGemmaScorer, render_shieldgemma_prompt
     from pyrit.score.true_false.substring_scorer import SubStringScorer
     from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
+    from pyrit.score.true_false.true_false_fallback_scorer import TrueFalseFallbackScorer
     from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
     from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
     from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
@@ -156,6 +161,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ContentClassifierCategory": "pyrit.score.true_false.self_ask_category_scorer",
     "ContentClassifierPaths": "pyrit.score.true_false.self_ask_category_scorer",
     "ConversationScorer": "pyrit.score.conversation_scorer",
+    "AgentThreatRulesScorer": "pyrit.score.true_false.regex.agent_threat_rules_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
     "DecodingScorer": "pyrit.score.true_false.decoding_scorer",
     "DivergenceScorer": "pyrit.score.true_false.regex.divergence_scorer",
@@ -165,11 +171,14 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FloatScaleScoreAggregator": "pyrit.score.float_scale.float_scale_score_aggregator",
     "FloatScaleScorerAllCategories": "pyrit.score.float_scale.float_scale_score_aggregator",
     "FloatScaleScorerByCategory": "pyrit.score.float_scale.float_scale_score_aggregator",
+    "FloatScaleFallbackScorer": "pyrit.score.float_scale.float_scale_fallback_scorer",
     "FloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
     "MessageFloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
     "MessageTrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
     "FloatScaleThresholdScorer": "pyrit.score.true_false.float_scale_threshold_scorer",
     "GandalfScorer": "pyrit.score.true_false.gandalf_scorer",
+    "GarakExploitationDetector": "pyrit.score.true_false.garak_exploitation_scorer",
+    "GarakExploitationScorer": "pyrit.score.true_false.garak_exploitation_scorer",
     "HarmHumanLabeledEntry": "pyrit.score.scorer_evaluation.human_labeled_dataset",
     "HarmScorerEvaluator": "pyrit.score.scorer_evaluation.scorer_evaluator",
     "HarmScorerMetrics": "pyrit.score.scorer_evaluation.scorer_metrics",
@@ -266,6 +275,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "SubStringScorer": "pyrit.score.true_false.substring_scorer",
     "SystemPromptExtractionScorer": "pyrit.score.float_scale.system_prompt_extraction_scorer",
     "TrueFalseCompositeScorer": "pyrit.score.true_false.true_false_composite_scorer",
+    "TrueFalseFallbackScorer": "pyrit.score.true_false.true_false_fallback_scorer",
     "TrueFalseInverterScorer": "pyrit.score.true_false.true_false_inverter_scorer",
     "TrueFalseQuestion": "pyrit.score.true_false.self_ask_true_false_scorer",
     "TrueFalseQuestionPaths": "pyrit.score.true_false.self_ask_true_false_scorer",
@@ -274,6 +284,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
     "VideoFloatScaleScorer": "pyrit.score.float_scale.video_float_scale_scorer",
     "VideoTrueFalseScorer": "pyrit.score.true_false.video_true_false_scorer",
+    "LocalViolenceClassifierScorer": "pyrit.score.float_scale.local_violence_classifier_scorer",
     "WildGuardLabel": "pyrit.score.true_false.wildguard_parser",
     "WildGuardScorer": "pyrit.score.true_false.wildguard_scorer",
     "XSSOutputScorer": "pyrit.score.true_false.regex.xss_output_scorer",

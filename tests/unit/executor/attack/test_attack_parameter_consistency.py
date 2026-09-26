@@ -8,6 +8,9 @@ These tests verify that all attacks handle objective, next_message, prepended_co
 and memory_labels consistently according to the established contracts.
 """
 
+import dataclasses
+import importlib
+import pkgutil
 import uuid
 from contextlib import suppress
 from pathlib import Path
@@ -15,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import pyrit.executor.attack
 from pyrit.common.path import DATASETS_PATH, EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -38,6 +42,7 @@ from pyrit.models import (
     PromptDataType,
     Score,
     SeedDataset,
+    SeedObjective,
     SeedPrompt,
     get_common_json_schema,
 )
@@ -702,7 +707,7 @@ class TestAdversarialReplyParsedConsistentlyAcrossAttacks:
 
 
 # Adversarial system prompts routed through ``_AdversarialConversationManager`` but not exposed via a
-# ``*SystemPromptPaths`` enum: the SimulatedConversation crescendo personas (each drives an inner
+# ``*SystemPromptPaths`` enum: SimulatedConversation crescendo personas (each drives an inner
 # ``RedTeamingAttack`` whose adversarial system prompt is the YAML) and the scam-scenario persuasion
 # persona (set as ``AttackAdversarialConfig.system_prompt``).
 _NON_ENUM_ADVERSARIAL_SYSTEM_PROMPTS = [
@@ -946,13 +951,13 @@ class TestPrependedConversationInMemory:
             next_message=multimodal_text_message,  # Required when prepended_conversation is provided
         )
 
-        # TAP prunes all branches with these mocks, so result.conversation_id is empty. The prepended
-        # messages were duplicated into the single node conversation; resolve that id from memory.
-        assert not result.conversation_id
+        # next_message is sent on the first live turn and scored as a success, so the result points at
+        # the single node conversation that holds the prepended messages.
+        assert result.conversation_id
         memory = CentralMemory.get_memory_instance()
         node_conversation_ids = {piece.conversation_id for piece in memory.get_message_pieces()}
-        assert len(node_conversation_ids) == 1, f"Expected one conversation in memory, got {node_conversation_ids}"
-        conversation = list(memory.get_conversation_messages(conversation_id=node_conversation_ids.pop()))
+        assert node_conversation_ids == {result.conversation_id}
+        conversation = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -1219,3 +1224,54 @@ class TestAdversarialChatContextInjection:
                         f"Prepended text '{piece.original_value}' not found in node conversation. "
                         f"Available text: {node_text}"
                     )
+
+
+def _all_params_types() -> list[type]:
+    """
+    Collect every attack parameters type: AttackParameters subclasses and the module-level
+    ``AttackParameters.excluding(...)`` types, which are generated without inheritance.
+    """
+    for module_info in pkgutil.walk_packages(pyrit.executor.attack.__path__, "pyrit.executor.attack."):
+        importlib.import_module(module_info.name)
+
+    params_types: list[type] = []
+
+    def _add(candidate: type) -> None:
+        if candidate not in params_types:
+            params_types.append(candidate)
+
+    pending: list[type] = [AttackParameters]
+    while pending:
+        params_type = pending.pop()
+        _add(params_type)
+        pending.extend(params_type.__subclasses__())
+
+    for module_info in pkgutil.walk_packages(pyrit.executor.attack.__path__, "pyrit.executor.attack."):
+        module = importlib.import_module(module_info.name)
+        for value in vars(module).values():
+            if (
+                isinstance(value, type)
+                and dataclasses.is_dataclass(value)
+                and hasattr(value, "from_seed_group_async")
+                and "objective" in {f.name for f in dataclasses.fields(value)}
+            ):
+                _add(value)
+
+    return sorted(params_types, key=lambda params_type: params_type.__name__)
+
+
+@pytest.mark.parametrize("params_type", _all_params_types(), ids=lambda c: c.__name__)
+async def test_params_types_propagate_targeted_harm_categories(params_type) -> None:
+    if "targeted_harm_categories" not in {f.name for f in dataclasses.fields(params_type)}:
+        pytest.skip(f"{params_type.__name__} excludes targeted_harm_categories")
+
+    seed_group = AttackSeedGroup(
+        seeds=[
+            SeedObjective(value="objective", harm_categories=["violence"]),
+            SeedPrompt(value="turn one", data_type="text", role="user", sequence=0),
+        ]
+    )
+
+    params = await params_type.from_seed_group_async(seed_group=seed_group)
+
+    assert params.targeted_harm_categories == ["violence"]

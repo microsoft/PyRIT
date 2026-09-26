@@ -6,7 +6,9 @@
 import logging
 import os
 from hashlib import sha256
+from typing import Any
 
+import yaml
 from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -16,6 +18,7 @@ from pyrit.backend.models.configuration import (
     ConfigurationFileContent,
     EnvironmentFileContent,
     EnvironmentFileListResponse,
+    ReinitializeRequest,
     UpdateConfigurationFileRequest,
     UpdateEnvironmentFileRequest,
 )
@@ -25,9 +28,37 @@ from pyrit.backend.services.configuration_file_service import (
 )
 from pyrit.backend.services.environment_file_service import EnvironmentFileConflictError, EnvironmentFileService
 from pyrit.exceptions import KeyVaultInitializationException
+from pyrit.setup.configuration_loader import ConfigurationLoader
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["config"], dependencies=[Depends(require_admin)])
+
+
+@router.get("/runtime")
+async def runtime_status_async(request: Request) -> dict[str, Any]:
+    """Return administrator-visible runtime status and outstanding work."""
+    return request.app.state.runtime_lifecycle.status()
+
+
+@router.post("/runtime/apply", status_code=202)
+async def reinitialize_async(body: ReinitializeRequest, request: Request) -> dict[str, Any]:
+    """
+    Apply saved configuration in the current backend process.
+
+    Returns:
+        dict[str, Any]: Accepted operation or rejection status.
+    """
+    result = request.app.state.runtime_lifecycle.begin_apply(
+        version=body.version,
+    )
+    _audit_configuration_access(
+        request=request,
+        action="apply",
+        source="runtime",
+        outcome=result["outcome"],
+        version=body.version,
+    )
+    return result
 
 
 def _content_hash(content: str) -> str:
@@ -74,6 +105,15 @@ def _storage_unavailable() -> HTTPException:
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Configuration storage is temporarily unavailable",
     )
+
+
+def _live_reinitialization_enabled(content: str) -> bool:
+    """Return the explicit saved opt-in without executing configuration code."""
+    try:
+        value = yaml.safe_load(content)
+        return isinstance(value, dict) and ConfigurationLoader.from_dict(value).enable_live_reinitialization
+    except (TypeError, ValueError, yaml.YAMLError):
+        return False
 
 
 def _get_configuration_file_service(request: Request) -> ConfigurationFileService:
@@ -134,7 +174,12 @@ async def get_configuration_file(  # pyrit-async-suffix-exempt
         outcome="success",
         version=version,
     )
-    return ConfigurationFileContent(content=content, source=service.source, version=version)
+    return ConfigurationFileContent(
+        content=content,
+        source=service.source,
+        version=version,
+        live_reinitialization_enabled=_live_reinitialization_enabled(content),
+    )
 
 
 @router.put(
@@ -187,7 +232,12 @@ async def update_configuration_file(  # pyrit-async-suffix-exempt
         outcome="success",
         version=version,
     )
-    return ConfigurationFileContent(content=body.content, source=service.source, version=version)
+    return ConfigurationFileContent(
+        content=body.content,
+        source=service.source,
+        version=version,
+        live_reinitialization_enabled=_live_reinitialization_enabled(body.content),
+    )
 
 
 @router.get("/env-files", response_model=EnvironmentFileListResponse)
