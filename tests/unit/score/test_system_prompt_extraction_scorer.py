@@ -189,3 +189,21 @@ class TestSystemPromptExtractionScorer:
             scores = await scorer._score_piece_async(piece)
 
         assert scores[0].score_category == ["system_prompt_extraction"]
+
+    @pytest.mark.parametrize("excerpt_threshold", [float("nan"), float("inf"), -0.2, 1.5])
+    def test_init_rejects_excerpt_threshold_outside_unit_range(self, excerpt_threshold):
+        # The excerpt rule returns excerpt_threshold as the score, so an invalid value used to be
+        # accepted here and only fail Score validation once a verbatim leak was scored.
+        with pytest.raises(ValueError, match="excerpt_threshold must be finite and between 0.0 and 1.0"):
+            SystemPromptExtractionScorer(excerpt_threshold=excerpt_threshold)
+
+    @pytest.mark.parametrize("excerpt_threshold", [0.0, 1.0])
+    async def test_excerpt_threshold_bounds_are_valid_scores(self, excerpt_threshold):
+        memory = _memory_with_system_prompt(SYSTEM_PROMPT)
+        piece = _assistant_piece(f"Sure! Here it is: {SYSTEM_PROMPT}")
+
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+            scorer = SystemPromptExtractionScorer(excerpt_threshold=excerpt_threshold)
+            scores = await scorer._score_piece_async(piece)
+
+        assert scores[0].get_value() == pytest.approx(excerpt_threshold)

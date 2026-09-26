@@ -69,6 +69,31 @@ class TestKrippendorffAlpha:
         result = krippendorff_alpha(data, level_of_measurement="ordinal")
         assert np.isnan(result)
 
+    def test_unpairable_identical_ratings_returns_nan(self):
+        """Test that identical ratings with no pairable item return NaN, not 1.0.
+
+        Every item is rated by exactly one rater, so no coincidence can be
+        formed and alpha is undefined, even though all ratings happen to be
+        identical. Reporting 1.0 would claim perfect reliability from data that
+        cannot measure reliability at all.
+        """
+        data = np.array([[1, np.nan], [np.nan, 1]])
+        result = krippendorff_alpha(data, level_of_measurement="ordinal")
+        assert np.isnan(result)
+
+    def test_unpairable_identical_ratings_mixed_with_pairable_returns_value(self):
+        """Test that one pairable item is enough to define alpha."""
+        # Item 0 is rated by two raters (pairable); item 1 by a single rater.
+        data = np.array([[1, 2], [1, np.nan]])
+        result = krippendorff_alpha(data, level_of_measurement="ordinal")
+        assert not np.isnan(result)
+
+    def test_pairable_identical_ratings_still_return_one(self):
+        """Test that identical ratings with a pairable item still return 1.0."""
+        data = np.array([[2, 2], [2, np.nan]])
+        result = krippendorff_alpha(data, level_of_measurement="ordinal")
+        assert result == 1.0
+
     def test_all_missing_returns_nan(self):
         """Test that all missing values returns NaN."""
         data = np.array([[np.nan, np.nan], [np.nan, np.nan]])

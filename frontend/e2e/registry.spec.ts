@@ -363,4 +363,70 @@ test.describe("Converter Registry", () => {
     const bounds = await listbox.boundingBox();
     expect(bounds?.height).toBeGreaterThan(300);
   });
+
+  for (const { name, viewport, deviceScaleFactor } of [
+    { name: "wide short screen", viewport: { width: 1920, height: 600 }, deviceScaleFactor: 1 },
+    { name: "scaled laptop", viewport: { width: 1280, height: 640 }, deviceScaleFactor: 1.5 },
+    { name: "narrow screen", viewport: { width: 390, height: 640 }, deviceScaleFactor: 2 },
+  ]) {
+    test.describe(name, () => {
+      test.use({ viewport, deviceScaleFactor });
+
+      test("keeps a long converter list vertical, stable, and scrollable", async ({ page }) => {
+        await page.getByRole("button", { name: "New Converter" }).click();
+        const trigger = page.getByRole("combobox", { name: "Converter type" });
+        await trigger.click();
+
+        const listbox = page.getByRole("listbox");
+        await expect(listbox).toBeVisible();
+        const anchor = await trigger.evaluate((button) => {
+          const { x, y, width, height } = button.parentElement!.getBoundingClientRect();
+          return { x, y, width, height };
+        });
+        await expect.poll(async () => {
+          const box = (await listbox.boundingBox())!;
+          return Math.abs(box.x - anchor.x);
+        }).toBeLessThanOrEqual(1);
+
+        // Sample successive frames: a single bounding box can miss position oscillation.
+        const samples = await listbox.evaluate(async (element) => {
+          const bounds = [];
+          for (let frame = 0; frame < 60; frame++) {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+            const { x, y, width, height } = element.getBoundingClientRect();
+            bounds.push({ x, y, width, height });
+          }
+          return bounds;
+        });
+
+        for (const box of samples) {
+          expect(Math.abs(box.x - anchor.x)).toBeLessThanOrEqual(1);
+          expect(Math.abs(box.width - anchor.width)).toBeLessThanOrEqual(1);
+          expect(box.height).toBeGreaterThan(0);
+          expect(box.x).toBeGreaterThanOrEqual(-1);
+          expect(box.y).toBeGreaterThanOrEqual(-1);
+          expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
+          expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
+          expect(
+            box.y >= anchor.y + anchor.height - 1
+              || box.y + box.height <= anchor.y + 1,
+          ).toBe(true);
+          expect(Math.abs(box.y - samples[0].y)).toBeLessThanOrEqual(1);
+          expect(Math.abs(box.height - samples[0].height)).toBeLessThanOrEqual(1);
+        }
+
+        const scroll = await listbox.evaluate((element) => ({
+          height: element.clientHeight,
+          contentHeight: element.scrollHeight,
+        }));
+        expect(scroll.contentHeight).toBeGreaterThan(scroll.height);
+        const lastOption = listbox.getByRole("option").last();
+        await lastOption.scrollIntoViewIfNeeded();
+        await expect(lastOption).toBeInViewport();
+        await lastOption.click();
+        await expect(listbox).toBeHidden();
+        await expect(trigger).toHaveText("ViewportConverter9");
+      });
+    });
+  }
 });
