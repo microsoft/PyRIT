@@ -1,8 +1,13 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
 import type { BackendMessage, BackendMessagePiece } from "@/types";
-import { makeAddMessageResponse } from "./_attacks";
+import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
+import { READY_RUNTIME } from "./_runtime";
 import { makeTarget } from "./_targets";
+
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/runtime", async (route) => { await route.fulfill({ json: READY_RUNTIME }); });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers – mock backend API responses so tests don't require an OpenAI key
@@ -47,7 +52,7 @@ async function mockBackendAPIs(page: Page) {
   // Mock add-message – MUST be registered BEFORE the create-attack route
   // so the more specific pattern matches first.
   let postSeen = false; // track POST so GET doesn't return empty during render race
-  await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
+  await page.route(/\/api\/attacks\/[^/]+\/(?:messages|message-sends)(?:\?|$)/, async (route) => {
     if (route.request().method() === "POST") {
       let userText = "your message";
       try {
@@ -96,13 +101,9 @@ async function mockBackendAPIs(page: Page) {
       accumulatedMessages.push(userMsg, assistantMsg);
       postSeen = true;
 
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(makeAddMessageResponse(
-          "e2e-attack-001", MOCK_CONVERSATION_ID, [...accumulatedMessages],
-        )),
-      });
+      await fulfillMessageSend(route, makeAddMessageResponse(
+        "e2e-attack-001", MOCK_CONVERSATION_ID, [...accumulatedMessages],
+      ));
     } else if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -412,7 +413,7 @@ function buildModalityMock(
     // Also handles GET requests for loadConversation.
     let lastMessages: BackendMessage[] = [];
     let postSeen = false; // track POST so GET doesn't return empty during render race
-    await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
+    await page.route(/\/api\/attacks\/[^/]+\/(?:messages|message-sends)(?:\?|$)/, async (route) => {
       if (route.request().method() === "POST") {
         let userText = "user-input";
         try {
@@ -449,13 +450,9 @@ function buildModalityMock(
           },
         ];
         postSeen = true;
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify(makeAddMessageResponse(
-            "e2e-modality-attack", mockConversationId, lastMessages,
-          )),
-        });
+        await fulfillMessageSend(route, makeAddMessageResponse(
+          "e2e-modality-attack", mockConversationId, lastMessages,
+        ));
       } else if (route.request().method() === "GET") {
         // Return empty before any POST so loadConversation doesn't hang,
         // but don't overwrite UI with stale empty data.

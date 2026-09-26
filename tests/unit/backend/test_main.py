@@ -7,6 +7,7 @@ Tests for the FastAPI application entry point (main.py).
 Covers the lifespan manager and setup_frontend function.
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import Iterator
@@ -23,7 +24,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
 from pyrit.backend.models.converters import CreateConverterRequest
 from pyrit.backend.services.converter_service import ConverterService, get_converter_service
+from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
+from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.memory import AzureSQLMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
@@ -45,6 +49,58 @@ def mock_scenario_run_lifecycle():
 
 class TestLifespan:
     """Tests for the application lifespan context manager."""
+
+    async def test_cancelled_manual_shutdown_still_closes_converter_and_clears_caches_async(
+        self, *, patch_central_database: MagicMock
+    ) -> None:
+        service = get_message_send_service()
+        converter = get_converter_service()
+        with (
+            patch.object(service, "shutdown_async", side_effect=asyncio.CancelledError),
+            patch.object(converter, "close_async", wraps=converter.close_async) as close,
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await close_services_async()
+        close.assert_awaited_once()
+        assert get_message_send_service.cache_info().currsize == 0
+        assert get_manual_send_scheduler.cache_info().currsize == 0
+        assert get_converter_service.cache_info().currsize == 0
+
+    @pytest.mark.parametrize("scenario_failure", [False, True])
+    async def test_manual_sends_stop_before_converter_cleanup_and_caches_reset_async(
+        self, *, patch_central_database: MagicMock, mock_scenario_run_lifecycle: MagicMock, scenario_failure: bool
+    ) -> None:
+        fake_config = ConfigurationLoader()
+        order: list[str] = []
+        service = get_message_send_service()
+        scheduler = get_manual_send_scheduler()
+        converter = get_converter_service()
+        close = converter.close_async
+
+        async def shutdown_async() -> None:
+            assert scheduler._closing
+            order.append("sends")
+
+        async def close_async() -> None:
+            order.append("converters")
+            await close()
+
+        if scenario_failure:
+            mock_scenario_run_lifecycle.shutdown_async.side_effect = RuntimeError("scenario shutdown failed")
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+            patch.object(service, "shutdown_async", side_effect=shutdown_async),
+            patch.object(converter, "close_async", side_effect=close_async),
+            pytest.raises(RuntimeError, match="scenario shutdown failed") if scenario_failure else nullcontext(),
+        ):
+            async with lifespan(app):
+                assert get_message_send_service() is service
+        assert order == ["sends", "converters"]
+        assert get_message_send_service.cache_info().currsize == 0
+        assert get_manual_send_scheduler.cache_info().currsize == 0
+        assert get_converter_service.cache_info().currsize == 0
 
     @pytest.fixture(autouse=True)
     def isolated_lifespan_state(self) -> Iterator[None]:

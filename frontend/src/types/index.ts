@@ -626,6 +626,22 @@ export interface AddMessageResponse {
   messages: ConversationMessagesResponse
 }
 
+export interface MessageSendRequest extends AddMessageRequest {
+  send: true
+  target_registry_name: string
+  submission_id: string
+}
+
+export interface MessageSendStatus {
+  send_id: string
+  attack_result_id: string
+  conversation_id: string
+  request_turn_number: number | null
+  state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
+  error: string | null
+  failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
+}
+
 export interface AttackListResponse {
   items: AttackSummary[]
   pagination: PaginationInfo

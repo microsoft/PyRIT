@@ -97,6 +97,7 @@ class PromptNormalizer:
         response_converter_configurations: list[ConverterConfiguration] | None = None,
         normalizer_overrides: Mapping[CapabilityName, MessageListNormalizer[Message]] | None = None,
         send_context: TargetSendContext | None = None,
+        on_target_dispatch: Callable[[], None] | None = None,
     ) -> Message:
         """
         Send a single request to a target.
@@ -112,6 +113,8 @@ class PromptNormalizer:
             normalizer_overrides: Optional per-send target normalizer overrides.
             send_context: Optional internal coordination contract for caller-owned
                 history selection and send lifecycle state.
+            on_target_dispatch: Optional notification after request preparation and before entering the
+                target's send pipeline. It does not confirm provider delivery.
 
         Returns:
             Message: The response received from the target.
@@ -146,6 +149,8 @@ class PromptNormalizer:
 
         responses = None
         target_invocation_count_before_send = send_context.target_invocation_count if send_context else 0
+        if on_target_dispatch is not None:
+            on_target_dispatch()
         try:
             responses = await target.send_prompt_async(
                 message=request,

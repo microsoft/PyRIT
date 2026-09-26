@@ -8,10 +8,13 @@ import type {
   AddMessageResponse,
   BackendMessage,
   ConverterPreviewRequest,
+  MessageSendStatus,
   TargetInstance,
 } from "@/types";
 
 import { makeTarget } from "./_targets";
+import { READY_RUNTIME } from "./_runtime";
+import { fulfillMessageSend, makeAddMessageResponse, readMessageSendResult } from "./_attacks";
 
 // ---------------------------------------------------------------------------
 // Mock data
@@ -104,6 +107,7 @@ const IMAGE_OUTPUT_CONVERTERS: Record<string, string> = {
  * accumulates messages for multi-turn, and mirrors real API shapes.
  */
 async function mockBackendAPIs(page: Page) {
+  await page.route("**/api/runtime", async (route) => { await route.fulfill({ json: READY_RUNTIME }); });
   let accumulatedMessages: Record<string, unknown>[] = [];
   // Track the converter type for each registered converter instance so the
   // preview mock can decide between text and image_path output.
@@ -275,7 +279,7 @@ async function mockBackendAPIs(page: Page) {
   });
 
   // Add message — MUST be registered BEFORE create-attack route
-  await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
+  await page.route(/\/api\/attacks\/[^/]+\/(?:messages|message-sends)(?:\?|$)/, async (route) => {
     if (route.request().method() === "POST") {
       let userText = "your message";
       let convertedText: string | null = null;
@@ -338,25 +342,9 @@ async function mockBackendAPIs(page: Page) {
 
       accumulatedMessages.push(userMsg, assistantMsg);
 
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          attack: {
-            attack_result_id: "e2e-attack-001",
-            conversation_id: MOCK_CONVERSATION_ID,
-            attack_type: "ManualAttack",
-            converters: converterIds.length > 0 ? ["Base64Converter"] : [],
-            outcome: "undetermined",
-            message_count: accumulatedMessages.length,
-            related_conversation_ids: [],
-            labels: {},
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          messages: { messages: [...accumulatedMessages] },
-        }),
-      });
+      const response = makeAddMessageResponse("e2e-attack-001", MOCK_CONVERSATION_ID, [...accumulatedMessages]);
+      response.attack.converters = converterIds.length > 0 ? ["Base64Converter"] : [];
+      await fulfillMessageSend(route, response);
     } else if (route.request().method() === "GET") {
       // FIX: Handle GET so loadConversation doesn't hang in mock mode.
       // See detailed comment in chat.spec.ts mockBackendAPIs.
@@ -691,10 +679,10 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
 
     const [response] = await Promise.all([
       page.waitForResponse((candidate) => candidate.request().method() === "POST"
-        && /\/api\/attacks\/[^/]+\/messages$/.test(new URL(candidate.url()).pathname)),
+        && /\/api\/attacks\/[^/]+\/message-sends$/.test(new URL(candidate.url()).pathname)),
       page.getByRole("button", { name: "Send message", exact: true }).click(),
     ]);
-    expect(response.status()).toBe(200);
+    expect(response.status()).toBe(202);
     const sentRequest: AddMessageRequest = response.request().postDataJSON();
     expect(sentRequest.pieces).toHaveLength(1);
     expect(sentRequest.pieces[0]).toMatchObject({
@@ -706,7 +694,8 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     expect(sentRequest.pieces[0].applied_converter_ids).toEqual([base64Id, caesarId]);
     expect(sentRequest.request_converter_configurations).toBeUndefined();
 
-    const sent: AddMessageResponse = await response.json();
+    const accepted: MessageSendStatus = await response.json();
+    const sent = await readMessageSendResult(request, accepted);
     const historyResponse = await request.get(
       `/api/attacks/${sent.attack.attack_result_id}/messages?conversation_id=${sent.attack.conversation_id}`,
     );
@@ -811,10 +800,10 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
 
     const [response] = await Promise.all([
       page.waitForResponse((candidate) => candidate.request().method() === "POST"
-        && /\/api\/attacks\/[^/]+\/messages$/.test(new URL(candidate.url()).pathname)),
+        && /\/api\/attacks\/[^/]+\/message-sends$/.test(new URL(candidate.url()).pathname)),
       page.getByRole("button", { name: "Send message", exact: true }).click(),
     ]);
-    expect(response.status()).toBe(200);
+    expect(response.status()).toBe(202);
     const sentRequest: AddMessageRequest = response.request().postDataJSON();
     expect(sentRequest.pieces).toEqual([expect.objectContaining({
       data_type: "text",
@@ -825,7 +814,8 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     expect(sentRequest.pieces[0].applied_converter_ids).toEqual([base64Id, caesarId, base64Id]);
     expect(sentRequest.request_converter_configurations).toBeUndefined();
     expect(previewRequests).toHaveLength(2);
-    const sent: AddMessageResponse = await response.json();
+    const accepted: MessageSendStatus = await response.json();
+    const sent = await readMessageSendResult(request, accepted);
     const expectedPiece = expect.objectContaining({
       original_value: source,
       original_value_data_type: "text",

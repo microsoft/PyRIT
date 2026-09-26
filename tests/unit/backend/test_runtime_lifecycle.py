@@ -19,6 +19,7 @@ from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import configuration, health
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
@@ -114,6 +115,24 @@ async def test_active_work_rejects_apply_without_stopping_or_mutating(runtime: R
     assert runtime.state == "ready"
     lifecycle_module.close_services_async.assert_not_awaited()
     assert not hasattr(service, "request_stop") or not service.request_stop.called
+
+
+async def test_admitted_manual_send_blocks_reinitialization_without_an_http_request_async(
+    runtime: RuntimeLifecycle,
+) -> None:
+    get_manual_send_scheduler.cache_clear()
+    try:
+        scheduler = get_manual_send_scheduler()
+        with scheduler.reserve(conversation_id="accepted-send"):
+            assert not runtime.operations
+            await apply_async(runtime)
+            assert runtime.outcome == "busy"
+            assert runtime.generation == "original"
+            lifecycle_module.close_services_async.assert_not_awaited()
+        await apply_async(runtime)
+        assert runtime.generation != "original"
+    finally:
+        get_manual_send_scheduler.cache_clear()
 
 
 async def test_second_idle_check_closes_admission_race(runtime: RuntimeLifecycle) -> None:

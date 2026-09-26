@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { makeAddMessageResponse } from "./_attacks";
+import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
 import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
 import { makeTarget } from "./_targets";
 
@@ -300,6 +300,12 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
           updated_at: "2026-07-22T13:10:01.000Z",
         })
       );
+      return;
+    }
+    if (apiPath === "/attacks/mobile-attack-001/message-sends" && method === "POST") {
+      await fulfillMessageSend(route, makeAddMessageResponse(
+        "mobile-attack-001", "mobile-conversation-001", MESSAGES,
+      ));
       return;
     }
     if (apiPath === "/attacks/mobile-attack-001/messages") {

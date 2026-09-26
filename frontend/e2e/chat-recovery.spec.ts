@@ -14,13 +14,17 @@ import type {
   AddMessageResponse,
   ConversationMessagesResponse,
   CreateConversationResponse,
+  MessageSendStatus,
   TargetInstance,
 } from "@/types";
+import { readMessageSendResult } from "./_attacks";
 
 interface LocalTarget {
   registryName: string;
   requestBodies: string[];
   setProcessingFailure: (enabled: boolean) => void;
+  holdResponse: () => void;
+  releaseResponse: () => void;
 }
 
 const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>({
@@ -47,6 +51,8 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
     const pageErrors: Error[] = [];
     page.on("pageerror", (error: Error) => { pageErrors.push(error); });
     let processingFailure = false;
+    let holdResponse = false;
+    let heldResponse: (() => void) | undefined;
     const server = createServer((incoming: IncomingMessage, response: ServerResponse) => {
       if (incoming.method !== "POST" || incoming.url !== "/v1/chat/completions") {
         errors.push(new Error(`Unexpected provider request: ${incoming.method} ${incoming.url}`));
@@ -65,7 +71,7 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
         requestBodies.push(Buffer.concat(chunks).toString("utf8"));
         response.setHeader("Content-Type", "application/json");
         // Invalid provider JSON exercises the real normalizer's persisted processing-error path.
-        response.end(processingFailure ? '{"choices":' : JSON.stringify({
+        const reply = processingFailure ? '{"choices":' : JSON.stringify({
           id: `local-${requestBodies.length}`,
           object: "chat.completion",
           created: Math.floor(Date.now() / 1000),
@@ -76,7 +82,9 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
             message: { role: "assistant", content: "Local target response" },
           }],
           usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-        }));
+        });
+        const deliver = (): void => { response.end(reply); };
+        if (holdResponse) { heldResponse = deliver; } else { deliver(); }
       });
     });
     await new Promise<void>((resolve, reject) => {
@@ -105,6 +113,12 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
         registryName: target.target_registry_name,
         requestBodies,
         setProcessingFailure: (enabled: boolean): void => { processingFailure = enabled; },
+        holdResponse: (): void => { holdResponse = true; },
+        releaseResponse: (): void => {
+          holdResponse = false;
+          heldResponse?.();
+          heldResponse = undefined;
+        },
       });
       expect(errors).toEqual([]);
       expect(pageErrors).toEqual([]);
@@ -122,7 +136,7 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
 
 function isMessagePost(request: Request): boolean {
   return request.method() === "POST"
-    && /\/api\/attacks\/[^/]+\/messages$/.test(new URL(request.url()).pathname);
+    && /\/api\/attacks\/[^/]+\/message-sends$/.test(new URL(request.url()).pathname);
 }
 
 async function sendFromComposer(page: Page, text?: string): Promise<AddMessageResponse> {
@@ -136,8 +150,9 @@ async function sendFromComposer(page: Page, text?: string): Promise<AddMessageRe
     page.waitForResponse((candidate) => isMessagePost(candidate.request())),
     sendButton.click(),
   ]);
-  expect(response.status()).toBe(200);
-  return response.json();
+  expect(response.status()).toBe(202);
+  const accepted: MessageSendStatus = await response.json();
+  return readMessageSendResult(page.request, accepted);
 }
 
 async function createConversation(request: APIRequestContext, attackId: string): Promise<string> {
@@ -194,6 +209,62 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByRole("combobox", { name: "Default objective target", exact: true })
       .selectOption(localTarget.registryName);
     await page.getByTitle("Chat", { exact: true }).click();
+  });
+
+  test("accepts before target completion and continues after leaving chat", async ({ page, request, localTarget }) => {
+    localTarget.holdResponse();
+    let submissions = 0;
+    page.on("request", (request: Request) => { if (isMessagePost(request)) submissions += 1; });
+    await page.getByTestId("chat-input").fill("Continue independently");
+    const [acceptedResponse] = await Promise.all([
+      page.waitForResponse((response) => isMessagePost(response.request())),
+      page.getByRole("button", { name: "Send message", exact: true }).click(),
+    ]);
+    expect(acceptedResponse.status()).toBe(202);
+    const accepted: MessageSendStatus = await acceptedResponse.json();
+    expect(accepted.state).toBe("queued");
+    // First use can initialize the target's HTTP client after the submission has already been accepted.
+    await expect.poll(() => localTarget.requestBodies.length, { timeout: 30_000 }).toBe(1);
+    const live = await request.get(`/api/attacks/${accepted.attack_result_id}/message-sends/${accepted.send_id}`);
+    expect((await live.json()).state).toBe("sending");
+    await expect(page).toHaveURL((url: URL) => url.pathname.includes(accepted.attack_result_id));
+    const chatUrl = page.url();
+    await page.getByTitle("Registry", { exact: true }).click();
+    localTarget.releaseResponse();
+    const result = await readMessageSendResult(request, accepted);
+    expect(result.messages.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    await page.goto(chatUrl);
+    await expect(page.getByTestId("message-list").getByText("Local target response", { exact: true })).toBeVisible();
+    expect(localTarget.requestBodies).toHaveLength(1);
+    expect(submissions).toBe(1);
+  });
+
+  test("refreshes a completed send after an attack-details read fails without a second submission", async ({
+    page, localTarget,
+  }) => {
+    localTarget.holdResponse();
+    let submissions = 0;
+    page.on("request", (request: Request) => { if (isMessagePost(request)) submissions += 1; });
+    await page.getByTestId("chat-input").fill("Keep this accepted draft");
+    const [acceptedResponse] = await Promise.all([
+      page.waitForResponse((response) => isMessagePost(response.request())),
+      page.getByRole("button", { name: "Send message", exact: true }).click(),
+    ]);
+    const accepted: MessageSendStatus = await acceptedResponse.json();
+    await expect.poll(() => localTarget.requestBodies.length).toBe(1);
+    const path = new RegExp(`/api/attacks/${accepted.attack_result_id}$`);
+    await page.route(path, async (route: Route) => {
+      await route.fulfill({ status: 503, json: { detail: "Controlled metadata read failure" } });
+    });
+    localTarget.releaseResponse();
+    await expect(page.getByText(/Saved messages or attack details could not be loaded/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await page.unroute(path);
+    await page.getByRole("button", { name: "Refresh saved messages" }).click();
+    await expect(page.getByTestId("message-list").getByText("Local target response", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("chat-input")).toHaveValue("");
+    expect(submissions).toBe(1);
+    expect(localTarget.requestBodies).toHaveLength(1);
   });
 
   for (const keepSafePrefix of [false, true]) {
@@ -289,7 +360,7 @@ test.describe("Chat processing recovery @seeded", () => {
     const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
     let loadStarted = false;
     let postCount = 0;
-    await page.route(new RegExp(`/api/attacks/${attackId}/messages`), async (route: Route) => {
+    await page.route(new RegExp(`/api/attacks/${attackId}/(?:messages|message-sends)(?:\\?|$)`), async (route: Route) => {
       if (route.request().method() === "GET"
         && new URL(route.request().url()).searchParams.get("conversation_id") === otherId) {
         loadStarted = true;
@@ -313,7 +384,7 @@ test.describe("Chat processing recovery @seeded", () => {
     }
     await expect(page.getByTestId("message-list").getByText("Only conversation B history")).toBeVisible();
     await page.getByRole("button", { name: "Send message", exact: true }).click();
-    await expect(page.getByTestId("message-list").getByText(/Network error/)).toBeVisible();
+    await expect(page.getByText(/Network error/)).toBeVisible();
     expect(postCount).toBe(1);
     await expect(page.getByTestId("chat-input")).toHaveValue("Retain this unsent draft");
     const [download] = await Promise.all([

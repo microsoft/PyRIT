@@ -48,7 +48,8 @@ jest.mock('@/services/api', () => ({
     getConversations: jest.fn(),
     updateAttack: jest.fn(),
     createAttack: jest.fn(),
-    addMessage: jest.fn(),
+    submitMessageSend: jest.fn(),
+    getMessageSend: jest.fn(),
   },
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   scenariosApi: {
@@ -318,7 +319,7 @@ describe('Shared new run labels', () => {
     expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
     expect(attacksApi.updateAttack).not.toHaveBeenCalled()
     expect(attacksApi.createAttack).not.toHaveBeenCalled()
-    expect(attacksApi.addMessage).not.toHaveBeenCalled()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
 
     const toolbar = within(currentLabels()).getByRole('group', { name: 'Chat controls' })
     expect(within(toolbar).getByLabelText('Active target: test_target')).toBeInTheDocument()

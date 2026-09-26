@@ -52,6 +52,41 @@ describe("api service", () => {
       expect(apiClient).toBeDefined();
     });
 
+    describe("single message sends", () => {
+      it("submits one message and reads progress with bounded waiting and cancellation", async () => {
+        const progress = { send_id: "send/id", state: "queued" };
+        const request = {
+          submission_id: "submission", role: "user", pieces: [{ original_value: "hello", data_type: "text" }],
+          send: true as const, target_registry_name: "target", target_conversation_id: "conversation",
+        };
+        const controller = new AbortController();
+        (apiClient.post as jest.Mock).mockResolvedValue({ data: progress });
+        (apiClient.get as jest.Mock).mockResolvedValue({ data: progress });
+        expect(await attacksApi.submitMessageSend("attack/id", request)).toEqual(progress);
+        expect(apiClient.post).toHaveBeenCalledWith("/attacks/attack%2Fid/message-sends", request);
+        expect(await attacksApi.getMessageSend("attack/id", "send/id", controller.signal)).toEqual(progress);
+        expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/message-sends/send%2Fid", {
+          params: { wait_ms: 1000 }, signal: controller.signal,
+        });
+      });
+
+      it("does not automatically retry an unauthorized submission", async () => {
+        const error = {
+          isAxiosError: true,
+          config: { method: "post", url: "/attacks/attack/message-sends", headers: {} },
+          response: { status: 401, data: { detail: "Unauthorized" } },
+        };
+        const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+        try {
+          await expect(responseOnError(error)).rejects.toBe(error);
+          expect(error.config).not.toHaveProperty("_retried");
+          expect(apiClient.post).not.toHaveBeenCalled();
+        } finally {
+          consoleSpy.mockRestore();
+        }
+      });
+    });
+
     it("should have correct methods", () => {
       expect(apiClient.get).toBeDefined();
       expect(apiClient.post).toBeDefined();
