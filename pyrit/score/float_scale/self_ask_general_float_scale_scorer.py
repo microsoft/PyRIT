@@ -12,7 +12,11 @@ from pyrit.score.llm_scoring import (
     _parse_judgment_observation,
     _run_llm_scoring_async,
 )
-from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
+from pyrit.score.response_handler import (
+    JsonSchemaResponseHandler,
+    NumericRangeResponseHandler,
+    ResponseHandler,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
@@ -105,9 +109,9 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
         self._system_prompt_format_string = system_prompt_format_string
         self._prompt_format_string = prompt_format_string
         self._scale = scale
-        # A caller-supplied handler owns its own response contract; otherwise the default JSON
-        # handler carries the schema and enforces the numeric score contract for the round-trip.
-        self._response_handler = response_handler or JsonSchemaResponseHandler(
+        # A caller-supplied handler owns its own wire format; otherwise the default JSON handler
+        # carries the schema and enforces the numeric score contract for the round-trip.
+        wire_format_handler = response_handler or JsonSchemaResponseHandler(
             score_value_output_key=score_value_output_key,
             rationale_output_key=rationale_output_key,
             description_output_key=description_output_key,
@@ -115,6 +119,12 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
             category_output_key=category_output_key,
             response_schema=response_json_schema,
             numeric_value=True,
+        )
+        # Keep score-domain validation in the parser callback so out-of-range values retry.
+        self._response_handler = NumericRangeResponseHandler(
+            response_handler=wire_format_handler,
+            minimum_value=scale.minimum_value,
+            maximum_value=scale.maximum_value,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:

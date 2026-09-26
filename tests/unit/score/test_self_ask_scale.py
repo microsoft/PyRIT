@@ -196,6 +196,33 @@ async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, p
     assert score[0].objective == "task"
 
 
+@pytest.mark.parametrize("out_of_range_value", ["0", "11"])
+async def test_scale_scorer_retries_out_of_range_score(out_of_range_value: str, patch_central_database):
+    def _response(score_value: str) -> Message:
+        return Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value=f'{{"score_value": "{score_value}", "rationale": "r", "description": "d"}}',
+                )
+            ]
+        )
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(side_effect=[[_response(out_of_range_value)], [_response("10")]])
+
+    scorer = SelfAskScaleScorer.from_scale(
+        chat_target=chat_target,
+        scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
+    )
+
+    score = await scorer.score_text_async(text="example text", objective="task")
+
+    assert chat_target.send_prompt_async.call_count == 2
+    assert score[0].get_value() == 1.0
+
+
 async def test_scale_scorer_score_calls_send_chat(patch_central_database):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
