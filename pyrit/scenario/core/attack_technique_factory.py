@@ -20,11 +20,8 @@ from __future__ import annotations
 import copy
 import inspect
 import logging
-import sys
-import typing
-from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
@@ -47,6 +44,7 @@ from pyrit.models import (
     resolve_prompt_source,
 )
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
+from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
@@ -57,14 +55,6 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
-
-
-class ScorerOverridePolicy(str, Enum):
-    """Policy for what to do when the scenario's scorer is incompatible with an attack's annotation."""
-
-    SKIP = "skip"
-    WARN = "warn"
-    RAISE = "raise"
 
 
 class AttackTechniqueFactory(Identifiable):
@@ -161,6 +151,11 @@ class AttackTechniqueFactory(Identifiable):
         self._seed_technique = seed_technique
         self._supports_additional_request_converters = supports_additional_request_converters
         self._scorer_override_policy = scorer_override_policy
+
+        self._compatibility_helper = _ConstructorCompatibilityHelper(
+            attack_class=self._attack_class,
+            scorer_override_policy=self._scorer_override_policy,
+        )
 
         self._uses_adversarial = uses_adversarial if uses_adversarial is not None else self._derive_uses_adversarial()
 
@@ -375,7 +370,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         if (
             self._supports_additional_request_converters
-            and "attack_converter_config" not in self._get_accepted_params()
+            and "attack_converter_config" not in self._compatibility_helper.accepted_params
         ):
             raise ValueError(
                 f"Factory '{self._name}' declares supports_additional_request_converters=True, "
@@ -415,16 +410,7 @@ class AttackTechniqueFactory(Identifiable):
                 f"parameter validation. All attack constructor parameters must be explicitly named."
             )
 
-        valid_params = {
-            name
-            for name, param in sig.parameters.items()
-            if name != "self"
-            and param.kind
-            in (
-                inspect.Parameter.KEYWORD_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            )
-        }
+        valid_params = self._compatibility_helper.accepted_params
 
         invalid = set(self._attack_kwargs) - valid_params
         if invalid:
@@ -490,7 +476,7 @@ class AttackTechniqueFactory(Identifiable):
         Returns:
             bool: ``True`` when the converter can be appended safely.
         """
-        if "attack_converter_config" not in self._get_accepted_params():
+        if "attack_converter_config" not in self._compatibility_helper.accepted_params:
             return False
 
         output_types: set[PromptDataType] = {"text"}
@@ -568,7 +554,7 @@ class AttackTechniqueFactory(Identifiable):
     @property
     def scoring_config_type(self) -> type | None:
         """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
-        return self._get_scoring_config_type()
+        return self._compatibility_helper.scoring_config_type
 
     def with_adversarial_system_prompt_prefix(self, prefix: str) -> AttackTechniqueFactory:
         """
@@ -597,7 +583,7 @@ class AttackTechniqueFactory(Identifiable):
         """
         SeedPrompt.reject_jinja_syntax(prefix, component_name="adversarial_system_prompt_prefix")
         seed_technique, supports_simulated = self._copy_seed_technique_with_prefix(prefix=prefix)
-        accepts_adversarial_config = "attack_adversarial_config" in self._get_accepted_params()
+        accepts_adversarial_config = "attack_adversarial_config" in self._compatibility_helper.accepted_params
         if not accepts_adversarial_config and not supports_simulated:
             raise ValueError(
                 f"Factory '{self._name}' cannot accept an adversarial system prompt prefix. "
@@ -702,10 +688,9 @@ class AttackTechniqueFactory(Identifiable):
         kwargs = dict(self._attack_kwargs)
         kwargs["objective_target"] = objective_target
 
-        accepted_params = self._get_accepted_params()
-        if self._should_apply_scoring_config(
+        accepted_params = self._compatibility_helper.accepted_params
+        if self._compatibility_helper.should_apply_scoring_config(
             attack_scoring_config=attack_scoring_config,
-            accepted_params=accepted_params,
         ):
             kwargs["attack_scoring_config"] = attack_scoring_config
         if "attack_adversarial_config" in accepted_params and (
@@ -838,139 +823,6 @@ class AttackTechniqueFactory(Identifiable):
         if not supports_simulated:
             return self._seed_technique, False
         return self._seed_technique.model_copy(update={"seeds": seeds}, deep=True), True
-
-    def _get_accepted_params(self) -> set[str]:
-        """Return the set of keyword parameter names accepted by the attack class constructor."""
-        sig = inspect.signature(self._attack_class.__init__)
-        return {
-            name
-            for name, param in sig.parameters.items()
-            if name != "self"
-            and param.kind
-            in (
-                inspect.Parameter.KEYWORD_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            )
-        }
-
-    def _should_apply_scoring_config(
-        self,
-        *,
-        attack_scoring_config: AttackScoringConfig,
-        accepted_params: set[str],
-    ) -> bool:
-        """
-        Determine whether the scoring config should be forwarded to the attack constructor.
-
-        Checks two conditions:
-        1. The attack class accepts an ``attack_scoring_config`` parameter.
-        2. The provided config is type-compatible with the attack's annotation.
-
-        When either condition fails, the ``scorer_override_policy`` determines
-        behavior: RAISE raises ValueError, WARN logs and returns False, SKIP
-        silently returns False.
-
-        Args:
-            attack_scoring_config: The scoring config to evaluate.
-            accepted_params: The set of parameter names the attack class accepts.
-
-        Returns:
-            True if the config should be applied, False otherwise.
-
-        Raises:
-            ValueError: If the policy is RAISE and the config cannot be applied.
-        """
-        if "attack_scoring_config" not in accepted_params:
-            self._apply_scorer_policy(
-                f"Scorer config provided but {self._attack_class.__name__} does not accept 'attack_scoring_config'."
-            )
-            return False
-
-        required_type = self._get_scoring_config_type()
-        if required_type is None or isinstance(attack_scoring_config, required_type):
-            return True
-
-        self._apply_scorer_policy(
-            f"Scorer config of type {type(attack_scoring_config).__name__} is incompatible "
-            f"with {self._attack_class.__name__} (requires {required_type.__name__})."
-        )
-        return False
-
-    def _apply_scorer_policy(self, message: str) -> None:
-        """
-        Apply the scorer override policy for an incompatibility.
-
-        Args:
-            message: Description of the incompatibility.
-
-        Raises:
-            ValueError: If the policy is RAISE.
-        """
-        if self._scorer_override_policy == ScorerOverridePolicy.RAISE:
-            raise ValueError(message)
-        if self._scorer_override_policy == ScorerOverridePolicy.WARN:
-            logger.warning(message)
-
-    def _get_scoring_config_type(self) -> type | None:
-        """
-        Introspect the attack class to determine the required type for ``attack_scoring_config``.
-
-        Resolves the type annotation (handling ``X | None`` / ``X | None``) and returns
-        the inner concrete type. Returns ``None`` if the annotation is the base
-        ``AttackScoringConfig`` or cannot be resolved — meaning any config is accepted.
-
-        Returns:
-            The narrowed type if the annotation is narrower than the base, else None.
-        """
-        try:
-            # get_type_hints resolves string annotations from __future__ annotations
-            hints = typing.get_type_hints(
-                self._attack_class.__init__,
-                globalns=getattr(sys.modules.get(self._attack_class.__module__, None), "__dict__", None),
-            )
-        except Exception:
-            return None
-
-        annotation = hints.get("attack_scoring_config")
-        if annotation is None:
-            return None
-
-        inner = self._unwrap_optional(annotation)
-        if inner is None or inner is AttackScoringConfig:
-            # Base type or unresolvable — any config is accepted
-            return None
-        if not issubclass(inner, AttackScoringConfig):
-            return None
-        return inner
-
-    @staticmethod
-    def _unwrap_optional(annotation: Any) -> type | None:
-        """
-        Unwrap a union containing one concrete type and ``None`` to extract the concrete type.
-
-        Returns:
-            The inner type X, or None if the annotation cannot be unwrapped to a single type.
-        """
-        # Handle typing.Union and Optional annotations.
-        origin = typing.get_origin(annotation)
-        if origin is Union or (hasattr(annotation, "__args__") and origin is None and hasattr(annotation, "__or__")):
-            args = typing.get_args(annotation)
-            non_none = [a for a in args if a is not type(None)]
-            candidate = non_none[0] if len(non_none) == 1 else None
-            return candidate if isinstance(candidate, type) else None
-
-        # Handle PEP 604 unions (X | None).
-        if hasattr(annotation, "__args__") and type(annotation).__name__ == "UnionType":
-            args = annotation.__args__
-            non_none = [a for a in args if a is not type(None)]
-            candidate = non_none[0] if len(non_none) == 1 else None
-            return candidate if isinstance(candidate, type) else None
-
-        # Plain type (not Optional)
-        if isinstance(annotation, type):
-            return annotation
-
-        return None
 
     @staticmethod
     def _serialize_value(value: Any) -> Any:
