@@ -37,10 +37,18 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, Seed, SeedGroup, group_seeds_into_attack_groups
+from pyrit.models import (
+    AttackSeedGroup,
+    ScenarioDatasetPopulationStatus,
+    ScenarioDatasetSizeCap,
+    ScenarioDatasetSummary,
+    Seed,
+    SeedGroup,
+    group_seeds_into_attack_groups,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from pyrit.memory import MemoryInterface
 
@@ -332,15 +340,18 @@ class DatasetConfiguration:
 
         if max_dataset_size is not None and max_dataset_size < 1:
             raise ValueError("'max_dataset_size' must be a positive integer (>= 1).")
+        if dataset_names is not None and len(set(dataset_names)) != len(dataset_names):
+            raise ValueError("'dataset_names' cannot contain duplicates.")
 
         self._seeds = list(seeds) if seeds is not None else None
         self._seed_groups = list(seed_groups) if seed_groups is not None else None
         self._dataset_names = list(dataset_names) if dataset_names is not None else None
         self.max_dataset_size = max_dataset_size
         self._filters: dict[str, list[str]] = dict(filters or {})
+        self._custom_validators = list(validators) if validators else []
         self._validators: list[Callable[[ResolvedDataset], None]] = [
             *self._default_validators(),
-            *(list(validators) if validators else []),
+            *self._custom_validators,
         ]
         self._auto_fetch = auto_fetch
 
@@ -411,6 +422,36 @@ class DatasetConfiguration:
         """Whether this configuration applies a logical-group selection cap."""
         return self.max_dataset_size is not None
 
+    def size_cap_provenance(self) -> list[ScenarioDatasetSizeCap]:
+        """
+        Describe each configured cap once with its ordered contributing datasets.
+
+        Returns:
+            list[ScenarioDatasetSizeCap]: Canonical cap provenance in application order.
+        """
+        if self.max_dataset_size is None:
+            return []
+
+        names = self.dataset_names or [INLINE_DATASET_NAME]
+        if len(names) == 1:
+            return [
+                ScenarioDatasetSizeCap(
+                    label="per-dataset cap",
+                    count=self.max_dataset_size,
+                    configured_on="dataset",
+                    dataset_name=names[0],
+                    dataset_names=names,
+                )
+            ]
+        return [
+            ScenarioDatasetSizeCap(
+                label="combined configuration cap",
+                count=self.max_dataset_size,
+                configured_on="configuration",
+                dataset_names=names,
+            )
+        ]
+
     def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
         """
         Describe configured caps for each named dataset or inline source.
@@ -419,14 +460,79 @@ class DatasetConfiguration:
             dict[str, list[tuple[str, int, Literal]]]: Source name to ordered
             ``(cap label, count, provenance)`` entries.
         """
-        if self.max_dataset_size is None:
-            return {}
-        names = self.dataset_names or [INLINE_DATASET_NAME]
-        if len(names) == 1:
-            cap = ("per-dataset cap", self.max_dataset_size, "dataset")
-        else:
-            cap = ("combined configuration cap", self.max_dataset_size, "configuration")
-        return {name: [cap] for name in names}
+        caps: dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]] = {}
+        for cap in self.size_cap_provenance():
+            for name in cap.dataset_names:
+                caps.setdefault(name, []).append((cap.label, cap.count, cap.configured_on))
+        return caps
+
+    def _has_single_population_source(self, *, name: str) -> bool:
+        """
+        Identify populations whose cap applies to one source.
+
+        Args:
+            name (str): The population name.
+
+        Returns:
+            bool: True for a single-source configuration.
+        """
+        return True
+
+    def build_population_summaries(
+        self,
+        *,
+        full_counts_by_dataset: Mapping[str, int] | None = None,
+        selected_counts_by_dataset: Mapping[str, int] | None = None,
+    ) -> list[ScenarioDatasetSummary]:
+        """
+        Build ordered known or unknown population summaries with cap provenance.
+
+        Omitting ``full_counts_by_dataset`` represents an unmaterialized population.
+        Unknown counts remain ``None`` rather than being encoded as zero.
+
+        Args:
+            full_counts_by_dataset (Mapping[str, int] | None): Full logical populations.
+            selected_counts_by_dataset (Mapping[str, int] | None): Effectively selected populations.
+
+        Returns:
+            list[ScenarioDatasetSummary]: Ordered dataset population summaries.
+        """
+        resolved_names = [*(full_counts_by_dataset or {}), *(selected_counts_by_dataset or {})]
+        names = list(dict.fromkeys(resolved_names or (self.dataset_names or [INLINE_DATASET_NAME])))
+        caps = self.size_cap_provenance()
+        summaries: list[ScenarioDatasetSummary] = []
+        for name in names:
+            full_count = full_counts_by_dataset.get(name, 0) if full_counts_by_dataset is not None else None
+            selected_count = selected_counts_by_dataset.get(name, 0) if selected_counts_by_dataset is not None else None
+            applicable_caps = [
+                cap.model_copy(deep=True, update={"dataset_name": name}) for cap in caps if name in cap.dataset_names
+            ]
+            independent_caps = [cap.count for cap in applicable_caps if cap.configured_on == "dataset"]
+            selection_note = None
+            if full_count is not None and selected_count is not None and selected_count != full_count:
+                selection_note = f"The selection uses {selected_count} of {full_count} available objectives."
+            elif full_count is None:
+                selection_note = "The full dataset population is not materialized for this estimate."
+            summaries.append(
+                ScenarioDatasetSummary(
+                    name=name,
+                    population_status=(
+                        ScenarioDatasetPopulationStatus.Known
+                        if full_count is not None
+                        else ScenarioDatasetPopulationStatus.Unknown
+                    ),
+                    logical_seed_group_count=full_count,
+                    selected_seed_group_count=selected_count,
+                    effective_cap=(
+                        independent_caps[0]
+                        if len(independent_caps) == 1 and self._has_single_population_source(name=name)
+                        else None
+                    ),
+                    configured_caps=applicable_caps,
+                    selection_note=selection_note,
+                )
+            )
+        return summaries
 
     @property
     def _get_seeds_filters(self) -> dict[str, Any]:
@@ -611,6 +717,48 @@ class DatasetAttackConfiguration(DatasetConfiguration):
     ``prompt_group_id`` via ``group_seeds_into_attack_groups``.
     """
 
+    def with_dataset_names(
+        self,
+        *,
+        dataset_names: Sequence[str],
+        max_dataset_size: int | None = None,
+        filters: dict[str, list[str]] | None = None,
+    ) -> DatasetAttackConfiguration:
+        """
+        Rebuild this configuration for an explicit ordered dataset selection.
+
+        Args:
+            dataset_names (Sequence[str]): Selected dataset names.
+            max_dataset_size (int | None): Optional replacement cap; the existing cap is preserved when omitted.
+            filters (dict[str, list[str]] | None): Filters merged over configured defaults.
+
+        Returns:
+            DatasetAttackConfiguration: A fresh configuration of the same type.
+
+        Raises:
+            ValueError: If the selection is empty or contains duplicates.
+            TypeError: If the concrete configuration cannot be reconstructed from standard fields.
+        """
+        if not dataset_names:
+            raise ValueError("dataset-name overrides require at least one dataset")
+        if len(set(dataset_names)) != len(dataset_names):
+            raise ValueError("dataset-name overrides cannot contain duplicates")
+
+        inherited_filters = self.filters
+        inherited_filters.update(filters or {})
+        try:
+            return type(self)(
+                dataset_names=list(dataset_names),
+                max_dataset_size=self.max_dataset_size if max_dataset_size is None else max_dataset_size,
+                filters=inherited_filters or None,
+                validators=self._custom_validators,
+                auto_fetch=self._auto_fetch,
+            )
+        except TypeError as exc:
+            raise TypeError(
+                f"{type(self).__name__} cannot be reconstructed from standard dataset configuration fields: {exc}"
+            ) from exc
+
     def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """
         Shape raw seeds into attack groups (override seam).
@@ -742,6 +890,28 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
         return result
 
+    async def resolve_attack_groups_for_estimate_async(
+        self,
+    ) -> tuple[dict[str, list[AttackSeedGroup]], dict[str, list[AttackSeedGroup]]]:
+        """
+        Resolve full and sampled attack groups with one dataset read.
+
+        Returns:
+            tuple: Full groups and effectively selected groups, both keyed by dataset.
+
+        Raises:
+            DatasetConstraintError: If the resolved or sampled attack-group population is empty.
+        """
+        groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
+        self.validate(resolved)
+        selected = {
+            name: groups for name, groups in self._sample_groups_by_dataset(groups_by_dataset).items() if groups
+        }
+        if not groups_by_dataset or not selected:
+            names = ", ".join(self._dataset_names) if self._dataset_names else "<inline>"
+            raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
+        return groups_by_dataset, selected
+
     def _sample_groups_by_dataset(
         self, groups_by_dataset: dict[str, list[AttackSeedGroup]]
     ) -> dict[str, list[AttackSeedGroup]]:
@@ -836,7 +1006,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         """
         if not dataset_names:
             raise ValueError("per_dataset requires at least one dataset name.")
-        return cls(
+        config = cls(
             configurations=[
                 DatasetAttackConfiguration(
                     dataset_names=[name],
@@ -848,6 +1018,73 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
                 for name in dataset_names
             ]
         )
+        if filters:
+            config.update_filters(filters=filters)
+        return config
+
+    def with_dataset_names(
+        self,
+        *,
+        dataset_names: Sequence[str],
+        max_dataset_size: int | None = None,
+        filters: dict[str, list[str]] | None = None,
+    ) -> CompoundDatasetAttackConfiguration:
+        """
+        Rebuild a homogeneous per-dataset compound for an explicit name selection.
+
+        Args:
+            dataset_names (Sequence[str]): Selected dataset names in request order.
+            max_dataset_size (int | None): Optional replacement per-dataset cap.
+            filters (dict[str, list[str]] | None): Filters merged over shared defaults.
+
+        Returns:
+            CompoundDatasetAttackConfiguration: A fresh compound for the selected datasets.
+
+        Raises:
+            TypeError: If child configurations do not share a reconstructable shape.
+            ValueError: If ``dataset_names`` is empty or contains duplicates.
+        """
+        if not dataset_names:
+            raise ValueError("dataset-name overrides require at least one dataset")
+        if len(set(dataset_names)) != len(dataset_names):
+            raise ValueError("dataset-name overrides cannot contain duplicates")
+        if any(
+            type(child) is not DatasetAttackConfiguration or len(child.dataset_names) != 1
+            for child in self._configurations
+        ):
+            raise TypeError(
+                "dataset-name overrides require homogeneous single-dataset DatasetAttackConfiguration children"
+            )
+
+        template_child = self._configurations[0]
+        child_caps = {child.max_dataset_size for child in self._configurations}
+        child_auto_fetch = {child._auto_fetch for child in self._configurations}
+        child_filters = {
+            tuple(sorted((key, tuple(values)) for key, values in child.filters.items()))
+            for child in self._configurations
+        }
+        child_validators_match = all(
+            child._custom_validators == template_child._custom_validators for child in self._configurations[1:]
+        )
+        if len(child_caps) != 1 or len(child_auto_fetch) != 1 or len(child_filters) != 1 or not child_validators_match:
+            raise TypeError(
+                "dataset-name overrides require children with shared caps, filters, validators, and auto-fetch policy"
+            )
+
+        inherited_filters = {key: list(values) for key, values in next(iter(child_filters))}
+        inherited_filters.update(filters or {})
+        per_dataset_cap = max_dataset_size if max_dataset_size is not None else next(iter(child_caps))
+        rebuilt = type(self).per_dataset(
+            dataset_names=dataset_names,
+            max_dataset_size=per_dataset_cap,
+            auto_fetch=next(iter(child_auto_fetch)),
+            filters=inherited_filters or None,
+            validators=template_child._custom_validators,
+        )
+        rebuilt.max_dataset_size = self.max_dataset_size
+        rebuilt._custom_validators = list(self._custom_validators)
+        rebuilt._validators = [*rebuilt._default_validators(), *rebuilt._custom_validators]
+        return rebuilt
 
     @property
     def dataset_names(self) -> list[str]:
@@ -881,6 +1118,62 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         """Whether the compound or any child applies a logical-group cap."""
         return self.max_dataset_size is not None or any(child.has_size_cap for child in self._configurations)
 
+    @property
+    def supports_per_dataset_size_override(self) -> bool:
+        """Whether one independent cap can be attributed to each child population."""
+        population_names: list[str] = []
+        for child in self._configurations:
+            if isinstance(child, CompoundDatasetAttackConfiguration):
+                return False
+            names = child.dataset_names or (
+                [INLINE_DATASET_NAME] if child.source_kind is DatasetSourceKind.INLINE else []
+            )
+            if len(names) != 1:
+                return False
+            population_names.extend(names)
+        return len(set(population_names)) == len(population_names)
+
+    def _has_single_population_source(self, *, name: str) -> bool:
+        """
+        Check whether exactly one child contributes the named population.
+
+        Args:
+            name (str): The population name.
+
+        Returns:
+            bool: Whether one child supplies the complete population.
+        """
+        matches = 0
+        for child in self._configurations:
+            names = child.dataset_names or (
+                [INLINE_DATASET_NAME] if child.source_kind is DatasetSourceKind.INLINE else []
+            )
+            if name not in names:
+                continue
+            matches += 1
+            if matches > 1 or not child._has_single_population_source(name=name):
+                return False
+        return matches == 1
+
+    def size_cap_provenance(self) -> list[ScenarioDatasetSizeCap]:
+        """
+        Describe child caps followed by the optional combined compound cap.
+
+        Returns:
+            list[ScenarioDatasetSizeCap]: Canonical cap provenance in application order.
+        """
+        caps = [cap for child in self._configurations for cap in child.size_cap_provenance()]
+        if self.max_dataset_size is not None:
+            caps.append(
+                ScenarioDatasetSizeCap(
+                    label="combined compound cap",
+                    count=self.max_dataset_size,
+                    configured_on="compound",
+                    dataset_names=self.dataset_names or [INLINE_DATASET_NAME],
+                )
+            )
+        return caps
+
     def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
         """
         Describe child and combined caps for every contributed dataset.
@@ -889,12 +1182,9 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             dict[str, list[tuple[str, int, Literal]]]: Ordered cap labels, counts, and provenance by source.
         """
         caps: dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]] = {}
-        for child in self._configurations:
-            for name, child_caps in child.size_caps_by_dataset().items():
-                caps.setdefault(name, []).extend(child_caps)
-        if self.max_dataset_size is not None:
-            for name in self.dataset_names or [INLINE_DATASET_NAME]:
-                caps.setdefault(name, []).append(("combined compound cap", self.max_dataset_size, "compound"))
+        for cap in self.size_cap_provenance():
+            for name in cap.dataset_names:
+                caps.setdefault(name, []).append((cap.label, cap.count, cap.configured_on))
         return caps
 
     def update_filters(self, *, filters: dict[str, list[str]]) -> None:
@@ -910,6 +1200,26 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         super().update_filters(filters=filters)
         for child in self._configurations:
             child.update_filters(filters=filters)
+
+    def update_child_max_dataset_size(self, *, max_dataset_size: int) -> None:
+        """
+        Apply the same independent sampling cap to every child configuration.
+
+        Args:
+            max_dataset_size (int): Positive per-child logical-group cap.
+
+        Raises:
+            ValueError: If ``max_dataset_size`` is less than one or the child shape
+                cannot represent one independently attributable cap per dataset.
+        """
+        if max_dataset_size < 1:
+            raise ValueError("'max_dataset_size' must be a positive integer (>= 1).")
+        if not self.supports_per_dataset_size_override:
+            raise ValueError(
+                "per-dataset cap overrides require one distinct dataset population per child configuration"
+            )
+        for child in self._configurations:
+            child.max_dataset_size = max_dataset_size
 
     async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
         """
@@ -960,6 +1270,27 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
                 merged.setdefault(name, []).extend(groups)
         self.validate(self._resolved_from_groups([group for groups in merged.values() for group in groups]))
         return self._sample_groups_by_dataset(merged) if apply_sampling else merged
+
+    async def resolve_attack_groups_for_estimate_async(
+        self,
+    ) -> tuple[dict[str, list[AttackSeedGroup]], dict[str, list[AttackSeedGroup]]]:
+        """
+        Resolve every child's full and sampled populations with one read per child.
+
+        Returns:
+            tuple: Full groups and effectively selected groups, both keyed by dataset.
+        """
+        full_merged: dict[str, list[AttackSeedGroup]] = {}
+        selected_merged: dict[str, list[AttackSeedGroup]] = {}
+        for child in self._configurations:
+            full_groups, selected_groups = await child.resolve_attack_groups_for_estimate_async()
+            for name, groups in full_groups.items():
+                full_merged.setdefault(name, []).extend(groups)
+            for name, groups in selected_groups.items():
+                selected_merged.setdefault(name, []).extend(groups)
+        self.validate(self._resolved_from_groups([group for groups in selected_merged.values() for group in groups]))
+        selected = {name: groups for name, groups in self._sample_groups_by_dataset(selected_merged).items() if groups}
+        return full_merged, selected
 
     def _resolved_from_groups(self, groups: list[AttackSeedGroup]) -> ResolvedDataset:
         """

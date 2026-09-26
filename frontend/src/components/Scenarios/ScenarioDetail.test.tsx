@@ -889,6 +889,11 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValueOnce(
       makeScenario({
+        dataset_size_limit: {
+          default_scope: 'combined',
+          default_count: 8,
+          override_scope: 'combined',
+        },
         default_run_size: {
           estimated_attack_count: null,
           components: [],
@@ -900,9 +905,9 @@ describe('ScenarioDetail', () => {
               selected_seed_group_count: 4,
               configured_caps: [
                 {
-                  label: 'per-dataset cap',
-                  count: 4,
-                  configured_on: 'dataset',
+                  label: 'combined configuration cap',
+                  count: 8,
+                  configured_on: 'configuration',
                   dataset_name: 'harmbench',
                 },
               ],
@@ -915,9 +920,9 @@ describe('ScenarioDetail', () => {
               selected_seed_group_count: 4,
               configured_caps: [
                 {
-                  label: 'per-dataset cap',
-                  count: 4,
-                  configured_on: 'dataset',
+                  label: 'combined configuration cap',
+                  count: 8,
+                  configured_on: 'configuration',
                   dataset_name: 'adv_bench',
                 },
               ],
@@ -935,19 +940,120 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByText('Advanced options')).not.toBeInTheDocument()
     expect(screen.getByTestId('max-dataset-size-input')).toHaveValue(8)
     expect(screen.getByText(
-      'The scenario default is 8. Edit it to override the default.',
+      'The scenario default is 8 total across selected datasets. Edit it to override the default.',
     )).toBeInTheDocument()
     const estimate = screen.getByTestId('run-estimate')
     expect(within(estimate).getByText('Dataset size')).toBeInTheDocument()
-    expect(within(estimate).getByText('8')).toBeInTheDocument()
+    expect(within(estimate).getByText('8 total across selected datasets')).toBeInTheDocument()
     expect(within(estimate).getByText('Number techniques')).toBeInTheDocument()
     expect(within(estimate).getByText('2')).toBeInTheDocument()
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
 
-    await confirmRunPreview(user)
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText('Scenario defaults, capped at 8 total across selected datasets')).toBeInTheDocument()
+    await user.click(within(preview).getByTestId('confirm-launch-scenario-btn'))
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')
+  })
+
+  it('shows the per-dataset default instead of a seven-dataset selected total', async () => {
+    const user = userEvent.setup()
+    const datasetNames = Array.from({ length: 7 }, (_, index) => `dataset-${index}`)
+    mockGetScenario.mockResolvedValueOnce(
+      makeScenario({
+        default_datasets: datasetNames,
+        dataset_size_limit: {
+          default_scope: 'per_dataset',
+          default_count: 4,
+          override_scope: 'per_dataset',
+        },
+        default_run_size: {
+          estimated_attack_count: null,
+          components: [],
+          datasets: datasetNames.map((name) => ({
+            name,
+            kind: 'dataset',
+            logical_seed_group_count: 100,
+            selected_seed_group_count: 4,
+            configured_caps: [{
+              label: 'per-dataset cap',
+              count: 4,
+              configured_on: 'dataset',
+              dataset_name: name,
+            }],
+            selection_note: null,
+          })),
+          note: null,
+        },
+      }),
+    )
+
+    renderDetail('/scanner/foundry.red_team_agent')
+    const capInput = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
+    expect(capInput).toHaveValue(4)
+    expect(screen.getByText(
+      'The scenario default is 4 per dataset. Edit it to override the default.',
+    )).toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('4 per dataset')).toBeInTheDocument()
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
+    expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
+
+    await user.clear(capInput)
+    await user.type(capInput, '30')
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toMatchObject({ max_dataset_size: 30 }))
+
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText('Scenario defaults, capped at 30 per dataset')).toBeInTheDocument()
+    await user.click(within(preview).getByTestId('confirm-launch-scenario-btn'))
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0].max_dataset_size).toBe(30)
+  })
+
+  it('distinguishes a combined default from a per-dataset override', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      dataset_size_limit: {
+        default_scope: 'combined',
+        default_count: 8,
+        override_scope: 'per_dataset',
+      },
+    }))
+
+    renderDetail('/scanner/foundry.red_team_agent')
+    const capInput = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
+    expect(capInput).toHaveValue(8)
+    expect(screen.getByText(
+      'The scenario default is 8 total across selected datasets. An override uses a per-dataset cap.',
+    )).toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('8 total across selected datasets')).toBeInTheDocument()
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
+    expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
+
+    await user.clear(capInput)
+    await user.type(capInput, '10')
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toMatchObject({ max_dataset_size: 10 }))
+    expect(within(screen.getByTestId('run-estimate')).getByText('10 per dataset')).toBeInTheDocument()
+
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText('Scenario defaults, capped at 10 per dataset')).toBeInTheDocument()
+    await user.click(within(preview).getByTestId('confirm-launch-scenario-btn'))
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0].max_dataset_size).toBe(10)
+  })
+
+  it('disables unsupported dataset-size overrides instead of inviting an invalid request', async () => {
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      dataset_size_limit: {
+        default_scope: 'none',
+        default_count: null,
+        override_scope: 'unsupported',
+      },
+    }))
+
+    renderDetail('/scanner/foundry.red_team_agent')
+    expect(await screen.findByRole('spinbutton', { name: 'Max dataset size' })).toBeDisabled()
+    expect(screen.getByText('This scenario does not support a max dataset size override.')).toBeInTheDocument()
   })
 
   it('includes dataset overrides and filters when provided', async () => {

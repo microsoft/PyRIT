@@ -431,7 +431,9 @@ class PyRITShell(cmd.Cmd):
             --max-retries <N>               Maximum retry attempts
             --memory-labels <JSON>          JSON string of labels
             --dataset-names <name> ...      Override default dataset names
-            --max-dataset-size <N>          Maximum items per dataset
+            --max-dataset-size <N>          Cap per dataset or once across all
+                                            (see list-scenarios); unsupported
+                                            scenarios reject this flag
             --<scenario-flag> <value>       Scenario-declared parameters (see list-scenarios)
 
         Notes:

@@ -7,7 +7,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pyrit.models import (
+    ScenarioDatasetSelection,
+    ScenarioDatasetSelectionOverrideScope,
+    ScenarioDatasetSizeLimitOverrideScope,
+)
 from pyrit.registry import ConverterRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    DatasetConfiguration,
+)
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 
 if TYPE_CHECKING:
@@ -119,7 +129,9 @@ class ScenarioConfigurationResolver:
             resolved["memory_labels"] = memory_labels
 
         filters = dataset_filters or {}
-        needs_introspection = bool(techniques) or bool(dataset_names) or max_dataset_size is not None or bool(filters)
+        needs_introspection = (
+            bool(techniques) or dataset_names is not None or max_dataset_size is not None or bool(filters)
+        )
         if not needs_introspection:
             return resolved
 
@@ -131,6 +143,13 @@ class ScenarioConfigurationResolver:
                 f"scenario class is not instantiable without arguments ({exc})."
             ) from exc
 
+        if dataset_names is not None:
+            cls._validate_dataset_selection(
+                scenario_name=scenario_name,
+                selection=introspection_instance.get_dataset_selection(),
+                dataset_names=dataset_names,
+            )
+
         if techniques:
             technique_enums, technique_converters = cls.resolve_techniques_and_converters(
                 tokens=techniques,
@@ -141,29 +160,200 @@ class ScenarioConfigurationResolver:
             if technique_converters:
                 resolved["technique_converters"] = technique_converters
 
-        if dataset_names or max_dataset_size is not None or filters:
+        if dataset_names is not None or max_dataset_size is not None or filters:
             default_config = introspection_instance._default_dataset_config
-            if dataset_names:
-                default_config_class = type(default_config)
-                try:
-                    resolved["dataset_config"] = default_config_class(
-                        dataset_names=dataset_names,
-                        max_dataset_size=max_dataset_size,
-                        filters=filters or None,
-                    )
-                except TypeError as exc:
-                    raise ValueError(
-                        f"Scenario '{scenario_name}' does not support overriding dataset names through "
-                        f"its {default_config_class.__name__} configuration: {exc}"
-                    ) from exc
-            else:
-                if max_dataset_size is not None:
-                    default_config.max_dataset_size = max_dataset_size
-                if filters:
-                    default_config.update_filters(filters=filters)
-                resolved["dataset_config"] = default_config
+            override_scope = introspection_instance.get_dataset_size_limit_override_scope()
+            resolved["dataset_config"] = cls._resolve_dataset_configuration(
+                scenario_name=scenario_name,
+                default_config=default_config,
+                dataset_names=dataset_names,
+                max_dataset_size=max_dataset_size,
+                filters=filters,
+                override_scope=override_scope,
+            )
 
         return resolved
+
+    @staticmethod
+    def _validate_dataset_selection(
+        *,
+        scenario_name: str,
+        selection: ScenarioDatasetSelection,
+        dataset_names: list[str],
+    ) -> None:
+        """Reject explicit dataset-name shapes the scenario cannot interpret."""
+        scope = selection.override_scope
+        if scope is ScenarioDatasetSelectionOverrideScope.Unsupported:
+            raise ValueError(f"Scenario '{scenario_name}' does not support dataset_names overrides.")
+        if scope is ScenarioDatasetSelectionOverrideScope.Any:
+            return
+
+        allowed = selection.allowed_names
+        if allowed is None:
+            raise ValueError(f"Scenario '{scenario_name}' has no allowed dataset names configured.")
+        if scope is ScenarioDatasetSelectionOverrideScope.Fixed and dataset_names != allowed:
+            raise ValueError(f"Scenario '{scenario_name}' requires dataset_names={allowed} in that order.")
+        if scope is ScenarioDatasetSelectionOverrideScope.FixedSet and set(dataset_names) != set(allowed):
+            raise ValueError(f"Scenario '{scenario_name}' requires exactly these datasets: {allowed}.")
+        if scope is ScenarioDatasetSelectionOverrideScope.OneOf and (
+            len(dataset_names) != 1 or dataset_names[0] not in allowed
+        ):
+            raise ValueError(f"Scenario '{scenario_name}' requires exactly one dataset from {allowed}.")
+
+    @classmethod
+    def _resolve_dataset_configuration(
+        cls,
+        *,
+        scenario_name: str,
+        default_config: DatasetConfiguration,
+        dataset_names: list[str] | None,
+        max_dataset_size: int | None,
+        filters: dict[str, list[str]],
+        override_scope: ScenarioDatasetSizeLimitOverrideScope,
+    ) -> DatasetConfiguration:
+        """
+        Apply dataset names, filters, and cap scope without changing their meaning.
+
+        Returns:
+            DatasetConfiguration: The effective configuration shared by preview and launch.
+
+        Raises:
+            ValueError: If an override is empty, duplicated, unsupported, or cannot preserve configuration shape.
+        """
+        if dataset_names is not None:
+            if not dataset_names:
+                raise ValueError("dataset-name overrides require at least one dataset")
+            if len(set(dataset_names)) != len(dataset_names):
+                raise ValueError("dataset-name overrides cannot contain duplicates")
+        if max_dataset_size is not None and override_scope is ScenarioDatasetSizeLimitOverrideScope.Unsupported:
+            raise ValueError(f"Scenario '{scenario_name}' does not support max_dataset_size overrides.")
+
+        if isinstance(default_config, CompoundDatasetAttackConfiguration):
+            return cls._resolve_compound_dataset_configuration(
+                scenario_name=scenario_name,
+                default_config=default_config,
+                dataset_names=dataset_names,
+                max_dataset_size=max_dataset_size,
+                filters=filters,
+                override_scope=override_scope,
+            )
+
+        config = cls._rebuild_dataset_configuration(
+            scenario_name=scenario_name,
+            default_config=default_config,
+            dataset_names=dataset_names,
+            filters=filters,
+        )
+        if max_dataset_size is not None:
+            config.max_dataset_size = max_dataset_size
+
+        effective_cap = config.max_dataset_size
+        if (
+            override_scope is ScenarioDatasetSizeLimitOverrideScope.PerDataset
+            and effective_cap is not None
+            and len(config.dataset_names) > 1
+        ):
+            if not isinstance(default_config, DatasetAttackConfiguration):
+                raise ValueError(
+                    f"Scenario '{scenario_name}' cannot preserve per-dataset cap semantics across multiple datasets "
+                    f"with {type(default_config).__name__}."
+                )
+            children = [
+                default_config.with_dataset_names(
+                    dataset_names=[name],
+                    max_dataset_size=effective_cap,
+                    filters=filters or None,
+                )
+                for name in config.dataset_names
+            ]
+            compound = CompoundDatasetAttackConfiguration(configurations=children)
+            if config.filters:
+                compound.update_filters(filters=config.filters)
+            return compound
+        return config
+
+    @staticmethod
+    def _resolve_compound_dataset_configuration(
+        *,
+        scenario_name: str,
+        default_config: CompoundDatasetAttackConfiguration,
+        dataset_names: list[str] | None,
+        max_dataset_size: int | None,
+        filters: dict[str, list[str]],
+        override_scope: ScenarioDatasetSizeLimitOverrideScope,
+    ) -> CompoundDatasetAttackConfiguration:
+        """
+        Preserve a compound's child shape while applying the declared cap scope.
+
+        Returns:
+            CompoundDatasetAttackConfiguration: The effective compound configuration.
+
+        Raises:
+            ValueError: If selected dataset names cannot preserve the compound shape.
+        """
+        config = default_config
+        if dataset_names is not None and dataset_names != default_config.dataset_names:
+            try:
+                config = default_config.with_dataset_names(
+                    dataset_names=dataset_names,
+                    filters=filters or None,
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Scenario '{scenario_name}' does not support overriding datasets through "
+                    f"its {type(default_config).__name__} configuration: {exc}"
+                ) from exc
+        elif filters:
+            config.update_filters(filters=filters)
+
+        if max_dataset_size is None:
+            return config
+        if override_scope is ScenarioDatasetSizeLimitOverrideScope.PerDataset:
+            config.update_child_max_dataset_size(max_dataset_size=max_dataset_size)
+        elif override_scope is ScenarioDatasetSizeLimitOverrideScope.Combined:
+            config.max_dataset_size = max_dataset_size
+        return config
+
+    @staticmethod
+    def _rebuild_dataset_configuration(
+        *,
+        scenario_name: str,
+        default_config: DatasetConfiguration,
+        dataset_names: list[str] | None,
+        filters: dict[str, list[str]],
+    ) -> DatasetConfiguration:
+        """
+        Rebuild a non-compound configuration only when dataset names change.
+
+        Returns:
+            DatasetConfiguration: The existing or safely reconstructed configuration.
+
+        Raises:
+            ValueError: If the concrete configuration cannot be reconstructed.
+        """
+        if dataset_names is None or dataset_names == default_config.dataset_names:
+            if filters:
+                default_config.update_filters(filters=filters)
+            return default_config
+
+        try:
+            if isinstance(default_config, DatasetAttackConfiguration):
+                return default_config.with_dataset_names(
+                    dataset_names=dataset_names,
+                    filters=filters or None,
+                )
+            inherited_filters = default_config.filters
+            inherited_filters.update(filters)
+            return type(default_config)(
+                dataset_names=dataset_names,
+                max_dataset_size=default_config.max_dataset_size,
+                filters=inherited_filters or None,
+            )
+        except TypeError as exc:
+            raise ValueError(
+                f"Scenario '{scenario_name}' does not support overriding dataset names through "
+                f"its {type(default_config).__name__} configuration: {exc}"
+            ) from exc
 
     @classmethod
     def resolve_techniques_and_converters(

@@ -677,11 +677,18 @@ export interface RegisteredScenario {
   all_techniques: string[]
   technique_summaries: ScenarioTechniqueSummary[]
   default_datasets: string[]
+  dataset_size_limit?: ScenarioDatasetSizeLimit
   baseline_policy: 'enabled' | 'disabled' | 'forbidden'
   include_baseline_by_default: boolean
   uses_default_adversarial_target: boolean
   supported_parameters: Parameter[]
   default_run_size: ScenarioRunSizeEstimateResponse
+}
+
+export interface ScenarioDatasetSizeLimit {
+  default_scope: 'none' | 'per_dataset' | 'combined' | 'heterogeneous'
+  default_count: number | null
+  override_scope: 'per_dataset' | 'combined' | 'unsupported'
 }
 
 export interface ScenarioTechniqueSummary {

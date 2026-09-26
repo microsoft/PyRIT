@@ -16,7 +16,14 @@ from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.converter import SearchReplaceConverter
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, Parameter, Seed, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    Parameter,
+    ScenarioDatasetSelectionOverrideScope,
+    Seed,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -183,6 +190,9 @@ class PromptInject(Scenario):
 
     VERSION: int = 3
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
+    DATASET_SELECTION_OVERRIDE_SCOPE: ClassVar[ScenarioDatasetSelectionOverrideScope] = (
+        ScenarioDatasetSelectionOverrideScope.FixedSet
+    )
     DEFAULT_GOAL_TEXTS: ClassVar[tuple[str, str, str]] = _DEFAULT_GOAL_TEXTS
     TECHNIQUE_DATASET_NAME: ClassVar[str] = "prompt_inject_techniques"
 

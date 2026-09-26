@@ -21,6 +21,9 @@ from pyrit.models.catalog import (
     AttackRetrySummary,
     RegisteredInitializer,
     RegisteredScenario,
+    ScenarioDatasetSizeLimit,
+    ScenarioDatasetSizeLimitDefaultScope,
+    ScenarioDatasetSizeLimitOverrideScope,
     ScenarioRunListItem,
     ScenarioRunSummary,
     TargetInstance,
@@ -178,6 +181,11 @@ def test_print_scenario_list_full(capsys):
             all_techniques=["s1", "s2", "s3"],
             default_technique="s1",
             default_datasets=["d1", "d2"],
+            dataset_size_limit=ScenarioDatasetSizeLimit(
+                default_scope=ScenarioDatasetSizeLimitDefaultScope.PerDataset,
+                default_count=4,
+                override_scope=ScenarioDatasetSizeLimitOverrideScope.Combined,
+            ),
             supported_parameters=[
                 Parameter(
                     name="max_turns",
@@ -203,6 +211,7 @@ def test_print_scenario_list_full(capsys):
     assert "Available Techniques (3)" in captured.out
     assert "Default Technique: s1" in captured.out
     assert "Default Datasets (2)" in captured.out
+    assert "Dataset Cap: default per_dataset (4); override combined" in captured.out
     assert "Supported Parameters" in captured.out
     assert "max_turns" in captured.out
     assert "mode" in captured.out
@@ -215,6 +224,21 @@ def test_print_scenario_list_minimal_fields(capsys):
     captured = capsys.readouterr()
     assert "min" in captured.out
     assert "MinScenario" in captured.out
+
+
+def test_print_scenario_list_unsupported_cap_scope(capsys):
+    _output.print_scenario_list(
+        items=[
+            _make_scenario(
+                scenario_name="synthesized",
+                dataset_size_limit=ScenarioDatasetSizeLimit(
+                    override_scope=ScenarioDatasetSizeLimitOverrideScope.Unsupported,
+                ),
+            )
+        ]
+    )
+
+    assert "Dataset Cap: default none; override unsupported" in capsys.readouterr().out
 
 
 def test_print_scenario_list_no_max_dataset_size(capsys):

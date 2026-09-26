@@ -7,6 +7,7 @@ Unit tests for the pyrit_shell CLI module (thin REST client).
 
 import asyncio
 from datetime import UTC
+from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -88,6 +89,19 @@ def shell(mock_api_client):
     s._api_client = mock_api_client
     s._base_url = "http://localhost:8000"
     return s, mock_api_client
+
+
+def test_run_help_describes_scenario_dependent_dataset_cap_scope(
+    shell: tuple[pyrit_shell.PyRITShell, AsyncMock],
+) -> None:
+    client, _ = shell
+    output = StringIO()
+    client.stdout = output
+    client.do_help("run")
+
+    help_text = output.getvalue()
+    assert "Cap per dataset or once across all" in help_text
+    assert "unsupported" in help_text
 
 
 class TestPyRITShell:

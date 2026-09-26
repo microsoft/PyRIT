@@ -46,6 +46,7 @@ import type {
   Parameter,
   RegisteredScenario,
   RunScenarioRequest,
+  ScenarioDatasetSizeLimit,
   ScenarioRunEstimate,
   ScenarioRunEstimateResult,
   ScenarioRunSizeEstimateRequest,
@@ -96,22 +97,58 @@ function targetOptionLabel(target: TargetInstance): string {
 }
 
 function defaultMaxDatasetSize(scenario: RegisteredScenario): string {
-  const datasets = scenario.default_run_size.datasets
-  if (datasets.length === 0) {
-    return ''
-  }
+  const limit = scenario.dataset_size_limit
+  return limit?.default_count != null && (
+    limit.default_scope === 'per_dataset' || limit.default_scope === 'combined'
+  ) ? String(limit.default_count) : ''
+}
 
-  for (const dataset of datasets) {
-    if (dataset.configured_caps.length === 0) {
-      return ''
+function describeDatasetCap(
+  value: string,
+  scope: ScenarioDatasetSizeLimit['default_scope'] | ScenarioDatasetSizeLimit['override_scope'] | undefined,
+): string {
+  switch (scope) {
+    case 'per_dataset':
+      return `${value} per dataset`
+    case 'combined':
+      return `${value} total across selected datasets`
+    default:
+      return value
+  }
+}
+
+function datasetSizeHint(scenario: RegisteredScenario, defaultSize: string): string {
+  const limit = scenario.dataset_size_limit
+  if (limit?.override_scope === 'unsupported') {
+    return 'This scenario does not support a max dataset size override.'
+  }
+  if (defaultSize) {
+    const defaultDescription = describeDatasetCap(defaultSize, limit?.default_scope)
+    if (limit?.default_scope !== limit?.override_scope) {
+      const overrideDescription = limit?.override_scope === 'per_dataset'
+        ? 'a per-dataset cap'
+        : 'one combined cap'
+      return `The scenario default is ${defaultDescription}. An override uses ${overrideDescription}.`
     }
+    return `The scenario default is ${defaultDescription}. Edit it to override the default.`
   }
+  if (limit?.default_scope === 'heterogeneous') {
+    return limit.override_scope === 'per_dataset'
+      ? 'Default caps vary by dataset. Enter a positive integer to use the same cap per dataset.'
+      : 'Default caps vary by dataset. Enter a positive integer for one combined cap.'
+  }
+  if (limit?.override_scope === 'per_dataset') {
+    return 'Enter a positive integer to cap each selected dataset.'
+  }
+  if (limit?.override_scope === 'combined') {
+    return 'Enter a positive integer to cap all selected datasets together.'
+  }
+  return 'Enter a positive integer to limit the selected dataset size.'
+}
 
-  const selectedGroupCount = datasets.reduce(
-    (total, dataset) => total + dataset.selected_seed_group_count,
-    0,
-  )
-  return selectedGroupCount > 0 ? String(selectedGroupCount) : ''
+function datasetPreviewHint(customSelection: boolean, cap: string): string {
+  const selection = customSelection ? 'Custom override' : 'Scenario defaults'
+  return cap ? `${selection}, capped at ${cap}` : selection
 }
 
 /** Resolves a Fluent `SpinButton` change event to a numeric value, preferring the parsed `value` over the raw `displayValue`. */
@@ -678,6 +715,15 @@ function ScenarioLaunchForm({
     && maxDatasetSize !== configuredDefaultMaxDatasetSize
     ? maxDatasetSize
     : ''
+  const displayedDatasetCap = maxDatasetSizeOverride.trim() || configuredDefaultMaxDatasetSize
+  const describedDatasetCap = displayedDatasetCap
+    ? describeDatasetCap(
+      displayedDatasetCap,
+      maxDatasetSizeOverride.trim()
+        ? scenario.dataset_size_limit?.override_scope
+        : scenario.dataset_size_limit?.default_scope,
+    )
+    : ''
   const estimateResult = useMemo(
     () => buildEstimateRequest({
       scenario,
@@ -1144,16 +1190,14 @@ function ScenarioLaunchForm({
                 </Field>
                 <Field
                   label="Max dataset size"
-                  hint={configuredDefaultMaxDatasetSize
-                    ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Edit it to override the default.`
-                    : 'Enter a positive integer to limit the selected dataset size.'}
+                  hint={datasetSizeHint(scenario, configuredDefaultMaxDatasetSize)}
                 >
                   <Input
                     className={styles.numberInput}
                     type="number"
                     min={1}
                     value={maxDatasetSize}
-                    disabled={submitting}
+                    disabled={submitting || scenario.dataset_size_limit?.override_scope === 'unsupported'}
                     onChange={(_, data) => setMaxDatasetSize(data.value)}
                     data-testid="max-dataset-size-input"
                   />
@@ -1240,11 +1284,12 @@ function ScenarioLaunchForm({
                 </div>
                 <div className={styles.costEstimateRow}>
                   <dt>Dataset size</dt>
-                  <dd>
-                    {maxDatasetSizeOverride.trim()
-                      || configuredDefaultMaxDatasetSize
-                      || 'Not configured'}
-                  </dd>
+                  <dd>{describedDatasetCap
+                    || (scenario.dataset_size_limit?.default_scope === 'heterogeneous'
+                      ? 'Varies by dataset'
+                      : scenario.dataset_size_limit?.override_scope === 'unsupported'
+                        ? 'Not configurable'
+                        : 'Not configured')}</dd>
                 </div>
                 <div className={styles.costEstimateRow}>
                   <dt>Number techniques</dt>
@@ -1337,8 +1382,7 @@ function ScenarioLaunchForm({
                               : 'No datasets declared'}
                           </Text>
                           <Text size={200} className={styles.hint}>
-                            {previewDatasets.length > 0 ? 'Custom override' : 'Scenario defaults'}
-                            {maxDatasetSize.trim() ? ` - capped at ${maxDatasetSize.trim()} each` : ''}
+                            {datasetPreviewHint(previewDatasets.length > 0, describedDatasetCap)}
                           </Text>
                         </div>
                       </dd>

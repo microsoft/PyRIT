@@ -44,6 +44,9 @@ from pyrit.models import (
     ComponentIdentifier,
     RetryEvent,
     ScenarioAttackResultDelta,
+    ScenarioDatasetSelection,
+    ScenarioDatasetSelectionOverrideScope,
+    ScenarioDatasetSizeLimitOverrideScope,
     ScenarioProgressResult,
     ScenarioProgressScore,
     ScenarioResult,
@@ -59,11 +62,14 @@ from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueS
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
+    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetConfiguration,
     get_default_adversarial_target,
 )
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination
+from pyrit.scenario.scenarios.garak.system_prompt_extraction import SystemPromptExtraction
 from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
@@ -3012,6 +3018,238 @@ class TestScenarioRunServiceFailedAttackReporting:
         assert summary.atomic_attack_name == "baseline_airt_hate"
         assert summary.retries[0].endpoint == "https://ep/"
         assert summary.retries[0].component_role == "objective_scorer"
+
+
+class TestResolveDatasetConfiguration:
+    """Tests for the shared launch and estimate dataset contract."""
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize(
+        "scenario_class",
+        [PackageHallucination, SystemPromptExtraction],
+    )
+    def test_synthesized_scenarios_reject_unused_dataset_caps(self, scenario_class: type[Scenario]) -> None:
+        with pytest.raises(ValueError, match="does not support max_dataset_size"):
+            _resolver_mod.ScenarioConfigurationResolver.resolve_configuration(
+                scenario_name=scenario_class.__name__,
+                scenario_class=scenario_class,
+                max_dataset_size=2,
+            )
+
+    def test_launch_and_estimate_inputs_resolve_identical_dataset_configuration(self) -> None:
+        class _DatasetResolutionScenario:
+            def __init__(self) -> None:
+                self._default_dataset_config = DatasetAttackConfiguration(
+                    dataset_names=["default-one", "default-two"],
+                    max_dataset_size=7,
+                )
+
+            def get_dataset_size_limit_override_scope(self) -> ScenarioDatasetSizeLimitOverrideScope:
+                return ScenarioDatasetSizeLimitOverrideScope.Combined
+
+            def get_dataset_selection(self) -> ScenarioDatasetSelection:
+                return ScenarioDatasetSelection()
+
+        common_inputs = {
+            "scenario_name": "example",
+            "scenario_class": _DatasetResolutionScenario,
+            "dataset_names": ["selected-one", "selected-two"],
+            "max_dataset_size": 3,
+            "dataset_filters": {"data_types": ["text"]},
+            "include_baseline": False,
+        }
+
+        launch = _resolver_mod.ScenarioConfigurationResolver.resolve_configuration(**common_inputs)
+        estimate = _resolver_mod.ScenarioConfigurationResolver.resolve_configuration(**common_inputs)
+
+        launch_config = launch["dataset_config"]
+        estimate_config = estimate["dataset_config"]
+        assert launch["include_baseline"] is estimate["include_baseline"] is False
+        assert type(launch_config) is type(estimate_config) is DatasetAttackConfiguration
+        assert launch_config is not estimate_config
+        assert launch_config.dataset_names == estimate_config.dataset_names == ["selected-one", "selected-two"]
+        assert launch_config.max_dataset_size == estimate_config.max_dataset_size == 3
+        assert launch_config.filters == estimate_config.filters == {"data_types": ["text"]}
+        assert launch_config.size_cap_provenance() == estimate_config.size_cap_provenance()
+
+    @pytest.mark.parametrize(
+        ("scope", "allowed_names", "requested_names", "error"),
+        [
+            (ScenarioDatasetSelectionOverrideScope.Fixed, ["first", "second"], ["first", "second"], None),
+            (ScenarioDatasetSelectionOverrideScope.Fixed, ["first", "second"], ["second", "first"], "in that order"),
+            (ScenarioDatasetSelectionOverrideScope.FixedSet, ["first", "second"], ["second", "first"], None),
+            (ScenarioDatasetSelectionOverrideScope.FixedSet, ["first", "second"], ["first"], "exactly these datasets"),
+            (ScenarioDatasetSelectionOverrideScope.OneOf, ["first", "second"], ["second"], None),
+            (ScenarioDatasetSelectionOverrideScope.OneOf, ["first", "second"], ["first", "second"], "exactly one"),
+            (ScenarioDatasetSelectionOverrideScope.OneOf, ["first", "second"], ["unrelated"], "exactly one"),
+            (ScenarioDatasetSelectionOverrideScope.Unsupported, None, ["first"], "does not support dataset_names"),
+        ],
+    )
+    def test_dataset_selection_policy_is_enforced_by_shared_resolver(
+        self,
+        scope: ScenarioDatasetSelectionOverrideScope,
+        allowed_names: list[str] | None,
+        requested_names: list[str],
+        error: str | None,
+    ) -> None:
+        selection = ScenarioDatasetSelection(override_scope=scope, allowed_names=allowed_names)
+
+        class _PolicyScenario:
+            def __init__(self) -> None:
+                self._default_dataset_config = DatasetAttackConfiguration(dataset_names=["first", "second"])
+
+            def get_dataset_selection(self) -> ScenarioDatasetSelection:
+                return selection
+
+            def get_dataset_size_limit_override_scope(self) -> ScenarioDatasetSizeLimitOverrideScope:
+                return ScenarioDatasetSizeLimitOverrideScope.Combined
+
+        if error is not None:
+            with pytest.raises(ValueError, match=error):
+                _resolver_mod.ScenarioConfigurationResolver.resolve_configuration(
+                    scenario_name="example", scenario_class=_PolicyScenario, dataset_names=requested_names
+                )
+            return
+
+        resolved = _resolver_mod.ScenarioConfigurationResolver.resolve_configuration(
+            scenario_name="example", scenario_class=_PolicyScenario, dataset_names=requested_names
+        )
+        assert resolved["dataset_config"].dataset_names == requested_names
+
+    def test_combined_dataset_override_is_one_budget(self) -> None:
+        default = DatasetAttackConfiguration(
+            dataset_names=["default-one", "default-two"],
+            max_dataset_size=7,
+            filters={"harm_categories": ["original"]},
+            auto_fetch=False,
+        )
+
+        config = _resolver_mod.ScenarioConfigurationResolver._resolve_dataset_configuration(
+            scenario_name="example",
+            default_config=default,
+            dataset_names=["selected-one", "selected-two"],
+            max_dataset_size=3,
+            filters={"data_types": ["text"]},
+            override_scope=ScenarioDatasetSizeLimitOverrideScope.Combined,
+        )
+
+        assert isinstance(config, DatasetAttackConfiguration)
+        assert config.dataset_names == ["selected-one", "selected-two"]
+        assert config.max_dataset_size == 3
+        assert config.filters == {
+            "harm_categories": ["original"],
+            "data_types": ["text"],
+        }
+        assert config._auto_fetch is False
+        assert [(cap.dataset_names, cap.count) for cap in config.size_cap_provenance()] == [
+            (["selected-one", "selected-two"], 3)
+        ]
+
+    def test_per_dataset_override_builds_independent_children(self) -> None:
+        default = DatasetAttackConfiguration(
+            dataset_names=["default"], filters={"harm_categories": ["original"]}, auto_fetch=False
+        )
+
+        config = _resolver_mod.ScenarioConfigurationResolver._resolve_dataset_configuration(
+            scenario_name="example",
+            default_config=default,
+            dataset_names=["first", "second"],
+            max_dataset_size=4,
+            filters={"data_types": ["text"]},
+            override_scope=ScenarioDatasetSizeLimitOverrideScope.PerDataset,
+        )
+
+        assert isinstance(config, CompoundDatasetAttackConfiguration)
+        assert config.dataset_names == ["first", "second"]
+        assert [child.max_dataset_size for child in config._configurations] == [4, 4]
+        assert config.filters == {"harm_categories": ["original"], "data_types": ["text"]}
+        assert all(child.filters == config.filters and child._auto_fetch is False for child in config._configurations)
+        assert [(cap.dataset_names, cap.count) for cap in config.size_cap_provenance()] == [
+            (["first"], 4),
+            (["second"], 4),
+        ]
+
+    def test_per_dataset_override_preserves_default_child_caps(self) -> None:
+        default = CompoundDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(dataset_names=["first"], max_dataset_size=2),
+                DatasetAttackConfiguration(dataset_names=["second"], max_dataset_size=5),
+            ]
+        )
+
+        config = _resolver_mod.ScenarioConfigurationResolver._resolve_dataset_configuration(
+            scenario_name="example",
+            default_config=default,
+            dataset_names=None,
+            max_dataset_size=None,
+            filters={},
+            override_scope=ScenarioDatasetSizeLimitOverrideScope.PerDataset,
+        )
+
+        assert [child.max_dataset_size for child in config._configurations] == [2, 5]
+
+    def test_unsupported_dataset_cap_override_raises(self) -> None:
+        default = DatasetAttackConfiguration(dataset_names=["default"])
+
+        with pytest.raises(ValueError, match="does not support max_dataset_size"):
+            _resolver_mod.ScenarioConfigurationResolver._resolve_dataset_configuration(
+                scenario_name="example",
+                default_config=default,
+                dataset_names=None,
+                max_dataset_size=3,
+                filters={},
+                override_scope=ScenarioDatasetSizeLimitOverrideScope.Unsupported,
+            )
+
+    def test_per_dataset_override_rejects_multi_population_child(self) -> None:
+        default = CompoundDatasetAttackConfiguration(
+            configurations=[DatasetAttackConfiguration(dataset_names=["first", "second"])],
+        )
+
+        with pytest.raises(ValueError, match="one distinct dataset population"):
+            _resolver_mod.ScenarioConfigurationResolver._resolve_dataset_configuration(
+                scenario_name="example",
+                default_config=default,
+                dataset_names=None,
+                max_dataset_size=3,
+                filters={},
+                override_scope=ScenarioDatasetSizeLimitOverrideScope.PerDataset,
+            )
+
+    def test_ambiguous_compound_selection_override_raises(self) -> None:
+        class _ShapedConfiguration(DatasetAttackConfiguration):
+            pass
+
+        default = CompoundDatasetAttackConfiguration(
+            configurations=[
+                _ShapedConfiguration(dataset_names=["first"]),
+                _ShapedConfiguration(dataset_names=["second"]),
+            ]
+        )
+
+        with pytest.raises(ValueError, match="homogeneous single-dataset"):
+            _resolver_mod.ScenarioConfigurationResolver._resolve_dataset_configuration(
+                scenario_name="example",
+                default_config=default,
+                dataset_names=["selected"],
+                max_dataset_size=None,
+                filters={},
+                override_scope=ScenarioDatasetSizeLimitOverrideScope.PerDataset,
+            )
+
+    @pytest.mark.parametrize("dataset_names", [[], ["duplicate", "duplicate"]])
+    def test_invalid_dataset_selection_override_raises(self, dataset_names: list[str]) -> None:
+        default = DatasetAttackConfiguration(dataset_names=["default"])
+
+        with pytest.raises(ValueError, match="dataset-name overrides"):
+            _resolver_mod.ScenarioConfigurationResolver._resolve_dataset_configuration(
+                scenario_name="example",
+                default_config=default,
+                dataset_names=dataset_names,
+                max_dataset_size=None,
+                filters={},
+                override_scope=ScenarioDatasetSizeLimitOverrideScope.PerDataset,
+            )
 
 
 class TestResolveTechniquesAndConverters:

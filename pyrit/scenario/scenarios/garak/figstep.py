@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.models import AttackSeedGroup, PromptDataType
+from pyrit.models import AttackSeedGroup, PromptDataType, ScenarioDatasetSelectionOverrideScope
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -67,6 +67,10 @@ class FigStep(Scenario):
     """
 
     VERSION: int = 1
+    DATASET_SELECTION_OVERRIDE_SCOPE: ClassVar[ScenarioDatasetSelectionOverrideScope] = (
+        ScenarioDatasetSelectionOverrideScope.OneOf
+    )
+    DATASET_SELECTION_ALLOWED_NAMES: ClassVar[tuple[str, ...] | None] = tuple(sorted(_FIGSTEP_DATASET_NAMES))
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
         native_required=frozenset({CapabilityName.MULTI_MESSAGE_PIECES}),
         required_input_modalities=_FIGSTEP_INPUT_MODALITIES,

@@ -123,6 +123,11 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
         if sc.default_datasets:
             print(f"    Default Datasets ({len(sc.default_datasets)}):")
             print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
+        limit = sc.dataset_size_limit
+        default_cap = limit.default_scope.value
+        if limit.default_count is not None:
+            default_cap += f" ({limit.default_count})"
+        print(f"    Dataset Cap: default {default_cap}; override {limit.override_scope.value}")
         if sc.supported_parameters:
             print("    Supported Parameters:")
             for p in sc.supported_parameters:

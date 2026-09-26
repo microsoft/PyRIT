@@ -16,6 +16,8 @@ from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
+    ScenarioDatasetSelectionOverrideScope,
+    ScenarioDatasetSizeCap,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
@@ -38,7 +40,6 @@ from pyrit.score import CredentialLeakScorer
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from typing import Literal
 
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import TrueFalseScorer
@@ -97,19 +98,23 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
         """Set the techniques whose populations are sampled."""
         self._techniques = list(techniques)
 
-    def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
+    def size_cap_provenance(self) -> list[ScenarioDatasetSizeCap]:
         """
-        Describe the shared configuration cap for each technique population.
+        Describe the one shared configuration cap across technique populations.
 
         Returns:
-            dict: Technique names mapped to their shared configuration cap.
+            list[ScenarioDatasetSizeCap]: Canonical cap provenance.
         """
         if self.max_dataset_size is None:
-            return {}
-        return {
-            str(technique.value): [("combined configuration cap", self.max_dataset_size, "configuration")]
-            for technique in self._techniques
-        }
+            return []
+        return [
+            ScenarioDatasetSizeCap(
+                label="combined configuration cap",
+                count=self.max_dataset_size,
+                configured_on="configuration",
+                dataset_names=[str(technique.value) for technique in self._techniques],
+            )
+        ]
 
     async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]:
         """
@@ -194,6 +199,9 @@ class ApiKey(Scenario):
 
     VERSION: int = 1
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
+    DATASET_SELECTION_OVERRIDE_SCOPE: ClassVar[ScenarioDatasetSelectionOverrideScope] = (
+        ScenarioDatasetSelectionOverrideScope.FixedSet
+    )
 
     @classmethod
     def required_datasets(cls) -> list[str]:

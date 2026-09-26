@@ -7,7 +7,7 @@ import asyncio
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH
@@ -32,6 +32,8 @@ from pyrit.executor.attack import (
     CrescendoAttack,
 )
 from pyrit.models import (
+    ScenarioDatasetSelectionOverrideScope,
+    ScenarioDatasetSizeLimitOverrideScope,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     SeedPrompt,
@@ -44,6 +46,7 @@ from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
+    DatasetSourceKind,
 )
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
@@ -359,11 +362,17 @@ class Psychosocial(Scenario):
     is emitted (toggle with ``include_baseline``).
 
     Dataset selection is bound to the sub-harms: the ``dataset_config`` parameter still tunes
-    ``max_dataset_size`` and sampling, but the dataset names are always the selected sub-harms'
-    datasets (``--dataset-names`` is ignored).
+    ``max_dataset_size`` and sampling, but explicit ``--dataset-names`` overrides are rejected.
+    Select a subset through the ``sub_harm`` parameter instead.
     """
 
     VERSION: int = 3
+    DATASET_SELECTION_OVERRIDE_SCOPE: ClassVar[ScenarioDatasetSelectionOverrideScope] = (
+        ScenarioDatasetSelectionOverrideScope.Unsupported
+    )
+    DATASET_SIZE_LIMIT_OVERRIDE_SCOPE: ClassVar[ScenarioDatasetSizeLimitOverrideScope | None] = (
+        ScenarioDatasetSizeLimitOverrideScope.PerDataset
+    )
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:
@@ -479,12 +488,10 @@ class Psychosocial(Scenario):
         """
         Hard-bind the dataset names to the selected sub-harms before resolving seeds.
 
-        Forces the dataset names to the selected sub-harms' (so ``--dataset-names`` cannot repoint
-        the scenario at unrelated data) and applies any ``max_dataset_size`` budget *per sub-harm*
-        rather than as one global budget. A single ``DatasetAttackConfiguration`` spends one budget
-        across the union of sub-harm datasets, so a small cap (e.g. ``1``) can starve a sub-harm of
-        every seed; a per-sub-harm compound caps each independently. Any run-time ``filters`` on the
-        active ``dataset_config`` are preserved.
+        Reject unrelated datasets and apply any ``max_dataset_size`` budget *per sub-harm*
+        rather than as one global budget. A single ``DatasetAttackConfiguration`` spends one
+        budget across the union, so a small cap can starve a sub-harm of every seed. Rebuilt
+        configurations retain filters, validators, and auto-fetch policy.
 
         Args:
             apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling. On
@@ -492,21 +499,42 @@ class Psychosocial(Scenario):
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by originating dataset name.
+
+        Raises:
+            ValueError: If the selection is unrelated or a compound cap shape is unsupported.
         """
         dataset_names = [harm.dataset_name for harm in self._selected_sub_harms()]
-        per_subharm_cap = self._dataset_config.max_dataset_size
-        filters = self._dataset_config.filters
-        if per_subharm_cap is None:
-            self._dataset_config = DatasetAttackConfiguration(dataset_names=dataset_names, filters=filters)
-        else:
-            rebuilt = CompoundDatasetAttackConfiguration.per_dataset(
-                dataset_names=dataset_names, max_dataset_size=per_subharm_cap, filters=filters
+        config = self._dataset_config
+        if config.source_kind is DatasetSourceKind.INLINE or config.dataset_names not in (
+            self._default_dataset_config.dataset_names,
+            dataset_names,
+        ):
+            raise ValueError("Psychosocial dataset names are determined by sub_harm; use its selected datasets.")
+        if isinstance(config, CompoundDatasetAttackConfiguration):
+            if not config.supports_per_dataset_size_override:
+                raise ValueError("Psychosocial requires one distinct dataset population per child.")
+            configured_caps = config.size_cap_provenance()
+            if any(cap.configured_on != "dataset" for cap in configured_caps):
+                raise ValueError("Psychosocial does not support a combined dataset cap.")
+            capped_names = [name for cap in configured_caps for name in cap.dataset_names]
+            child_caps = {cap.count for cap in configured_caps}
+            if configured_caps and (len(child_caps) > 1 or capped_names != config.dataset_names):
+                raise ValueError("Psychosocial requires one consistent per-dataset cap.")
+            if config.dataset_names != dataset_names:
+                self._dataset_config = config.with_dataset_names(dataset_names=dataset_names)
+        elif config.max_dataset_size is not None:
+            children = [
+                config.with_dataset_names(dataset_names=[name], max_dataset_size=config.max_dataset_size)
+                for name in dataset_names
+            ]
+            compound = CompoundDatasetAttackConfiguration(configurations=children)
+            if config.filters:
+                compound.update_filters(filters=config.filters)
+            self._dataset_config = compound
+        elif config.dataset_names != dataset_names:
+            self._dataset_config = config.with_dataset_names(
+                dataset_names=dataset_names,
             )
-            # Parent cap = per-sub-harm cap x sub-harm count: each child already caps at the
-            # per-sub-harm budget so the parent never trims the union, yet it stays non-None so the
-            # base still pins the sampled objective subset into the scenario metadata for resume.
-            rebuilt.max_dataset_size = per_subharm_cap * len(dataset_names)
-            self._dataset_config = rebuilt
         return await super()._resolve_seed_groups_by_dataset_async(apply_sampling=apply_sampling)
 
     async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:

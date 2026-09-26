@@ -27,6 +27,7 @@ from pyrit.scenario.core import (
     BaselineAttackPolicy,
     DatasetAttackConfiguration,
     DatasetConfiguration,
+    DatasetConstraintError,
     Scenario,
     ScenarioTechnique,
 )
@@ -187,17 +188,11 @@ async def test_configured_estimate_reuses_technique_and_baseline_resolution_with
     assert patch_central_database.return_value.get_scenario_results() == []
 
 
-async def test_configured_estimate_auto_fetches_selected_named_dataset() -> None:
-    """A configured estimate loads its selected dataset through DatasetConfiguration."""
+async def test_configured_estimate_does_not_fetch_or_persist_selected_named_dataset() -> None:
+    """A configured estimate refuses to materialize its selected dataset."""
     memory = MagicMock()
     memory.get_seeds.return_value = []
-
-    async def populate_memory_async(*, dataset_name: str) -> None:
-        assert dataset_name == "sample"
-        memory.get_seeds.return_value = [
-            SeedObjective(value="one", dataset_name="sample"),
-            SeedObjective(value="two", dataset_name="sample"),
-        ]
+    memory.add_seed_datasets_to_memory_async = AsyncMock()
 
     with (
         patch(
@@ -208,15 +203,15 @@ async def test_configured_estimate_auto_fetches_selected_named_dataset() -> None
             DatasetConfiguration,
             "_fetch_dataset_async",
             new_callable=AsyncMock,
-            side_effect=populate_memory_async,
         ) as fetch_dataset,
+        pytest.raises(DatasetConstraintError, match="read-only resolution"),
     ):
         scenario = _NamedDatasetEstimateScenario(objective_scorer=_scorer())
         scenario.set_params_from_args(args={})
-        estimate = await scenario.get_run_size_estimate_async()
+        await scenario.get_run_size_estimate_async()
 
-    assert estimate.estimated_attack_count == 6
-    fetch_dataset.assert_awaited_once_with(dataset_name="sample")
+    fetch_dataset.assert_not_awaited()
+    memory.add_seed_datasets_to_memory_async.assert_not_awaited()
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -18,7 +18,15 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from pyrit.models import ScenarioRunSizeEstimate, ScenarioTechniqueSummary, class_name_to_snake_case
+from pyrit.models import (
+    ScenarioDatasetSelection,
+    ScenarioDatasetSizeLimit,
+    ScenarioDatasetSizeLimitDefaultScope,
+    ScenarioDatasetSizeLimitOverrideScope,
+    ScenarioRunSizeEstimate,
+    ScenarioTechniqueSummary,
+    class_name_to_snake_case,
+)
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -65,6 +73,12 @@ class ScenarioMetadata(RegistryMetadata):
 
     # Default dataset names used by this scenario.
     default_datasets: tuple[str, ...] = field(kw_only=True)
+
+    # Dataset-name override semantics, including any allowed names.
+    dataset_selection: ScenarioDatasetSelection = field(kw_only=True, default_factory=ScenarioDatasetSelection)
+
+    # Structured default and override semantics for the dataset-size control.
+    dataset_size_limit: ScenarioDatasetSizeLimit = field(kw_only=True, default_factory=ScenarioDatasetSizeLimit)
 
     # Scenario-declared custom parameters.
     supported_parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
@@ -194,7 +208,12 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             )
             for aggregate in technique_class.get_aggregate_techniques()
         )
-        default_datasets = tuple(instance._default_dataset_config.dataset_names)
+        default_dataset_config = instance._default_dataset_config
+        default_datasets = tuple(default_dataset_config.dataset_names)
+        dataset_size_limit = self._build_dataset_size_limit(
+            default_dataset_config=default_dataset_config,
+            override_scope=instance.get_dataset_size_limit_override_scope(),
+        )
 
         return ScenarioMetadata(
             class_name=cls.__name__,
@@ -210,10 +229,51 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             aggregate_techniques=aggregate_techniques,
             aggregate_technique_expansions=aggregate_technique_expansions,
             default_datasets=default_datasets,
+            dataset_selection=instance.get_dataset_selection(),
+            dataset_size_limit=dataset_size_limit,
             supported_parameters=supported_parameters,
             baseline_policy=instance.BASELINE_ATTACK_POLICY.value,
             include_baseline_by_default=instance.BASELINE_ATTACK_POLICY.value == "enabled",
             uses_default_adversarial_target=instance.uses_default_adversarial_target,
+        )
+
+    @staticmethod
+    def _build_dataset_size_limit(
+        *,
+        default_dataset_config: Any,
+        override_scope: ScenarioDatasetSizeLimitOverrideScope,
+    ) -> ScenarioDatasetSizeLimit:
+        """
+        Normalize a scenario dataset configuration into request limit semantics.
+
+        Returns:
+            ScenarioDatasetSizeLimit: The structured default and override scopes.
+        """
+        caps = list(default_dataset_config.size_cap_provenance())
+        if not caps:
+            return ScenarioDatasetSizeLimit(override_scope=override_scope)
+
+        dataset_names = default_dataset_config.dataset_names
+        per_dataset_caps = [cap for cap in caps if cap.configured_on == "dataset"]
+        if len(per_dataset_caps) == len(caps) == max(1, len(dataset_names)):
+            counts = {cap.count for cap in per_dataset_caps}
+            covered_names = [name for cap in per_dataset_caps for name in cap.dataset_names]
+            if len(counts) == 1 and covered_names == (dataset_names or ["inline"]):
+                return ScenarioDatasetSizeLimit(
+                    default_scope=ScenarioDatasetSizeLimitDefaultScope.PerDataset,
+                    default_count=next(iter(counts)),
+                    override_scope=override_scope,
+                )
+
+        if len(caps) == 1 and caps[0].configured_on in {"configuration", "compound"}:
+            return ScenarioDatasetSizeLimit(
+                default_scope=ScenarioDatasetSizeLimitDefaultScope.Combined,
+                default_count=caps[0].count,
+                override_scope=override_scope,
+            )
+        return ScenarioDatasetSizeLimit(
+            default_scope=ScenarioDatasetSizeLimitDefaultScope.Heterogeneous,
+            override_scope=override_scope,
         )
 
     async def create_and_estimate_async(
@@ -239,8 +299,15 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         """
         scenario = await asyncio.to_thread(self.create_instance, name)
         scenario.set_scenario_registry_name(scenario_registry_name=name)
-        scenario.set_params_from_args(args={**(scenario_params or {}), **estimate_kwargs})
-        return await scenario.get_run_size_estimate_async(target_is_configured=target_is_configured)
+        merged_args = self._merge_scenario_params(
+            scenario_params=scenario_params,
+            resolved_kwargs=estimate_kwargs,
+        )
+        scenario.set_params_from_args(args=merged_args)
+        from pyrit.scenario.core.dataset_configuration import read_only_dataset_resolution
+
+        with read_only_dataset_resolution():
+            return await scenario.get_run_size_estimate_async(target_is_configured=target_is_configured)
 
     async def create_and_initialize_async(
         self,
@@ -290,10 +357,33 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         if scenario_result_id:
             constructor_kwargs["scenario_result_id"] = scenario_result_id
 
-        merged_args = {**(scenario_params or {}), **initialize_kwargs}
+        merged_args = self._merge_scenario_params(
+            scenario_params=scenario_params,
+            resolved_kwargs=initialize_kwargs,
+        )
         scenario = self._create_and_configure(name, params=merged_args, constructor_kwargs=constructor_kwargs)
         scenario.set_scenario_registry_name(scenario_registry_name=name)
         if initial_metadata:
             scenario.set_initial_metadata(metadata=initial_metadata)
         await scenario.initialize_async()
         return scenario
+
+    @staticmethod
+    def _merge_scenario_params(
+        *,
+        scenario_params: dict[str, Any] | None,
+        resolved_kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Merge scenario-owned parameters with resolver-owned common parameters.
+
+        Returns:
+            dict[str, Any]: The unambiguous merged parameter bag.
+
+        Raises:
+            ValueError: If the same parameter is supplied through both ownership paths.
+        """
+        overlapping = sorted(set(scenario_params or {}) & set(resolved_kwargs))
+        if overlapping:
+            raise ValueError("Scenario parameters conflict with dedicated request fields: " + ", ".join(overlapping))
+        return {**(scenario_params or {}), **resolved_kwargs}

@@ -4,6 +4,7 @@
 
 import logging
 from collections.abc import Sequence
+from typing import ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.converter import (
@@ -26,6 +27,7 @@ from pyrit.executor.attack.core.attack_config import AttackConverterConfig, Atta
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
+    ScenarioDatasetSelectionOverrideScope,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     Seed,
@@ -162,6 +164,9 @@ class Encoding(Scenario):
     """
 
     VERSION: int = 2
+    DATASET_SELECTION_OVERRIDE_SCOPE: ClassVar[ScenarioDatasetSelectionOverrideScope] = (
+        ScenarioDatasetSelectionOverrideScope.Fixed
+    )
 
     @apply_defaults
     def __init__(

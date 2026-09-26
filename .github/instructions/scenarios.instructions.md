@@ -117,11 +117,24 @@ Datasets are read from `CentralMemory`.
 
 ### Basic — named datasets:
 ```python
-DatasetConfiguration(
+DatasetAttackConfiguration(
     dataset_names=["airt_hate", "airt_violence"],
-    max_dataset_size=10,  # optional: sample up to N per dataset
+    max_dataset_size=10,  # one cap across both datasets
+)
+
+CompoundDatasetAttackConfiguration.per_dataset(
+    dataset_names=["airt_hate", "airt_violence"],
+    max_dataset_size=10,  # one independent cap per dataset
 )
 ```
+
+For REST clients, the registry exposes a scenario's `dataset_selection` alongside
+`dataset_size_limit`. Declare `DATASET_SELECTION_OVERRIDE_SCOPE` when a scenario cannot
+accept arbitrary dataset names: `Fixed` requires the default order, `FixedSet` requires the
+same names in any order, `OneOf` requires one of `DATASET_SELECTION_ALLOWED_NAMES`, and
+`Unsupported` means names are derived from scenario parameters and must not be overridden.
+The shared launch/estimate resolver enforces the same declared policy. The default `Any`
+accepts non-empty selections, subject to dataset content validation.
 
 ### Advanced — custom subclass for filtering:
 ```python
@@ -135,8 +148,13 @@ class MyDatasetConfiguration(DatasetConfiguration):
 Options:
 - `dataset_names` — load by name from memory
 - `seed_groups` — pass explicit groups (mutually exclusive with `dataset_names`)
-- `max_dataset_size` — cap per dataset
+- `max_dataset_size` — one combined cap on `DatasetAttackConfiguration`, or a per-child
+  cap with `CompoundDatasetAttackConfiguration.per_dataset`
 - Override `_load_seed_groups_for_dataset()` for custom loading
+
+When several compound children contribute to the same named population, their caps still
+apply to each child independently. The population summary reports all child caps, but
+has no single `effective_cap` for their combined selection.
 
 ## Technique Enum
 

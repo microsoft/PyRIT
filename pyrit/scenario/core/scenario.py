@@ -30,7 +30,9 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
-    ScenarioDatasetSizeCap,
+    ScenarioDatasetSelection,
+    ScenarioDatasetSelectionOverrideScope,
+    ScenarioDatasetSizeLimitOverrideScope,
     ScenarioDatasetSummary,
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
@@ -53,7 +55,11 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    read_only_dataset_resolution,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -132,6 +138,16 @@ class Scenario(ABC):
 
     #: Whether the default estimator must mirror matrix-builder seed compatibility.
     RUN_SIZE_USES_FACTORY_COMPATIBILITY: ClassVar[bool] = False
+
+    #: How a generic dataset-size run override is interpreted. ``None`` derives the
+    #: standard behavior from the default configuration.
+    DATASET_SIZE_LIMIT_OVERRIDE_SCOPE: ClassVar[ScenarioDatasetSizeLimitOverrideScope | None] = None
+
+    #: Which explicit dataset-name requests this scenario can interpret.
+    DATASET_SELECTION_OVERRIDE_SCOPE: ClassVar[ScenarioDatasetSelectionOverrideScope] = (
+        ScenarioDatasetSelectionOverrideScope.Any
+    )
+    DATASET_SELECTION_ALLOWED_NAMES: ClassVar[tuple[str, ...] | None] = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -260,6 +276,44 @@ class Scenario(ABC):
         # Resolved effective baseline inclusion for the current run. Set in initialize_async
         # before _build_atomic_attacks_async is awaited so overrides can read it.
         self._include_baseline: bool = False
+
+    def get_dataset_size_limit_override_scope(self) -> ScenarioDatasetSizeLimitOverrideScope:
+        """
+        Return how this scenario interprets a generic dataset-size run override.
+
+        Returns:
+            ScenarioDatasetSizeLimitOverrideScope: The scope exposed through the scenario catalog.
+        """
+        if self.DATASET_SIZE_LIMIT_OVERRIDE_SCOPE is not None:
+            return self.DATASET_SIZE_LIMIT_OVERRIDE_SCOPE
+        if isinstance(self._default_dataset_config, CompoundDatasetAttackConfiguration):
+            return (
+                ScenarioDatasetSizeLimitOverrideScope.PerDataset
+                if self._default_dataset_config.supports_per_dataset_size_override
+                else ScenarioDatasetSizeLimitOverrideScope.Combined
+            )
+        if len(self._default_dataset_config.dataset_names) <= 1:
+            return ScenarioDatasetSizeLimitOverrideScope.PerDataset
+        return ScenarioDatasetSizeLimitOverrideScope.Combined
+
+    def get_dataset_selection(self) -> ScenarioDatasetSelection:
+        """
+        Describe valid explicit dataset-name requests for this scenario.
+
+        Returns:
+            ScenarioDatasetSelection: The client-facing selection contract.
+        """
+        scope = self.DATASET_SELECTION_OVERRIDE_SCOPE
+        if scope in {
+            ScenarioDatasetSelectionOverrideScope.Fixed,
+            ScenarioDatasetSelectionOverrideScope.FixedSet,
+        }:
+            allowed_names = self._default_dataset_config.dataset_names
+        elif scope is ScenarioDatasetSelectionOverrideScope.OneOf:
+            allowed_names = list(self.DATASET_SELECTION_ALLOWED_NAMES or [])
+        else:
+            allowed_names = None
+        return ScenarioDatasetSelection(override_scope=scope, allowed_names=allowed_names)
 
     @property
     def name(self) -> str:
@@ -612,7 +666,8 @@ class Scenario(ABC):
         if target_is_configured and self._objective_target is None:
             raise ValueError("target_is_configured requires a resolved objective_target")
         self._estimate_target_is_configured = self._objective_target is not None
-        return await self._estimate_run_size_async()
+        with read_only_dataset_resolution():
+            return await self._estimate_run_size_async()
 
     async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
         """
@@ -772,7 +827,7 @@ class Scenario(ABC):
             maximum = 0
             for name, full_groups in self._estimate_full_groups_by_dataset.items():
                 summary = summaries.get(name)
-                if summary is None:
+                if summary is None or summary.selected_seed_group_count is None:
                     return None
                 compatible_count = len(filter_compatible_seed_groups(factory=factory, seed_groups=full_groups))
                 bounds = self._get_sampled_compatibility_bounds(
@@ -832,40 +887,25 @@ class Scenario(ABC):
             tuple: Selected groups keyed by population and their catalog summaries.
         """
         configured_dataset = self._dataset_config
-        self._dataset_config = configured_dataset
-        full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+        resolver_owner = next(
+            owner for owner in type(self).__mro__ if "_resolve_seed_groups_by_dataset_async" in owner.__dict__
+        )
+        if resolver_owner is Scenario:
+            full_groups, selected_groups = await configured_dataset.resolve_attack_groups_for_estimate_async()
+        else:
+            full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+            self._dataset_config = configured_dataset
+            selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
         self._estimate_full_groups_by_dataset = full_groups
-        self._dataset_config = configured_dataset
-        selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
 
         configured_caps = self._dataset_config.size_caps_by_dataset()
-        datasets: list[ScenarioDatasetSummary] = []
-        for name in dict.fromkeys([*full_groups, *selected_groups]):
-            logical_count = len(full_groups.get(name, []))
-            selected_count = len(selected_groups.get(name, []))
-            selection_note = None
-            if selected_count != logical_count:
-                selection_note = f"The default selection uses {selected_count} of {logical_count} available objectives."
-            datasets.append(
-                ScenarioDatasetSummary(
-                    name=name,
-                    logical_seed_group_count=logical_count,
-                    selected_seed_group_count=selected_count,
-                    configured_caps=[
-                        ScenarioDatasetSizeCap(
-                            label=label,
-                            count=count,
-                            configured_on=configured_on,
-                            dataset_name=name,
-                        )
-                        for label, count, configured_on in configured_caps.get(name, [])
-                    ],
-                    selection_note=selection_note,
-                )
-            )
+        datasets = self._dataset_config.build_population_summaries(
+            full_counts_by_dataset={name: len(groups) for name, groups in full_groups.items()},
+            selected_counts_by_dataset={name: len(groups) for name, groups in selected_groups.items()},
+        )
         self._estimate_has_binding_size_cap = bool(configured_caps) and sum(
-            dataset.selected_seed_group_count for dataset in datasets
-        ) < sum(dataset.logical_seed_group_count for dataset in datasets)
+            dataset.selected_seed_group_count or 0 for dataset in datasets
+        ) < sum(dataset.logical_seed_group_count or 0 for dataset in datasets)
         return selected_groups, datasets
 
     def _resolve_runtime_configuration(self, *, require_objective_target: bool) -> None:
@@ -1043,20 +1083,21 @@ class Scenario(ABC):
         """
         Build the metadata dict persisted with a freshly-created ``ScenarioResult``.
 
-        When ``max_dataset_size`` is in effect, the dataset config draws an
+        When a dataset size cap is in effect, the dataset config draws an
         unseeded ``random.sample`` and the chosen subset would silently change
         on the next run (e.g. a resume). To make resume reliable, snapshot the
         chosen objective hashes here so the next ``_setup_scenario_async`` can
         replay them via ``keep_seed_groups_with_hashes``.
 
-        The normalized run plan is always stored. When ``max_dataset_size`` is not
-        set, only the run plan is needed because the full dataset is deterministic.
+        The normalized run plan is always stored. When no configuration or child
+        dataset cap is set, only the run plan is needed because the full dataset
+        is deterministic.
 
         Returns:
             dict[str, Any]: Metadata payload for the new ScenarioResult.
         """
         metadata: dict[str, Any] = {}
-        if getattr(self._dataset_config, "max_dataset_size", None) is not None:
+        if self._dataset_config.size_cap_provenance():
             hashes: list[str] = []
             seen: set[str] = set()
             for aa in self._atomic_attacks:

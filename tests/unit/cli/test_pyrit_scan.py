@@ -55,6 +55,17 @@ def test_dataset_filter_help_covers_every_request_model_key():
     assert all(_DATASET_FILTER_HELP.values()), "every dataset filter key needs a semantics note"
 
 
+def test_run_help_describes_scenario_dependent_dataset_cap_scope(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as result:
+        pyrit_scan.parse_args(["run", "--help"])
+
+    assert result.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "per dataset for per_dataset scenarios" in help_text
+    assert "once across all selected datasets for combined scenarios" in help_text
+    assert "Unsupported scenarios reject it" in help_text
+
+
 class TestParseArgs:
     """Tests for parse_args with the subcommand model."""
 

@@ -411,10 +411,11 @@ ARG_HELP = {
     "memory_labels": 'Additional labels as JSON string (e.g., \'{"experiment": "test1"}\')',
     "database": "Database type to use for memory storage",
     "log_level": "Logging level",
-    "dataset_names": "List of dataset names to use instead of scenario defaults (e.g., harmbench advbench). "
-    "Creates a new dataset config; fetches all items unless --max-dataset-size is also specified",
-    "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
-    "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
+    "dataset_names": "Dataset names to use instead of scenario defaults (e.g., harmbench advbench). "
+    "The scenario must support the selection; default caps still apply unless overridden",
+    "max_dataset_size": "Positive cap (>= 1) applied per dataset for per_dataset scenarios, "
+    "or once across all selected datasets for combined scenarios. Unsupported scenarios reject it. "
+    "See list-scenarios for the scenario's override scope",
     "dataset_filters": "Dataset seed filters as KEY=VALUE tokens "
     "(e.g., harm_categories=cyber data_types=text). Keys filter seeds before sizing. "
     "List values may be comma-separated, but semantics differ per key: "
