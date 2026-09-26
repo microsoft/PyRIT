@@ -68,6 +68,8 @@ class ExactTextMatching(TextMatching):
         if self._ignore_whitespace:
             target = target.strip()
             text = text.strip()
+        if not target:
+            return False
         if self._case_sensitive:
             return target in text
         return target.lower() in text.lower()

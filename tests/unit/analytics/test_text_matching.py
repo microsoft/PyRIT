@@ -31,6 +31,11 @@ class TestExactTextMatching:
         matcher = ExactTextMatching(case_sensitive=False)
         assert matcher.is_match(target="hello", text="") is False
 
+    def test_empty_target(self):
+        matcher = ExactTextMatching()
+        assert matcher.is_match(target="", text="hello world") is False
+        assert matcher.is_match(target="   \n ", text="hello world") is False
+
     def test_partial_match(self):
         matcher = ExactTextMatching(case_sensitive=False)
         assert matcher.is_match(target="World", text="Hello World") is True
