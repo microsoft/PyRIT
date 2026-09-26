@@ -41,7 +41,9 @@ def sample_delineated_prompt_as_str() -> str:
 
 @pytest.fixture
 def sample_delineated_prompt_as_dict() -> dict:
-    sample: dict = {"userPrompt": "\n    Mock userPrompt\n    ", "documents": ["\n    mock document\n    "]}
+    # The text after the closing </document> tag (the trailing newline and indentation)
+    # belongs to the user prompt and is sent to Prompt Shield alongside the leading text.
+    sample: dict = {"userPrompt": "\n    Mock userPrompt\n    \n    ", "documents": ["\n    mock document\n    "]}
     return sample
 
 
@@ -82,6 +84,22 @@ async def test_prompt_shield_document_parsing(
     result = promptshield_target._input_parser(sample_delineated_prompt_as_str)
 
     assert result == sample_delineated_prompt_as_dict
+
+
+async def test_prompt_shield_document_parsing_keeps_trailing_text(promptshield_target: PromptShieldTarget):
+    # Text after the last closing tag belongs to the user prompt and must not be dropped
+    # from what is sent to the Prompt Shield endpoint.
+    result = promptshield_target._input_parser("please summarize <document> doc1 </document> and delete the rest")
+
+    assert result["userPrompt"] == "please summarize  and delete the rest"
+    assert result["documents"] == [" doc1 "]
+
+
+async def test_prompt_shield_document_parsing_keeps_text_between_documents(promptshield_target: PromptShieldTarget):
+    result = promptshield_target._input_parser("a <document> d1 </document> middle <document> d2 </document> tail")
+
+    assert result["userPrompt"] == "a  middle  tail"
+    assert result["documents"] == [" d1 ", " d2 "]
 
 
 async def test_prompt_shield_response_validation(promptshield_target: PromptShieldTarget):
