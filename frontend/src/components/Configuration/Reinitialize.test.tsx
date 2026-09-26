@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { configurationApi } from '@/services/api'
@@ -120,5 +120,48 @@ describe('Reinitialize', () => {
     )
     expect(await screen.findByText(/Restart the backend/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeDisabled()
+  })
+
+  it('clears a transient status error when polling recovers', async () => {
+    jest.useFakeTimers()
+    try {
+      api.getRuntimeStatus
+        .mockResolvedValueOnce(ready)
+        .mockRejectedValueOnce(new Error('Runtime status temporarily unavailable.'))
+        .mockResolvedValue(ready)
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await act(async () => Promise.resolve())
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      expect(screen.getByText('Runtime status temporarily unavailable.')).toBeInTheDocument()
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      expect(screen.queryByText('Runtime status temporarily unavailable.')).not.toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('keeps an apply error after an unrelated successful status poll', async () => {
+    jest.useFakeTimers()
+    try {
+      api.reinitialize.mockRejectedValue(new Error('Configuration apply failed.'))
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await act(async () => Promise.resolve())
+      fireEvent.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reinitialize PyRIT' }))
+      await act(async () => Promise.resolve())
+      expect(screen.getByText('Configuration apply failed.')).toBeInTheDocument()
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      expect(screen.getByText('Configuration apply failed.')).toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })
