@@ -47,3 +47,19 @@ def __getattr__(name: str) -> object:
     value = builder()
     globals()[name] = value
     return value
+
+
+def reset_dynamic_technique_caches() -> None:
+    """Discard scenario technique classes derived from the live registry."""
+    package_names = {
+        "pyrit.scenario.scenarios.airt",
+        "pyrit.scenario.scenarios.benchmark",
+        "pyrit.scenario.scenarios.garak",
+    }
+    for technique_name, (module_name, builder_name) in _TECHNIQUE_BUILDERS.items():
+        builder = getattr(import_module(module_name), builder_name)
+        builder.cache_clear()
+        globals().pop(technique_name, None)
+        for package_name in package_names:
+            package = import_module(package_name)
+            package.__dict__.pop(technique_name, None)
