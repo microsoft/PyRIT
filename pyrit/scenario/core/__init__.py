@@ -23,6 +23,12 @@ if TYPE_CHECKING:
         ResolvedDataset,
         require_nonempty,
     )
+    from pyrit.scenario.core.modality_validation import (
+        ModalityPolicy,
+        ModalityReport,
+        ModalityValidationError,
+        ModalityVerdict,
+    )
     from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
     from pyrit.scenario.core.scenario_target_defaults import (
         get_default_adversarial_target,
@@ -42,6 +48,10 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "DatasetConstraintError": "pyrit.scenario.core.dataset_configuration",
     "DatasetSourceKind": "pyrit.scenario.core.dataset_configuration",
     "INLINE_DATASET_NAME": "pyrit.scenario.core.dataset_configuration",
+    "ModalityPolicy": "pyrit.scenario.core.modality_validation",
+    "ModalityReport": "pyrit.scenario.core.modality_validation",
+    "ModalityValidationError": "pyrit.scenario.core.modality_validation",
+    "ModalityVerdict": "pyrit.scenario.core.modality_validation",
     "Parameter": "pyrit.models.parameter",
     "ResolvedDataset": "pyrit.scenario.core.dataset_configuration",
     "require_nonempty": "pyrit.scenario.core.dataset_configuration",

@@ -46,6 +46,55 @@ the constructor — no classmethod indirection required.
    abstract extension point every scenario must define (see "AtomicAttack Construction" below).
    Matrix-shaped scenarios delegate to `build_matrix_atomic_attacks(context=...)` in one line.
 
+## Modality Validation
+
+`Scenario.initialize_async` validates every `AtomicAttack` returned by
+`_build_atomic_attacks_async` before any of them is queued, and applies `MODALITY_POLICY`
+(`ModalityPolicy.SKIP` by default, also `WARN` and `RAISE`). Scenario authors get this for free
+and normally do not override it. On resume, it first reconstructs the persisted seed groups
+from the full dataset without resampling, then checks only those groups. `SKIP` fails loudly
+instead of removing an incompatible saved attack and silently changing the run plan; `WARN`
+retains it as configured.
+
+- The **request chain** projects each seed group's data types through the attack's request
+  converters; each possible final message combination is checked against the target's
+  advertised `input_modalities` combinations. A converter's multiple declared output types
+  are alternatives for one piece, not simultaneous message pieces. When only some outcomes
+  can reach the target, validation reports `UNKNOWN` rather than skipping the whole attack.
+  Projection is bounded at 256 piece-type combinations; larger searches are also `UNKNOWN`.
+  Conversion selection (including `indexes_to_apply`) is
+  **per message piece**: preserve ordered pieces through each converter configuration, then
+  collapse their resulting types to a **message-level set** for target compatibility. A single
+  text piece selected at index 0 and converted to an image leaves no text; selecting only
+  index 0 of two text pieces leaves text in the second piece. Declarations are read literally —
+  a target that accepts a lone image advertises `{image_path}` as well as `{text, image_path}`.
+  A constructor-supplied `AtomicAttack.next_message` execution override replaces the seed's
+  message before projection; an explicit `None` selects the objective-text fallback. Inputs
+  not safely representable at plan time remain `UNKNOWN`.
+- The **response chain** checks each advertised target output combination against the scorer.
+  Project alternative outputs of configured response converters separately before checking
+  the types the scorer receives.
+  When response piece indexes cannot be known, report `UNKNOWN` rather than guessing which
+  pieces were converted.
+  A scorer allowing unsupported pieces alongside readable ones needs at least one readable type
+  in each combination; a strict scorer needs to read every piece. This differs from the ability
+  to return no score for a wholly unreadable response, which composites use to assess their
+  children's applicability. If only some possible combinations can be scored,
+  the response-chain verdict is `UNKNOWN`, not a reason to skip the attack. This type check
+  does not establish that the resulting score is meaningful. After the scorer condition-routing
+  refactor, composite scorers declare their response modality compatibility as `UNKNOWN` until
+  their per-child applicability can be reconciled with the new expectation-selection contract;
+  this keeps potentially runnable attacks but defers some early incompatibility detection.
+- Anything indeterminate is `UNKNOWN` and never blocks a run.
+- Only turn 0 is checked. Media routing across later turns belongs to `_ModalityFeedbackRouter`,
+  which multi-turn attacks consult at execution time.
+- A `SequentialAttack` wrapper delegates its actual request, target, converters, and scorer to
+  its children, so the wrapper itself reports `UNKNOWN` rather than treating the absence of
+  `next_message` as a text request to its nominal target.
+
+Override `MODALITY_POLICY` to `RAISE` when an incompatible pairing means the run is
+misconfigured rather than merely narrower than intended.
+
 ## Constructor Pattern
 
 ```python

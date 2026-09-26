@@ -194,6 +194,30 @@ print_scenario_list(items=response.items)
 # - **`Forbidden`** — the baseline is unavailable and passing `include_baseline=True` raises. Use
 #   when the scenario's semantics make a single-shot unmodified prompt meaningless as a comparator
 #   (e.g., benchmarks comparing across adversarial models, or multi-turn-only scenarios).
+#
+# ### Modality Validation
+#
+# Before any attack is queued, a scenario checks that each `AtomicAttack` can actually carry its
+# payload. The seed's data types are projected through the request converters and must be accepted
+# by the objective target, and whatever the target may emit must be readable by the scorer. A
+# mismatch — a converter that produces an image for a text-only target, say — is caught during
+# `initialize_async` rather than part-way through a run.
+#
+# `MODALITY_POLICY` decides what happens to an incompatible attack:
+#
+# - **`SKIP`** (default) — the attack is dropped with a warning and the rest of the run proceeds. If
+#   every attack is dropped the scenario raises rather than reporting an empty success.
+# - **`WARN`** — the attack is kept and the problem is logged.
+# - **`RAISE`** — `initialize_async` aborts with `ModalityValidationError`, a `ValueError` subclass.
+#
+# Compatibility that cannot be determined never blocks a run: a target that does not declare its
+# capabilities, an attack that exposes no scoring config, and a scorer that never declared its data
+# types are all treated as unknown rather than incompatible. Only the first turn is checked — media
+# routing across later turns belongs to the multi-turn attacks themselves, at execution time.
+# For Tree of Attacks (TAP) with width greater than one, a text-capable objective gets sibling
+# roots starting from generated text, projected through the same converters. If only the seeded
+# media root is incompatible, the mixed-root attack reports unknown and is retained under `SKIP`.
+# If the objective requires media, TAP seeds every root; incompatible requests are still rejected.
 
 # %% [markdown]
 #

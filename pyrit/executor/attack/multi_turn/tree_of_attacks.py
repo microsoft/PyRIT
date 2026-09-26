@@ -1759,6 +1759,19 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         """
         return self._attack_scoring_config
 
+    @property
+    def has_unseeded_first_turn_roots(self) -> bool:
+        """
+        Whether sibling roots generate text instead of consuming the first-turn seed.
+
+        Returns:
+            bool: True when more than one root exists and the objective permits text-only requests.
+        """
+        return (
+            self._configuration.tree_width > 1
+            and not self._modality_router.objective_target_requires_media_on_first_turn
+        )
+
     def get_attack_adversarial_config(self) -> AttackAdversarialConfig | None:
         """
         Get the effective adversarial configuration used by this strategy.

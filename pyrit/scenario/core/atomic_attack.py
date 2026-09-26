@@ -182,6 +182,16 @@ class AtomicAttack:
         """The attack technique for this atomic attack."""
         return self._attack_technique
 
+    def get_next_message_override(self) -> tuple[bool, object]:
+        """
+        Return whether execution supplies a replacement for the seed's next message.
+
+        Returns:
+            tuple[bool, object]: Whether a constructor override exists and its value.
+                A present ``None`` overrides the seed and triggers the attack's fallback.
+        """
+        return "next_message" in self._attack_execute_params, self._attack_execute_params.get("next_message")
+
     @property
     def technique_name(self) -> str | None:
         """Catalog name of the technique that built this attack."""

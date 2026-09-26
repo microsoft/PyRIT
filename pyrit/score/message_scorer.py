@@ -26,6 +26,7 @@ from pyrit.models import (
     MessagePiece,
     MessageScorable,
     Observation,
+    PromptDataType,
     PromptResponseError,
     Scorable,
     ScorableUnion,
@@ -314,6 +315,23 @@ class MessageScorer(Scorer):
         self._validator = validator
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
+
+    @property
+    def supported_data_types(self) -> frozenset[PromptDataType] | None:
+        """The data types declared by this message scorer's validator."""
+        if not self._validator.has_declared_data_types:
+            return None
+        return frozenset(self._validator.supported_data_types)
+
+    @property
+    def skips_unsupported_data_types(self) -> bool:
+        """Whether wholly unreadable evidence returns no score rather than raising."""
+        return self._validator.skips_unsupported_data_types
+
+    @property
+    def allows_unsupported_pieces(self) -> bool:
+        """Whether readable evidence may also contain unsupported pieces."""
+        return self._validator.allows_unsupported_pieces
 
     def _get_condition_type(self) -> type[Condition] | None:
         """Return the declared criterion, using the objective validator only for undeclared leaves."""

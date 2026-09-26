@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     )
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.message_normalizer import MessageListNormalizer
+    from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
     from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
@@ -626,7 +627,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         if not hasattr(self, "_request_converters"):
             self._request_converters: list[Any] = []
         if not hasattr(self, "_response_converters"):
-            self._response_converters: list[Any] = []
+            self._response_converters: list[ConverterConfiguration] = []
 
     def _get_prepended_normalizer_overrides(
         self,
@@ -819,6 +820,15 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             list[Any]: The list of request ConverterConfiguration objects.
         """
         return self._request_converters
+
+    def get_response_converters(self) -> list[ConverterConfiguration]:
+        """
+        Return response converter configurations applied before objective scoring.
+
+        Returns:
+            list[ConverterConfiguration]: The configured response converters.
+        """
+        return self._response_converters
 
     async def execute_with_context_async(self, *, context: AttackStrategyContextT) -> AttackStrategyResultT:
         """

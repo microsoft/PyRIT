@@ -54,6 +54,12 @@ from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.modality_validation import (
+    ModalityPolicy,
+    ModalityValidationError,
+    ModalityVerdict,
+    validate_atomic_attack,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -129,6 +135,12 @@ class Scenario(ABC):
     #: ``Enabled`` and ``Disabled`` states; ``Forbidden`` is a hard constraint and a
     #: caller-supplied ``include_baseline=True`` raises ``ValueError``.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
+
+    #: How this scenario type treats an atomic attack whose payload provably cannot reach its
+    #: objective target or scorer. Derived per run in ``initialize_async`` once the attacks are
+    #: built, and before any of them is queued. ``SKIP`` drops the attack with a warning,
+    #: ``WARN`` keeps it, and ``RAISE`` aborts initialization. Skipping every attack raises.
+    MODALITY_POLICY: ClassVar[ModalityPolicy] = ModalityPolicy.SKIP
 
     #: Whether the default estimator must mirror matrix-builder seed compatibility.
     RUN_SIZE_USES_FACTORY_COMPATIBILITY: ClassVar[bool] = False
@@ -958,6 +970,8 @@ class Scenario(ABC):
                 nor registered as a default), if a supplied target name is not registered in
                 ``TargetRegistry``, or if ``include_baseline=True`` is set for a scenario whose
                 ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
+            ModalityValidationError: If ``MODALITY_POLICY`` is ``RAISE`` and any atomic attack's
+                payload cannot reach its target or scorer, or if ``SKIP`` would leave no attacks.
         """
         self._resolve_runtime_configuration(require_objective_target=True)
 
@@ -977,6 +991,8 @@ class Scenario(ABC):
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
         context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
         self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
+        if not is_resume:
+            self._atomic_attacks = self._apply_modality_policy(atomic_attacks=self._atomic_attacks)
 
         # Build the canonical scenario identifier once params/techniques/datasets
         # are resolved, so both the resume check and the new-result branch share the
@@ -1005,6 +1021,8 @@ class Scenario(ABC):
                 self._apply_persisted_run_plan(stored_plan=stored_plan)
             else:
                 self._apply_persisted_objectives(stored_result=stored_result)
+            self._atomic_attacks = self._apply_modality_policy(atomic_attacks=self._atomic_attacks, is_resume=True)
+            if stored_plan is None:
                 reconstructed_plan = self._build_run_plan()
                 metadata = dict(stored_result.metadata)
                 metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = reconstructed_plan.model_dump(mode="json", exclude_none=True)
@@ -1461,6 +1479,67 @@ class Scenario(ABC):
             seed_groups=seed_groups,
             seed_groups_by_dataset=seed_groups_by_dataset,
         )
+
+    def _apply_modality_policy(
+        self, *, atomic_attacks: list[AtomicAttack], is_resume: bool = False
+    ) -> list[AtomicAttack]:
+        """
+        Derive each atomic attack's modality compatibility and apply ``MODALITY_POLICY``.
+
+        Runs once per ``initialize_async``. On resume, the saved plan is reconstructed
+        first, so unsampled seed groups do not affect the verdict. Attacks whose
+        compatibility cannot be determined are always kept.
+
+        Args:
+            atomic_attacks (list[AtomicAttack]): The attacks just built for this run.
+            is_resume (bool): Whether these attacks are the saved run's reconstructed plan.
+
+        Returns:
+            list[AtomicAttack]: The attacks that should run.
+
+        Raises:
+            ModalityValidationError: Under ``RAISE`` when any attack is incompatible, or under
+                ``SKIP`` when the saved plan would change or every new attack would be dropped.
+        """
+        reports = [validate_atomic_attack(atomic_attack=attack) for attack in atomic_attacks]
+        incompatible = [report for report in reports if report.verdict is ModalityVerdict.INCOMPATIBLE]
+        if not incompatible:
+            return atomic_attacks
+
+        summary = "\n".join(f"  - {report.atomic_attack_name}: {'; '.join(report.reasons)}" for report in incompatible)
+        policy = type(self).MODALITY_POLICY
+
+        if policy is ModalityPolicy.RAISE:
+            raise ModalityValidationError(
+                f"{len(incompatible)} atomic attack(s) cannot reach the objective target or scorer:\n{summary}"
+            )
+
+        if policy is ModalityPolicy.WARN:
+            logger.warning(
+                f"Modality incompatibility in {len(incompatible)} atomic attack(s); running anyway:\n{summary}"
+            )
+            return atomic_attacks
+
+        if is_resume:
+            raise ModalityValidationError(
+                f"Scenario result id '{self._scenario_result_id}' cannot resume: "
+                f"{len(incompatible)} saved atomic attack(s) are modality incompatible:\n{summary}"
+            )
+
+        for report in incompatible:
+            logger.warning(f"Skipping atomic attack '{report.atomic_attack_name}': {'; '.join(report.reasons)}")
+
+        kept = [
+            attack
+            for attack, report in zip(atomic_attacks, reports, strict=True)
+            if report.verdict is not ModalityVerdict.INCOMPATIBLE
+        ]
+        if not kept:
+            raise ModalityValidationError(
+                f"Modality validation skipped all {len(atomic_attacks)} atomic attack(s), "
+                f"so the scenario has nothing to run:\n{summary}"
+            )
+        return kept
 
     @abstractmethod
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:

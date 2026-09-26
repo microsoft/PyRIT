@@ -131,11 +131,9 @@ class AudioTranscriptHelper:
         Raises:
             ValueError: If the scorer does not support text data type.
         """
-        if "text" not in scorer._validator._supported_data_types:
-            raise ValueError(
-                f"text_capable_scorer must support 'text' data type. "
-                f"Supported types: {scorer._validator._supported_data_types}"
-            )
+        declared = scorer.supported_data_types
+        if declared is not None and "text" not in declared:
+            raise ValueError(f"text_capable_scorer must support 'text' data type. Supported types: {sorted(declared)}")
 
     async def _score_audio_async(
         self, *, message_piece: MessagePiece, expectation: ScoringExpectation | None

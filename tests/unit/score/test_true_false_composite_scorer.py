@@ -224,6 +224,19 @@ async def test_composite_scorer_ignores_non_applicable_child(mock_request, true_
     assert scores[0].get_value() is True
 
 
+async def test_composite_modality_unknown_does_not_change_runtime_applicability(
+    mock_request, true_scorer, false_scorer
+):
+    true_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
+    false_scorer._validator = ScorerPromptValidator(supported_data_types=["image_path"])
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[true_scorer, false_scorer])
+
+    assert scorer.supported_data_types is None
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    assert len(scores) == 1
+    assert scores[0].get_value() is True
+
+
 async def test_composite_routes_supported_conditions_to_each_leaf(mock_request):
     objective_scorer = MockScorer(
         score_value=True,

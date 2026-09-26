@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 from pyrit.models import (
     ComponentIdentifier,
+    PromptDataType,
     Scorable,
     Score,
     ScoringExpectation,
@@ -38,6 +39,21 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         self._scorer = scorer
 
         super().__init__()
+
+    @property
+    def supported_data_types(self) -> frozenset[PromptDataType] | None:
+        """The wrapped scorer's declared readable data types."""
+        return self._scorer.supported_data_types
+
+    @property
+    def skips_unsupported_data_types(self) -> bool:
+        """Whether the wrapped scorer skips wholly unsupported evidence."""
+        return self._scorer.skips_unsupported_data_types
+
+    @property
+    def allows_unsupported_pieces(self) -> bool:
+        """Whether the wrapped scorer accepts unsupported pieces alongside readable ones."""
+        return self._scorer.allows_unsupported_pieces
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

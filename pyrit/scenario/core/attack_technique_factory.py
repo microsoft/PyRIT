@@ -37,7 +37,6 @@ from pyrit.models import (
     AttackTechniqueSeedGroup,
     ComponentIdentifier,
     Identifiable,
-    PromptDataType,
     SeedIdentifier,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -48,6 +47,7 @@ from pyrit.models import (
 )
 from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
 from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.modality_validation import project_request_chain
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
@@ -493,32 +493,15 @@ class AttackTechniqueFactory(Identifiable):
         if "attack_converter_config" not in self._get_accepted_params():
             return False
 
-        output_types: set[PromptDataType] = {"text"}
         converter_config = self._attack_kwargs.get("attack_converter_config")
-        if converter_config is None:
-            return "text" in converter_type.SUPPORTED_INPUT_TYPES
-
-        for configuration in converter_config.request_converters:
-            next_output_types: set[PromptDataType] = set()
-            for output_type in output_types:
-                applies_to_type = (
-                    not configuration.prompt_data_types_to_apply
-                    or output_type in configuration.prompt_data_types_to_apply
-                )
-                if not applies_to_type:
-                    next_output_types.add(output_type)
-                    continue
-
-                converted_types: set[PromptDataType] = {output_type}
-                for built_in_converter in configuration.converters:
-                    if not all(built_in_converter.input_supported(data_type) for data_type in converted_types):
-                        return False
-                    converted_types = set(built_in_converter.supported_output_types)
-
-                next_output_types.update(converted_types)
-                if configuration.indexes_to_apply:
-                    next_output_types.add(output_type)
-            output_types = next_output_types
+        request_converters = converter_config.request_converters if converter_config is not None else []
+        output_types, failure_reason = project_request_chain(
+            start_types=["text"],
+            request_converters=request_converters,
+            piece_indexes_known=False,
+        )
+        if failure_reason is not None:
+            return False
 
         return bool(output_types) and output_types.issubset(converter_type.SUPPORTED_INPUT_TYPES)
 
