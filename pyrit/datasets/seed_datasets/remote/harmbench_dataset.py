@@ -11,7 +11,8 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import Modality, SeedDataset, SeedObjective, SeedUnion
 from pyrit.models.harm_category import HarmCategory
 
-# Separator HarmBench uses between a contextual behavior's context and the behavior itself.
+# Separator HarmBench uses between a contextual behavior's context and the behavior itself
+# (baselines/direct_request/direct_request.py).
 _CONTEXT_SEPARATOR = "\n\n---\n\n"
 
 
@@ -104,7 +105,8 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
             category = example["SemanticCategory"]
             context = example.get("ContextString", "")
             behavior = example["Behavior"]
-            value = f"{context}\n\n---\n\n{behavior}" if context else behavior
+            # Contextual behaviors only make sense together with their context (e.g. "Modify this code ...").
+            value = f"{context}{_CONTEXT_SEPARATOR}{behavior}" if context else behavior
 
             # Standardize harm categories
             standardized_categories = self._standardize_harm_categories(
@@ -112,14 +114,8 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
                 alias_overrides=harm_category_alias_overrides,
             )
 
+            # Keep the full row, including the raw Behavior, since the seed value may add context to it.
             metadata: dict[str, str | int] = dict(example)
-
-            # Contextual behaviors only make sense together with their context (e.g. "Modify this code ...").
-            # Combine them the way HarmBench does (baselines/direct_request/direct_request.py).
-            value = example["Behavior"]
-            context_string = example.get("ContextString")
-            if context_string:
-                value = f"{context_string}{_CONTEXT_SEPARATOR}{value}"
 
             # Create SeedPrompt
             seed_prompt = SeedObjective(
