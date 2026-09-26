@@ -102,7 +102,20 @@ def test_get_configuration_file_returns_content(client: TestClient) -> None:
         "content": "operator: alice\n",
         "source": "C:/Users/test/.pyrit/config.yaml",
         "version": "version-1",
+        "live_reinitialization_enabled": False,
     }
+
+
+def test_get_configuration_file_reports_saved_reinitialization_opt_in(client: TestClient) -> None:
+    """Test that the GUI receives the enabled state from saved configuration."""
+    service = MagicMock(spec=ConfigurationFileService)
+    service.read_with_version_async = AsyncMock(return_value=("enable_live_reinitialization: true\n", "version-1"))
+    service.source = "config.yaml"
+    with patch("pyrit.backend.routes.configuration._get_configuration_file_service", return_value=service):
+        response = client.get("/api/config")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["live_reinitialization_enabled"] is True
 
 
 def test_update_configuration_file_persists_content(client: TestClient) -> None:
@@ -118,6 +131,7 @@ def test_update_configuration_file_persists_content(client: TestClient) -> None:
         "content": "operator: bob\n",
         "source": "https://account.blob.core.windows.net/config/config.yaml",
         "version": "version-2",
+        "live_reinitialization_enabled": False,
     }
     service.update_async.assert_awaited_once_with("operator: bob\n", expected_version="version-1")
 
@@ -136,6 +150,7 @@ def test_get_configuration_file_returns_empty_bootstrap_when_missing(client: Tes
         "content": "",
         "source": "C:/missing/.pyrit_conf",
         "version": "missing-version",
+        "live_reinitialization_enabled": False,
     }
 
 

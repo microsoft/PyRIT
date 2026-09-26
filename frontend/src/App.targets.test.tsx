@@ -39,6 +39,9 @@ jest.mock('@/components/Layout/MainLayout', () => {
   }
 })
 jest.mock('@/services/api', () => ({
+  runtimeApi: {
+    getReadiness: jest.fn().mockResolvedValue({ ready: true, state: 'ready', generation: '' }),
+  },
   attacksApi: {
     getAttack: jest.fn(),
     getMessages: jest.fn(),

@@ -1,0 +1,15 @@
+{
+  "servers": {
+    "notes": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "doc/code/targets/supporting_assets/notes_mcp_server.py",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}

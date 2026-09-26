@@ -91,6 +91,26 @@ class ScenarioService:
         self._configured_estimate_task_lock = asyncio.Lock()
         self._configured_estimate_semaphore = asyncio.Semaphore(_CONFIGURED_ESTIMATE_CONCURRENCY)
 
+    def outstanding_estimates(self) -> int:
+        """Return the number of owned background estimates still running."""
+        tasks = {
+            *self._estimate_tasks.values(),
+            *self._configured_estimate_tasks.values(),
+            *self._timed_out_estimate_workers,
+        }
+        return sum(not task.done() for task in tasks)
+
+    async def close_async(self) -> None:
+        """Drain shielded estimates before discarding the registry and cache."""
+        tasks = {
+            *self._estimate_tasks.values(),
+            *self._configured_estimate_tasks.values(),
+            *self._timed_out_estimate_workers,
+        }
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._estimate_cache.clear()
+
     async def list_scenarios_async(
         self,
         *,

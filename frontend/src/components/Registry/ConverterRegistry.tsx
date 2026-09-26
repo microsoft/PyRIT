@@ -22,6 +22,7 @@ import {
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular, DeleteRegular } from '@fluentui/react-icons'
 
+import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { ConverterIdentifier, ConverterInstance } from '@/types'
@@ -81,6 +82,7 @@ function DataTypeBadges({ dataTypes }: DataTypeBadgesProps) {
 }
 
 export default function ConverterRegistry() {
+  const { generation } = useRuntime()
   const styles = useConverterRegistryStyles()
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const [loading, setLoading] = useState(true)
@@ -155,7 +157,7 @@ export default function ConverterRegistry() {
     Promise.resolve().then(() => {
       void loadConverters()
     })
-  }, [loadConverters])
+  }, [loadConverters, generation])
 
   const openCreateDialog = (event: MouseEvent<HTMLButtonElement>) => {
     createTriggerRef.current = event.currentTarget

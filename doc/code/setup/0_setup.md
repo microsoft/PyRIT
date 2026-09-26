@@ -27,3 +27,31 @@ PyRIT offers flexible configuration through:
 - **Custom initializers** for project-specific defaults
 
 See the detailed sections below for comprehensive setup guidance.
+
+## Reinitializing a running backend
+
+The CoPyRIT configuration page separates **Save** from **Reinitialize PyRIT**.
+On a single-process, single-replica backend, administrators can apply saved
+configuration, environment documents, and custom initializer scripts without
+restarting Python. The saved `.pyrit_conf` must set `enable_live_reinitialization: true`.
+See [the GUI reinitialization guide](../../gui/0_gui.md) for status, failure behavior, and deployment limits.
+
+The backend first validates the saved sources without changing live setup state. It rejects live apply while any
+runtime work is active. When the runtime is idle, it closes admission, checks for work again, and then rebuilds
+setup-owned registries and defaults. The replacement reuses the same memory object, which preserves in-memory and
+persisted history.
+Memory type, connection, or storage changes require a process restart.
+Library callers must provide their own admission and idle-runtime boundary
+before using this configuration-level reinitialization path.
+
+Reinitialization explicitly replaces process environment values supplied by the
+selected sources, including deployment-provided values. Omitted variables remain;
+there is no historical tracking or removal. Key Vault selection and `.env.local`
+priority still apply, and interpolation uses newly selected values. Ordinary
+initialization retains its existing environment precedence. The lower-level
+`initialize_pyrit_async(reinitialize=True)` option provides replacement values and
+memory reuse; `ConfigurationLoader` owns the complete registry/script rebuild.
+
+Failure after mutation blocks backend runtime operations until a process restart.
+Configuration repair stays available under the original authorization policy.
+Initializer side effects and environment updates are not rolled back.

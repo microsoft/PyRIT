@@ -207,6 +207,7 @@ class ScenarioRunService:
         # they are serialized onto a single worker. The event loop is still free while they run,
         # which is the point of the offload.
         self._prepare_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pyrit-scenario-prep")
+        self._preparations: set[asyncio.Future[_PreparedRun]] = set()
         self._terminal_errors: OrderedDict[str, str] = OrderedDict()
         self._active_scenario_result_id: str | None = None
         self._queued_runs: deque[_ActiveTask] = deque()
@@ -217,6 +218,18 @@ class ScenarioRunService:
         self._pending_resume_requests: set[str] = set()
         self._queue_revision = 0
         self._stopping = False
+
+    def has_active_work(self) -> bool:
+        """Return whether scenario scheduling, preparation, or handoff work remains."""
+        return bool(
+            self._active_scenario_result_id or self._queued_runs or self._preparations or self._handoff_retry_tasks
+        )
+
+    async def close_async(self) -> None:
+        """Close a service only after all tracked work has drained."""
+        if self.has_active_work():
+            raise RuntimeError("Scenario work has not drained.")
+        await asyncio.to_thread(self._prepare_executor.shutdown, wait=True)
 
     async def start_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
         """
@@ -371,6 +384,8 @@ class ScenarioRunService:
             self._prepare_executor,
             functools.partial(self._prepare_run_blocking, request=request),
         )
+        self._preparations.add(prepare_task)
+        prepare_task.add_done_callback(self._discard_preparation)
         if request.scenario_result_id:
             prepare_task.add_done_callback(lambda _: self._preparing_run_ids.discard(request.scenario_result_id or ""))
         try:
@@ -443,6 +458,9 @@ class ScenarioRunService:
         if response is None:
             raise RuntimeError(f"Scenario run {scenario_result_id} was not found in the database after initialization.")
         return response
+
+    def _discard_preparation(self, preparation: asyncio.Future[_PreparedRun]) -> None:
+        self._preparations.discard(preparation)
 
     def _is_run_cancelled(self, *, scenario_result_id: str | None) -> bool:
         """
@@ -2104,6 +2122,19 @@ class ScenarioRunService:
 
 
 _service_instance: ScenarioRunService | None = None
+
+
+def peek_scenario_run_service() -> ScenarioRunService | None:
+    """Return the existing service without constructing one for lifecycle inspection."""
+    return _service_instance
+
+
+async def reset_scenario_run_service_async() -> None:
+    """Close and discard the drained singleton."""
+    global _service_instance
+    if _service_instance is not None:
+        await _service_instance.close_async()
+        _service_instance = None
 
 
 def get_scenario_run_service() -> ScenarioRunService:
