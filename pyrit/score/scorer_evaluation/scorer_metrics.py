@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -19,6 +20,37 @@ if TYPE_CHECKING:
 
 T = TypeVar("T", bound="ScorerMetrics")
 M = TypeVar("M", bound="ScorerMetrics")
+
+
+def non_finite_to_none(value: Any) -> Any:
+    """
+    Return a copy of ``value`` in which every non-finite float has become ``None``.
+
+    JSON (RFC 8259) has no number for ``NaN`` or ``Infinity``, but ``json.dumps`` writes them as
+    the bare tokens ``NaN`` / ``Infinity`` by default. Python reads those back, so a metrics file
+    written this way looks round-trip safe here while strict parsers reject the whole document:
+    ``JSON.parse`` in JavaScript, and the .NET and Go standard JSON libraries both fail on it (jq
+    accepts the tokens only as a documented extension). An undefined statistic therefore has to be
+    serialized as ``null``, which is what this maps them to.
+
+    Args:
+        value (Any): A metrics value: a scalar, or a dict / list / tuple / numpy array of them.
+
+    Returns:
+        Any: The value with ``NaN`` and ``±inf`` replaced by ``None``. Numpy arrays become nested
+            lists, which is the shape ``to_json`` already writes for them.
+    """
+    if isinstance(value, np.ndarray):
+        return [non_finite_to_none(item) for item in value.tolist()]
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: non_finite_to_none(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [non_finite_to_none(item) for item in value]
+    return value
 
 
 def _json_default(value: Any) -> Any:
@@ -78,13 +110,14 @@ class ScorerMetrics:
         JSON lists.
 
         Returns:
-            str: The JSON string representation of the metrics.
+            str: The JSON string representation of the metrics. A statistic that is undefined
+                (``NaN``) is written as ``null``, because JSON has no literal for it.
 
         Raises:
             TypeError: If a field holds a value that is neither JSON-serializable nor
                 a numpy array or scalar.
         """
-        return json.dumps(asdict(self), default=_json_default)
+        return json.dumps(non_finite_to_none(asdict(self)), default=_json_default, allow_nan=False)
 
     @classmethod
     def from_json_file(cls: type[T], file_path: str | Path) -> T:
@@ -143,10 +176,13 @@ class HarmScorerMetrics(ScorerMetrics):
             indicates that the model scores are typically higher than the human scores. When the model perfectly
             agrees with the gold labels (zero difference everywhere), this is reported as 0.0. When all differences
             are equal and non-zero (a systematic constant bias with no variance), the t-test is undefined and this
-            is reported as NaN; consult `mean_absolute_error` for the bias magnitude in that case.
+            is reported as NaN; consult `mean_absolute_error` for the bias magnitude in that case. NaN is the
+            in-memory signal only: it is not JSON-representable, so a round trip through `to_json`,
+            `from_json_file`, or the metrics registry gives ``None`` for this field instead.
         p_value (float): The p-value for the one-sample t-test above. It represents the probability of obtaining a
             difference in means as extreme as the observed difference, assuming the null hypothesis is true.
-            Reported as 1.0 on perfect agreement and NaN on the constant-non-zero-bias case (see `t_statistic`).
+            Reported as 1.0 on perfect agreement and NaN on the constant-non-zero-bias case (see `t_statistic`,
+            whose round-trip note applies here too).
         krippendorff_alpha_combined (float): Krippendorff's alpha for the reliability data, which includes both
             human and model scores. This measures the agreement between all the human raters and model scoring trials
             and ranges between -1.0 to 1.0 where 1.0 indicates perfect agreement, 0.0 indicates no agreement, and
@@ -183,8 +219,8 @@ class HarmScorerMetrics(ScorerMetrics):
 
     mean_absolute_error: float
     mae_standard_error: float
-    t_statistic: float
-    p_value: float
+    t_statistic: float | None
+    p_value: float | None
     krippendorff_alpha_combined: float
     harm_category: str | None = field(default=None, kw_only=True)
     harm_definition: str | None = field(default=None, kw_only=True)
