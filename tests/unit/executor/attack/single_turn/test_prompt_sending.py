@@ -12,24 +12,36 @@ from unit.mocks import MockPromptTarget, get_mock_scorer_identifier, get_mock_ta
 from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
+    AttackExecutor,
     AttackParameters,
     AttackScoringConfig,
     PrependedConversationConfig,
     PromptSendingAttack,
+    PromptSendingAttackParameters,
+    RTASystemPromptPaths,
     SingleTurnAttackContext,
 )
+from pyrit.executor.attack.core.attack_preparation import (
+    AttackPreparationFailure,
+    AttackPreparationFailureKind,
+)
+from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import TokenizerTemplateNormalizer
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
+    ConversationReference,
     ConversationType,
     Message,
     MessagePiece,
     Score,
     ScoringExpectation,
     SeedGroup,
+    SeedObjective,
     SeedPrompt,
+    SeedSimulatedConversation,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -1412,6 +1424,110 @@ class TestAttackLifecycle:
 @pytest.mark.usefixtures("patch_central_database")
 class TestEdgeCasesAndErrorHandling:
     """Tests for edge cases and error handling scenarios"""
+
+    async def test_preparation_failure_does_not_call_objective_target(
+        self,
+        mock_target: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+    ) -> None:
+        failure_reason = "Adversarial chat blocked the attack."
+        context = SingleTurnAttackContext(
+            params=PromptSendingAttackParameters(
+                objective="Test objective",
+                preparation_failure=AttackPreparationFailure(
+                    kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                    reason=failure_reason,
+                ),
+                source_conversations=frozenset(
+                    {
+                        ConversationReference(
+                            conversation_id="preparation-1",
+                            conversation_type=ConversationType.PREPARATION,
+                        )
+                    }
+                ),
+            ),
+            conversation_id=str(uuid.uuid4()),
+        )
+        attack = PromptSendingAttack(
+            objective_target=mock_target,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        result = await attack._perform_async(context=context)
+
+        assert result.outcome is AttackOutcome.UNDETERMINED
+        assert result.outcome_reason == failure_reason
+        assert result.executed_turns == 0
+        assert result.last_response is None
+        assert result.related_conversations == context.related_conversations
+        preparation_failure = AttackPreparationFailure.from_result(result=result)
+        assert preparation_failure is not None
+        assert preparation_failure.kind is AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED
+        assert preparation_failure.reason == failure_reason
+        mock_prompt_normalizer.send_prompt_async.assert_not_awaited()
+
+    @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
+    async def test_executor_completes_simulated_preparation_block_as_undetermined(
+        self,
+        mock_generate: AsyncMock,
+        mock_target: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        mock_true_false_scorer: MagicMock,
+    ) -> None:
+        failure_reason = "Adversarial chat blocked the attack."
+        mock_generate.return_value = SimulatedConversationResult(
+            seed_prompts=[],
+            related_conversations=frozenset(
+                {
+                    ConversationReference(
+                        conversation_id="preparation-1",
+                        conversation_type=ConversationType.PREPARATION,
+                    )
+                }
+            ),
+            preparation_failure=AttackPreparationFailure(
+                kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                reason=failure_reason,
+            ),
+        )
+        seed_group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Test objective"),
+                SeedSimulatedConversation(
+                    num_turns=1,
+                    adversarial_chat_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
+                ),
+            ]
+        )
+        attack = PromptSendingAttack(
+            objective_target=mock_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        executor_result = await AttackExecutor().execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=[seed_group],
+            adversarial_chat=MagicMock(spec=PromptTarget),
+            objective_scorer=mock_true_false_scorer,
+            return_partial_on_failure=True,
+        )
+
+        assert executor_result.incomplete_objectives == []
+        assert len(executor_result.completed_results) == 1
+        result = executor_result.completed_results[0]
+        assert result.outcome is AttackOutcome.UNDETERMINED
+        assert result.outcome_reason == failure_reason
+        assert result.executed_turns == 0
+        assert {reference.conversation_id for reference in result.related_conversations} == {"preparation-1"}
+        mock_prompt_normalizer.send_prompt_async.assert_not_awaited()
+        [persisted_result] = CentralMemory.get_memory_instance().get_attack_results(objective="Test objective")
+        assert persisted_result.outcome is AttackOutcome.UNDETERMINED
+        assert persisted_result.related_conversations == result.related_conversations
+        persisted_failure = AttackPreparationFailure.from_result(result=persisted_result)
+        assert persisted_failure is not None
+        assert persisted_failure.kind is AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED
 
     @pytest.mark.parametrize("max_attempts", [0, 1, 5])
     async def test_perform_attack_with_various_max_attempts(

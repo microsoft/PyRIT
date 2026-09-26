@@ -7,6 +7,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from pyrit.exceptions import AdversarialChatResponseBlockedException
 from pyrit.models import AttackSeedGroup, ConversationReference, Message, ScoringExpectation, SeedGroup
 
 if TYPE_CHECKING:
@@ -114,6 +115,8 @@ class AttackParameters:
             An instance of this AttackParameters type.
 
         Raises:
+            AdversarialChatResponseBlockedException: If simulated-conversation preparation was
+                blocked and this parameter type cannot represent a completed preparation failure.
             TypeError: If ``seed_group`` is not a ``AttackSeedGroup``.
             ValueError: If overrides contain invalid fields, or if seed_group has simulated
                 conversation but adversarial_chat/scorer not provided.
@@ -186,6 +189,10 @@ class AttackParameters:
             simulated_prompts = simulated_result.seed_prompts
             if "source_conversations" in valid_fields:
                 params["source_conversations"] = frozenset(simulated_result.related_conversations)
+            if simulated_result.preparation_failure is not None:
+                if "preparation_failure" not in valid_fields:
+                    raise AdversarialChatResponseBlockedException(message=simulated_result.preparation_failure.reason)
+                params["preparation_failure"] = simulated_result.preparation_failure
 
             # Merge simulated prompts with existing static prompts from the seed_group
             all_prompts: list[SeedUnion] = [*seed_group.prompts, *simulated_prompts]

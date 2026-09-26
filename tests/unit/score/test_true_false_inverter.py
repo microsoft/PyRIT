@@ -74,3 +74,25 @@ async def test_inverter_propagates_silent_child(patch_central_database):
     scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
 
     assert scores == []
+
+
+def test_with_scorer_block_policy_reaches_wrapped_scorer(patch_central_database):
+    """The inverter has no policy of its own, so it must hand the policy to its leaf."""
+    sub_scorer = SubStringScorer(substring="test")
+    sub_scorer.raise_if_scorer_blocks = True
+    scorer = TrueFalseInverterScorer(scorer=sub_scorer)
+
+    scoped = scorer.with_scorer_block_policy(raise_if_scorer_blocks=False)
+
+    assert scoped is not scorer
+    assert scoped._scorer.raise_if_scorer_blocks is False
+    assert sub_scorer.raise_if_scorer_blocks is True
+
+
+def test_with_scorer_block_policy_returns_self_when_already_compliant(patch_central_database):
+    """Returning self keeps shared instances from being copied for no reason."""
+    sub_scorer = SubStringScorer(substring="test")
+    sub_scorer.raise_if_scorer_blocks = True
+    scorer = TrueFalseInverterScorer(scorer=sub_scorer)
+
+    assert scorer.with_scorer_block_policy(raise_if_scorer_blocks=True) is scorer

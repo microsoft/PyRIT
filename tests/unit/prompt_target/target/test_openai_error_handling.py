@@ -46,10 +46,10 @@ def test_content_filter_markers_contents():
     assert {
         "content_filter",
         "content_safety_violation",
+        "cyber_policy",
         "policy_violation",
         "moderation_blocked",
         "bio_policy",
-        "cyber_policy",
     } <= CONTENT_FILTER_MARKERS
 
 
@@ -63,9 +63,9 @@ def test_safety_message_markers_contents():
     [
         "content_filter",
         "content_safety_violation",
+        "cyber_policy",
         "moderation_blocked",
         "bio_policy",
-        "cyber_policy",
     ],
 )
 def test_is_content_filter_error_explicit_code(code):
@@ -76,6 +76,22 @@ def test_is_content_filter_error_explicit_code(code):
 def test_is_content_filter_error_content_policy_violation_via_substring():
     """Azure's content_policy_violation code is detected via the policy_violation marker."""
     data = {"error": {"code": "content_policy_violation", "message": "Content blocked"}}
+    assert _is_content_filter_error(data) is True
+
+
+def test_is_content_filter_error_cyber_policy_payload():
+    """Azure OpenAI's cybersecurity-policy rejection is treated as a provider block."""
+    data = {
+        "error": {
+            "message": (
+                "This content was flagged for possible cybersecurity risk. "
+                "Please contact Microsoft if you believe this is an error."
+            ),
+            "type": "invalid_request_error",
+            "param": "prompt",
+            "code": "cyber_policy",
+        }
+    }
     assert _is_content_filter_error(data) is True
 
 

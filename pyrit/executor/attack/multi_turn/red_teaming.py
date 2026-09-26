@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
 from pyrit.common.utils import warn_if_set
-from pyrit.exceptions import ComponentRole, execution_context
+from pyrit.exceptions import AdversarialChatResponseBlockedException, ComponentRole, execution_context
 from pyrit.executor.attack.component import (
     ConversationManager,
     PrependedConversationConfig,
@@ -20,6 +20,10 @@ from pyrit.executor.attack.component import (
 )
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_preparation import (
+    AttackPreparationFailure,
+    AttackPreparationFailureKind,
+)
 from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
@@ -343,9 +347,25 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             logger.info(f"Executing turn {context.executed_turns + 1}/{self._max_turns}")
 
             # Determine what to send next
-            message_to_send = await self._generate_next_prompt_async(
-                context=context, adversarial_manager=adversarial_manager
-            )
+            try:
+                message_to_send = await self._generate_next_prompt_async(
+                    context=context, adversarial_manager=adversarial_manager
+                )
+            except AdversarialChatResponseBlockedException as blocked:
+                # The adversarial model produced no attacker turn, so the objective target was
+                # never probed. That is an absence of data, not a defensive win for the target,
+                # so the outcome stays UNDETERMINED.
+                kind = AttackPreparationFailureKind.from_exception(blocked)
+                preparation_failure = AttackPreparationFailure(
+                    kind=kind,
+                    reason=f"{kind.default_reason} Details: {blocked}",
+                )
+                return self._create_attack_result(
+                    context=context,
+                    outcome=AttackOutcome.UNDETERMINED,
+                    outcome_reason=preparation_failure.reason,
+                    metadata=preparation_failure.to_metadata(),
+                )
 
             # Send the generated message to the objective target
             context.last_response = await self._send_prompt_to_objective_target_async(
@@ -367,16 +387,36 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             # Increment the executed turns
             context.executed_turns += 1
 
-        # Prepare the result
+        return self._create_attack_result(
+            context=context,
+            outcome=attack_outcome_from_score(context.last_score) if context.last_score else AttackOutcome.FAILURE,
+        )
+
+    def _create_attack_result(
+        self,
+        *,
+        context: MultiTurnAttackContext[Any],
+        outcome: AttackOutcome,
+        outcome_reason: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AttackResult:
+        """
+        Create a result from the current attack context.
+
+        Returns:
+            AttackResult: The completed attack result.
+        """
         return AttackResult(
             atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
-            outcome=(attack_outcome_from_score(context.last_score) if context.last_score else AttackOutcome.FAILURE),
+            outcome=outcome,
+            outcome_reason=outcome_reason,
             executed_turns=context.executed_turns,
             last_response=context.last_response.get_piece() if context.last_response else None,
             automated_score=context.last_score,
             related_conversations=context.related_conversations,
+            metadata=metadata or {},
             labels=context.memory_labels,
         )
 

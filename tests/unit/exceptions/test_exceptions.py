@@ -124,17 +124,18 @@ def _make_request_piece() -> MessagePiece:
 def test_content_filter_markers_exported_from_pyrit_exceptions():
     """The marker set must be importable from ``pyrit.exceptions`` as the single source of truth."""
     assert "content_filter" in CONTENT_FILTER_MARKERS
+    assert "cyber_policy" in CONTENT_FILTER_MARKERS
     assert "moderation_blocked" in CONTENT_FILTER_MARKERS
     assert "policy_violation" in CONTENT_FILTER_MARKERS
     assert "content_safety_violation" in CONTENT_FILTER_MARKERS
     assert "bio_policy" in CONTENT_FILTER_MARKERS
-    assert "cyber_policy" in CONTENT_FILTER_MARKERS
 
 
 @pytest.mark.parametrize(
     "marker_response_text",
     [
         "content_filter",
+        '{"error": {"code": "cyber_policy"}}',
         '{"error": {"code": "moderation_blocked"}}',
         '{"error": {"code": "content_policy_violation"}}',
         '{"error": {"code": "content_safety_violation"}}',

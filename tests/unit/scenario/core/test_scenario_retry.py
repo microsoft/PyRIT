@@ -11,6 +11,10 @@ import pytest
 
 from pyrit.executor.attack import AttackParameters, AttackStrategy, SingleTurnAttackContext
 from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.executor.attack.core.attack_preparation import (
+    AttackPreparationFailure,
+    AttackPreparationFailureKind,
+)
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -879,11 +883,13 @@ class TestGetCompletedObjectiveHashesForAttack:
         type(atomic).technique_eval_hash = PropertyMock(return_value=eval_hash)
         return atomic
 
-    def _row(self, *, objective, outcome=AttackOutcome.SUCCESS, attribution_data=None):
+    def _row(self, *, objective, outcome=AttackOutcome.SUCCESS, attribution_data=None, metadata=None):
         row = MagicMock()
         row.outcome = outcome
         row.attribution_data = attribution_data
         row.objective = objective
+        row.metadata = metadata if metadata is not None else {}
+        row.outcome_reason = None
         return row
 
     def test_returns_empty_when_scenario_result_id_unset(self):
@@ -914,6 +920,66 @@ class TestGetCompletedObjectiveHashesForAttack:
             atomic_attack=self._make_atomic("a"),
         )
         assert result == {to_sha256("ok")}
+
+    def test_skips_rows_that_never_reached_the_objective_target(self):
+        """A preparation failure never sent anything to the objective target, so the
+        objective stays pending. A measured FAILURE is a real result and counts as
+        completed."""
+        from pyrit.common.utils import to_sha256
+
+        scenario = self._make_scenario()
+        scenario._memory.get_attack_results.return_value = [
+            self._row(
+                objective="measured-failure",
+                outcome=AttackOutcome.FAILURE,
+                attribution_data={"parent_collection": "a", "parent_eval_hash": "hash-A"},
+            ),
+            self._row(
+                objective="provider-blocked",
+                outcome=AttackOutcome.UNDETERMINED,
+                attribution_data={"parent_collection": "a", "parent_eval_hash": "hash-A"},
+                metadata=AttackPreparationFailure(
+                    kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                    reason="blocked before any prompt was sent",
+                ).to_metadata(),
+            ),
+            self._row(
+                objective="model-refused",
+                outcome=AttackOutcome.UNDETERMINED,
+                attribution_data={"parent_collection": "a", "parent_eval_hash": "hash-A"},
+                metadata=AttackPreparationFailure(
+                    kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_REFUSED,
+                    reason="adversarial model refused before any prompt was sent",
+                ).to_metadata(),
+            ),
+        ]
+        result = scenario._get_completed_objective_hashes_for_attack(
+            atomic_attack=self._make_atomic("a"),
+        )
+        assert result == {to_sha256("measured-failure")}
+
+    @pytest.mark.parametrize(
+        "reason",
+        ["No objective scorer configured", "Scorer could not reach a verdict"],
+    )
+    def test_counts_undetermined_rows_that_reached_the_target_as_completed(self, reason):
+        """An UNDETERMINED row that *did* reach the objective target recorded the best
+        verdict the configuration allows. Retrying it would re-send the objective on every
+        resume without ever converging, so it must count as completed."""
+        from pyrit.common.utils import to_sha256
+
+        scenario = self._make_scenario()
+        row = self._row(
+            objective="no-verdict",
+            outcome=AttackOutcome.UNDETERMINED,
+            attribution_data={"parent_collection": "a", "parent_eval_hash": "hash-A"},
+        )
+        row.outcome_reason = reason
+        scenario._memory.get_attack_results.return_value = [row]
+        result = scenario._get_completed_objective_hashes_for_attack(
+            atomic_attack=self._make_atomic("a"),
+        )
+        assert result == {to_sha256("no-verdict")}
 
     def test_skips_rows_without_attribution_data(self):
         from pyrit.common.utils import to_sha256

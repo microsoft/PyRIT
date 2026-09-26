@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from pyrit.exceptions import AdversarialChatResponseBlockedException
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
     _AdversarialConversationManager,
 )
@@ -23,6 +24,10 @@ from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
     AttackScoringConfig,
+)
+from pyrit.executor.attack.core.attack_preparation import (
+    AttackPreparationFailure,
+    AttackPreparationFailureKind,
 )
 from pyrit.executor.attack.multi_turn.red_teaming import RedTeamingAttack
 from pyrit.memory import CentralMemory
@@ -54,6 +59,7 @@ class SimulatedConversationResult:
 
     seed_prompts: list[SeedPrompt]
     related_conversations: frozenset[ConversationReference]
+    preparation_failure: AttackPreparationFailure | None = None
 
 
 async def _resolve_prompt_source_async(
@@ -241,26 +247,36 @@ async def generate_simulated_conversation_async(
         *result.related_conversations,
     }
 
+    preparation_failure = AttackPreparationFailure.from_result(result=result)
+
     # If a next-message prompt is configured, generate a final user message
-    if next_message_system_prompt:
+    if next_message_system_prompt and preparation_failure is None:
         next_message_conversation_id = str(uuid4())
-        next_message = await _generate_next_message_async(
-            objective=objective,
-            conversation_messages=conversation_messages,
-            adversarial_chat=adversarial_chat,
-            conversation_id=next_message_conversation_id,
-            next_message_system_prompt=next_message_system_prompt,
-            prompt_normalizer=PromptNormalizer(),
-            memory_labels=memory_labels,
-        )
-        conversation_messages.append(next_message)
-        related_conversations.add(
-            ConversationReference(
+        try:
+            next_message = await _generate_next_message_async(
+                objective=objective,
+                conversation_messages=conversation_messages,
+                adversarial_chat=adversarial_chat,
                 conversation_id=next_message_conversation_id,
-                conversation_type=ConversationType.ADVERSARIAL,
-                description="simulated next-message generation",
+                next_message_system_prompt=next_message_system_prompt,
+                prompt_normalizer=PromptNormalizer(),
+                memory_labels=memory_labels,
             )
-        )
+            conversation_messages.append(next_message)
+        except AdversarialChatResponseBlockedException as blocked:
+            kind = AttackPreparationFailureKind.from_exception(blocked)
+            preparation_failure = AttackPreparationFailure(
+                kind=kind,
+                reason=f"{kind.default_reason} Details: {blocked}",
+            )
+        finally:
+            related_conversations.add(
+                ConversationReference(
+                    conversation_id=next_message_conversation_id,
+                    conversation_type=ConversationType.ADVERSARIAL,
+                    description="simulated next-message generation",
+                )
+            )
 
     # Convert to SeedPrompts for the return value
     seed_prompts = SeedPrompt.from_messages(conversation_messages, starting_sequence=starting_sequence)
@@ -273,6 +289,7 @@ async def generate_simulated_conversation_async(
     return SimulatedConversationResult(
         seed_prompts=seed_prompts,
         related_conversations=frozenset(related_conversations),
+        preparation_failure=preparation_failure,
     )
 
 

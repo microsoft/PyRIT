@@ -162,8 +162,11 @@ def _objective_target_eval_hash_for(attack_result: AttackResult) -> str | None:
     """
     Return the ObjectiveTargetEvaluationIdentifier eval hash for a result.
 
-    Walks ``atomic_attack_identifier.attack_technique.objective_target`` and
-    wraps the resulting identifier in ``ObjectiveTargetEvaluationIdentifier``.
+    Walks the current
+    ``atomic_attack_identifier.attack_technique.attack.objective_target``
+    shape and wraps the resulting identifier in
+    ``ObjectiveTargetEvaluationIdentifier``. The legacy direct
+    ``attack_technique.objective_target`` shape is also accepted.
 
     Args:
         attack_result (AttackResult): The attack result whose persisted
@@ -183,7 +186,8 @@ def _objective_target_eval_hash_for(attack_result: AttackResult) -> str | None:
     if technique is None:
         return None
 
-    target = technique.get_child("objective_target")
+    attack = technique.get_child("attack")
+    target = attack.get_child("objective_target") if attack else technique.get_child("objective_target")
     if target is None:
         return None
 

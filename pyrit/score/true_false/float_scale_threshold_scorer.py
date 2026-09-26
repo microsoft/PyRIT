@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import copy
 import math
 import uuid
 from typing import TYPE_CHECKING, cast
@@ -103,6 +104,26 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             PromptTarget | None: The chat target from the wrapped scorer.
         """
         return self._scorer.get_chat_target()
+
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+        """
+        Apply the policy to the wrapped float-scale scorer.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply to LLM-backed leaves.
+
+        Returns:
+            Scorer: ``self`` when the wrapped scorer is unchanged, otherwise a copy wrapping
+            the updated scorer.
+        """
+        scoped_inner = cast(
+            "FloatScaleScorer", self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
+        )
+        if scoped_inner is self._scorer:
+            return self
+        scoped = copy.copy(self)
+        scoped._scorer = scoped_inner
+        return scoped
 
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the scorer whose value is compared to the threshold."""

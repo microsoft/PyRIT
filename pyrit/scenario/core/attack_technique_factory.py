@@ -565,6 +565,36 @@ class AttackTechniqueFactory(Identifiable):
         """Whether callers may safely append request converters to this technique."""
         return self._supports_additional_request_converters
 
+    def with_attack_kwargs(self, *, attack_kwargs: dict[str, Any]) -> AttackTechniqueFactory:
+        """
+        Return a copy with the supplied attack constructor arguments merged in.
+
+        Existing constructor arguments are preserved unless replaced by a supplied
+        value. All other factory behavior and metadata remain unchanged.
+
+        Args:
+            attack_kwargs: Attack constructor arguments to add or replace.
+
+        Returns:
+            AttackTechniqueFactory: An independent factory with the merged arguments.
+        """
+        merged_attack_kwargs = dict(self._attack_kwargs)
+        merged_attack_kwargs.update(attack_kwargs)
+        return AttackTechniqueFactory(
+            name=self._name,
+            attack_class=self._attack_class,
+            description=self._description,
+            technique_tags=self._technique_tags,
+            attack_kwargs=merged_attack_kwargs,
+            adversarial_chat=self._adversarial_chat,
+            adversarial_system_prompt=self._adversarial_system_prompt,
+            adversarial_seed_prompt=self._adversarial_seed_prompt,
+            seed_technique=self._seed_technique,
+            uses_adversarial=self._uses_adversarial,
+            supports_additional_request_converters=self._supports_additional_request_converters,
+            scorer_override_policy=self._scorer_override_policy,
+        )
+
     @property
     def scoring_config_type(self) -> type | None:
         """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""

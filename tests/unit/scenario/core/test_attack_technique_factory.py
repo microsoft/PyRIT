@@ -244,6 +244,37 @@ class TestFactoryInit:
         assert not default_factory.supports_additional_request_converters
         assert composable_factory.supports_additional_request_converters
 
+    def test_with_attack_kwargs_preserves_factory_and_merges_values(self) -> None:
+        seed_technique = _make_seed_technique()
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            description="Configured stub.",
+            technique_tags=["multi_turn"],
+            attack_kwargs={"max_turns": 7},
+            seed_technique=seed_technique,
+            uses_adversarial=True,
+            supports_additional_request_converters=True,
+            scorer_override_policy=ScorerOverridePolicy.RAISE,
+        )
+
+        specialized = factory.with_attack_kwargs(attack_kwargs={"max_turns": 2})
+
+        assert specialized is not factory
+        assert specialized.name == factory.name
+        assert specialized.attack_class is factory.attack_class
+        assert specialized.description == factory.description
+        assert specialized.technique_tags == factory.technique_tags
+        assert specialized.seed_technique is factory.seed_technique
+        assert specialized.uses_adversarial == factory.uses_adversarial
+        assert specialized.supports_additional_request_converters == factory.supports_additional_request_converters
+        target = MagicMock(spec=PromptTarget)
+        scoring = MagicMock(spec=AttackScoringConfig)
+        original_technique = factory.create(objective_target=target, attack_scoring_config=scoring)
+        specialized_technique = specialized.create(objective_target=target, attack_scoring_config=scoring)
+        assert original_technique.attack.max_turns == 7
+        assert specialized_technique.attack.max_turns == 2
+
 
 class TestFactoryCreate:
     """Tests for AttackTechniqueFactory.create()."""
