@@ -307,7 +307,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
 
     initLabels()
     return () => { ignore = true }
-  }, [])
+  }, [generation])
 
   // Hydrate loadedAttack from the routed attack id. Depends on routeAttackId
   // ONLY, so switching conversations within an attack never refetches.
