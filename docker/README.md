@@ -6,6 +6,48 @@ This Docker container provides a pre-configured environment for running PyRIT (P
 
 This README contains technical details for working with the Docker setup locally.
 
+## Docker CI
+
+The `docker_build` workflow builds the devcontainer base, builds the local-source
+production image, and runs import, GUI, and Jupyter smoke checks on one runner.
+Images stay in that runner's Docker daemon instead of being compressed, uploaded,
+downloaded, and loaded between jobs. The PyPI checks run on `main` and manual
+dispatches only, using a separate runner with the same co-located build/test
+sequence. The two sequences share the existing GHA cache only for their identical
+devcontainer build inputs. Production explicitly selects the daemon's `default`
+builder (Docker driver) so it can consume the locally loaded base image rather
+than looking for it in the cached builder's separate image store. Neither
+sequence publishes images.
+
+The existing `Build Devcontainer`, `Build Production (local)`, `Test Import (local)`,
+`Test GUI (local)`, and `Test Jupyter (local)` check names are retained as result
+gates, along with the four PyPI check names. Each enabled gate requires both its
+execution job and its corresponding stage to succeed. A failed or cancelled
+execution job fails all its enabled gates, even if an earlier stage succeeded;
+missing or skipped stage results also fail. The two sources are independent, and
+PyPI checks remain intentionally skipped on PRs and merge-queue runs. Look at
+`Build and test (local)` or `Build and test (PyPI)` for the actual build/test logs
+and step timings.
+
+GUI and Jupyter checks poll for HTTP 200 for up to 120 seconds, stop early if the
+container exits, and bound each HTTP request. GUI checks also require frontend
+HTML. Each service gets an ephemeral localhost port and its own container, which
+is removed on success, failure, or a handled cancellation signal. Failures print
+container state and recent logs. Application errors, including migration failures,
+remain failures rather than being retried or hidden.
+
+To run the same checks against an already built image:
+
+```bash
+bash docker/smoke_test.sh pyrit:local-test import
+bash docker/smoke_test.sh pyrit:local-test gui
+bash docker/smoke_test.sh pyrit:local-test jupyter
+```
+
+An optional third argument sets the readiness timeout in seconds. The helper and
+workflow result gates have offline regression coverage in
+`tests/unit/infra/test_docker_ci.py`.
+
 ## Features
 
 - Pre-installed PyRIT with all dependencies
