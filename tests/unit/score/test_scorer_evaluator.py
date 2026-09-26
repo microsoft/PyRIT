@@ -183,6 +183,8 @@ async def test_evaluate_dataset_async_excludes_undetermined_responses(mock_objec
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=2)
 
     assert metrics.accuracy == 1.0
+    assert metrics.num_responses == 1
+    assert metrics.num_input_responses == 2
     assert metrics.trial_scores.shape == (2, 1)
 
 
@@ -227,6 +229,7 @@ async def test_evaluate_dataset_async_selects_category_before_filtering_undeterm
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=1)
 
     assert metrics.num_responses == 1
+    assert metrics.num_input_responses == 2
     assert metrics.mean_absolute_error == 0.0
     assert metrics.trial_scores.tolist() == [[0.2]]
 

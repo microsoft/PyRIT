@@ -452,6 +452,7 @@ class ScorerEvaluator(abc.ABC):
         # Include trial scores for debugging and future mismatch analysis
         # (not persisted to registry - use returned metrics object for detailed analysis)
         metrics.trial_scores = all_model_scores
+        metrics.num_input_responses = len(assistant_responses)
         # Include average scoring time per item
         metrics.average_score_time_seconds = average_score_time
 

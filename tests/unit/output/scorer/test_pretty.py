@@ -96,7 +96,7 @@ async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, c
     identifier = _make_scorer_identifier(class_name="MyScorer")
 
     mock_eval_id_cls.return_value = MagicMock(eval_hash="abc123")
-    mock_find.return_value = _make_objective_metrics()
+    mock_find.return_value = _make_objective_metrics(num_responses=1, num_input_responses=2)
 
     await printer.write_async(scorer_identifier=identifier)
     output = capsys.readouterr().out
@@ -104,6 +104,7 @@ async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, c
     assert "Scorer Information" in output
     assert "MyScorer" in output
     assert "Accuracy" in output
+    assert "Scored Responses: 1/2 (50.0% coverage)" in output
     assert "F1 Score" in output
     assert "Precision" in output
     assert "Recall" in output
@@ -151,13 +152,14 @@ async def test_write_async_objective_no_metrics(mock_find, mock_eval_id_cls, cap
 async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="harm_hash")
-    mock_find.return_value = _make_harm_metrics()
+    mock_find.return_value = _make_harm_metrics(num_responses=1, num_input_responses=2)
 
     await printer.write_async(scorer_identifier=_make_scorer_identifier(class_name="HarmScorer"), harm_category="hate")
     output = capsys.readouterr().out
 
     assert "HarmScorer" in output
     assert "Mean Absolute Error" in output
+    assert "Scored Responses: 1/2 (50.0% coverage)" in output
     assert "Krippendorff Alpha (Combined)" in output
     assert "Krippendorff Alpha (Model)" in output
     mock_find.assert_called_once_with(eval_hash="harm_hash", harm_category="hate")
