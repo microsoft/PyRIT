@@ -412,6 +412,32 @@ editing `.github/docs-versions.yml`:
 Once merged, the docs workflow rebuilds the site and the new version appears in the version picker on
 every page of every version.
 
+The `build-book` workflow validates ordinary PRs with a single `Build latest` job.
+It checks out the PR's immutable tested merge commit, not `main` or the PR's moving
+head branch. This also applies to PRs targeting release branches; `latest` is only
+the validation artifact's slug and does not change what will be published.
+
+PRs changing the version configuration, docs workflow, matrix/composition/manifest
+helpers, or version-picker code also build every configured release and run the
+read-only `Compose site` job. That checks the complete tree, default/stable redirects,
+page manifests, and picker before publication. Ordinary content, API, or dependency
+changes do not rebuild historical releases. Markdown-only documentation changes
+trigger both PR validation and publication after merging.
+
+Only a push to `main` or a manual run from `main` can deploy. Both publish the full
+configured version list, with `latest` pinned to that run's commit. Release pushes
+and manual runs from other refs remain validation-only. A listed release validates
+its own version at the triggering commit. An unlisted release or manual ref validates
+that commit under `latest`, while retaining all configured historical releases.
+Production runs share a non-cancelling queue for the **whole pipeline**, so a slower earlier build cannot
+overtake a later deployment. PRs have separate per-PR queues that cancel superseded
+runs and never cancel a publication.
+
+Rendered-site caches require an exact match on the tested workflow's hash, version
+slug, and checked-out commit SHA. There are no partial-key fallbacks to a build of
+`main`. Each release still uses its own build scripts and `uv.lock` with
+`uv sync --frozen`; changing the pipeline invalidates old rendered-site caches.
+
 For example, releasing `1.1.0` would change:
 
 ```yaml
