@@ -7,10 +7,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget, get_mock_scorer_identifier
 
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
 from pyrit.converter import CharNoiseConverter, CharSwapConverter, RandomCapitalLettersConverter
 from pyrit.executor.attack import (
+    AttackScoringConfig,
     CrescendoAttack,
     PAIRAttack,
     PromptSendingAttack,
@@ -21,6 +23,7 @@ from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.score import TrueFalseScorer
 from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestionPaths
 from pyrit.setup.initializers import TechniqueInitializer
 from pyrit.setup.initializers.techniques import (
@@ -745,6 +748,33 @@ class TestGoatTechnique:
         assert "objective" in (config.first_message.parameters or [])
         assert isinstance(config.adversarial_prompt_template, SeedPrompt)
         assert "feedback_text" in (config.adversarial_prompt_template.parameters or [])
+
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_created_attack_scores_every_turn_without_judge_feedback(self):
+        """Paper section 3.3: GOAT's attacker never sees judge output. The created attack must
+        disable score feedback while still scoring every turn (early stopping), leave the
+        scenario's shared config unchanged, and carry the setting into its eval identity."""
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        objective_scorer.get_identifier.return_value = get_mock_scorer_identifier()
+        scenario_scoring = AttackScoringConfig(objective_scorer=objective_scorer)
+
+        attack = (
+            self._goat_factory()
+            .create(
+                objective_target=MockPromptTarget(),
+                attack_scoring_config=scenario_scoring,
+                adversarial_chat=MockPromptTarget(),
+            )
+            .attack
+        )
+
+        assert isinstance(attack, RedTeamingAttack)
+        applied = attack.get_attack_scoring_config()
+        assert applied.use_score_as_feedback is False
+        assert applied.objective_scorer is objective_scorer
+        assert attack._score_last_turn_only is False
+        assert scenario_scoring.use_score_as_feedback is True
+        assert attack.get_identifier().params["use_score_as_feedback"] is False
 
     async def test_registered_when_extra_selected(self, mock_adversarial_target):
         init = TechniqueInitializer()

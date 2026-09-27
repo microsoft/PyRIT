@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import TargetIdentifierEntry
+from pyrit.memory.memory_models import AttackIdentifierEntry, TargetIdentifierEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -164,6 +164,23 @@ def test_get_target_identifiers_by_hash_and_promoted_field(sqlite_instance: Memo
     assert isinstance(identifiers[0], TargetIdentifier)
     assert sqlite_instance.get_target_identifiers(supported_auth_modes=["api_key"]) == []
     assert sqlite_instance.get_target_identifiers(supported_auth_modes=["API_KEY", "identity"]) == []
+
+
+def test_attack_identifier_disabled_score_feedback_round_trips(sqlite_instance: MemoryInterface) -> None:
+    attack = AttackIdentifier(class_name="TestAttack", class_module="tests.unit.memory", use_score_as_feedback=False)
+
+    with closing(sqlite_instance.get_session()) as session:
+        sqlite_instance._persist_identifier(session=session, identifier=attack)
+        session.commit()
+        entry = session.get(AttackIdentifierEntry, attack.hash)
+        assert entry is not None
+        assert entry.use_score_as_feedback is False
+
+    identifiers = sqlite_instance.get_attack_identifiers(identifier_hashes=[attack.hash])
+
+    assert identifiers == [attack]
+    assert identifiers[0].use_score_as_feedback is False
+    assert identifiers[0].hash == attack.hash
 
 
 def test_get_identifiers_reconstructs_each_typed_graph(

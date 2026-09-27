@@ -196,6 +196,27 @@ def test_seed_conditions_and_follow_up_template_migrations_merge(starting_revisi
         engine.dispose()
 
 
+def test_score_feedback_migration_adds_attack_identifier_column() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, "aca1eba410d9")
+            assert "use_score_as_feedback" not in {
+                column["name"] for column in inspect(connection).get_columns("AttackIdentifiers")
+            }
+
+        run_schema_migrations(engine=engine)
+        check_schema_migrations(engine=engine)
+
+        with engine.connect() as connection:
+            assert "use_score_as_feedback" in {
+                column["name"] for column in inspect(connection).get_columns("AttackIdentifiers")
+            }
+    finally:
+        engine.dispose()
+
+
 def test_scenario_progress_migration_adds_composite_index():
     """The migration head contains the parent/timestamp/id keyset index."""
     with tempfile.TemporaryDirectory() as temp_dir:
