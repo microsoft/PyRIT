@@ -1,7 +1,7 @@
 name: goat_initial_prompt
 description: |
   Prompt asking the GOAT attacker to craft its first message to the Defender AI, given only the
-  conversation objective. Adapted from GOAT paper Figure A.2 ("Prompt for attacker LLM to start
+  conversation objective. Adapted from GOAT paper [@pavlova2024goat] Figure A.2 ("Prompt for attacker LLM to start
   conversation with target LLM given a conversation objective or goal").
 groups:
   - AI Red Team

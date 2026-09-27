@@ -1,7 +1,7 @@
 name: goat
 description: |
   Generative Offensive Agent Tester (GOAT) attacker persona and reasoning structure, based on
-  the GOAT paper: https://arxiv.org/abs/2410.01606. Intentional differences from the paper,
+  the GOAT paper [@pavlova2024goat]: https://arxiv.org/abs/2410.01606. Intentional differences from the paper,
   both inherited from reusing PyRIT's existing RedTeamingAttack executor rather than building a
   new one:
 

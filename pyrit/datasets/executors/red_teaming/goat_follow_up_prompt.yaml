@@ -1,7 +1,7 @@
 name: goat_follow_up_prompt
 description: |
   Per-turn prompt asking the GOAT attacker to craft its next reply, given the objective and the
-  Defender's latest response. Adapted from GOAT paper Figure A.3 ("Prompt for attacker LLM to
+  Defender's latest response. Adapted from GOAT paper [@pavlova2024goat] Figure A.3 ("Prompt for attacker LLM to
   generate follow-up adversarial reply given a target LLM response and prior conversation
   prompt"), with one deliberate omission: Figure A.3 also re-supplies the attacker's own previous
   prompt (P) as an explicit field. RedTeamingAttack's per-turn adversarial template only receives
