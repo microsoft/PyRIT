@@ -162,20 +162,15 @@ class SelectiveTextConverter(Converter):
 
         # If using TokenSelectionStrategy, delegate to convert_tokens_async
         if self._is_token_based:
-            result = await self._sub_converter.convert_tokens_async(
+            # With preserve_tokens, each converted region keeps its own tokens so later stages still see only
+            # the originally selected text as marked.
+            return await self._sub_converter.convert_tokens_async(
                 prompt=prompt,
                 input_type="text",
                 start_token=self._start_token,
                 end_token=self._end_token,
+                keep_tokens=self._preserve_tokens,
             )
-            # If preserve_tokens is True, the tokens are already in the result
-            # If False, convert_tokens_async removes them
-            if self._preserve_tokens and self._start_token not in result.output_text:
-                # Wrap the result with tokens if they were removed
-                result = ConverterResult(
-                    output_text=f"{self._start_token}{result.output_text}{self._end_token}", output_type="text"
-                )
-            return result
 
         if self._is_word_level:
             return await self._convert_word_level_async(prompt=prompt)

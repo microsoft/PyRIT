@@ -16,7 +16,9 @@ from pyrit.converter.text_selection_strategy import (
     ProportionSelectionStrategy,
     RangeSelectionStrategy,
     RegexSelectionStrategy,
+    TokenSelectionStrategy,
     WordIndexSelectionStrategy,
+    WordPositionSelectionStrategy,
     WordProportionSelectionStrategy,
 )
 
@@ -297,3 +299,44 @@ class TestSelectiveTextConverter:
         params = converter.get_identifier().params
         assert params["selection_strategy"] == "IndexSelectionStrategy"
         assert params["selection_strategy_params"] == {}
+
+
+class TestTokenSelectionChaining:
+    """Token-based stages must only convert the regions an earlier stage marked."""
+
+    async def test_token_stages_keep_each_region_marked(self):
+        first = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=WordPositionSelectionStrategy(start_proportion=0.5, end_proportion=1.0),
+            preserve_tokens=True,
+        )
+        second = SelectiveTextConverter(
+            sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+        )
+        third = SelectiveTextConverter(
+            sub_converter=Base64Converter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+        )
+
+        stage1 = (await first.convert_async(prompt="tell me how to do it")).output_text
+        stage2 = (await second.convert_async(prompt=stage1)).output_text
+        stage3 = (await third.convert_async(prompt=stage2)).output_text
+
+        assert stage1 == "tell me how ⟪dG8=⟫ ⟪ZG8=⟫ ⟪aXQ=⟫"
+        assert stage2 == "tell me how ⟪qT8=⟫ ⟪MT8=⟫ ⟪nKD=⟫"
+        assert stage3 == "tell me how ⟪cVQ4PQ==⟫ ⟪TVQ4PQ==⟫ ⟪bktEPQ==⟫"
+
+    async def test_token_stage_without_preserve_tokens_drops_markers(self):
+        converter = SelectiveTextConverter(sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy())
+
+        result = await converter.convert_async(prompt="keep ⟪this⟫ and ⟪that⟫")
+
+        assert result.output_text == "keep guvf and gung"
+
+    async def test_token_stage_without_markers_wraps_whole_prompt(self):
+        converter = SelectiveTextConverter(
+            sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+        )
+
+        result = await converter.convert_async(prompt="hello")
+
+        assert result.output_text == "⟪uryyb⟫"
