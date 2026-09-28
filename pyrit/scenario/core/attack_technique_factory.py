@@ -151,9 +151,10 @@ class AttackTechniqueFactory(Identifiable):
                 applies it to a copy of the scenario's scoring config, keeping the
                 scenario's scorers. Use ``False`` for techniques whose attacker must
                 not see scorer rationales while every turn is still scored. ``None``
-                (the default) leaves the scenario's config unchanged. Only applies when
-                the scenario's config is forwarded to the attack (see
-                ``scorer_override_policy``).
+                (the default) leaves the scenario's config unchanged. When the
+                scenario's config is not forwarded (see ``scorer_override_policy``),
+                the override is applied to the ``attack_scoring_config`` in
+                ``attack_kwargs`` instead, and ``create()`` raises if there is none.
 
         Raises:
             TypeError: If any kwarg name is not a valid constructor parameter,
@@ -721,8 +722,9 @@ class AttackTechniqueFactory(Identifiable):
 
         Raises:
             ValueError: If a create-time adversarial chat is supplied while the
-                factory already baked one, or if ``scorer_override_policy`` is RAISE
-                and the scenario scorer is incompatible with the attack's type annotation.
+                factory already baked one, if ``scorer_override_policy`` is RAISE
+                and the scenario scorer is incompatible with the attack's type annotation,
+                or if ``use_score_as_feedback`` is set but no scoring config reaches the attack.
         """
         create_time_target: PromptTarget | None = adversarial_chat
 
@@ -754,6 +756,18 @@ class AttackTechniqueFactory(Identifiable):
             kwargs["attack_scoring_config"] = self._apply_score_feedback_override(
                 attack_scoring_config=attack_scoring_config
             )
+        elif self._use_score_as_feedback is not None:
+            # The scenario's config was skipped, so the override must reach the config the attack
+            # will actually use. Without a baked config the attack builds its own default, which
+            # cannot honor the override, so reject instead of silently running with the default.
+            baked_config = kwargs.get("attack_scoring_config")
+            if baked_config is None:
+                raise ValueError(
+                    f"Factory '{self._name}': use_score_as_feedback={self._use_score_as_feedback} cannot be "
+                    f"applied because the {type(attack_scoring_config).__name__} was not forwarded to "
+                    f"{self._attack_class.__name__} and no attack_scoring_config is set in attack_kwargs."
+                )
+            kwargs["attack_scoring_config"] = self._apply_score_feedback_override(attack_scoring_config=baked_config)
         if "attack_adversarial_config" in accepted_params and (
             create_time_target is not None
             or adversarial_system_prompt is not None
@@ -781,13 +795,14 @@ class AttackTechniqueFactory(Identifiable):
 
     def _apply_score_feedback_override(self, *, attack_scoring_config: AttackScoringConfig) -> AttackScoringConfig:
         """
-        Apply this technique's ``use_score_as_feedback`` override to the scenario's scoring config.
+        Apply this technique's ``use_score_as_feedback`` override to a scoring config.
 
-        A shallow copy keeps the scenario's scorers and config subtype (e.g. TAP's) without
-        re-running its constructor, and leaves the caller's config unchanged.
+        A shallow copy keeps the config's scorers and subtype (e.g. TAP's) without
+        re-running its constructor, and leaves the original config unchanged.
 
         Args:
-            attack_scoring_config: The scoring config supplied by the caller.
+            attack_scoring_config: The scenario's config, or the baked config when the
+                scenario's config is not forwarded.
 
         Returns:
             AttackScoringConfig: The caller's config when no override applies, otherwise

@@ -15,7 +15,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
 )
-from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
+from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig, TreeOfAttacksWithPruningAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -1459,6 +1459,67 @@ class TestScoreFeedbackOverride:
         assert applied.objective_scorer is objective_scorer
         assert applied.threshold == 0.7
         assert scoring.use_score_as_feedback is True
+
+    @pytest.mark.parametrize("policy", [ScorerOverridePolicy.WARN, ScorerOverridePolicy.SKIP])
+    def test_skipped_scenario_config_without_baked_config_raises(self, policy):
+        """A skipped scenario config leaves the attack to build its own default, which would
+        silently run with feedback on, so create() must reject the technique instead."""
+
+        class _TapStubAttack:
+            def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
+                self.attack_scoring_config = attack_scoring_config
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_TapStubAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            name="test", attack_class=_TapStubAttack, use_score_as_feedback=False, scorer_override_policy=policy
+        )
+
+        with pytest.raises(ValueError, match="use_score_as_feedback=False cannot be applied"):
+            factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=AttackScoringConfig())
+
+    def test_skipped_scenario_config_applies_override_to_baked_config(self):
+        class _TapStubAttack:
+            def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
+                self.attack_scoring_config = attack_scoring_config
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_TapStubAttack", class_module="test")
+
+        objective_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+        baked = TAPAttackScoringConfig(objective_scorer=objective_scorer)
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_TapStubAttack,
+            attack_kwargs={"attack_scoring_config": baked},
+            use_score_as_feedback=False,
+            scorer_override_policy=ScorerOverridePolicy.SKIP,
+        )
+
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=AttackScoringConfig()
+        )
+
+        applied = technique.attack.attack_scoring_config
+        assert type(applied) is TAPAttackScoringConfig
+        assert applied.use_score_as_feedback is False
+        assert applied.objective_scorer is objective_scorer
+        assert baked.use_score_as_feedback is True
+
+    def test_tap_with_plain_scenario_config_rejects_instead_of_enabling_feedback(self):
+        """Regression test: TAP requires TAPAttackScoringConfig, so a plain scenario config is
+        skipped and TAP would otherwise build its default config with feedback on."""
+        factory = AttackTechniqueFactory(
+            name="tap_no_feedback", attack_class=TreeOfAttacksWithPruningAttack, use_score_as_feedback=False
+        )
+
+        with pytest.raises(ValueError, match="not forwarded to TreeOfAttacksWithPruningAttack"):
+            factory.create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer)),
+                adversarial_chat=MagicMock(spec=PromptTarget),
+            )
 
     def test_override_requires_attack_scoring_config_param(self):
         class _NoScoringAttack:
