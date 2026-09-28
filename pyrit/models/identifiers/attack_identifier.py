@@ -39,6 +39,8 @@ class AttackIdentifier(ComponentIdentifier):
     adversarial_system_prompt: Annotated[str | None, Evaluate.Include()] = None
     #: Effective adversarial seed prompt text, if the strategy uses one.
     adversarial_seed_prompt: Annotated[str | None, Evaluate.Include()] = None
+    #: Effective per-turn adversarial prompt template text, if the strategy uses one.
+    adversarial_prompt_template: Annotated[str | None, Evaluate.Include()] = None
     #: The objective target the attack drives.
     objective_target: Annotated[TargetIdentifier | None, Evaluate.Include(only_params=frozenset({"temperature"}))] = (
         None
