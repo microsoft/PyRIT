@@ -65,6 +65,8 @@ class ExactTextMatching(TextMatching):
         """
         if not text:
             return False
+        if not target.strip():
+            return False
         if self._ignore_whitespace:
             target = target.strip()
             text = text.strip()
@@ -125,27 +127,22 @@ class ApproximateTextMatching(TextMatching):
 
         Returns:
             float: A score between 0.0 and 1.0 indicating the proportion of target n-grams
-                found in the text.
+            found in the text.
         """
         if not text:
             return 0.0
         if len(target) < self._n:
-            return 0.0  # Confidence is too low for short targets
+            return 0.0
 
         target_str = target if self._case_sensitive else target.lower()
         text_str = text if self._case_sensitive else text.lower()
 
-        # Generate all n-grams from target
         target_ngrams = {target_str[i : i + self._n] for i in range(len(target_str) - (self._n - 1))}
 
-        # Safety check: if no n-grams were generated, return 0.0
         if not target_ngrams:
             return 0.0
 
-        # Count how many target n-grams are found in text
         matching_ngrams = sum(int(ngram in text_str) for ngram in target_ngrams)
-
-        # Calculate proportion of matching n-grams
         return matching_ngrams / len(target_ngrams)
 
     def get_overlap_score(self, *, target: str, text: str) -> float:
@@ -155,10 +152,10 @@ class ApproximateTextMatching(TextMatching):
         Useful for getting detailed scoring information.
 
         Args:
-            target (str): The target string to match.
+            target (str): The string to search for.
             text (str): The text to search in.
 
         Returns:
-            float: The n-gram overlap score between 0.0 and 1.0.
+            float: The n-gram overlap score between target and text.
         """
         return self._calculate_ngram_overlap(target=target, text=text)
