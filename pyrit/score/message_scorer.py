@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 import logging
 from abc import abstractmethod
@@ -314,6 +315,23 @@ class MessageScorer(Scorer):
         self._validator = validator
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
+
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+        """
+        Return this scorer carrying the given blocked-response policy.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply.
+
+        Returns:
+            Scorer: ``self`` when the policy already matches, otherwise a shallow copy that
+            keeps sharing the chat target and validator and differs only in the policy.
+        """
+        if self.raise_if_scorer_blocks == raise_if_scorer_blocks:
+            return self
+        scoped = copy.copy(self)
+        scoped.raise_if_scorer_blocks = raise_if_scorer_blocks
+        return scoped
 
     def _get_condition_type(self) -> type[Condition] | None:
         """Return the declared criterion, using the objective validator only for undeclared leaves."""
