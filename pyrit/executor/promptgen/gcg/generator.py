@@ -296,6 +296,7 @@ class GCGGenerator(
                 sampling=self._algorithm.sampling,
                 loss=self._algorithm.loss,
                 candidate_filter=self._algorithm.candidate_filter,
+                use_prefix_cache=self._algorithm.use_prefix_cache,
             ),
         }
         context.attack = self._create_attack(
