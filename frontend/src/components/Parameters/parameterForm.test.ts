@@ -48,6 +48,14 @@ describe('getParameterControlKind', () => {
     expect(getParameterControlKind(makeParameter({ name: 'label' }))).toBe('text')
   })
 
+  it('returns multiline for a raw HTTP request template', () => {
+    expect(getParameterControlKind(makeParameter({ name: 'http_request' }))).toBe('multiline')
+  })
+
+  it('does not treat a non-str http_request-named parameter as multiline', () => {
+    expect(getParameterControlKind(makeParameter({ name: 'http_request', type_name: 'int' }))).toBe('number')
+  })
+
   it('returns json for dictionary parameters', () => {
     expect(getParameterControlKind(
       makeParameter({ name: 'extra', type_name: 'dict[str, typing.Any]' }),

@@ -32,6 +32,10 @@ export interface ParameterFieldProps {
   showRequiredError?: boolean
   /** Prefix for `data-testid` attributes. Defaults to `'param'` (e.g. `param-<name>`). */
   testIdPrefix?: string
+  /** Extra guidance appended to the field's hint, e.g. explaining why it's disabled. */
+  extraHint?: string
+  /** Mask the value like a password field. For a `text`-kind credential (e.g. a SAS token). */
+  sensitive?: boolean
 }
 
 /**
@@ -54,6 +58,8 @@ export default function ParameterField({
   allowEmptyList = false,
   showRequiredError = false,
   testIdPrefix = 'param',
+  extraHint,
+  sensitive = false,
 }: ParameterFieldProps) {
   const styles = useParameterFieldStyles()
   const kind = getParameterControlKind(parameter)
@@ -68,7 +74,7 @@ export default function ParameterField({
   const defaultHint = showDefaultHint && hasDisplayDefault
     ? `Defaults to ${defaultText}.`
     : null
-  const descriptiveHint = [parameter.description, defaultHint]
+  const descriptiveHint = [parameter.description, defaultHint, extraHint]
     .filter((part): part is string => Boolean(part))
     .join(' ')
 
@@ -234,13 +240,29 @@ export default function ParameterField({
   const fallbackHint = kind === 'list' ? 'Comma-separated list of values.' : parameter.type_name
   const hint = descriptiveHint || fallbackHint
 
+  if (kind === 'multiline') {
+    return (
+      <Field label={label} hint={hint}>
+        <Textarea
+          className={styles.control}
+          value={stringValue}
+          placeholder={placeholder}
+          disabled={disabled}
+          resize="vertical"
+          onChange={(_, data) => onChange(parameter.name, data.value)}
+          data-testid={testId}
+        />
+      </Field>
+    )
+  }
+
   return (
     <>
       <Field label={label} hint={hint}>
         <Input
           className={styles.control}
           value={stringValue}
-          type={kind === 'number' ? 'number' : 'text'}
+          type={sensitive ? 'password' : kind === 'number' ? 'number' : 'text'}
           placeholder={placeholder}
           disabled={disabled || emptyListSelected}
           onChange={(_, data) => onChange(parameter.name, data.value)}

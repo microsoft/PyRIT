@@ -22,6 +22,33 @@ const TARGET_PARAMETER_POLICIES: Record<string, TargetParameterPolicy> = {
 
 const SCALAR_PARAMETER_TYPES = new Set(['bool', 'float', 'int', 'str'])
 
+/**
+ * Parameters that, if supplied, let the backend authenticate a different
+ * way than the user's chosen `auth_mode`, defeating "Identity-based" auth
+ * even though it's selected. `sas_token` is one such case: `AzureBlobStorageTarget`
+ * prefers a supplied SAS token (or the `AZURE_STORAGE_ACCOUNT_SAS_TOKEN` env var)
+ * over `DefaultAzureCredential`, so a leftover value would silently authenticate
+ * with the SAS token instead of the selected identity.
+ */
+const IDENTITY_CONFLICTING_PARAMETER_NAMES = new Set(['sas_token'])
+
+/** Whether a metadata-driven parameter must be excluded while identity-based auth is selected. */
+export function conflictsWithIdentityAuth(parameterName: string): boolean {
+  return IDENTITY_CONFLICTING_PARAMETER_NAMES.has(parameterName)
+}
+
+/**
+ * Credential-bearing parameters that must render masked (like the dedicated
+ * `api_key` field's `type="password"`) instead of as plain text, wherever
+ * they're offered as a generic metadata-driven parameter.
+ */
+const SENSITIVE_PARAMETER_NAMES = new Set(['sas_token'])
+
+/** Whether a metadata-driven parameter's value is a credential and must be masked. */
+export function isSensitiveTargetParameter(parameterName: string): boolean {
+  return SENSITIVE_PARAMETER_NAMES.has(parameterName)
+}
+
 export function getTargetParameterPolicy(
   targetType: string,
   parameterName: string,

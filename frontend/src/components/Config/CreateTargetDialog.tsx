@@ -43,8 +43,10 @@ import {
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
 import {
   canConfigureTargetType,
+  conflictsWithIdentityAuth,
   getTargetParameterPolicy,
   isMetadataDrivenTargetParameter,
+  isSensitiveTargetParameter,
 } from './targetParameterPolicy'
 import { MAX_WEIGHT, parseWeight } from './weightValidation'
 
@@ -527,6 +529,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
     try {
       const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
+      // Identity-based auth must be enforceable: strip any metadata-driven
+      // parameter (e.g. AzureBlobStorageTarget's sas_token) that would let the
+      // backend authenticate a different way than the selected identity.
+      if (isIdentity) {
+        for (const parameter of metadataDrivenParameters) {
+          if (conflictsWithIdentityAuth(parameter.name)) delete params[parameter.name]
+        }
+      }
       if (hasEndpointField && endpoint) params.endpoint = endpoint
       if (hasModelNameField && modelName) params.model_name = modelName
       if (hasApiKeyField && !isIdentity && apiKey) params.api_key = apiKey
@@ -878,6 +888,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       showDefaultHint
                       allowEmptyList
                       testIdPrefix="target-param"
+                      sensitive={isSensitiveTargetParameter(parameter.name)}
                       onChange={(name, value) => setParameterValues((current) => ({
                         ...current,
                         [name]: value,
@@ -892,7 +903,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         onChange={(_, data) => {
                           const next = data.value as AuthMode
                           setAuthMode(next)
-                          if (next === 'identity') setApiKey('')
+                          if (next === 'identity') {
+                            setApiKey('')
+                            setParameterValues((current) => {
+                              const cleared = { ...current }
+                              for (const parameter of metadataDrivenParameters) {
+                                if (conflictsWithIdentityAuth(parameter.name)) delete cleared[parameter.name]
+                              }
+                              return cleared
+                            })
+                          }
                         }}
                       >
                         <Radio value="api_key" label="API Key" />
@@ -932,22 +952,29 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         Advanced settings
                       </summary>
                       <div className={styles.advancedSettingsFields}>
-                        {optionalMetadataParameters.map((parameter) => (
-                          <ParameterField
-                            key={parameter.name}
-                            parameter={parameter}
-                            value={parameterValues[parameter.name] ?? ''}
-                            disabled={submitting}
-                            label={getParameterLabel(parameter.name)}
-                            showDefaultHint
-                            allowEmptyList
-                            testIdPrefix="target-param"
-                            onChange={(name, value) => setParameterValues((current) => ({
-                              ...current,
-                              [name]: value,
-                            }))}
-                          />
-                        ))}
+                        {optionalMetadataParameters.map((parameter) => {
+                          const identityConflict = isIdentity && conflictsWithIdentityAuth(parameter.name)
+                          return (
+                            <ParameterField
+                              key={parameter.name}
+                              parameter={parameter}
+                              value={parameterValues[parameter.name] ?? ''}
+                              disabled={submitting || identityConflict}
+                              label={getParameterLabel(parameter.name)}
+                              showDefaultHint
+                              allowEmptyList
+                              testIdPrefix="target-param"
+                              extraHint={identityConflict
+                                ? 'Ignored with Identity-based authentication.'
+                                : undefined}
+                              sensitive={isSensitiveTargetParameter(parameter.name)}
+                              onChange={(name, value) => setParameterValues((current) => ({
+                                ...current,
+                                [name]: value,
+                              }))}
+                            />
+                          )
+                        })}
                         {customFunctionsReason && (
                           <MessageBar intent="info">
                             <MessageBarBody>

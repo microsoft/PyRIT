@@ -1352,8 +1352,15 @@ describe("CreateTargetDialog", () => {
     expect(screen.queryByPlaceholderText("API key (stored in memory only)")).not.toBeInTheDocument();
     expect(screen.getByText("Create Target").closest("button")).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText(/Http Request/), {
-      target: { value: "POST /chat HTTP/1.1\\r\\n\\r\\n{PROMPT}" },
+    // A real raw HTTP request template needs actual line breaks between the
+    // request line, headers, and body — the backend parser splits on real
+    // newlines, not on literal "\r\n" characters. The http_request field
+    // must render as a multiline control (Textarea) for this to be entered.
+    const httpRequestTemplate = "POST /chat HTTP/1.1\nHost: example.com\nContent-Type: application/json\n\n{\"message\": \"{PROMPT}\"}";
+    const httpRequestField = screen.getByLabelText(/Http Request/);
+    expect(httpRequestField.tagName).toBe("TEXTAREA");
+    fireEvent.change(httpRequestField, {
+      target: { value: httpRequestTemplate },
     });
 
     expect(screen.getByText("Create Target").closest("button")).toBeEnabled();
@@ -1363,7 +1370,7 @@ describe("CreateTargetDialog", () => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
         type: "HTTPTarget",
         params: {
-          http_request: "POST /chat HTTP/1.1\\r\\n\\r\\n{PROMPT}",
+          http_request: httpRequestTemplate,
         },
       });
     });
@@ -1387,6 +1394,47 @@ describe("CreateTargetDialog", () => {
     await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
 
     expect(screen.getByText("Create Target").closest("button")).toBeEnabled();
+  });
+
+  it("should mask the sas_token parameter and drop it once identity auth is selected", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "blob_target",
+      target_type: "AzureBlobStorageTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("AzureBlobStorageTarget");
+    await user.click(screen.getByText("Advanced settings"));
+
+    const sasTokenField = screen.getByLabelText(/Sas Token/);
+    expect(sasTokenField).toHaveAttribute("type", "password");
+
+    fireEvent.change(sasTokenField, { target: { value: "sv=2024&sig=secret" } });
+    expect(sasTokenField).toHaveValue("sv=2024&sig=secret");
+
+    // Selecting identity-based auth must clear and disable sas_token so it
+    // can't silently override the chosen auth mode (SAS takes precedence
+    // over DefaultAzureCredential on the backend).
+    await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
+
+    expect(sasTokenField).toBeDisabled();
+    expect(sasTokenField).toHaveValue("");
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "AzureBlobStorageTarget",
+        params: {},
+        auth_mode: "identity",
+      });
+    });
   });
 
   it("should reset form when dialog is closed via onOpenChange", () => {

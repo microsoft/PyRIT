@@ -16,7 +16,20 @@ export type ParameterControlKind =
   | 'multiselect'
   | 'list'
   | 'number'
+  | 'multiline'
   | 'text'
+
+/**
+ * Parameter names whose raw string value spans multiple lines (e.g.
+ * `HTTPTarget.http_request`, a raw request template with headers and a
+ * body). A single-line `<Input>` cannot retain the line breaks these values
+ * depend on, so they render as a `<Textarea>` instead.
+ */
+const MULTILINE_PARAMETER_NAMES = new Set(['http_request'])
+
+function isMultilineTextParameter(param: Parameter): boolean {
+  return param.type_name === 'str' && MULTILINE_PARAMETER_NAMES.has(param.name)
+}
 
 /**
  * Form state value for a single parameter.
@@ -79,6 +92,9 @@ export function getParameterControlKind(param: Parameter): ParameterControlKind 
   }
   if (param.type_name === 'int' || param.type_name === 'float') {
     return 'number'
+  }
+  if (isMultilineTextParameter(param)) {
+    return 'multiline'
   }
   return 'text'
 }
