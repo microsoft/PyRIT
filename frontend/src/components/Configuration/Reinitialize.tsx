@@ -37,15 +37,17 @@ export default function Reinitialize({
 
   useEffect(() => {
     let cancelled = false
+    let latestPoll = 0
     const refresh = async (): Promise<void> => {
+      const poll = ++latestPoll
       try {
         const response = await configurationApi.getRuntimeStatus()
-        if (!cancelled) {
+        if (!cancelled && poll === latestPoll) {
           setStatus(response)
           setStatusError(null)
         }
       } catch (reason) {
-        if (!cancelled) setStatusError(toApiError(reason).detail)
+        if (!cancelled && poll === latestPoll) setStatusError(toApiError(reason).detail)
       }
     }
     void refresh()
@@ -61,7 +63,6 @@ export default function Reinitialize({
     setShowRuntimeStatus(true)
     try {
       setStatus(await configurationApi.reinitialize(version))
-      setStatusError(null)
     } catch (reason) {
       setApplyError(toApiError(reason).detail)
     } finally {

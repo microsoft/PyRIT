@@ -144,6 +144,51 @@ describe('Reinitialize', () => {
     }
   })
 
+  it('keeps the latest poll error when an older poll succeeds later', async () => {
+    jest.useFakeTimers()
+    try {
+      let resolveFirst!: (value: RuntimeStatus) => void
+      api.getRuntimeStatus
+        .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+        .mockRejectedValueOnce(new Error('Latest poll failed.'))
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await act(async () => Promise.resolve())
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      expect(screen.getByText('Latest poll failed.')).toBeInTheDocument()
+      await act(async () => { resolveFirst(ready); await Promise.resolve() })
+      expect(screen.getByText('Latest poll failed.')).toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('keeps a polling error after a successful apply request', async () => {
+    jest.useFakeTimers()
+    try {
+      api.getRuntimeStatus
+        .mockResolvedValueOnce(ready)
+        .mockRejectedValueOnce(new Error('Runtime status unavailable.'))
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await act(async () => Promise.resolve())
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      expect(screen.getByText('Runtime status unavailable.')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reinitialize PyRIT' }))
+      await act(async () => Promise.resolve())
+      expect(screen.getByText('Runtime status unavailable.')).toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   it('keeps an apply error after an unrelated successful status poll', async () => {
     jest.useFakeTimers()
     try {
