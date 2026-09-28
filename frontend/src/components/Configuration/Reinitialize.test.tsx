@@ -144,13 +144,14 @@ describe('Reinitialize', () => {
     }
   })
 
-  it('keeps the latest poll error when an older poll succeeds later', async () => {
+  it('keeps a polling error visible until the next serialized request succeeds', async () => {
     jest.useFakeTimers()
     try {
-      let resolveFirst!: (value: RuntimeStatus) => void
+      let resolveRecovery!: (value: RuntimeStatus) => void
       api.getRuntimeStatus
-        .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
-        .mockRejectedValueOnce(new Error('Latest poll failed.'))
+        .mockResolvedValueOnce(ready)
+        .mockRejectedValueOnce(new Error('Runtime status unavailable.'))
+        .mockImplementationOnce(() => new Promise(resolve => { resolveRecovery = resolve }))
       render(
         <TestWrapper>
           <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
@@ -158,9 +159,39 @@ describe('Reinitialize', () => {
       )
       await act(async () => Promise.resolve())
       await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
-      expect(screen.getByText('Latest poll failed.')).toBeInTheDocument()
+      expect(screen.getByText('Runtime status unavailable.')).toBeInTheDocument()
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_200) })
+      expect(api.getRuntimeStatus).toHaveBeenCalledTimes(3)
+      expect(screen.getByText('Runtime status unavailable.')).toBeInTheDocument()
+      await act(async () => { resolveRecovery(ready); await Promise.resolve() })
+      expect(screen.queryByText('Runtime status unavailable.')).not.toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('applies a slow successful poll and waits before starting the next poll', async () => {
+    jest.useFakeTimers()
+    try {
+      let resolveFirst!: (value: RuntimeStatus) => void
+      api.getRuntimeStatus
+        .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+        .mockResolvedValue(ready)
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await act(async () => Promise.resolve())
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_200) })
+      expect(api.getRuntimeStatus).toHaveBeenCalledTimes(1)
       await act(async () => { resolveFirst(ready); await Promise.resolve() })
-      expect(screen.getByText('Latest poll failed.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled()
+      await act(async () => { await jest.advanceTimersByTimeAsync(999) })
+      expect(api.getRuntimeStatus).toHaveBeenCalledTimes(1)
+      await act(async () => { await jest.advanceTimersByTimeAsync(1) })
+      expect(api.getRuntimeStatus).toHaveBeenCalledTimes(2)
     } finally {
       jest.useRealTimers()
     }

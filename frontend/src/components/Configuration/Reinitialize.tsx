@@ -37,22 +37,26 @@ export default function Reinitialize({
 
   useEffect(() => {
     let cancelled = false
-    let latestPoll = 0
+    let timer: number | undefined
     const refresh = async (): Promise<void> => {
-      const poll = ++latestPoll
       try {
         const response = await configurationApi.getRuntimeStatus()
-        if (!cancelled && poll === latestPoll) {
+        if (!cancelled) {
           setStatus(response)
           setStatusError(null)
         }
       } catch (reason) {
-        if (!cancelled && poll === latestPoll) setStatusError(toApiError(reason).detail)
+        if (!cancelled) setStatusError(toApiError(reason).detail)
+      } finally {
+        // A slow request must be allowed to settle before another poll starts.
+        if (!cancelled) timer = window.setTimeout(() => { void refresh() }, POLL_INTERVAL_MS)
       }
     }
     void refresh()
-    const timer = setInterval(() => { void refresh() }, POLL_INTERVAL_MS)
-    return () => { cancelled = true; clearInterval(timer) }
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
   }, [])
 
   const apply = async (): Promise<void> => {
