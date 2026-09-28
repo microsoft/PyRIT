@@ -273,3 +273,29 @@ def test_general_float_scale_no_chat_target_raises():
             system_prompt_format_string="prompt",
             scale=DEFAULT_RANGE,
         )
+
+
+def _response(body: str) -> Message:
+    return Message(message_pieces=[MessagePiece(role="assistant", original_value=body)])
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_category"),
+    [
+        ('{"score_value": 50, "rationale": "r", "category": "violence"}', ["violence"]),
+        ('{"score_value": 50, "rationale": "r"}', ["test_category"]),
+    ],
+    ids=["response_category_wins", "configured_category_is_fallback"],
+)
+async def test_general_float_scorer_category_precedence(patch_central_database, body, expected_category):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[_response(body)])
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target, system_prompt_format_string="Prompt.", scale=DEFAULT_RANGE
+    )
+
+    score = await scorer.score_text_async(text="prompt", objective="obj")
+
+    assert score[0].score_category == expected_category
+    assert chat_target.send_prompt_async.call_count == 1

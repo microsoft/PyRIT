@@ -170,3 +170,29 @@ def test_true_false_get_scorer_metrics_returns_metrics_when_eval_hash_is_set(pat
 def test_general_true_false_no_chat_target_raises():
     with pytest.raises(ValueError, match="A chat_target must be provided"):
         SelfAskGeneralTrueFalseScorer(chat_target=None, system_prompt_format_string="prompt")
+
+
+def _response(body: str) -> Message:
+    return Message(message_pieces=[MessagePiece(role="assistant", original_value=body)])
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_category"),
+    [
+        ('{"score_value": "true", "rationale": "r", "category": "violence"}', ["violence"]),
+        ('{"score_value": "true", "rationale": "r"}', ["harm"]),
+    ],
+    ids=["response_category_wins", "configured_category_is_fallback"],
+)
+async def test_general_scorer_category_precedence(patch_central_database, body, expected_category):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[_response(body)])
+    scorer = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target, system_prompt_format_string="Prompt.", category="harm"
+    )
+
+    score = await scorer.score_text_async(text="prompt", objective="obj")
+
+    assert score[0].score_category == expected_category
+    assert chat_target.send_prompt_async.call_count == 1

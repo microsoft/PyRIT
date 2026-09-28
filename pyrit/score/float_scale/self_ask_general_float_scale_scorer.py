@@ -113,6 +113,8 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
             description_output_key=description_output_key,
             metadata_output_key=metadata_output_key,
             category_output_key=category_output_key,
+            # As documented, a category in the response wins and the configured one is the fallback.
+            prefer_response_category=True,
             response_schema=response_json_schema,
             numeric_value=True,
         )

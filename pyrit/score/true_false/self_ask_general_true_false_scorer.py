@@ -121,6 +121,8 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
             description_output_key=description_output_key,
             metadata_output_key=metadata_output_key,
             category_output_key=category_output_key,
+            # As documented, a category in the response wins and the configured one is the fallback.
+            prefer_response_category=True,
             response_schema=response_json_schema,
         )
         # Keep score-domain validation in the parser callback so invalid semantic values retry.

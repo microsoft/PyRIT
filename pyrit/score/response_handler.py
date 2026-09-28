@@ -106,11 +106,14 @@ def _build_unvalidated_score(
     scored_prompt_id: str | uuid.UUID,
     category: Sequence[str] | str | None,
     objective: str | None,
+    prefer_response_category: bool = False,
 ) -> UnvalidatedScore:
     category_response = parsed_response.get(category_output_key)
 
     if category_response is not None and category is not None:
-        raise ValueError("Category is present in the response and an argument")
+        if not prefer_response_category:
+            raise ValueError("Category is present in the response and an argument")
+        category = None
 
     # Validate and normalize category to a list of strings
     cat_val = category_response if category_response is not None else category
@@ -254,6 +257,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
         category_output_key: str = "category",
         response_schema: JsonSchemaDefinition | None = None,
         numeric_value: bool = False,
+        prefer_response_category: bool = False,
     ) -> None:
         """
         Initialize the handler with the JSON keys to read from the response.
@@ -270,6 +274,9 @@ class JsonSchemaResponseHandler(ResponseHandler):
             numeric_value (bool): When True, ``parse`` requires the parsed score value to be
                 parsable as a finite float and raises ``InvalidJsonException`` otherwise. Defaults
                 to False.
+            prefer_response_category (bool): When True, a category in the response takes precedence
+                over the ``category`` argument, which becomes the fallback. When False, supplying both
+                is an error. Defaults to False.
         """
         self._score_value_output_key = score_value_output_key
         self._rationale_output_key = rationale_output_key
@@ -278,6 +285,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
         self._category_output_key = category_output_key
         self._response_schema = response_schema
         self._numeric_value = numeric_value
+        self._prefer_response_category = prefer_response_category
 
     @property
     def json_response_config(self) -> JsonResponseConfig:
@@ -296,6 +304,8 @@ class JsonSchemaResponseHandler(ResponseHandler):
             "category_output_key": self._category_output_key,
             "response_schema": self._response_schema,
             "numeric_value": self._numeric_value,
+            # Only recorded when set, so existing replay contracts stay unchanged.
+            **({"prefer_response_category": True} if self._prefer_response_category else {}),
         }
 
     def parse(
@@ -325,8 +335,9 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 normalized and validated by the caller.
 
         Raises:
-            ValueError: If a category is present in both the response and the argument, or the
-                parsed category is not a string or a list of strings.
+            ValueError: If a category is present in both the response and the argument (and
+                ``prefer_response_category`` is not set), or the parsed category is not a string or a
+                list of strings.
             InvalidJsonException: If the response is invalid JSON, is not a top-level JSON object,
                 is missing a required key, or (when this handler is numeric) the score value is not
                 parsable as a finite float.
@@ -349,6 +360,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 scored_prompt_id=scored_prompt_id,
                 category=category,
                 objective=objective,
+                prefer_response_category=self._prefer_response_category,
             )
 
         except json.JSONDecodeError:

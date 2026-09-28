@@ -87,3 +87,45 @@ def test_true_false_response_handler_rejects_value_outside_domain() -> None:
             scorer_identifier=SCORER_IDENTIFIER,
             scored_prompt_id="test-id",
         )
+
+
+def test_json_schema_response_handler_rejects_category_in_both_by_default() -> None:
+    handler = JsonSchemaResponseHandler()
+
+    with pytest.raises(ValueError, match="Category is present in the response and an argument"):
+        handler.parse(
+            response_text='{"score_value": "1", "rationale": "r", "category": "violence"}',
+            scorer_identifier=SCORER_IDENTIFIER,
+            scored_prompt_id="test-id",
+            category="harm",
+        )
+
+
+def test_json_schema_response_handler_prefer_response_category() -> None:
+    handler = JsonSchemaResponseHandler(prefer_response_category=True)
+
+    from_response = handler.parse(
+        response_text='{"score_value": "1", "rationale": "r", "category": "violence"}',
+        scorer_identifier=SCORER_IDENTIFIER,
+        scored_prompt_id="test-id",
+        category="harm",
+    )
+    fallback = handler.parse(
+        response_text='{"score_value": "1", "rationale": "r"}',
+        scorer_identifier=SCORER_IDENTIFIER,
+        scored_prompt_id="test-id",
+        category="harm",
+    )
+
+    assert from_response.score_category == ["violence"]
+    assert fallback.score_category == ["harm"]
+
+
+def test_json_schema_response_handler_replay_identifier_unchanged_by_default() -> None:
+    default = JsonSchemaResponseHandler()._get_replay_identifier()
+    preferring = JsonSchemaResponseHandler(prefer_response_category=True)._get_replay_identifier()
+
+    assert default is not None
+    assert "prefer_response_category" not in default
+    assert preferring is not None
+    assert preferring["prefer_response_category"] is True
