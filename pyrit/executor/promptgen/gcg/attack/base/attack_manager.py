@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -325,13 +326,17 @@ class AttackPrompt:
             target (str):
                 The target of the attack
             tokenizer (Transformer Tokenizer):
-                The tokenizer used to convert text into tokens. Must have a configured chat template
-                (i.e., ``tokenizer.chat_template`` is not ``None``); ``apply_chat_template`` is used
-                to render the user/assistant exchange instead of model-specific fastchat templates.
+                A fast tokenizer with a configured chat template. The template must render each
+                message once and preserve its content, apart from surrounding whitespace.
+                Unsupported templates or token boundaries raise an error rather than guessing slices.
             control_init (str, optional):
                 A string used to control the attack (default is "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !")
             test_prefixes (list, optional):
                 A list of prefixes to test the attack (default is _DEFAULT_TEST_PREFIXES).
+
+        Raises:
+            ValueError: If the tokenizer or template cannot provide safe token slices, or the control
+                or target has no non-whitespace text or tokens. Empty goals are supported for target-only datasets.
         """
         if test_prefixes is None:
             test_prefixes = list(_DEFAULT_TEST_PREFIXES)
@@ -347,69 +352,149 @@ class AttackPrompt:
 
         self._update_ids()
 
+    def _content_bounds(self, *, prompt: str, messages: list[dict[str, str]], message_index: int) -> tuple[int, int]:
+        """
+        Locate one message using a probe that leaves the other message unchanged.
+
+        Anchor both ends of the probe to the complete prompt, without searching for role markers
+        or separators that may also occur inside the content.
+
+        Args:
+            prompt (str): The complete rendered conversation.
+            messages (list[dict[str, str]]): The original user and assistant messages.
+            message_index (int): The message whose content bounds are needed.
+
+        Returns:
+            tuple[int, int]: Inclusive start and exclusive end of the rendered content.
+
+        Raises:
+            ValueError: If the template drops, duplicates, or transforms content, or changes its
+                surrounding scaffolding when the content is replaced.
+        """
+        marker = f"pyrit{uuid4().hex}"
+        probe_messages = [dict(message) for message in messages]
+        probe_messages[message_index]["content"] = marker
+        scaffold = self.tokenizer.apply_chat_template(probe_messages, tokenize=False)
+        role = messages[message_index]["role"]
+        error = (
+            f"Cannot safely locate {role} content in the chat template. "
+            "The template must render each message once and preserve its content, "
+            "apart from surrounding whitespace."
+        )
+        if not isinstance(scaffold, str) or scaffold.count(marker) != 1:
+            raise ValueError(error)
+
+        prefix, suffix = scaffold.split(marker)
+        start, stop = len(prefix), len(prompt) - len(suffix)
+        if (
+            start > stop
+            or not prompt.startswith(prefix)
+            or not prompt.endswith(suffix)
+            or prompt[start:stop].strip() != messages[message_index]["content"].strip()
+        ):
+            raise ValueError(error)
+        return start, stop
+
+    def _token_slice(
+        self,
+        *,
+        prompt: str,
+        offsets: list[tuple[int, int]],
+        start: int,
+        stop: int,
+        name: str,
+        allow_empty: bool = False,
+    ) -> slice:
+        """
+        Map a character span to all its tokens, including repeated byte-level offsets.
+
+        Args:
+            prompt (str): The complete rendered conversation.
+            offsets (list[tuple[int, int]]): Character offsets for each token.
+            start (int): Inclusive character start.
+            stop (int): Exclusive character end.
+            name (str): Component name for validation errors.
+            allow_empty (bool): Whether an empty span is valid.
+
+        Returns:
+            slice: The corresponding token range.
+
+        Raises:
+            ValueError: If a required span has no tokens or a token crosses a content boundary.
+        """
+        indices: list[int] = []
+        for i, (token_start, token_stop) in enumerate(offsets):
+            if token_start >= token_stop or token_start >= stop or token_stop <= start:
+                continue
+            outside = prompt[token_start:start].strip() or prompt[stop:token_stop].strip()
+            if outside:
+                # Added role tokens can consume neighboring whitespace through lstrip/rstrip.
+                if prompt[max(start, token_start) : min(stop, token_stop)].strip():
+                    raise ValueError(f"GCG {name} token crosses a content boundary in the chat template.")
+                continue
+            indices.append(i)
+        if start == stop or not indices:
+            if not allow_empty:
+                raise ValueError(f"GCG {name} contains no tokens in the rendered prompt.")
+            boundary = next((i for i, (_, token_stop) in enumerate(offsets) if token_stop > start), len(offsets))
+            return slice(boundary, boundary)
+
+        return slice(indices[0], indices[-1] + 1)
+
     def _update_ids(self) -> None:
-        # Render the goal+control as the user turn and the target as the assistant turn using the
-        # tokenizer's built-in chat template. This replaces fastchat's per-model Conversation logic
-        # and works for any HuggingFace chat-tuned model (issue #965).
+        if not self.control.strip() or not self.target.strip():
+            raise ValueError("GCG control and target must contain non-whitespace text.")
+        if not self.tokenizer.is_fast:
+            raise ValueError("GCG requires a fast tokenizer (use_fast=True) for character-to-token alignment.")
         messages = [
             {"role": "user", "content": f"{self.goal} {self.control}"},
-            {"role": "assistant", "content": f"{self.target}"},
+            {"role": "assistant", "content": self.target},
         ]
         prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+        user_start, user_end = self._content_bounds(prompt=prompt, messages=messages, message_index=0)
+        assistant_start, assistant_end = self._content_bounds(prompt=prompt, messages=messages, message_index=1)
+        if not user_start <= user_end <= assistant_start <= assistant_end:
+            raise ValueError("Cannot safely locate user and assistant content in conversation order.")
 
-        encoding = self.tokenizer(prompt)
+        raw_user = messages[0]["content"]
+        rendered_user = prompt[user_start:user_end]
+        raw_leading = len(raw_user) - len(raw_user.lstrip())
+        rendered_leading = len(rendered_user) - len(rendered_user.lstrip())
+        user_origin = user_start + rendered_leading - raw_leading
+        goal_start = max(user_start, user_origin)
+        goal_end = max(goal_start, min(user_end, user_origin + len(self.goal)))
+        control_start = max(user_start, min(user_end, user_origin + len(self.goal) + 1))
+
+        # Templates already supply their special tokens. Offset spans handle both unmapped
+        # whitespace and multiple byte-level tokens sharing the same character position.
+        encoding = self.tokenizer(prompt, add_special_tokens=False, return_offsets_mapping=True)
         toks = encoding.input_ids
-
-        # Locate goal/control/target substrings in the rendered prompt.
-        goal_start = prompt.find(self.goal)
-        control_start = prompt.find(self.control)
-        target_start = prompt.find(self.target)
-        if goal_start == -1 or control_start == -1 or target_start == -1:
-            raise ValueError(
-                "Could not locate goal/control/target in chat-templated prompt. "
-                f"prompt={prompt!r}, goal={self.goal!r}, "
-                f"control={self.control!r}, target={self.target!r}"
-            )
-
-        # ``char_to_token`` returns None when the character index has no
-        # corresponding token (e.g. when the substring ends exactly at the end
-        # of the prompt or lands on whitespace squashed into a neighbouring
-        # token). For end positions we clamp to ``len(toks)``; for start
-        # positions we walk forward to the next character that does map to a
-        # token. Both are necessary for the slice arithmetic to remain valid
-        # across tokenizers/templates.
-        def end_tok(char_pos: int) -> int:
-            tok: int | None = encoding.char_to_token(char_pos)
-            return len(toks) if tok is None else tok
-
-        def start_tok(char_pos: int) -> int:
-            limit = len(prompt)
-            cur = char_pos
-            while cur < limit:
-                tok: int | None = encoding.char_to_token(cur)
-                if tok is not None:
-                    return tok
-                cur += 1
-            return len(toks)
-
-        self._goal_slice = slice(
-            start_tok(goal_start),
-            end_tok(goal_start + len(self.goal)),
+        offsets = encoding["offset_mapping"]
+        goal_slice = self._token_slice(
+            prompt=prompt,
+            offsets=offsets,
+            start=goal_start,
+            stop=goal_end,
+            name="goal",
+            allow_empty=not self.goal.strip(),
         )
-        self._control_slice = slice(
-            start_tok(control_start),
-            end_tok(control_start + len(self.control)),
+        control_slice = self._token_slice(
+            prompt=prompt, offsets=offsets, start=control_start, stop=user_end, name="control"
         )
-        target_start_tok = start_tok(target_start)
-        target_end_tok = end_tok(target_start + len(self.target))
-        self._target_slice = slice(target_start_tok, target_end_tok)
-        self._loss_slice = slice(target_start_tok - 1, target_end_tok - 1)
-        # Assistant role tokens are everything between the control end and the target start.
-        # This works for any chat template (e.g. llama-2 "[/INST]", phi-3 "<|assistant|>", etc.)
-        # without us needing to know the literal marker text.
-        self._assistant_role_slice = slice(self._control_slice.stop, self._target_slice.start)
+        target_slice = self._token_slice(
+            prompt=prompt, offsets=offsets, start=assistant_start, stop=assistant_end, name="target"
+        )
+        if not self.goal.strip():
+            goal_slice = slice(control_slice.start, control_slice.start)
+        if goal_slice.stop > control_slice.start or control_slice.stop > target_slice.start:
+            raise ValueError("GCG token slices overlap across a content boundary.")
 
-        self.input_ids = torch.tensor(toks[: self._target_slice.stop], device="cpu")
+        self._goal_slice = goal_slice
+        self._control_slice = control_slice
+        self._target_slice = target_slice
+        self._loss_slice = slice(target_slice.start - 1, target_slice.stop - 1)
+        self._assistant_role_slice = slice(control_slice.stop, target_slice.start)
+        self.input_ids = torch.tensor(toks[: target_slice.stop], device="cpu")
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def generate(self, model: Any, gen_config: Any = None) -> torch.Tensor:
