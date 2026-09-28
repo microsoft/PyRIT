@@ -649,12 +649,24 @@ class TestGoatTechnique:
             ("goat_follow_up_prompt.yaml", "b2a50f66dea6c763d3f3bc7f457e398790452b914bf798e6d7b60ffa53cc39db"),
         ],
     )
-    def test_prompt_citation_preserves_local_provenance(self, *, filename: str, expected_value_sha256: str) -> None:
+    def test_prompt_credits_paper_and_adaptation(self, *, filename: str, expected_value_sha256: str) -> None:
         seed_prompt = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / filename)
         assert "[@pavlova2024goat]" in (seed_prompt.description or "")
-        assert seed_prompt.source == "AI Red Team"
-        assert seed_prompt.groups == ["AI Red Team"]
-        assert not seed_prompt.authors
+        assert "Adapted for PyRIT by AI Red Team" in (seed_prompt.description or "")
+        assert seed_prompt.source == "https://arxiv.org/abs/2410.01606"
+        assert seed_prompt.groups == ["Meta"]
+        assert seed_prompt.authors == [
+            "Maya Pavlova",
+            "Erik Brinkman",
+            "Krithika Iyer",
+            "V\u00edtor Albiero",
+            "Joanna Bitton",
+            "Hailey Nguyen",
+            "Joe Li",
+            "Cristian Canton Ferrer",
+            "Ivan Evtimov",
+            "Aaron Grattafiori",
+        ]
         prompt_data = yaml.safe_load((EXECUTOR_RED_TEAM_PATH / filename).read_text(encoding="utf-8"))
         assert hashlib.sha256(prompt_data["value"].encode("utf-8")).hexdigest() == expected_value_sha256
 

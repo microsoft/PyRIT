@@ -30,9 +30,22 @@ description: |
      technique's follow-up prompt (goat_follow_up_prompt.yaml) omits that field rather than
      approximate it, since the attacker's full prior reasoning already stays in the adversarial
      chat's own conversation history regardless.
+
+  Adapted for PyRIT by AI Red Team. The authors and groups below credit the original research.
+authors:
+  - Maya Pavlova
+  - Erik Brinkman
+  - Krithika Iyer
+  - Vítor Albiero
+  - Joanna Bitton
+  - Hailey Nguyen
+  - Joe Li
+  - Cristian Canton Ferrer
+  - Ivan Evtimov
+  - Aaron Grattafiori
 groups:
-  - AI Red Team
-source: AI Red Team
+  - Meta
+source: https://arxiv.org/abs/2410.01606
 parameters:
   - objective
 response_json_schema_name: goat_adversarial_chat

@@ -3,9 +3,21 @@ description: |
   Prompt asking the GOAT attacker to craft its first message to the Defender AI, given only the
   conversation objective. Adapted from GOAT paper [@pavlova2024goat] Figure A.2 ("Prompt for attacker LLM to start
   conversation with target LLM given a conversation objective or goal").
+  Adapted for PyRIT by AI Red Team. The authors and groups below credit the original research.
+authors:
+  - Maya Pavlova
+  - Erik Brinkman
+  - Krithika Iyer
+  - Vítor Albiero
+  - Joanna Bitton
+  - Hailey Nguyen
+  - Joe Li
+  - Cristian Canton Ferrer
+  - Ivan Evtimov
+  - Aaron Grattafiori
 groups:
-  - AI Red Team
-source: AI Red Team
+  - Meta
+source: https://arxiv.org/abs/2410.01606
 parameters:
   - objective
 data_type: text
