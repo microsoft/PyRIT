@@ -173,6 +173,27 @@ describe('buildParametersFromForm', () => {
     expect(result).toEqual({ ok: true, parameters: { days: 7 } })
   })
 
+  it('preserves a multiline value verbatim, including a significant trailing blank line', () => {
+    const params = [makeParameter({ name: 'http_request' })]
+    // The trailing "\n\n" is the CRLF-CRLF boundary that ends the headers
+    // section of a bodyless raw HTTP request; it must not be trimmed away.
+    const template = 'GET /health HTTP/1.1\nHost: example.com\n\n'
+    const result = buildParametersFromForm(params, { http_request: template })
+    expect(result).toEqual({ ok: true, parameters: { http_request: template } })
+  })
+
+  it('omits an optional multiline value left blank', () => {
+    const params = [makeParameter({ name: 'http_request' })]
+    const result = buildParametersFromForm(params, { http_request: '   \n  ' })
+    expect(result).toEqual({ ok: true, parameters: null })
+  })
+
+  it('reports a required multiline value left blank', () => {
+    const params = [makeParameter({ name: 'http_request', required: true })]
+    const result = buildParametersFromForm(params, { http_request: '' })
+    expect(result).toEqual({ ok: false, error: 'http_request is required.' })
+  })
+
   it('builds a structured variant recursively', () => {
     const params = [
       makeParameter({

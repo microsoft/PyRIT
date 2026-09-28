@@ -332,6 +332,21 @@ export function buildParametersFromForm(
 
     const raw = typeof value === 'string' ? value.trim() : ''
 
+    if (kind === 'multiline') {
+      // Preserve the original string verbatim (including leading/trailing
+      // newlines) once we know it isn't blank — for an HTTP request template,
+      // a trailing blank line is the significant CRLF-CRLF boundary that ends
+      // the headers section, and trimming it would corrupt the request.
+      if (raw.length === 0) {
+        if (param.required) {
+          return { ok: false, error: `${param.name} is required.` }
+        }
+        continue
+      }
+      parameters[param.name] = typeof value === 'string' ? value : raw
+      continue
+    }
+
     if (kind === 'list') {
       const entries = Array.isArray(value) ? value : parseListValue(raw)
       if (entries.length === 0 && !Array.isArray(value)) {

@@ -878,23 +878,29 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     </Field>
                   )}
 
-                  {requiredMetadataParameters.map((parameter) => (
-                    <ParameterField
-                      key={parameter.name}
-                      parameter={parameter}
-                      value={parameterValues[parameter.name] ?? ''}
-                      disabled={submitting}
-                      label={getParameterLabel(parameter.name)}
-                      showDefaultHint
-                      allowEmptyList
-                      testIdPrefix="target-param"
-                      sensitive={isSensitiveTargetParameter(parameter.name)}
-                      onChange={(name, value) => setParameterValues((current) => ({
-                        ...current,
-                        [name]: value,
-                      }))}
-                    />
-                  ))}
+                  {requiredMetadataParameters.map((parameter) => {
+                    const identityConflict = isIdentity && conflictsWithIdentityAuth(parameter.name)
+                    return (
+                      <ParameterField
+                        key={parameter.name}
+                        parameter={parameter}
+                        value={parameterValues[parameter.name] ?? ''}
+                        disabled={submitting || identityConflict}
+                        label={getParameterLabel(parameter.name)}
+                        showDefaultHint
+                        allowEmptyList
+                        testIdPrefix="target-param"
+                        sensitive={isSensitiveTargetParameter(parameter.name)}
+                        extraHint={identityConflict
+                          ? 'Ignored with Identity-based authentication.'
+                          : undefined}
+                        onChange={(name, value) => setParameterValues((current) => ({
+                          ...current,
+                          [name]: value,
+                        }))}
+                      />
+                    )
+                  })}
 
                   {showAuthField && (
                     <Field label="Authentication">
