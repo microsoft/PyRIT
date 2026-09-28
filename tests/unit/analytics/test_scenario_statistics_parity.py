@@ -100,6 +100,13 @@ _HISTORIES = {
             _Attempt("other", "A", AttackOutcome.FAILURE, eval_hash=None),
         ],
     ),
+    "legacy_technique_configurations_sharing_a_name": _History(
+        # No saved plan, same atomic attack name and seed, different technique configurations: two units.
+        attempts=[
+            _Attempt("attack", "A", AttackOutcome.ERROR, eval_hash="config-a"),
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, eval_hash="config-b"),
+        ],
+    ),
     "legacy_error_matched_by_saved_plan": _History(
         plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
         attempts=[
@@ -147,6 +154,7 @@ _EXPECTED_OVERALL = {
     "retry_and_resume_recovered": 100,
     "unrecovered_errors": 50,
     "legacy_identities_without_plan": 66,
+    "legacy_technique_configurations_sharing_a_name": 50,
     "legacy_error_matched_by_saved_plan": 100,
     "technique_configurations_sharing_a_name": 50,
     "display_groups": 50,
@@ -215,6 +223,7 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     assert progress.summary.overall.success_percentage == expected
     assert detail.completed_attacks == sdk.overall.completed == progress.summary.overall.completed
     assert list_item.completed_attacks == sdk.overall.completed
+    assert list_item.total_retries == detail.total_retries == sdk.overall.retries
     assert progress.summary.overall.succeeded == sdk.overall.succeeded
     assert progress.summary.overall.errors == sdk.overall.errors
 

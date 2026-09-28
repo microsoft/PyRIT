@@ -13,17 +13,24 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
+from pyrit.common.utils import to_sha256
 from pyrit.models import (
+    SCENARIO_RUN_PLAN_METADATA_KEY,
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    ComponentIdentifier,
     ObjectiveTargetEvaluationIdentifier,
     ScenarioResult,
+    ScenarioRunPlan,
+    ScenarioRunPlanSeedGroup,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateCondition,
     ScenarioRunSizeEstimateStatus,
     ScenarioRunSizeFactor,
     SeedPrompt,
+    config_hash,
 )
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
@@ -210,6 +217,7 @@ class AdversarialBenchmark(Scenario):
         self._use_cached: bool = use_cached
         self._precomputed_cached_results: dict[str, list[AttackResult]] = {}
         self._precomputed_cached_display_groups: dict[str, str] = {}
+        self._precomputed_cached_attacks: list[AtomicAttack] = []
         self._cached_results_by_name: dict[str, list[AttackResult]] = {}
 
         technique_class = _build_benchmark_technique()
@@ -429,6 +437,7 @@ class AdversarialBenchmark(Scenario):
             # attribution-filtered list keyed by atomic_attack_name, so no further filtering needed.
             self._precomputed_cached_results = {}
             self._precomputed_cached_display_groups = {}
+            self._precomputed_cached_attacks = list(skipped_attacks)
             for attack in skipped_attacks:
                 self._precomputed_cached_results[attack.atomic_attack_name] = self._cached_results_by_name.get(
                     attack.atomic_attack_name, []
@@ -492,7 +501,87 @@ class AdversarialBenchmark(Scenario):
             for attack_name, prior_results in self._precomputed_cached_results.items():
                 result.attack_results.setdefault(attack_name, []).extend(prior_results)
             result.display_group_map.update(self._precomputed_cached_display_groups)
+            self._include_cached_attacks_in_run_plan(result=result)
         return result
+
+    def _include_cached_attacks_in_run_plan(self, *, result: ScenarioResult) -> None:
+        """
+        Add the cache-served atomic attacks to the returned result's run plan.
+
+        Cached attacks are skipped before the run plan is built, so without this their merged results
+        would not match any planned unit and ``pyrit.analytics.compute_scenario_statistics`` would drop
+        them from the report. Each cached group covers the attack's current seed groups plus the seed
+        groups its cached results were produced from. Only this in-memory result changes; the persisted
+        plan still describes what this run executed.
+        """
+        metadata = getattr(result, "metadata", None)
+        if not isinstance(metadata, dict) or SCENARIO_RUN_PLAN_METADATA_KEY not in metadata:
+            return
+        if not self._precomputed_cached_attacks:
+            return
+
+        plan = ScenarioRunPlan.model_validate(metadata[SCENARIO_RUN_PLAN_METADATA_KEY])
+        cached_plan = self._build_run_plan_from(atomic_attacks=self._precomputed_cached_attacks)
+        seed_groups = {seed.id: seed for seed in plan.seed_groups}
+        seed_groups.update({seed.id: seed for seed in cached_plan.seed_groups})
+        for group in cached_plan.atomic_groups:
+            for cached_result in self._precomputed_cached_results.get(group.atomic_attack_name, []):
+                seed_group_id = self._cached_result_seed_group_id(
+                    cached_result=cached_result,
+                    candidate_seed_ids=group.seed_group_ids,
+                    seed_groups=seed_groups,
+                )
+                if seed_group_id not in seed_groups:
+                    seed_groups[seed_group_id] = ScenarioRunPlanSeedGroup(
+                        id=seed_group_id,
+                        objective_sha256=to_sha256(cached_result.objective),
+                        objective=cached_result.objective,
+                    )
+                if seed_group_id not in group.seed_group_ids:
+                    group.seed_group_ids.append(seed_group_id)
+
+        planned_group_ids = {group.id for group in plan.atomic_groups}
+        merged = plan.model_copy(
+            update={
+                "atomic_groups": [
+                    *plan.atomic_groups,
+                    *(group for group in cached_plan.atomic_groups if group.id not in planned_group_ids),
+                ],
+                "seed_groups": list(seed_groups.values()),
+            }
+        )
+        metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = merged.model_dump(mode="json", exclude_none=True)
+
+    @staticmethod
+    def _cached_result_seed_group_id(
+        *,
+        cached_result: AttackResult,
+        candidate_seed_ids: list[str],
+        seed_groups: dict[str, ScenarioRunPlanSeedGroup],
+    ) -> str:
+        """
+        Return the seed group a cached result belongs to, using the same precedence as the analytics.
+
+        Returns:
+            str: The attributed or identified seed group ID, an existing planned seed group with the same
+                objective, or an objective-hash ID for legacy rows.
+        """
+        attribution_data = cached_result.attribution_data if isinstance(cached_result.attribution_data, dict) else {}
+        attributed = attribution_data.get("seed_group_id")
+        if attributed:
+            return str(attributed)
+        identifier = cached_result.atomic_attack_identifier
+        if isinstance(identifier, ComponentIdentifier):
+            typed_identifier = AtomicAttackIdentifier.from_component_identifier(identifier)
+            if typed_identifier.seed_identifiers:
+                return typed_identifier.logical_seed_group_id
+        objective_sha256 = to_sha256(cached_result.objective)
+        matches = [
+            seed_id for seed_id in candidate_seed_ids if seed_groups[seed_id].objective_sha256 == objective_sha256
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        return config_hash({"objective": cached_result.objective})
 
     def _collect_cached_completion_pairs(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:
         """

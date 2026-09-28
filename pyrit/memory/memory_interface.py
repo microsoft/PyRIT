@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select, update
+from sqlalchemy import MetaData, Unicode, and_, case, exists, func, literal, not_, or_, select, type_coerce, update
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -5283,6 +5283,13 @@ class MemoryInterface(abc.ABC):
         Returns:
             Any: A statement selecting one row per attempt with its resolved unit identity.
         """
+        # Without a matching planned group, a unit is its atomic attack name plus technique configuration,
+        # the same identity pyrit.analytics.scenario_statistics uses, so configurations sharing a name stay apart.
+        unplanned_group_id = (
+            type_coerce(attempts.c.atomic_attack_name, Unicode)
+            .concat(literal("\x1f", Unicode))
+            .concat(type_coerce(attempts.c.technique_eval_hash, Unicode))
+        )
         if not plan_entry_ids:
             return select(
                 attempts.c.scenario_result_id,
@@ -5290,7 +5297,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.outcome,
                 attempts.c.timestamp,
                 attempts.c.total_retries,
-                attempts.c.atomic_attack_name.label("unit_group_id"),
+                unplanned_group_id.label("unit_group_id"),
                 attempts.c.seed_group_id.label("unit_seed_id"),
                 literal(1).label("is_planned"),
             )
@@ -5343,6 +5350,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.timestamp,
                 attempts.c.total_retries,
                 attempts.c.atomic_attack_name,
+                unplanned_group_id.label("unplanned_group_id"),
                 attempts.c.seed_group_id,
                 planned.c.atomic_group_id,
                 planned.c.seed_group_id.label("planned_seed_group_id"),
@@ -5366,7 +5374,7 @@ class MemoryInterface(abc.ABC):
             matched.c.outcome,
             matched.c.timestamp,
             matched.c.total_retries,
-            func.coalesce(matched.c.atomic_group_id, matched.c.atomic_attack_name).label("unit_group_id"),
+            func.coalesce(matched.c.atomic_group_id, matched.c.unplanned_group_id).label("unit_group_id"),
             func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
             # Runs outside the plan-resolution set keep their raw identity and stay counted.
             case(

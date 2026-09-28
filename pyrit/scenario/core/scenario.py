@@ -1076,9 +1076,21 @@ class Scenario(ABC):
         Returns:
             ScenarioRunPlan: The versioned run plan.
         """
+        return self._build_run_plan_from(atomic_attacks=self._atomic_attacks)
+
+    def _build_run_plan_from(self, *, atomic_attacks: Sequence[AtomicAttack]) -> ScenarioRunPlan:
+        """
+        Build the normalized run plan for the given atomic attacks.
+
+        Args:
+            atomic_attacks (Sequence[AtomicAttack]): The atomic attacks to describe.
+
+        Returns:
+            ScenarioRunPlan: The versioned run plan.
+        """
         seed_groups: dict[str, ScenarioRunPlanSeedGroup] = {}
         atomic_groups: list[ScenarioRunPlanAtomicGroup] = []
-        for atomic_attack in self._atomic_attacks:
+        for atomic_attack in atomic_attacks:
             technique_name = atomic_attack.technique_name
             if not isinstance(technique_name, str):
                 technique_name = atomic_attack.display_group

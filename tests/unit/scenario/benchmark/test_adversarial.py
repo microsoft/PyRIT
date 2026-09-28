@@ -31,13 +31,16 @@ These tests cover the new contract:
   persistence -> SQL filter -> objective-target filter -> outcome filter.
 """
 
+import json
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.analytics import compute_scenario_statistics
 from pyrit.executor.attack import (
     AttackScoringConfig,
     RedTeamingAttack,
@@ -46,6 +49,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
+    SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackEvaluationIdentifier,
     AttackOutcome,
     AttackResult,
@@ -1416,6 +1420,77 @@ class TestRunAsyncCacheInjection:
             result = await bench.run_async()
 
         assert result.display_group_map["technique_a__adv_target_harmbench"] == "adv_target"
+
+    async def test_partially_cached_benchmark_reports_fresh_and_cached_results(self):
+        """Cached results count in the report statistics; unrelated attempts outside the plan still do not."""
+        from pyrit.output.scenario_result.json import JsonScenarioResultPrinter
+        from tests.unit.mocks import make_scenario_result
+
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer), use_cached=True)
+
+        def _atomic_attack(*, name: str, eval_hash: str, objective: str):
+            return SimpleNamespace(
+                atomic_attack_name=name,
+                display_group=name.split("__")[0],
+                technique_name=None,
+                technique_eval_hash=eval_hash,
+                seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value=objective)])],
+            )
+
+        fresh = _atomic_attack(name="fresh__adv_target_harmbench", eval_hash="fresh-hash", objective="fresh objective")
+        cached = _atomic_attack(
+            name="cached__adv_target_harmbench", eval_hash="cached-hash", objective="cached objective"
+        )
+        timestamp = datetime(2026, 9, 1, tzinfo=UTC)
+
+        def _result(*, attack, outcome: AttackOutcome, seconds: int, **extra_attribution: str) -> AttackResult:
+            return AttackResult(
+                conversation_id=str(uuid.uuid4()),
+                objective=attack.seed_groups[0].objective.value,
+                outcome=outcome,
+                timestamp=timestamp + timedelta(seconds=seconds),
+                attribution_data={
+                    "parent_collection": attack.atomic_attack_name,
+                    "parent_eval_hash": attack.technique_eval_hash,
+                    **extra_attribution,
+                },
+            )
+
+        fresh_failure = _result(
+            attack=fresh, outcome=AttackOutcome.FAILURE, seconds=1, seed_group_id=fresh.seed_groups[0].logical_id
+        )
+        # A cached row from an older run, persisted without seed attribution.
+        cached_success = _result(attack=cached, outcome=AttackOutcome.SUCCESS, seconds=0)
+        stray = AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective="unrelated objective",
+            outcome=AttackOutcome.SUCCESS,
+            timestamp=timestamp,
+            attribution_data={"parent_collection": "fresh__adv_target_harmbench", "parent_eval_hash": "other-hash"},
+        )
+
+        plan = bench._build_run_plan_from(atomic_attacks=[fresh])
+        base_scenario_result = make_scenario_result(
+            attack_results={"fresh__adv_target_harmbench": [fresh_failure, stray]},
+            display_group_map={"fresh__adv_target_harmbench": "fresh"},
+            metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json", exclude_none=True)},
+        )
+        bench._precomputed_cached_results = {"cached__adv_target_harmbench": [cached_success]}
+        bench._precomputed_cached_display_groups = {"cached__adv_target_harmbench": "cached"}
+        bench._precomputed_cached_attacks = [cached]
+
+        with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
+            result = await bench.run_async()
+
+        statistics = compute_scenario_statistics(result)
+        assert statistics.overall.completed == 2
+        assert statistics.overall.success_percentage == 50
+        assert statistics.unattributed_attempts == 1
+
+        report = json.loads(await JsonScenarioResultPrinter().render_async(result))
+        assert report["stats"]["overall_success_rate"] == 50
+        groups = {group["name"]: (group["num_results"], group["success_rate"]) for group in report["groups"]}
+        assert groups == {"fresh": (1, 0), "cached": (1, 100)}
 
     async def test_no_injection_when_no_cached_attacks(self):
         """When all attacks were executed freshly, attack_results is returned unchanged."""
