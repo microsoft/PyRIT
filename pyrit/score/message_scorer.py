@@ -6,8 +6,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import uuid
 from abc import abstractmethod
 from contextlib import nullcontext
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -39,6 +41,8 @@ from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
+    _get_current_scorable,
+    _get_current_scored_message_piece,
     _observation_collection,
     _ObservationEvidence,
     _scoring_expectation_context,
@@ -49,11 +53,10 @@ from pyrit.score.observation.execution import (
 from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Awaitable, Sequence
 
     from pyrit.memory import MemoryInterface
-    from pyrit.prompt_target import PromptTarget
+    from pyrit.score.observation.target_judge import JudgmentRequest
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 logger = logging.getLogger(__name__)
@@ -283,7 +286,6 @@ class MessageScorer(Scorer):
         self,
         *,
         validator: ScorerPromptValidator,
-        chat_target: PromptTarget | None = None,
         message_resolver: MessageScorableResolver | None = None,
     ) -> None:
         """
@@ -291,7 +293,6 @@ class MessageScorer(Scorer):
 
         Args:
             validator (ScorerPromptValidator): Validator for message pieces.
-            chat_target (PromptTarget | None): Optional target used by the scorer.
             message_resolver (MessageScorableResolver | None): Evidence resolver.
 
         Raises:
@@ -313,7 +314,7 @@ class MessageScorer(Scorer):
                 )
         self._validator = validator
         self._message_resolver = message_resolver or MessageScorableResolver()
-        super().__init__(chat_target=chat_target)
+        super().__init__()
 
     def _get_condition_type(self) -> type[Condition] | None:
         """Return the declared criterion, using the objective validator only for undeclared leaves."""
@@ -963,33 +964,14 @@ class MessageScorer(Scorer):
                     expectation=effective_expectation,
                 )
         except ScorerLLMResponseBlockedException as e:
-            # The scorer's own LLM response was content-filtered. By default this is a real
-            # error and propagates; when raise_if_scorer_blocks is False, no verdict was
-            # reached, so the score is undetermined rather than a definitive negative. The
-            # decision lives here in the scorer, not the transport (see doc/code/framework.md).
-            if self.raise_if_scorer_blocks:
-                e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
-                e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
-                raise
-            logger.info(
-                "Scorer %s LLM response was blocked by content filtering; "
-                "returning an undetermined score (raise_if_scorer_blocks=False).",
-                self.__class__.__name__,
-            )
             first_piece = scoring_message.message_pieces[0]
             scores = [
-                self._build_undetermined_score(
-                    rationale=(
-                        "The scorer's own LLM response was blocked by content filtering "
-                        "(raise_if_scorer_blocks is False), so no verdict was reachable."
-                    ),
-                    description="Scorer response blocked; no verdict was reachable.",
+                self._handle_blocked_judge_response(
+                    error=e,
                     message_piece_id=first_piece.id or first_piece.original_prompt_id,
                     objective=objective,
                 )
             ]
-            if e.observation_id is not None:
-                scores[0].observation_ids.append(e.observation_id)
         except PyritException as e:
             # Re-raise PyRIT exceptions with enhanced context while preserving type for retry decorators
             e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
@@ -1010,6 +992,44 @@ class MessageScorer(Scorer):
         )
 
         return scores
+
+    def _handle_blocked_judge_response(
+        self,
+        *,
+        error: ScorerLLMResponseBlockedException,
+        message_piece_id: uuid.UUID | str | None = None,
+        objective: str | None = None,
+    ) -> Score:
+        """
+        Apply the scorer's blocked-judge policy and retain any error observation.
+
+        Returns:
+            Score: An undetermined score for the caller to anchor.
+
+        Raises:
+            ScorerLLMResponseBlockedException: If this scorer is configured to raise.
+        """
+        if self.raise_if_scorer_blocks:
+            error.message = f"Error in scorer {self.__class__.__name__}: {error.message}"
+            error.args = (f"Status Code: {error.status_code}, Message: {error.message}",)
+            raise error
+        logger.info(
+            "Scorer %s LLM response was blocked by content filtering; "
+            "returning an undetermined score (raise_if_scorer_blocks=False).",
+            self.__class__.__name__,
+        )
+        score = self._build_undetermined_score(
+            rationale=(
+                "The scorer's own LLM response was blocked by content filtering "
+                "(raise_if_scorer_blocks is False), so no verdict was reachable."
+            ),
+            description="Scorer response blocked; no verdict was reachable.",
+            message_piece_id=message_piece_id,
+            objective=objective,
+        )
+        if error.observation_id is not None:
+            score.observation_ids.append(error.observation_id)
+        return score
 
     def _validate_scoring_message(self, *, message: Message, objective: str | None) -> None:
         """
@@ -1220,6 +1240,22 @@ class MessageScorer(Scorer):
         return await self._score_piece_async(
             message_piece=message_piece,
             objective=expectation.objective if expectation else None,
+        )
+
+    @staticmethod
+    def _capture_judgment_evidence(request: JudgmentRequest) -> JudgmentRequest:
+        """
+        Attach the message pipeline's evidence before sending a prepared judge request.
+
+        Returns:
+            JudgmentRequest: A request that retains the original piece, not its rendered prompt.
+        """
+        return replace(
+            request,
+            scorable=_get_current_scorable(),
+            scored_message_piece=_get_current_scored_message_piece(
+                scored_piece_id=uuid.UUID(str(request.scored_prompt_id))
+            ),
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:

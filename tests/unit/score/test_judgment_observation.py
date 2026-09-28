@@ -153,8 +153,10 @@ class _MatchesObjectiveScorer(TrueFalseScorer):
 
 
 class _NegatingPipelineScorer(SelfAskTrueFalseScorer):
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        scores = await super()._score_piece_async(message_piece, objective=objective)
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        scores = await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
         for score in scores:
             score.score_value = str(not score.get_value()).lower()
         return scores
@@ -1182,18 +1184,18 @@ async def test_judgment_observation_rejects_evidence_changed_after_resolution_as
     scorer = _scorer(target=target)
     score_piece_started = asyncio.Event()
     continue_scoring = asyncio.Event()
-    score_piece_async = scorer._score_piece_async
+    score_piece_async = scorer._score_piece_with_expectation_async
 
     async def _delayed_score_piece_async(
         message_piece: MessagePiece,
         *,
-        objective: str | None = None,
+        expectation: ScoringExpectation | None,
     ) -> list[Score]:
         score_piece_started.set()
         await continue_scoring.wait()
-        return await score_piece_async(message_piece, objective=objective)
+        return await score_piece_async(message_piece, expectation=expectation)
 
-    with patch.object(scorer, "_score_piece_async", new=_delayed_score_piece_async):
+    with patch.object(scorer, "_score_piece_with_expectation_async", new=_delayed_score_piece_async):
         scoring_task = asyncio.create_task(
             scorer.score_async(
                 scorable=MessageScorable(message_piece_ids=(input_piece.id,)),

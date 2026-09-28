@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, TypeAlias
 from pyrit.models import (
     ContentEntryScorable,
     ContentScorable,
+    ConversationObservationPayload,
     Message,
     MessagePiece,
     MessageScorable,
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
 
-_ObservationEvidence: TypeAlias = Message | ToolEventsObservationPayload
+_ObservationEvidence: TypeAlias = Message | ToolEventsObservationPayload | tuple[MessagePiece, ...]
 
 
 def _scored_evidence_digest(
@@ -293,4 +294,6 @@ class _ObservationEvidenceResolver:
             )
         except ValueError as error:
             raise NonReplayableObservationError(str(error)) from error
+        if isinstance(payload, ConversationObservationPayload):
+            return tuple(pieces_by_id[piece_id] for piece_id in payload.message_piece_ids)
         return Message(message_pieces=[pieces_by_id[piece_id] for piece_id in observation.response_message_piece_ids])

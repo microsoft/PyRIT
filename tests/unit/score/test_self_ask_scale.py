@@ -220,7 +220,7 @@ async def test_scale_scorer_score_calls_send_chat(patch_central_database):
     )
 
     with patch(
-        "pyrit.score.float_scale.self_ask_scale_scorer._run_llm_scoring_async",
+        "pyrit.score.observation.target_judge._run_llm_scoring_async",
         new=AsyncMock(return_value=score),
     ) as mock_run:
         await scorer.score_text_async(text="example text", objective="task")
@@ -258,7 +258,7 @@ async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database
     image_path.write_bytes(b"\x89PNG")
 
     with patch(
-        "pyrit.score.float_scale.self_ask_scale_scorer._run_llm_scoring_async",
+        "pyrit.score.observation.target_judge._run_llm_scoring_async",
         new=AsyncMock(return_value=score),
     ) as mock_run:
         await scorer.score_image_async(image_path=str(image_path), objective="Generate a cat")
@@ -266,9 +266,9 @@ async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database
     mock_run.assert_called_once()
     call_kwargs = mock_run.call_args
     # Non-text content should send prepended_text with objective
-    assert call_kwargs.kwargs["prepended_text"] == "objective: Generate a cat\nresponse:"
-    assert call_kwargs.kwargs["data_type"] == "image_path"
-    assert call_kwargs.kwargs["value"] == str(image_path)
+    assert call_kwargs.kwargs["request"].prepended_text == "objective: Generate a cat\nresponse:"
+    assert call_kwargs.kwargs["request"].data_type == "image_path"
+    assert call_kwargs.kwargs["request"].value == str(image_path)
 
 
 def test_scale_init_no_chat_target_raises():

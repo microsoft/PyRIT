@@ -26,7 +26,8 @@ from pyrit.models import (
     UnvalidatedScore,
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -266,10 +267,10 @@ class SelfAskCategoryScorer(MessageTrueFalseScorer):
         super().__init__(
             score_aggregator=score_aggregator,
             validator=validator or self._DEFAULT_VALIDATOR,
-            chat_target=chat_target,
         )
 
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
         self._content_classifier = content_classifier
         self._system_prompt, schema = self._resolve_system_prompt(system_prompt)
         # When the caller does not supply a response handler, the default JSON handler carries the
@@ -348,30 +349,28 @@ class SelfAskCategoryScorer(MessageTrueFalseScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Scores the given message using the chat target.
-
-        Args:
-            message_piece (MessagePiece): The message piece to score.
-            objective (str | None): The task based on which the text should be scored
-                (the original attacker model's objective). Defaults to None.
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: The message_piece's score.
-                         The category that fits best in the response is used for score_category.
-                         The score_value is True in all cases unless no category fits. In which case,
-                         the score value is false and the _false_category is used.
+            list[Score]: The scorer's verdict.
         """
-        unvalidated_score = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=self._system_prompt,
+        unvalidated_score = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=message_piece.converted_value,
-            data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            judgment_replay_identifier=self._get_judgment_replay_identifier(),
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=self._system_prompt,
+                    value=message_piece.converted_value,
+                    data_type=message_piece.converted_value_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                )
+            ),
         )
 
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")

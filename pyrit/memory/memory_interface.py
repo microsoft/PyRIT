@@ -2114,7 +2114,7 @@ class MemoryInterface(abc.ABC):
                 message_piece_id=piece_id,
             )
             for observation in observations
-            for position, piece_id in enumerate(observation.response_message_piece_ids)
+            for position, piece_id in enumerate(observation.evidence_message_piece_ids)
         ]
         score_observation_links = [
             ScoreObservationEntry(

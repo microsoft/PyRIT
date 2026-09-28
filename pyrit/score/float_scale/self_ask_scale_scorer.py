@@ -18,8 +18,9 @@ from pyrit.models import (
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.numeric_scale import NumericRubric
-from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation
 from pyrit.score.observation.execution import _ObservationEvidence
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -112,8 +113,9 @@ class SelfAskScaleScorer(MessageFloatScaleScorer):
         if chat_target is None:
             raise ValueError("A chat_target must be provided.")
 
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
 
         self._system_prompt, schema = self._resolve_system_prompt(system_prompt)
         self._scale = scale
@@ -196,21 +198,16 @@ class SelfAskScaleScorer(MessageFloatScaleScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Scores the given message_piece using "self-ask" for the chat target.
-
-        Args:
-            message_piece (MessagePiece): The message piece containing the content to be scored.
-                Supports text and non-text types (e.g., image_path). For non-text content,
-                the objective context is sent as a prepended text piece alongside the raw content.
-            objective (str): The objective based on which the content should be scored (the original
-                attacker model's objective).
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: The message piece's score.
-                         The score_value is a value from [0,1] that is scaled based on the scorer's scale.
+            list[Score]: The scorer's verdict.
         """
+        objective = expectation.objective if expectation else None
         # For non-text content (images, audio, etc.), send the raw content with its original
         # data type and prepend the objective as a text piece. This allows multimodal LLMs
         # to evaluate the content directly (e.g., viewing an image to assess it).
@@ -224,17 +221,21 @@ class SelfAskScaleScorer(MessageFloatScaleScorer):
             scoring_value = f"objective: {objective}\nresponse: {message_piece.converted_value}"
             scoring_data_type = "text"
 
-        unvalidated_score = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=self._system_prompt,
+        unvalidated_score = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=scoring_value,
-            data_type=scoring_data_type,
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            judgment_replay_identifier=self._get_judgment_replay_identifier(),
-            prepended_text=prepended_text,
-            category=self._scale.category,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=self._system_prompt,
+                    value=scoring_value,
+                    data_type=scoring_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    prepended_text=prepended_text,
+                    category=self._scale.category,
+                )
+            ),
         )
 
         return [self._convert_score(unvalidated_score)]

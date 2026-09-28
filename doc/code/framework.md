@@ -279,9 +279,14 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   undetermined, not false. For a `MessageScorable`, the scoring layer resolves
   outbound request trace links, regardless of chat role, through the scored response.
   Attacks pass message evidence and route expectations according to scorer support.
-- `pyrit.score.observation` owns acquisition and replay support, not evaluation.
-  `ObservationSource` is typed by the scorable it accepts; sources acquire evidence
-  and matchers decide whether it meets a condition. Its local SDK exporter
+- Raw `ObservationSource` implementations acquire evidence without criteria.
+  `ConversationSource` captures whole-conversation references; the conversation scorer owns
+  role filtering and rendering. `TargetJudge` is a separate, expectation-bound collaborator:
+  scorers own prompts and verdict conversion, handlers own parsing, and the normalizer owns
+  transport and retries. The message-scoring boundary captures evidence explicitly in a
+  `JudgmentRequest`; the request and exchange do not read ambient scoring context.
+  Conversation scoring applies the same blocked-judge policy to direct and message-triggered
+  calls, retaining the acquired snapshot when the result is undetermined. The local SDK exporter
   supports caller-owned, in-process capture, not a remote collector or durable store.
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.

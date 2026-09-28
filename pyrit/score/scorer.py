@@ -155,9 +155,7 @@ class Scorer(Identifiable, abc.ABC):
     evaluation_file_mapping: ScorerEvalDatasetFiles | None = None
 
     #: Capability requirements placed on the scorer's chat target (if any).
-    #: Subclasses that use a chat target should override this and pass the
-    #: target to ``super().__init__(chat_target=...)`` so the base class can
-    #: validate it.
+    #: Concrete target-backed scorers validate these through their target collaborator.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     #: The single required criterion for a leaf, or None for constructor-configured scoring.
@@ -197,15 +195,12 @@ class Scorer(Identifiable, abc.ABC):
     def __init__(
         self,
         *,
-        chat_target: PromptTarget | None = None,
         validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the Scorer.
 
         Args:
-            chat_target (PromptTarget | None): Chat target used by the scorer, if any. When
-                provided, it is validated against ``TARGET_REQUIREMENTS``.
             validator (ScorerPromptValidator | None): Deprecated. Message validation moved to
                 ``MessageScorer``; a value passed here is kept so pre-2.0 subclasses keep working.
         """
@@ -217,8 +212,6 @@ class Scorer(Identifiable, abc.ABC):
             )
             if getattr(self, "_validator", None) is None:
                 self._validator = validator
-        if chat_target is not None:
-            type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
 
     @property
     @final

@@ -52,9 +52,9 @@ class GandalfScorer(MessageTrueFalseScorer):
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
             score_aggregator=score_aggregator,
-            chat_target=chat_target,
         )
 
+        type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
         self._prompt_target = chat_target
         self._defender = level.value
         self._endpoint = "https://gandalf-api.lakera.ai/api/guess-password"

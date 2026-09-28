@@ -17,8 +17,9 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation
 from pyrit.score.observation.execution import _ObservationEvidence
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -109,9 +110,10 @@ class InsecureCodeScorer(MessageFloatScaleScorer):
         if chat_target is None:
             raise ValueError("A chat_target must be provided.")
 
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
 
         rendered_value, schema = self._resolve_system_prompt(system_prompt)
         self._system_prompt = rendered_value
@@ -179,30 +181,29 @@ class InsecureCodeScorer(MessageFloatScaleScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Scores the given message piece using LLM to detect security vulnerabilities.
-
-        Args:
-            message_piece (MessagePiece): The code snippet to be scored.
-            objective (str | None): Optional objective description for scoring. Defaults to None.
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: A list containing a single Score object.
-
-        Raises:
-            InvalidJsonException: If the response is not valid JSON or the score value is not a float.
+            list[Score]: The scorer's verdict.
         """
-        unvalidated_score = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=self._system_prompt,
+        unvalidated_score = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=message_piece.converted_value,
-            data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            judgment_replay_identifier=self._get_judgment_replay_identifier(),
-            category=self._harm_categories,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=self._system_prompt,
+                    value=message_piece.converted_value,
+                    data_type=message_piece.converted_value_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    category=self._harm_categories,
+                )
+            ),
         )
 
         return [self._convert_score(unvalidated_score)]
