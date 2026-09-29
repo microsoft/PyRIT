@@ -76,7 +76,7 @@ async def test_write_async_renders_full_summary(printer, capsys):
     assert "https://example.com" in out
     assert "Overall Statistics" in out
     assert "Total Techniques: 2" in out
-    assert "Total Attack Results: 3" in out
+    assert "Total Units: 3" in out
     assert "Total Attempts: 3" in out
     assert "Per-Group Breakdown" in out
     assert "technique_a" in out
@@ -173,7 +173,7 @@ async def test_write_async_per_group_breakdown_with_display_group_map(printer, c
     await printer.write_async(result)
     out = capsys.readouterr().out
     assert "Group: Group X" in out
-    assert "Number of Results: 2" in out
+    assert "Units: 2" in out
 
 
 async def test_write_async_per_group_breakdown_with_empty_group(printer, capsys):
@@ -181,7 +181,7 @@ async def test_write_async_per_group_breakdown_with_empty_group(printer, capsys)
     await printer.write_async(result)
     out = capsys.readouterr().out
     assert "Group: empty_technique" in out
-    assert "Number of Results: 0" in out
+    assert "Units: 0" in out
     assert "Success Rate: 0%" in out
 
 

@@ -126,7 +126,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         groups = [
             {
                 "name": group.name,
-                "num_results": group.units,
+                "num_units": group.units,
                 "num_attempts": group.attempts,
                 "success_rate": group.success_rate,
             }
@@ -158,7 +158,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
             "scorer": scorer,
             "stats": {
                 "total_techniques": len(result.get_techniques_used()),
-                "total_results": overview.units,
+                "total_units": overview.units,
                 "total_attempts": overview.attempts,
                 "overall_success_rate": overview.success_rate,
                 "unique_objectives": len(result.get_objectives()),

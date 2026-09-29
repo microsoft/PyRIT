@@ -127,6 +127,19 @@ _HISTORIES = {
             _Attempt("attack", "A", AttackOutcome.FAILURE, eval_hash="eval-2", seed_group_id="a"),
         ],
     ),
+    "legacy_attempt_with_ambiguous_name": _History(
+        # A row with no technique hash can't be told apart when two planned groups share its name, so it stays
+        # unattributed everywhere instead of being guessed onto the first group.
+        plan=_plan(
+            _group(name="attack", eval_hash="eval-1", seed_ids=["a"]),
+            _group(name="attack", eval_hash="eval-2", seed_ids=["a"]),
+            seeds=[_seed("a", "A")],
+        ),
+        attempts=[
+            _Attempt("attack", "A", AttackOutcome.FAILURE, eval_hash="eval-1", seed_group_id="a"),
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, eval_hash=None, seed_group_id="a"),
+        ],
+    ),
     "display_groups": _History(
         plan=_plan(
             _group(name="base64", eval_hash="e1", seed_ids=["a", "b"], display_group="encoding"),
@@ -157,6 +170,7 @@ _EXPECTED_OVERALL = {
     "legacy_technique_configurations_sharing_a_name": 50,
     "legacy_error_matched_by_saved_plan": 100,
     "technique_configurations_sharing_a_name": 50,
+    "legacy_attempt_with_ambiguous_name": 0,
     "display_groups": 50,
     "empty_history": None,
 }
@@ -235,7 +249,7 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     # key sets first so a group missing from one view fails instead of reading as 0%.
     sdk_groups = {name: (counts.completed, counts.success_percentage) for name, counts in sdk.display_groups.items()}
     report_groups = {
-        group["name"]: (group["num_results"], group["success_rate"])
+        group["name"]: (group["num_units"], group["success_rate"])
         for group in report["groups"]
         if group["num_attempts"]
     }

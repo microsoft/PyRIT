@@ -73,13 +73,9 @@ class ScenarioOverview(NamedTuple):
 
 def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
     """
-    Summarize a scenario result for the reports.
+    Summarize a scenario result for the reports, using ``pyrit.analytics.compute_scenario_statistics``.
 
-    The numbers come from ``pyrit.analytics.compute_scenario_statistics``, the calculation shared with the
-    SDK and the GUI backend. Groups follow ``result.get_display_groups()``: each group folds the per-atomic-
-    attack counts of the atomic attacks ``display_group_map`` assigns to it, so the rate is always keyed the
-    same way the printers group their results. ``units`` counts effective execution units (the success-rate
-    denominator); ``attempts`` counts every persisted attempt, including retries.
+    ``units`` is the success-rate denominator; ``attempts`` counts every persisted attempt, retries included.
 
     Args:
         result (ScenarioResult): The scenario result to summarize.

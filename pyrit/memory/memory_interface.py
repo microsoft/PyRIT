@@ -5303,6 +5303,16 @@ class MemoryInterface(abc.ABC):
             )
 
         planned_units, plan_seeds = self._get_scenario_plan_unit_subqueries(scenario_result_ids=plan_entry_ids)
+        # How many planned groups share each atomic attack name, so name-only matches can require a unique group.
+        groups_per_name = (
+            select(
+                planned_units.c.scenario_result_id,
+                planned_units.c.atomic_attack_name,
+                func.count(func.distinct(planned_units.c.atomic_group_id)).label("group_count"),
+            )
+            .group_by(planned_units.c.scenario_result_id, planned_units.c.atomic_attack_name)
+            .subquery("history_planned_groups_per_name")
+        )
         planned = (
             select(
                 planned_units.c.scenario_result_id,
@@ -5312,6 +5322,7 @@ class MemoryInterface(abc.ABC):
                 planned_units.c.technique_eval_hash,
                 planned_units.c.seed_group_id,
                 plan_seeds.c.objective_sha256,
+                groups_per_name.c.group_count,
             )
             .select_from(
                 planned_units.outerjoin(
@@ -5319,6 +5330,12 @@ class MemoryInterface(abc.ABC):
                     and_(
                         plan_seeds.c.scenario_result_id == planned_units.c.scenario_result_id,
                         plan_seeds.c.seed_group_id == planned_units.c.seed_group_id,
+                    ),
+                ).join(
+                    groups_per_name,
+                    and_(
+                        groups_per_name.c.scenario_result_id == planned_units.c.scenario_result_id,
+                        groups_per_name.c.atomic_attack_name == planned_units.c.atomic_attack_name,
                     ),
                 )
             )
@@ -5330,8 +5347,9 @@ class MemoryInterface(abc.ABC):
         match_condition = and_(
             planned.c.scenario_result_id == attempts.c.scenario_result_id,
             planned.c.atomic_attack_name == attempts.c.atomic_attack_name,
+            # Same rule as ScenarioPlanLookup.resolve_group: without a technique hash, the name must be unambiguous.
             or_(
-                attempts.c.technique_eval_hash == "",
+                and_(attempts.c.technique_eval_hash == "", planned.c.group_count == 1),
                 planned.c.technique_eval_hash == attempts.c.technique_eval_hash,
             ),
             or_(

@@ -1489,7 +1489,7 @@ class TestRunAsyncCacheInjection:
 
         report = json.loads(await JsonScenarioResultPrinter().render_async(result))
         assert report["stats"]["overall_success_rate"] == 50
-        groups = {group["name"]: (group["num_results"], group["success_rate"]) for group in report["groups"]}
+        groups = {group["name"]: (group["num_units"], group["success_rate"]) for group in report["groups"]}
         assert groups == {"fresh": (1, 0), "cached": (1, 100)}
 
     async def test_no_injection_when_no_cached_attacks(self):

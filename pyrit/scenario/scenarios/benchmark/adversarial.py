@@ -11,15 +11,14 @@ from functools import cache
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.analytics import get_cached_results_for_technique
+from pyrit.analytics.scenario_statistics import ScenarioPlanLookup, resolve_attack_result_attempt
 from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
-    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
-    ComponentIdentifier,
     ObjectiveTargetEvaluationIdentifier,
     ScenarioResult,
     ScenarioRunPlan,
@@ -30,7 +29,6 @@ from pyrit.models import (
     ScenarioRunSizeEstimateStatus,
     ScenarioRunSizeFactor,
     SeedPrompt,
-    config_hash,
 )
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
@@ -526,11 +524,18 @@ class AdversarialBenchmark(Scenario):
         seed_groups.update({seed.id: seed for seed in cached_plan.seed_groups})
         for group in cached_plan.atomic_groups:
             for cached_result in self._precomputed_cached_results.get(group.atomic_attack_name, []):
-                seed_group_id = self._cached_result_seed_group_id(
-                    cached_result=cached_result,
-                    candidate_seed_ids=group.seed_group_ids,
-                    seed_groups=seed_groups,
+                # Resolve with the analytics' own rule so cached results land on the unit they are counted under.
+                group_plan = cached_plan.model_copy(
+                    update={
+                        "atomic_groups": [group],
+                        "seed_groups": [seed_groups[seed_id] for seed_id in group.seed_group_ids],
+                    }
                 )
+                seed_group_id = resolve_attack_result_attempt(
+                    atomic_attack_name=group.atomic_attack_name,
+                    attack_result=cached_result,
+                    plan_lookup=ScenarioPlanLookup.from_plan(plan=group_plan),
+                ).unit.seed_group_id
                 if seed_group_id not in seed_groups:
                     seed_groups[seed_group_id] = ScenarioRunPlanSeedGroup(
                         id=seed_group_id,
@@ -551,37 +556,6 @@ class AdversarialBenchmark(Scenario):
             }
         )
         metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = merged.model_dump(mode="json", exclude_none=True)
-
-    @staticmethod
-    def _cached_result_seed_group_id(
-        *,
-        cached_result: AttackResult,
-        candidate_seed_ids: list[str],
-        seed_groups: dict[str, ScenarioRunPlanSeedGroup],
-    ) -> str:
-        """
-        Return the seed group a cached result belongs to, using the same precedence as the analytics.
-
-        Returns:
-            str: The attributed or identified seed group ID, an existing planned seed group with the same
-                objective, or an objective-hash ID for legacy rows.
-        """
-        attribution_data = cached_result.attribution_data if isinstance(cached_result.attribution_data, dict) else {}
-        attributed = attribution_data.get("seed_group_id")
-        if attributed:
-            return str(attributed)
-        identifier = cached_result.atomic_attack_identifier
-        if isinstance(identifier, ComponentIdentifier):
-            typed_identifier = AtomicAttackIdentifier.from_component_identifier(identifier)
-            if typed_identifier.seed_identifiers:
-                return typed_identifier.logical_seed_group_id
-        objective_sha256 = to_sha256(cached_result.objective)
-        matches = [
-            seed_id for seed_id in candidate_seed_ids if seed_groups[seed_id].objective_sha256 == objective_sha256
-        ]
-        if len(matches) == 1:
-            return matches[0]
-        return config_hash({"objective": cached_result.objective})
 
     def _collect_cached_completion_pairs(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:
         """
