@@ -1206,3 +1206,34 @@ def test_file_backed_database_is_not_serialized(isolated_memory_factory):
         assert memory._connection_lock is None
         # Windows cannot remove the temp directory while the engine still holds the file open.
         memory.dispose_engine()
+
+
+def test_get_message_pieces_filters_on_integer_prompt_metadata(sqlite_instance: SQLiteMemory):
+    """An integer prompt_metadata value must be queryable.
+
+    ``get_message_pieces`` types the filter as ``dict[str, str | int]`` and the
+    targets store an int in that column on every request
+    (``pyrit_target_request`` is set to 1), so filtering on one has to work.
+    SQLite's JSON_EXTRACT keeps the JSON type of the stored value and never
+    compares an integer against a text bind parameter, so stringifying the
+    filter value cannot match. The seed path in the same module already leaves
+    the value alone for this reason.
+    """
+    matching = MessagePiece(
+        conversation_id=str(uuid.uuid4()),
+        role="assistant",
+        original_value="sent",
+        prompt_metadata={"pyrit_target_request": 1},
+    )
+    other = MessagePiece(
+        conversation_id=str(uuid.uuid4()),
+        role="assistant",
+        original_value="not sent",
+        prompt_metadata={"pyrit_target_request": 0},
+    )
+    sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=matching), PromptMemoryEntry(entry=other)])
+
+    retrieved = sqlite_instance.get_message_pieces(prompt_metadata={"pyrit_target_request": 1})
+
+    assert len(retrieved) == 1
+    assert retrieved[0].original_value == "sent"
