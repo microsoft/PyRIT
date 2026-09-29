@@ -129,12 +129,11 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             )
         else:
             inv_score.score_value = str(True) if not inv_score.get_value() else str(False)
-            # Keep the wrapped threshold score's float pointing the same way as the inverted verdict.
-            original_float = (inv_score.score_metadata or {}).get(ORIGINAL_FLOAT_VALUE_KEY)
-            if isinstance(original_float, (int, float)) and not isinstance(original_float, bool):
+            # The wrapped threshold score's float describes the uninverted verdict, and
+            # normalize_score_to_float would prefer it over this one.
+            if inv_score.score_metadata and ORIGINAL_FLOAT_VALUE_KEY in inv_score.score_metadata:
                 inv_score.score_metadata = {
-                    **(inv_score.score_metadata or {}),
-                    ORIGINAL_FLOAT_VALUE_KEY: 1.0 - float(original_float),
+                    k: v for k, v in inv_score.score_metadata.items() if k != ORIGINAL_FLOAT_VALUE_KEY
                 }
             inv_score.score_value_description = "Inverted score: " + str(inv_score.score_value_description)
             inv_score.score_rationale = (

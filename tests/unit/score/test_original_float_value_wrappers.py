@@ -35,17 +35,16 @@ def _threshold_scorer() -> FloatScaleThresholdScorer:
     return FloatScaleThresholdScorer(scorer=PlagiarismScorer(reference_text=_REFERENCE), threshold=0.7)
 
 
-async def test_inverter_flips_original_float_with_the_verdict(scorable):
+async def test_inverter_drops_original_float(scorable):
     threshold_score = (await _threshold_scorer().score_async(scorable=scorable))[0]
     inverted_score = (await TrueFalseInverterScorer(scorer=_threshold_scorer()).score_async(scorable=scorable))[0]
 
     assert threshold_score.get_value() is True
     assert inverted_score.get_value() is False
     assert threshold_score.score_metadata is not None
-    assert inverted_score.score_metadata is not None
-    original = float(threshold_score.score_metadata[ORIGINAL_FLOAT_VALUE_KEY])
-    assert inverted_score.score_metadata[ORIGINAL_FLOAT_VALUE_KEY] == pytest.approx(1.0 - original)
-    assert normalize_score_to_float(inverted_score) == pytest.approx(1.0 - normalize_score_to_float(threshold_score))
+    assert ORIGINAL_FLOAT_VALUE_KEY in threshold_score.score_metadata
+    assert ORIGINAL_FLOAT_VALUE_KEY not in (inverted_score.score_metadata or {})
+    assert normalize_score_to_float(inverted_score) == 0.0
 
 
 async def test_multi_scorer_composite_drops_child_original_float(scorable):
