@@ -75,6 +75,7 @@ def get_adversarial_chat_messages(
     chat conversations. From the adversarial chat's perspective:
     - "user" messages become "assistant" (prompts it generated)
     - "assistant" messages become "user" (responses it received)
+    - Tool exchanges become user text context, not the adversarial target's own calls
     - System messages are skipped (adversarial chat has its own system prompt)
 
     All messages receive new UUIDs to distinguish them from the originals.
@@ -101,6 +102,21 @@ def get_adversarial_chat_messages(
         for piece in message.message_pieces:
             # Skip system messages - adversarial chat has its own system prompt
             if piece.api_role == "system":
+                continue
+
+            if piece.api_role == "tool" or piece.converted_value_data_type in {
+                "function_call",
+                "function_call_output",
+                "tool_call",
+            }:
+                context = f"Objective target {piece.role} ({piece.converted_value_data_type}): {piece.converted_value}"
+                result.append(
+                    MessagePiece(
+                        role="user",
+                        original_value=context,
+                        conversation_id=adversarial_chat_conversation_id,
+                    ).to_message()
+                )
                 continue
 
             # Create a new piece with swapped role for adversarial chat

@@ -11,6 +11,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
 from pyrit.scenario.scenarios.airt.cyber import _build_cyber_technique
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique
 from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
@@ -50,6 +51,15 @@ class TestAirtPackageLazyAttrs:
 
         cls = airt.RapidResponseTechnique  # type: ignore[attr-defined]
         assert issubclass(cls, ScenarioTechnique)
+
+    def test_registry_reset_discards_lazy_technique_exports(self) -> None:
+        import pyrit.scenario.scenarios.airt as airt
+
+        first = airt.RapidResponseTechnique  # type: ignore[attr-defined]
+        reset_dynamic_technique_caches()
+        second = airt.RapidResponseTechnique  # type: ignore[attr-defined]
+
+        assert second is not first
 
     def test_leakage_technique_is_lazy_built(self) -> None:
         import pyrit.scenario.scenarios.airt as airt

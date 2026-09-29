@@ -4,15 +4,24 @@
 import asyncio
 import json
 import logging
+from copy import deepcopy
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from mcp.types import Tool as MCPToolDefinition
 from openai.types.chat import ChatCompletion
 
 from pyrit.models import Message, MessagePiece, PromptDataType, RequestTraceContext
-from pyrit.prompt_target import FunctionTool, MCPToolProvider, OpenAIChatTarget, OpenAIResponseTarget, TargetTraceConfig
+from pyrit.prompt_target import (
+    FunctionTool,
+    LiteLLMChatTarget,
+    MCPToolProvider,
+    OpenAIChatTarget,
+    OpenAIResponseTarget,
+    TargetTraceConfig,
+)
 from pyrit.prompt_target.common.discover_target_capabilities import (
     _CAPABILITY_PROBES,
     DEFAULT_TEST_ASSETS,
@@ -753,7 +762,13 @@ async def test_responses_probes_suppress_provider_io_and_preserve_state(
     )
     if initialized:
         provider._tools = [MCPToolDefinition(name="remote", inputSchema={"type": "object", "properties": {}})]
-    body = {"tools": [{"type": "web_search_preview"}], "tool_choice": "required", "parallel_tool_calls": True}
+    body = {
+        "tools": [{"type": "web_search_preview"}],
+        "tool_choice": "required",
+        "parallel_tool_calls": True,
+        "extra_body": {"tools": [{"type": "web_search_preview"}], "tool_choice": "required"},
+    }
+    original_body = deepcopy(body)
     target = OpenAIResponseTarget(
         model_name="unknown",
         endpoint="https://example.invalid",
@@ -812,6 +827,7 @@ async def test_responses_probes_suppress_provider_io_and_preserve_state(
         send.assert_awaited_once()
         await send.call_args.kwargs["api_call"]()
         assert not {"tools", "tool_choice", "parallel_tool_calls"} & create.call_args.kwargs.keys()
+        assert create.call_args.kwargs["extra_body"] == {}
         scope.assert_not_called()
         discover.assert_not_called()
         remote_call.assert_not_called()
@@ -823,12 +839,101 @@ async def test_responses_probes_suppress_provider_io_and_preserve_state(
     assert target._tools_initialized is initialized
     assert provider._tools is provider_cache
     assert target._extra_body_parameters is body
+    assert body == original_body
     assert target.configuration is configuration
     assert target._execute_tools
     assert not target._suppress_tools
     assert target.get_identifier().hash == target._build_identifier().hash == expected_identifier.hash
     if identity_cached:
         assert target.get_identifier() is cached_identifier
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget])
+def test_probe_removes_nested_and_legacy_tool_settings(target_type: type[PromptTarget]) -> None:
+    settings = {
+        "tools": [{"type": "function", "name": "lookup"}],
+        "tool_choice": "required",
+        "parallel_tool_calls": True,
+        "functions": [{"name": "lookup"}],
+        "function_call": {"name": "lookup"},
+        "metadata": {"keep": "yes"},
+    }
+    body = {**settings, "extra_body": dict(settings)}
+    original = deepcopy(body)
+    target = target_type(
+        model_name="unknown",
+        endpoint="https://example.invalid",
+        api_key="not-a-key",
+        extra_body_parameters=body,
+    )
+    with _permissive_configuration(target=target):
+        assert target._extra_body_parameters == {
+            "metadata": {"keep": "yes"},
+            "extra_body": {"metadata": {"keep": "yes"}},
+        }
+    assert target._extra_body_parameters is body
+    assert body == original
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAIResponseTarget])
+async def test_probe_final_sdk_body_has_no_nested_tools(target_type: type[PromptTarget]) -> None:
+    response = (
+        {
+            "id": "response",
+            "object": "response",
+            "created_at": 0,
+            "model": "unknown",
+            "status": "completed",
+            "output": [
+                {
+                    "id": "message",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "{}", "annotations": []}],
+                }
+            ],
+        }
+        if target_type is OpenAIResponseTarget
+        else {
+            "id": "completion",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "unknown",
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "{}"}}],
+        }
+    )
+    handler = MagicMock(return_value=httpx.Response(200, json=response))
+    body = {
+        "extra_body": {
+            "tools": [{"type": "web_search_preview"}],
+            "tool_choice": "required",
+            "parallel_tool_calls": True,
+            "functions": [{"name": "lookup"}],
+            "function_call": {"name": "lookup"},
+            "metadata": {"keep": "yes"},
+        }
+    }
+    original = deepcopy(body)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        target = target_type(
+            model_name="unknown",
+            endpoint="https://example.invalid/v1",
+            api_key="not-a-key",
+            httpx_client_kwargs={"http_client": client},
+            extra_body_parameters=body,
+        )
+        await discover_target_capabilities_async(
+            target=target, capabilities=[CapabilityName.JSON_OUTPUT], test_modalities=set(), retries=0
+        )
+    handler.assert_called_once()
+    sent = json.loads(handler.call_args.args[0].content)
+    assert not {"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"} & sent.keys()
+    assert sent["metadata"] == {"keep": "yes"}
+    assert body == original
+    assert target._extra_body_parameters is body
 
 
 # ---------------------------------------------------------------------------

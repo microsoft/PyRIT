@@ -36,6 +36,27 @@ from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
 
+@pytest.mark.parametrize("chat_shape", [False, True])
+@pytest.mark.parametrize("arguments", ["{not-json", "[]", "null"])
+async def test_replay_preserves_invalid_arguments_but_preflight_rejects_them(
+    *, chat_shape: bool, arguments: str
+) -> None:
+    function = {"name": "lookup", "arguments": arguments}
+    payload = {"id": "call-1", "function": function} if chat_shape else {"call_id": "call-1", **function}
+    piece = MessagePiece(role="assistant", original_value=json.dumps(payload), original_value_data_type="function_call")
+    history = [piece.to_message()]
+    response_target = _target(OpenAIResponseTarget)
+    body = await response_target._construct_request_body_async(
+        conversation=history, json_config=JsonResponseConfig(enabled=False)
+    )
+    assert body["input"][0]["arguments"] == arguments
+    chat = await build_multimodal_chat_messages_async(history)
+    assert chat[0]["tool_calls"][0]["function"]["arguments"] == arguments
+    for target_type in (OpenAIChatTarget, LiteLLMChatTarget, OpenAIResponseTarget):
+        with pytest.raises(ValueError):
+            _target(target_type).validate_tool_history(history)
+
+
 def _call_piece(*, call_id: str = "call_1", chat_shape: bool = False) -> MessagePiece:
     payload = (
         {"type": "function", "id": call_id, "function": {"name": "lookup", "arguments": '{"key":"new"}'}}

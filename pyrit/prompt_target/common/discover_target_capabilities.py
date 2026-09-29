@@ -42,7 +42,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Iterable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -186,11 +186,15 @@ def _disable_probe_tools(*, target: PromptTarget) -> Iterator[None]:
         if isinstance(target, (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget)):
             original_body = target._extra_body_parameters
             stack.callback(setattr, target, "_extra_body_parameters", original_body)
+            tool_settings = {"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"}
             target._extra_body_parameters = {
-                key: value
-                for key, value in (original_body or {}).items()
-                if key not in {"tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"}
+                key: value for key, value in (original_body or {}).items() if key not in tool_settings
             }
+            extra_body = target._extra_body_parameters.get("extra_body")
+            if isinstance(extra_body, Mapping):
+                target._extra_body_parameters["extra_body"] = {
+                    key: value for key, value in extra_body.items() if key not in tool_settings
+                }
         if isinstance(target, OpenAIResponseTarget):
             stack.callback(setattr, target, "_execute_tools", target._execute_tools)
             stack.callback(setattr, target, "_suppress_tools", target._suppress_tools)

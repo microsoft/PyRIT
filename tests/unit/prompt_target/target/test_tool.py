@@ -338,6 +338,47 @@ async def test_single_response_advertises_tools_without_executing_calls(patch_ce
     assert [item["type"] for item in create.call_args.kwargs["tools"]] == ["web_search_preview", "function"]
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("arguments", ["{not-json", "[]", "null"])
+@pytest.mark.parametrize("strict", [False, True])
+async def test_malformed_arguments_reach_model_as_tool_error(*, arguments: str, strict: bool) -> None:
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://example.invalid",
+        api_key="not-a-key",
+        tools=[add],
+        fail_on_missing_function=strict,
+    )
+    call = MessagePiece(
+        role="assistant",
+        original_value=json.dumps(
+            {"type": "function_call", "call_id": "call-1", "name": "add", "arguments": arguments}
+        ),
+        original_value_data_type="function_call",
+    ).to_message()
+    final = Message.from_prompt(prompt="Please supply valid arguments.", role="assistant")
+    with (
+        patch.object(target, "_handle_openai_request_async", new_callable=AsyncMock, side_effect=[call, final]) as send,
+        patch.object(target._client.responses, "create", new_callable=AsyncMock) as create,
+        patch.object(add, "execute_async", new_callable=AsyncMock) as execute,
+    ):
+        if strict:
+            with pytest.raises(ValueError, match="arguments|Arguments"):
+                await target.send_prompt_async(message=Message.from_prompt(prompt="Add", role="user"))
+            send.assert_awaited_once()
+        else:
+            result = await target.send_prompt_async(message=Message.from_prompt(prompt="Add", role="user"))
+            assert [message.api_role for message in result] == ["assistant", "tool", "assistant"]
+            assert send.await_count == 2
+            await send.call_args.kwargs["api_call"]()
+            inputs = create.call_args.kwargs["input"]
+            assert inputs[-2]["arguments"] == arguments
+            assert json.loads(inputs[-1]["output"])["error"] == "malformed_arguments"
+            with pytest.raises(ValueError):
+                target.validate_tool_history(result)
+        execute.assert_not_called()
+
+
 async def test_collect_tools_async_preserves_direct_and_provider_order() -> None:
     async def subtract(*, x: int, y: int) -> int:  # pyrit-async-suffix-exempt
         return x - y

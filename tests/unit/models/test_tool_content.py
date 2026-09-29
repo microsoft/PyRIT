@@ -50,11 +50,14 @@ def test_function_content_retains_arguments_and_extensions(nested: bool) -> None
 
 @pytest.mark.parametrize("arguments", ["{", "[]", "null", '"text"', "1"])
 @pytest.mark.parametrize("nested", [True, False])
-def test_function_content_rejects_invalid_arguments(arguments: str, nested: bool) -> None:
+def test_draft_validation_rejects_invalid_arguments_but_replay_preserves_them(arguments: str, nested: bool) -> None:
     function = {"name": "lookup", "arguments": arguments}
     payload = {"id": "call-1", "function": function} if nested else {"call_id": "call-1", **function}
+    call = FunctionCallContent.model_validate(payload)
+    assert call.validated_call_id() == "call-1"
+    assert call.validated_function().arguments == arguments
     with pytest.raises(ValueError):
-        FunctionCallContent.model_validate(payload).validated_call_id()
+        validate_tool_conversation([_message(role="assistant", data_type="function_call", payload=payload)])
 
 
 @pytest.mark.parametrize(

@@ -1437,6 +1437,8 @@ class TestAddMessage:
     ) -> None:
         """Test that add_message with send=False does not require target_registry_name."""
         ar = make_attack_result(conversation_id="test-id")
+        ar.operator = "alice"
+        ar.operation = "nightly"
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_message_pieces.return_value = [
             MessagePiece(role="user", original_value="prior", conversation_id="test-id", sequence=3)

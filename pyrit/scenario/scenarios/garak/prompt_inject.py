@@ -314,6 +314,7 @@ class PromptInject(Scenario):
                     AtomicAttack(
                         atomic_attack_name=f"{technique.value}__goal_{goal_index}",
                         display_group=goal_text,
+                        technique_name=technique.value,
                         attack_technique=AttackTechnique(attack=attack),
                         seed_groups=seed_groups,
                         memory_labels=context.memory_labels,

@@ -14,7 +14,7 @@ from pyrit.models.messages.message import Message
 
 
 class FunctionArguments(FunctionCall):
-    """A function name and serialized JSON-object arguments, with provider extensions."""
+    """A function name and argument string, with provider extensions."""
 
     model_config = ConfigDict(extra="allow")
     name: str = Field(min_length=1, pattern=r"\S")
@@ -33,21 +33,22 @@ class FunctionCallContent(BaseModel):
 
     def validated_function(self) -> FunctionArguments:
         """
-        Read the function name and JSON-object arguments without rewriting them.
+        Read the function name and argument string without parsing or rewriting it.
+
+        Providers can return invalid JSON arguments. Replay must retain these so
+        a tool error can reach the model; draft validation checks their contents.
 
         Returns:
             FunctionArguments: The validated function payload.
 
         Raises:
-            ValueError: The name or serialized JSON-object arguments are invalid.
+            ValueError: The name or argument string is missing or invalid.
         """
         function = self.function
         if function is None:
             if self.name is None or self.arguments is None:
                 raise ValueError("A function call requires a function name and arguments")
             function = FunctionArguments(name=self.name, arguments=self.arguments)
-        if not isinstance(json.loads(function.arguments), dict):
-            raise ValueError("Function arguments must be a JSON object")
         return function
 
     def validated_call_id(self) -> str:
@@ -100,6 +101,8 @@ def validate_tool_conversation(messages: Sequence[Message]) -> None:
                     raise ValueError("Function calls require an assistant role")
                 call = FunctionCallContent.model_validate_json(piece.converted_value)
                 call_id = call.validated_call_id()
+                if not isinstance(json.loads(call.validated_function().arguments), dict):
+                    raise ValueError("Function arguments must be a JSON object")
                 if call_id in calls:
                     raise ValueError(f"Duplicate function call ID: {call_id}")
                 calls.add(call_id)
