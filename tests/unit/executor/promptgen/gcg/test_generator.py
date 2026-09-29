@@ -369,6 +369,7 @@ class TestExtensionWiring:
                 sampling=sampling,
                 loss=loss,
                 candidate_filter=candidate_filter,
+                use_prefix_cache=True,
             ),
             output=GCGOutputConfig(result_prefix=str(tmp_path / "gcg")),
         )
@@ -395,6 +396,7 @@ class TestExtensionWiring:
         assert mpa_factory.keywords["sampling"] is sampling
         assert mpa_factory.keywords["loss"] is loss
         assert mpa_factory.keywords["candidate_filter"] is candidate_filter
+        assert mpa_factory.keywords["use_prefix_cache"] is True
 
 
 class TestReadResult:
