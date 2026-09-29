@@ -301,12 +301,14 @@ The Configuration view manages the targets available for attacks.
 
 #### Target Table
 
-Lists all registered targets with their type, endpoint, and model name. Two dropdowns above **Filter by type** select your defaults. Each option shows the registry name and model, when available:
+Lists all registered targets with their type, endpoint, model name, and supported input and output modalities. Two dropdowns above the table filters select your defaults. Each option shows the registry name and model, when available:
 
 - **Default objective target:** Preselected for new chats and scanner runs.
 - **Default adversarial target:** Preselected for scanner runs that use the shared adversarial target. The target must support multi-turn conversations. Without a saved selection, the GUI preselects the registered `adversarial_chat` target, which the target initializer configures from `ADVERSARIAL_CHAT_*` environment variables. A saved user selection takes priority.
 
 The objective dropdown appears first, followed by the adversarial dropdown. Select **Not set** to clear the objective default. Select **Use server default** to remove a saved adversarial selection and return to the environment default. Small **Objective** and **Adversarial** badges identify the selected rows; the table has no separate defaults column. Filtering the table does not filter the default dropdowns or change your selections.
+
+Use **Filter by type**, **Filter by input**, and **Filter by output** to narrow the table. The input and output filters list the modalities that the registered targets support, such as **Text**, **Image**, and **Audio**. A target matches when it supports the selected modality, so selecting **Image** under **Filter by input** also shows targets that accept both text and images. A target must match every selected filter. A filter appears only when it can narrow the table, and **Reset all filters** clears them all at once. The filters also reset whenever the target list reloads.
 
 Defaults are saved in this browser, separately for each signed-in account. They do not follow you to another browser or device. When authentication is disabled, the browser uses a separate local profile. Only target names and identity hashes are stored, not credentials or complete target configurations.
 

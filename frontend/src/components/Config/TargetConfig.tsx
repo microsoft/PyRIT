@@ -39,6 +39,10 @@ export default function TargetConfig({
   // Counter used to re-trigger the fetch effect from event handlers (Refresh,
   // dialog close) without invoking setState synchronously in the effect body.
   const [refetchCount, setRefetchCount] = useState(0)
+  // Bumped with every loaded target list. Keying the table on it starts each list with
+  // fresh filters, so a runtime reload (which swaps the list without unmounting the
+  // table) never applies a selection made on the previous list.
+  const [targetsRevision, setTargetsRevision] = useState(0)
 
   // Retry fetching targets a few times with backoff. The Vite dev proxy
   // returns 502 while the backend is still starting, so a single failed
@@ -53,6 +57,7 @@ export default function TargetConfig({
         const items = await listRegisteredTargets()
         if (cancelled) return
         setTargets(items)
+        setTargetsRevision(revision => revision + 1)
         setError(null)
         setLoading(false)
         onTargetsLoaded?.(items)
@@ -158,6 +163,7 @@ export default function TargetConfig({
 
       {!loading && !error && targets.length > 0 && (
         <TargetTable
+          key={targetsRevision}
           targets={targets}
           defaultObjectiveTarget={defaultObjectiveTarget}
           defaultAdversarialTarget={defaultAdversarialTarget}

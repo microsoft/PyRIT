@@ -1,4 +1,5 @@
 import React, { useState, useMemo, forwardRef, useId } from 'react'
+import type { ChangeEvent } from 'react'
 import {
   Table,
   TableHeader,
@@ -12,10 +13,12 @@ import {
   Text,
   Tooltip,
   Select,
+  type SelectOnChangeData,
 } from '@fluentui/react-components'
 import {
   CheckmarkCircleFilled,
   DismissCircleFilled,
+  FilterDismissRegular,
   TextTRegular,
   ImageRegular,
   MicRegular,
@@ -122,15 +125,54 @@ const MODALITY_ORDER: readonly string[] = [
   'url',
 ]
 
+/** Capability list that a modality filter reads. */
+type ModalityField = 'supported_input_modalities' | 'supported_output_modalities'
+
+/** A filter dropdown choice: the raw value and the text shown for it. */
+interface FilterOption {
+  value: string
+  label: string
+}
+
+/** Known modalities in canonical order, followed by the rest in their given order. */
+function orderModalities(modalities: string[]): string[] {
+  const known = MODALITY_ORDER.filter((modality: string) => modalities.includes(modality))
+  const extras = modalities.filter((modality: string) => !MODALITY_ORDER.includes(modality))
+  return [...known, ...extras]
+}
+
+/** Whether the target lists the modality under the given capability field. */
+function supportsModality(target: TargetInstance, field: ModalityField, modality: string): boolean {
+  return (target.capabilities?.[field] ?? []).includes(modality)
+}
+
+/** Every modality the targets list under one field, labeled and in display order. */
+function modalityFilterOptions(targets: TargetInstance[], field: ModalityField): FilterOption[] {
+  const present = new Set<string>()
+  for (const target of targets) {
+    for (const modality of target.capabilities?.[field] ?? []) {
+      present.add(modality)
+    }
+  }
+  return orderModalities([...present].sort()).map((modality: string) => ({
+    value: modality,
+    label: MODALITY_RENDERERS[modality]?.label ?? modality,
+  }))
+}
+
+/** A modality filter can narrow the table only if some target lacks one of the listed modalities. */
+function canFilterByModality(targets: TargetInstance[], field: ModalityField, options: FilterOption[]): boolean {
+  return options.some((option: FilterOption) =>
+    targets.some((target: TargetInstance) => !supportsModality(target, field, option.value)))
+}
+
 /** Render a row of modality icons; falls back to "—" when empty. */
 function ModalityCell({ modalities }: { modalities: string[] | undefined }) {
   const styles = useTargetTableStyles()
   if (!modalities || modalities.length === 0) {
     return <Text size={200}>—</Text>
   }
-  const ordered = MODALITY_ORDER.filter((m) => modalities.includes(m))
-  const extras = modalities.filter((m) => !MODALITY_ORDER.includes(m))
-  const sorted = [...ordered, ...extras]
+  const sorted = orderModalities(modalities)
   return (
     <div className={styles.modalityRow}>
       {sorted.map((modality) => {
@@ -243,6 +285,40 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
   )
 }
 
+interface FilterSelectProps {
+  label: string
+  allLabel: string
+  value: string
+  options: FilterOption[]
+  onChange: (value: string) => void
+  testId: string
+}
+
+/** A labeled table filter whose empty value means no filtering. */
+function FilterSelect({ label, allLabel, value, options, onChange, testId }: FilterSelectProps) {
+  const styles = useTargetTableStyles()
+  const selectId = useId()
+  return (
+    <div className={styles.filterGroup}>
+      <label className={styles.filterLabel} htmlFor={selectId}>
+        <Text size={200}>{label}</Text>
+      </label>
+      <Select
+        id={selectId}
+        className={styles.filterSelect}
+        value={value}
+        onChange={(_: ChangeEvent<HTMLSelectElement>, data: SelectOnChangeData) => onChange(data.value)}
+        data-testid={testId}
+      >
+        <option value="">{allLabel}</option>
+        {options.map((option: FilterOption) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </Select>
+    </div>
+  )
+}
+
 export default function TargetTable({
   targets,
   defaultObjectiveTarget,
@@ -251,8 +327,9 @@ export default function TargetTable({
   onSetDefaultAdversarialTarget,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
-  const typeFilterId = useId()
   const [typeFilter, setTypeFilter] = useState('')
+  const [inputFilter, setInputFilter] = useState('')
+  const [outputFilter, setOutputFilter] = useState('')
   // Tracks which RoundRobinTarget rows are expanded to show inner targets.
   // We use a Set of target_registry_name strings — when a name is in the set,
   // that row's sub-rows are visible.
@@ -273,15 +350,40 @@ export default function TargetTable({
   const hasInnerTargets = (target: TargetInstance): boolean =>
     (target.inner_targets ?? []).length > 0
 
-  const targetTypes = useMemo(
-    () => Array.from(new Set(targets.map(t => targetType(t)))).sort(),
+  const typeOptions = useMemo(
+    () => Array.from(new Set(targets.map((target: TargetInstance) => targetType(target))))
+      .sort()
+      .map((type: string) => ({ value: type, label: type })),
+    [targets],
+  )
+  const inputOptions = useMemo(
+    () => modalityFilterOptions(targets, 'supported_input_modalities'),
+    [targets],
+  )
+  const outputOptions = useMemo(
+    () => modalityFilterOptions(targets, 'supported_output_modalities'),
     [targets],
   )
 
+  const showTypeFilter = typeOptions.length > 1
+  const showInputFilter = canFilterByModality(targets, 'supported_input_modalities', inputOptions)
+  const showOutputFilter = canFilterByModality(targets, 'supported_output_modalities', outputOptions)
+
   const filteredTargets = useMemo(
-    () => typeFilter ? targets.filter(t => targetType(t) === typeFilter) : targets,
-    [targets, typeFilter],
+    () => targets.filter((target: TargetInstance) =>
+      (!typeFilter || targetType(target) === typeFilter)
+      && (!inputFilter || supportsModality(target, 'supported_input_modalities', inputFilter))
+      && (!outputFilter || supportsModality(target, 'supported_output_modalities', outputFilter))),
+    [targets, typeFilter, inputFilter, outputFilter],
   )
+  const hasActiveFilter = Boolean(typeFilter || inputFilter || outputFilter)
+  const noTargetsMatch = targets.length > 0 && filteredTargets.length === 0
+
+  const resetFilters = () => {
+    setTypeFilter('')
+    setInputFilter('')
+    setOutputFilter('')
+  }
 
   const isDefaultObjective = (target: TargetInstance): boolean =>
     sameTarget(defaultObjectiveTarget, target)
@@ -307,22 +409,50 @@ export default function TargetTable({
         />
       </section>
       <Divider appearance="strong" className={styles.defaultsDivider} />
-      {targetTypes.length > 1 && (
+      {(showTypeFilter || showInputFilter || showOutputFilter) && (
         <div className={styles.filterRow}>
-          <label htmlFor={typeFilterId}>
-            <Text size={200}>Filter by type:</Text>
-          </label>
-          <Select
-            id={typeFilterId}
-            className={styles.filterSelect}
-            value={typeFilter}
-            onChange={(_, data) => setTypeFilter(data.value)}
-          >
-            <option value="">All types</option>
-            {targetTypes.map(t => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </Select>
+          {showTypeFilter && (
+            <FilterSelect
+              label="Filter by type:"
+              allLabel="All types"
+              value={typeFilter}
+              options={typeOptions}
+              onChange={setTypeFilter}
+              testId="target-type-filter"
+            />
+          )}
+          {showInputFilter && (
+            <FilterSelect
+              label="Filter by input:"
+              allLabel="All inputs"
+              value={inputFilter}
+              options={inputOptions}
+              onChange={setInputFilter}
+              testId="target-input-filter"
+            />
+          )}
+          {showOutputFilter && (
+            <FilterSelect
+              label="Filter by output:"
+              allLabel="All outputs"
+              value={outputFilter}
+              options={outputOptions}
+              onChange={setOutputFilter}
+              testId="target-output-filter"
+            />
+          )}
+          <Tooltip content="Reset all filters" relationship="label">
+            <Button
+              className={styles.resetFiltersButton}
+              appearance="subtle"
+              size="small"
+              icon={<FilterDismissRegular />}
+              aria-label="Reset all filters"
+              disabled={!hasActiveFilter}
+              onClick={resetFilters}
+              data-testid="target-reset-filters-btn"
+            />
+          </Tooltip>
         </div>
       )}
 
@@ -453,6 +583,15 @@ export default function TargetTable({
           })}
         </TableBody>
       </Table>
+      {/* Stays mounted so screen readers announce the message when filtering hides every row. */}
+      <div role="status">
+        {noTargetsMatch && (
+          <div className={styles.noMatchState} data-testid="target-table-no-match">
+            <Text size={400}>No targets match the selected filters.</Text>
+            <Text size={200}>Try adjusting your filters.</Text>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

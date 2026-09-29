@@ -1,16 +1,22 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import TargetConfig from "./TargetConfig";
 import { targetsApi } from "../../services/api";
-import type { TargetInstance } from "../../types";
+import type { TargetInstance, TargetListResponse } from "../../types";
 
 jest.mock("../../services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     createTarget: jest.fn(),
   },
+}));
+
+let mockRuntimeGeneration = "generation-1";
+
+jest.mock("@/hooks/useRuntime", () => ({
+  useRuntime: () => ({ generation: mockRuntimeGeneration, ready: true, state: "ready" }),
 }));
 
 jest.mock("./CreateTargetDialog", () => {
@@ -73,6 +79,7 @@ describe("TargetConfig", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRuntimeGeneration = "generation-1";
   });
 
   it("should show loading state initially", () => {
@@ -249,6 +256,104 @@ describe("TargetConfig", () => {
       expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
     });
     expect(onTargetsLoaded).toHaveBeenCalledTimes(2);
+  });
+
+  it("should clear the table filters when the runtime generation changes", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: sampleTargets,
+      pagination: { limit: 200, has_more: false },
+    });
+    const { rerender } = render(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} defaultObjectiveTarget={sampleTargets[0]} />
+      </TestWrapper>
+    );
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Filter by type:" }),
+      "OpenAIImageTarget"
+    );
+    expect(screen.queryByRole("row", { name: /openai_chat_gpt4/ })).not.toBeInTheDocument();
+
+    mockRuntimeGeneration = "generation-2";
+    rerender(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} defaultObjectiveTarget={sampleTargets[0]} />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByRole("row", { name: /openai_chat_gpt4/ })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Filter by type:" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Default objective target" })).toHaveValue(
+      sampleTargets[0].target_registry_name
+    );
+  });
+
+  it("should drop a filter chosen while a runtime reload is still loading", async () => {
+    const user = userEvent.setup();
+    const imageTarget = makeTarget({
+      target_registry_name: "image_chat",
+      target_type: "OpenAIChatTarget",
+      capabilities: {
+        supports_multi_turn: true,
+        supports_json_schema: false,
+        supports_json_output: false,
+        supports_system_prompt: true,
+        supported_input_modalities: ["text", "image_path"],
+        supported_output_modalities: ["text"],
+      },
+    });
+    const textTarget = makeTarget({
+      target_registry_name: "text_chat",
+      target_type: "OpenAIChatTarget",
+      capabilities: {
+        supports_multi_turn: true,
+        supports_json_schema: false,
+        supports_json_output: false,
+        supports_system_prompt: true,
+        supported_input_modalities: ["text"],
+        supported_output_modalities: ["text"],
+      },
+    });
+    mockedTargetsApi.listTargets.mockResolvedValueOnce({
+      items: [imageTarget, textTarget],
+      pagination: { limit: 200, has_more: false },
+    });
+    const { rerender } = render(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} />
+      </TestWrapper>
+    );
+    await screen.findByRole("combobox", { name: "Filter by input:" });
+
+    let resolveReload: (response: TargetListResponse) => void = () => {};
+    mockedTargetsApi.listTargets.mockReturnValueOnce(
+      new Promise<TargetListResponse>((resolve) => {
+        resolveReload = resolve;
+      })
+    );
+    mockRuntimeGeneration = "generation-2";
+    rerender(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} />
+      </TestWrapper>
+    );
+    await waitFor(() => {
+      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
+    });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by input:" }), "image_path");
+    expect(screen.queryByRole("row", { name: /text_chat/ })).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveReload({ items: [textTarget], pagination: { limit: 200, has_more: false } });
+    });
+
+    expect(screen.getByRole("row", { name: /text_chat/ })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Filter by input:" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 
   it("should open create dialog when New Target is clicked", async () => {

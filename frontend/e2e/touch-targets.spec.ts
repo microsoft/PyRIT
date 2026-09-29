@@ -47,6 +47,18 @@ const TARGETS = [
       supported_output_modalities: ["text"],
     },
   }),
+  makeTarget({
+    target_registry_name: "mobile-speech-target",
+    target_type: "OpenAITTSTarget",
+    endpoint: "https://speech.example.test",
+    model_name: "tts-mobile",
+    capabilities: {
+      supports_multi_turn: false,
+      supports_system_prompt: false,
+      supported_input_modalities: ["text"],
+      supported_output_modalities: ["audio_path"],
+    },
+  }),
 ];
 
 const MESSAGES = [
@@ -470,6 +482,9 @@ test.describe("Mobile touch targets", () => {
       page.getByRole("button", { name: "Expand inner targets" })
     );
     await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by input:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by output:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
     await expectNoDocumentOverflow(page);
 
     await page.goto("/history");
@@ -728,6 +743,9 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
     page.getByRole("button", { name: "Refresh", exact: true })
   );
   await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by input:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by output:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
   await expectCompactDesktopTarget(
     page.getByRole("combobox", { name: "Default objective target", exact: true })
   );

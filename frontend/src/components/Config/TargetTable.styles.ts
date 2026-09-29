@@ -116,6 +116,18 @@ export const useTargetTableStyles = makeStyles({
     marginBottom: tokens.spacingVerticalS,
     gap: tokens.spacingHorizontalS,
   },
+  /** Keeps each filter's label on the same line as its dropdown when the row wraps. */
+  filterGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
+    flex: '1 1 19rem',
+    minWidth: 0,
+    maxWidth: '26.5rem',
+  },
+  filterLabel: {
+    whiteSpace: 'nowrap',
+  },
   filterSelect: {
     flex: '1 1 12.5rem',
     minWidth: 0,
@@ -126,6 +138,18 @@ export const useTargetTableStyles = makeStyles({
         minHeight: MINIMUM_TOUCH_TARGET_SIZE,
       },
     },
+  },
+  noMatchState: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: tokens.spacingVerticalM,
+    padding: tokens.spacingVerticalXXXL,
+    textAlign: 'center',
+    color: tokens.colorNeutralForeground3,
+  },
+  resetFiltersButton: {
+    ...mobileTouchTarget,
   },
   rowAction: {
     ...mobileTouchTarget,
