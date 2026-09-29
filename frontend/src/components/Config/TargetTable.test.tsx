@@ -418,6 +418,7 @@ describe('TargetTable', () => {
     )
 
     expect(screen.queryByText('Filter by type:')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reset all filters' })).not.toBeInTheDocument()
   })
 
   it('should filter targets that include the selected input modality', async () => {
@@ -487,8 +488,11 @@ describe('TargetTable', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by input:' }), 'image_path')
     expect(screen.getByRole('row', { name: /openai_chat_gpt4/ })).toBeInTheDocument()
     expect(screen.getByRole('row', { name: /openai_audio_chat/ })).toBeInTheDocument()
+    // Options come from every target, not only the rows left by the other filters.
+    const outputFilter = screen.getByRole('combobox', { name: 'Filter by output:' })
+    expect(within(outputFilter).getByRole('option', { name: 'Image' })).toBeInTheDocument()
 
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by output:' }), 'audio_path')
+    await user.selectOptions(outputFilter, 'audio_path')
     expect(screen.getByRole('row', { name: /openai_audio_chat/ })).toBeInTheDocument()
     expect(screen.queryByRole('row', { name: /openai_chat_gpt4/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('row', { name: /azure_image_dalle/ })).not.toBeInTheDocument()

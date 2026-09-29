@@ -301,7 +301,7 @@ The Configuration view manages the targets available for attacks.
 
 #### Target Table
 
-Lists all registered targets with their type, endpoint, model name, and supported input and output modalities. Two dropdowns above the table filters select your defaults. Each option shows the registry name and model, when available:
+Lists all registered targets with their type, endpoint, model name, and supported input and output modalities. Two dropdowns above the table select your defaults. Each option shows the registry name and model, when available:
 
 - **Default objective target:** Preselected for new chats and scanner runs.
 - **Default adversarial target:** Preselected for scanner runs that use the shared adversarial target. The target must support multi-turn conversations. Without a saved selection, the GUI preselects the registered `adversarial_chat` target, which the target initializer configures from `ADVERSARIAL_CHAT_*` environment variables. A saved user selection takes priority.
