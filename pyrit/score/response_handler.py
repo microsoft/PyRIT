@@ -191,6 +191,20 @@ class ResponseHandler(abc.ABC):
             return None
         return self._replay_identifier()
 
+    def _legacy_replay_identifiers(
+        self, *, response_text: str, category: Sequence[str] | str | None
+    ) -> list[dict[str, Any]]:
+        """
+        Return older replay contracts that would parse ``response_text`` exactly like this handler.
+
+        Lets observations acquired before a parser option existed keep replaying when that option
+        makes no difference for them.
+
+        Returns:
+            list[dict[str, Any]]: Older replay identifiers, none by default.
+        """
+        return []
+
     def _replay_identifier(self) -> dict[str, Any] | None:
         """
         Return stable parser configuration for observation replay.
@@ -308,6 +322,28 @@ class JsonSchemaResponseHandler(ResponseHandler):
             **({"prefer_response_category": True} if self._prefer_response_category else {}),
         }
 
+    def _legacy_replay_identifiers(
+        self, *, response_text: str, category: Sequence[str] | str | None
+    ) -> list[dict[str, Any]]:
+        """
+        Return the contract from before ``prefer_response_category`` when it parses this response the same way.
+
+        Returns:
+            list[dict[str, Any]]: The old identifier, unless both the response and the argument give a category.
+        """
+        if not self._prefer_response_category:
+            return []
+        if category is not None:
+            try:
+                parsed = json.loads(remove_markdown_json(response_text))
+            except json.JSONDecodeError:
+                return []
+            if not isinstance(parsed, dict) or parsed.get(self._category_output_key) is not None:
+                return []
+        legacy = self._replay_identifier()
+        del legacy["prefer_response_category"]
+        return [legacy]
+
     def parse(
         self,
         *,
@@ -413,6 +449,24 @@ class TrueFalseResponseHandler(ResponseHandler):
             "version": 1,
             "wrapped": wrapped,
         }
+
+    def _legacy_replay_identifiers(
+        self, *, response_text: str, category: Sequence[str] | str | None
+    ) -> list[dict[str, Any]]:
+        """
+        Wrap the inner handler's legacy contracts the same way ``_replay_identifier`` wraps its current one.
+
+        Returns:
+            list[dict[str, Any]]: The wrapped legacy identifiers.
+        """
+        if self._response_handler._get_replay_identifier() is None:
+            return []
+        return [
+            {"handler": f"{type(self).__module__}.{type(self).__qualname__}", "version": 1, "wrapped": wrapped}
+            for wrapped in self._response_handler._legacy_replay_identifiers(
+                response_text=response_text, category=category
+            )
+        ]
 
     def parse(
         self,

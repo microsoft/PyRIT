@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import json
 import uuid
 from collections.abc import Sequence
 from contextlib import closing
@@ -1325,4 +1326,84 @@ async def test_blocked_judgment_fallback_retains_error_observation_async(
 
     scorer.raise_if_scorer_blocks = True
     with pytest.raises(NonReplayableObservationError, match="raise_if_scorer_blocks=False"):
+        await scorer.score_observation_async(observation=observation, expectation=expectation)
+
+
+_LEGACY_GENERAL_SCORERS = [(SelfAskGeneralFloatScaleScorer, "5"), (SelfAskGeneralTrueFalseScorer, "true")]
+
+
+def _general_scorer(scorer_type: type[Scorer], *, target: MagicMock, category: str | None) -> Scorer:
+    if scorer_type is SelfAskGeneralFloatScaleScorer:
+        scale = NumericRange(minimum_value=0, maximum_value=10, category=category)
+        return SelfAskGeneralFloatScaleScorer(chat_target=target, system_prompt_format_string="Judge.", scale=scale)
+    return SelfAskGeneralTrueFalseScorer(chat_target=target, system_prompt_format_string="Judge.", category=category)
+
+
+def _pre_prefer_response_category_identifier():
+    """Mimic the handler contract from before prefer_response_category existed."""
+    current = JsonSchemaResponseHandler._replay_identifier
+
+    def legacy(self: JsonSchemaResponseHandler) -> dict[str, Any]:
+        identifier = current(self)
+        identifier.pop("prefer_response_category", None)
+        return identifier
+
+    return patch.object(JsonSchemaResponseHandler, "_replay_identifier", legacy)
+
+
+@pytest.mark.parametrize(("scorer_type", "raw_score"), _LEGACY_GENERAL_SCORERS)
+@pytest.mark.parametrize(
+    ("response_category", "configured_category", "expected_category"),
+    [(None, "harm", ["harm"]), ("violence", None, ["violence"])],
+    ids=["no_response_category", "no_configured_category"],
+)
+async def test_general_scorer_replays_observations_from_before_prefer_response_category_async(
+    sqlite_instance: MemoryInterface,
+    scorer_type: type[Scorer],
+    raw_score: str,
+    response_category: str | None,
+    configured_category: str | None,
+    expected_category: list[str],
+) -> None:
+    body = {"score_value": raw_score, "rationale": "r"}
+    if response_category:
+        body["category"] = response_category
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.send_prompt_async = AsyncMock(return_value=_response(json.dumps(body)))
+    scorer = _general_scorer(scorer_type, target=target, category=configured_category)
+    expectation = ScoringExpectation(objective="Judge this response")
+    with _pre_prefer_response_category_identifier():
+        live = (
+            await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
+        )[0]
+    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+
+    replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+
+    assert replay.score_value == live.score_value
+    assert replay.score_category == expected_category
+    assert target.send_prompt_async.call_count == 1
+
+
+@pytest.mark.parametrize(("scorer_type", "raw_score"), _LEGACY_GENERAL_SCORERS)
+async def test_general_scorer_rejects_old_observation_when_both_categories_are_given_async(
+    sqlite_instance: MemoryInterface,
+    scorer_type: type[Scorer],
+    raw_score: str,
+) -> None:
+    body = json.dumps({"score_value": raw_score, "rationale": "r", "category": "violence"})
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.send_prompt_async = AsyncMock(return_value=_response(body))
+    scorer = _general_scorer(scorer_type, target=target, category="harm")
+    expectation = ScoringExpectation(objective="Judge this response")
+    with _pre_prefer_response_category_identifier():
+        live = (
+            await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
+        )[0]
+    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+
+    # The old handler raised on this response, so the new precedence rule must not replay it silently.
+    with pytest.raises(NonReplayableObservationError, match="handler or category"):
         await scorer.score_observation_async(observation=observation, expectation=expectation)
