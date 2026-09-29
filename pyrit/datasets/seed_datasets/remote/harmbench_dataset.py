@@ -54,7 +54,7 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
         return "harmbench"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch HarmBench dataset and return as SeedDataset.
 

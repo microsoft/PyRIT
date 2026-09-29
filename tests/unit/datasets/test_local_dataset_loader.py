@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedOrigin, SeedPrompt
 
 
 class TestLocalDatasetLoader:
@@ -20,6 +21,7 @@ description: Test description
 seeds:
   - value: test prompt
     data_type: text
+    origin: local
 """
 
     def test_init(self, tmp_path, valid_yaml_content):
@@ -49,6 +51,7 @@ seeds:
         assert dataset.dataset_name == "test_dataset"
         assert len(dataset.prompts) == 1
         assert dataset.prompts[0].value == "test prompt"
+        assert dataset.seeds[0].origin is SeedOrigin.LOCAL
 
     async def test_fetch_dataset_offloads_file_read(self, tmp_path: Path) -> None:
         """Dataset file loading runs outside the event loop thread."""
@@ -74,6 +77,17 @@ seeds:
         assert dataset is expected
         to_thread_mock.assert_awaited_once_with(load_mock, file_path)
         load_mock.assert_not_called()
+
+    async def test_fetch_dataset_rejects_conflicting_origin_async(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "conflicting.yaml"
+        await asyncio.to_thread(
+            file_path.write_text,
+            "dataset_name: conflict\nseeds:\n  - value: test\n    origin: remote\n",
+            encoding="utf-8",
+        )
+        loader = await asyncio.to_thread(_LocalDatasetLoader, file_path=file_path)
+        with pytest.raises(ValueError, match="declares origin 'remote'"):
+            await loader.fetch_dataset_async()
 
     async def test_parse_metadata_offloads_file_read(self, tmp_path: Path) -> None:
         """Metadata YAML parsing runs outside the event loop thread."""

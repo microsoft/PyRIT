@@ -18,10 +18,10 @@ from pyrit.models import SeedDataset
 
 class ConcreteRemoteLoader(_RemoteDatasetLoader):
     @property
-    def dataset_name(self):
+    def dataset_name(self) -> str:
         return "test_remote"
 
-    async def fetch_dataset_async(self):
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         return SeedDataset(prompts=[])
 
 

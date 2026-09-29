@@ -98,7 +98,7 @@ class TestRemoteFilteringIntegration:
 
         captured_name = name
 
-        async def _fetch_dataset(self, *, cache=True):
+        async def _fetch_dataset_async(self: _RemoteDatasetLoader, *, cache: bool = True) -> SeedDataset:
             return SeedDataset(
                 seeds=[SeedPrompt(value="x", data_type="text")],
                 dataset_name=captured_name,
@@ -113,7 +113,7 @@ class TestRemoteFilteringIntegration:
             "__module__": __name__,
             # Concrete implementations satisfy ABC requirements
             "dataset_name": property(lambda self: captured_name),
-            "fetch_dataset_async": _fetch_dataset,
+            "_fetch_dataset_async": _fetch_dataset_async,
             "_fetch_from_url": lambda self, **kw: [],
         }
 

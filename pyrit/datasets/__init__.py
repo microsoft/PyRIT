@@ -16,8 +16,10 @@ if TYPE_CHECKING:
         SeedDatasetLoadTime,
         SeedDatasetMetadata,
     )
+    from pyrit.datasets.seed_datasets.target_objective_provider import TargetObjectiveProvider
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "TargetObjectiveProvider": "pyrit.datasets.seed_datasets.target_objective_provider",
     "SeedDatasetFilter": "pyrit.datasets.seed_datasets.seed_metadata",
     "SeedDatasetMetadata": "pyrit.datasets.seed_datasets.seed_metadata",
     "SeedDatasetLoadTime": "pyrit.datasets.seed_datasets.seed_metadata",

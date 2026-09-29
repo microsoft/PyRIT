@@ -48,6 +48,10 @@
 #
 # Remote datasets are typically fetched from URLs or HuggingFace. To add one, create a `_RemoteDatasetLoader` subclass with helper functions for parsing, caching, and downloading. These loaders are automatically discovered by `SeedDatasetProvider`.
 #
+# Implement `_fetch_dataset_async` to return the dataset without setting origin. Callers use
+# the inherited `fetch_dataset_async`, which assigns `REMOTE` to every seed, including when
+# loading an explicit source file or a cached download. Local YAML loading assigns `LOCAL`.
+#
 # ### Example: DarkBench Remote Loader
 #
 # Below is a simplified version of the [`DarkBenchDataset`](../../../pyrit/datasets/seed_datasets/remote/darkbench_dataset.py) loader.
@@ -64,7 +68,7 @@ class SimpleDarkBench(_RemoteDatasetLoader):
     def dataset_name(self) -> str:
         return "dark_bench"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         # Fetch from HuggingFace
         data = await self._fetch_from_huggingface_async(
             dataset_name="apart/darkbench",
