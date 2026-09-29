@@ -198,6 +198,13 @@ class Converter(Identifiable):
         """
         return self._seed
 
+    @staticmethod
+    def _mark_converted(text: str, *, start_token: str, end_token: str) -> str:
+        # A nested selective converter already marks its own output, so wrapping it again would nest the tokens.
+        if start_token in text:
+            return text
+        return f"{start_token}{text}{end_token}"
+
     async def convert_tokens_async(
         self,
         *,
@@ -243,7 +250,8 @@ class Converter(Identifiable):
             result = await self.convert_async(prompt=prompt, input_type=input_type)
             if keep_tokens and result.output_type == "text":
                 result = ConverterResult(
-                    output_text=f"{start_token}{result.output_text}{end_token}", output_type="text"
+                    output_text=self._mark_converted(result.output_text, start_token=start_token, end_token=end_token),
+                    output_type="text",
                 )
             return result
 
@@ -260,7 +268,9 @@ class Converter(Identifiable):
         previous_end = 0
         for (start, end), converted in zip(spans, converted_parts, strict=True):
             converted_text = (
-                f"{start_token}{converted.output_text}{end_token}" if keep_tokens else converted.output_text
+                self._mark_converted(converted.output_text, start_token=start_token, end_token=end_token)
+                if keep_tokens
+                else converted.output_text
             )
             parts.extend((prompt[previous_end:start], converted_text))
             previous_end = end

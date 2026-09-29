@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
+from typing import Any
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.converter.text_selection_strategy import (
@@ -163,18 +165,32 @@ class SelectiveTextConverter(Converter):
         # If using TokenSelectionStrategy, delegate to convert_tokens_async
         if self._is_token_based:
             # With preserve_tokens, each converted region keeps its own tokens so later stages still see only
-            # the originally selected text as marked.
-            return await self._sub_converter.convert_tokens_async(
+            # the originally selected text as marked. keep_tokens is only passed when needed and supported, so
+            # custom overrides with the older convert_tokens_async signature keep working.
+            kwargs: dict[str, Any] = {}
+            if self._preserve_tokens and self._accepts_keep_tokens():
+                kwargs["keep_tokens"] = True
+            result = await self._sub_converter.convert_tokens_async(
                 prompt=prompt,
                 input_type="text",
                 start_token=self._start_token,
                 end_token=self._end_token,
-                keep_tokens=self._preserve_tokens,
+                **kwargs,
             )
+            if self._preserve_tokens and not kwargs and self._start_token not in result.output_text:
+                # Older override without keep_tokens: fall back to wrapping the whole result.
+                result = ConverterResult(
+                    output_text=f"{self._start_token}{result.output_text}{self._end_token}", output_type="text"
+                )
+            return result
 
         if self._is_word_level:
             return await self._convert_word_level_async(prompt=prompt)
         return await self._convert_char_level_async(prompt=prompt)
+
+    def _accepts_keep_tokens(self) -> bool:
+        parameters = inspect.signature(self._sub_converter.convert_tokens_async).parameters.values()
+        return any(p.name == "keep_tokens" or p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters)
 
     async def _convert_word_level_async(self, *, prompt: str) -> ConverterResult:
         """

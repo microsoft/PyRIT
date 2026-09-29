@@ -9,6 +9,7 @@ from pyrit.converter import (
     ROT13Converter,
     SelectiveTextConverter,
 )
+from pyrit.converter.converter import ConverterResult
 from pyrit.converter.text_selection_strategy import (
     IndexSelectionStrategy,
     KeywordSelectionStrategy,
@@ -21,6 +22,7 @@ from pyrit.converter.text_selection_strategy import (
     WordPositionSelectionStrategy,
     WordProportionSelectionStrategy,
 )
+from pyrit.models import PromptDataType
 
 
 class TestSelectiveTextConverter:
@@ -340,3 +342,51 @@ class TestTokenSelectionChaining:
         result = await converter.convert_async(prompt="hello")
 
         assert result.output_text == "⟪uryyb⟫"
+
+    async def test_nested_selective_converter_keeps_one_pair_of_markers(self):
+        inner = SelectiveTextConverter(
+            sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+        )
+        outer = SelectiveTextConverter(
+            sub_converter=inner, selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+        )
+        later = SelectiveTextConverter(
+            sub_converter=Base64Converter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+        )
+
+        nested = (await outer.convert_async(prompt="prefix ⟪word⟫ suffix")).output_text
+        assert nested == "prefix ⟪jbeq⟫ suffix"
+
+        result = await later.convert_async(prompt=nested)
+        assert result.output_text == "prefix ⟪amJlcQ==⟫ suffix"
+
+
+class _LegacyTokenConverter(ROT13Converter):
+    """A custom converter overriding convert_tokens_async with the older signature (no keep_tokens)."""
+
+    async def convert_tokens_async(
+        self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
+    ) -> ConverterResult:
+        return ConverterResult(
+            output_text=prompt.replace(start_token, "").replace(end_token, "").upper(), output_type="text"
+        )
+
+
+class TestLegacyConvertTokensOverride:
+    async def test_override_without_keep_tokens_works_by_default(self):
+        converter = SelectiveTextConverter(
+            sub_converter=_LegacyTokenConverter(), selection_strategy=TokenSelectionStrategy()
+        )
+
+        result = await converter.convert_async(prompt="a ⟪b⟫ c")
+
+        assert result.output_text == "A B C"
+
+    async def test_override_without_keep_tokens_falls_back_to_wrapping_with_preserve_tokens(self):
+        converter = SelectiveTextConverter(
+            sub_converter=_LegacyTokenConverter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+        )
+
+        result = await converter.convert_async(prompt="a ⟪b⟫ c")
+
+        assert result.output_text == "⟪A B C⟫"
