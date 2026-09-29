@@ -25,6 +25,7 @@ import {
 import { Link } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
+import { useRuntime } from '@/hooks/useRuntime'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { RegisteredScenario, ScenarioDatasetSummary } from '@/types'
@@ -293,6 +294,7 @@ function ScenarioCatalogRow({ scenario, estimatesLoading }: ScenarioCatalogRowPr
 }
 
 export default function ScenarioCatalog() {
+  const { generation } = useRuntime()
   const styles = useScenarioCatalogStyles()
   const [scenarios, setScenarios] = useState<RegisteredScenario[]>([])
   const [loading, setLoading] = useState(true)
@@ -353,7 +355,7 @@ export default function ScenarioCatalog() {
     return () => {
       cancelled = true
     }
-  }, [refetchCount])
+  }, [refetchCount, generation])
 
   const handleRetry = useCallback(() => {
     setLoading(true)

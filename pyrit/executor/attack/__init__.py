@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from pyrit.executor.attack.single_turn import (
         ManyShotJailbreakAttack,
         PromptSendingAttack,
+        PromptSendingAttackParameters,
         SingleTurnAttackContext,
         SingleTurnAttackStrategy,
         SkeletonKeyAttack,
@@ -86,6 +87,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PAIRAttack": "pyrit.executor.attack.multi_turn",
     "PrependedConversationConfig": "pyrit.executor.attack.component",
     "PromptSendingAttack": "pyrit.executor.attack.single_turn",
+    "PromptSendingAttackParameters": "pyrit.executor.attack.single_turn",
     "RTASystemPromptPaths": "pyrit.executor.attack.multi_turn",
     "RedTeamingAttack": "pyrit.executor.attack.multi_turn",
     "SimulatedConversationResult": "pyrit.executor.attack.multi_turn",

@@ -147,6 +147,14 @@ class TrajectoryWorker:
             return self._grad(ob.control_toks)
         if operation is ModelWorkerOperation.LOGITS:
             return self._logits(ob, args[0])
+        if operation is ModelWorkerOperation.LOSS:
+            logits, token_ids = self._logits(ob, args[0])
+            return args[1].compute_loss(
+                logits=logits,
+                token_ids=token_ids,
+                target_slice=ob._target_slice,
+                control_slice=ob._control_slice,
+            )
         if operation is ModelWorkerOperation.TEST:
             return [(ob.control_str != ob.control_init, 0) for _ in ob]
         if operation is ModelWorkerOperation.TEST_LOSS:
