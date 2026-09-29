@@ -182,3 +182,30 @@ await custom_scenario.initialize_async()  # type: ignore
 
 custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)
+
+# %% [markdown]
+# ## Reporting Every Conversation
+#
+# `output_scenario_async` summarizes a run. To see what happened in each attack, use
+# `output_scenario_conversations_async` for one JSON document with every attack's conversation, or
+# `output_scenario_full_async` for the overview plus the conversations as JSON or a standalone HTML
+# report. Both read the conversations from memory and show only the objective score on each response,
+# like `pyrit_scan scenario-results --view conversations` and `--view full`. They include every attack
+# unless you pass `attack_result_ids` or `limit`, and HTML needs a sink such as `FileSink`. The example
+# writes both reports to a temporary folder; point `FileSink` at your own path to keep them.
+
+# %%
+import json
+import tempfile
+
+from pyrit.output import FileSink, output_scenario_conversations_async, output_scenario_full_async
+
+with tempfile.TemporaryDirectory() as report_dir:
+    conversations_path = Path(report_dir) / "conversations.json"
+    await output_scenario_conversations_async(custom_result, sink=FileSink(path=conversations_path))
+    conversations = json.loads(conversations_path.read_text(encoding="utf-8"))["conversations"]
+    print(f"{len(conversations)} conversations from: {[conversation['technique'] for conversation in conversations]}")
+
+    report_path = Path(report_dir) / "report.html"
+    await output_scenario_full_async(custom_result, format="html", sink=FileSink(path=report_path))
+    print(f"Wrote {report_path.name}")
