@@ -12,6 +12,7 @@ from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
 if TYPE_CHECKING:
+    from pyrit.prompt_target import PromptTarget
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
@@ -131,6 +132,7 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
         self,
         *,
         validator: ScorerPromptValidator,
+        chat_target: PromptTarget | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
         message_resolver: MessageScorableResolver | None = None,
     ) -> None:
@@ -139,11 +141,13 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
 
         Args:
             validator (ScorerPromptValidator): Custom validator.
+            chat_target (PromptTarget | None): Deprecated validation-only parameter, removed in 1.4.0.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
             message_resolver (MessageScorableResolver | None): Message evidence resolver.
         """
         super().__init__(
+            chat_target=chat_target,
             score_aggregator=score_aggregator,
             validator=validator,
             message_resolver=message_resolver,

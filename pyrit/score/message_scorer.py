@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Sequence
 
     from pyrit.memory import MemoryInterface
+    from pyrit.prompt_target import PromptTarget
     from pyrit.score.observation.target_judge import JudgmentRequest
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -287,6 +288,7 @@ class MessageScorer(Scorer):
         self,
         *,
         validator: ScorerPromptValidator,
+        chat_target: PromptTarget | None = None,
         message_resolver: MessageScorableResolver | None = None,
     ) -> None:
         """
@@ -294,6 +296,7 @@ class MessageScorer(Scorer):
 
         Args:
             validator (ScorerPromptValidator): Validator for message pieces.
+            chat_target (PromptTarget | None): Deprecated validation-only parameter, removed in 1.4.0.
             message_resolver (MessageScorableResolver | None): Evidence resolver.
 
         Raises:
@@ -315,7 +318,7 @@ class MessageScorer(Scorer):
                 )
         self._validator = validator
         self._message_resolver = message_resolver or MessageScorableResolver()
-        super().__init__()
+        super().__init__(chat_target=chat_target)
 
     def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
         """

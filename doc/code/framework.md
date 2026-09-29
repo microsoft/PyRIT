@@ -293,7 +293,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Scorer trees check that all conditions have a matching leaf. Wrappers route supported subsets
   to their children; leaves reject unsupported conditions. Typed message scorers receive criteria
   through `_score_piece_with_expectation_async`; old objective-only hooks must not discard
-  conditions they claim to match. Subclasses of a migrated scorer must use its typed hook.
+  conditions they claim to match. Subclasses of a migrated scorer must use its typed hook;
+  hidden legacy overrides fail at construction rather than silently changing a verdict.
 - A condition-based leaf declares one `CONDITION_TYPE` and requires exactly one condition of that
   type. Constructor-configured leaves declare none. Shared validation rejects missing and duplicate
   conditions before scoring. Wrappers expose their children; `get_condition_types()` derives their

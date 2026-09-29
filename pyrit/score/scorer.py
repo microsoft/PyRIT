@@ -195,12 +195,15 @@ class Scorer(Identifiable, abc.ABC):
     def __init__(
         self,
         *,
+        chat_target: PromptTarget | None = None,
         validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the Scorer.
 
         Args:
+            chat_target (PromptTarget | None): Deprecated validation-only compatibility parameter,
+                removed in 1.4.0. Does not store a target or create a judge.
             validator (ScorerPromptValidator | None): Deprecated. Message validation moved to
                 ``MessageScorer``; a value passed here is kept so pre-2.0 subclasses keep working.
         """
@@ -212,6 +215,13 @@ class Scorer(Identifiable, abc.ABC):
             )
             if getattr(self, "_validator", None) is None:
                 self._validator = validator
+        if chat_target is not None:
+            print_deprecation_message(
+                old_item="Scorer.__init__(chat_target=...)",
+                new_item="TargetJudge(target=..., requirements=...)",
+                removed_in="1.4.0",
+            )
+            type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
 
     @property
     @final

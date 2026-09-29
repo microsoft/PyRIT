@@ -107,14 +107,24 @@ print(df.to_string(index=False))
 # accepts a `MessageTrueFalseScorer` or `MessageFloatScaleScorer` and builds a compatible
 # subclass that evaluates a whole conversation.
 #
+# ### Custom scorer migration
+#
 # Concrete judge constructors still accept `chat_target`. Generic `Scorer` and message-family
-# bases no longer do. Custom subclasses must remove `super().__init__(chat_target=...)`:
-# initialize the message validator through the base, then compose
+# bases accept it with a deprecation warning until 1.4.0. This parameter only validates target
+# requirements; it does not store a target or create a judge. To migrate, remove the target
+# argument from the base call, initialize the message validator through the base, then compose
 # `TargetJudge(target=chat_target, requirements=self.TARGET_REQUIREMENTS)` at the concrete scorer.
 # Keep `_prompt_target` for `get_chat_target()` compatibility. Pass the effective expectation
 # in `JudgmentRequest` from `_score_piece_with_expectation_async`; keep prompt rendering and
 # verdict conversion in the scorer. Call `_capture_judgment_evidence` before sending a prepared
 # request. The request itself does not read ambient context. Raw sources do not receive criteria.
+#
+# **Hook migration is required:** a subclass of a migrated scorer that overrides only
+# `_score_piece_async` raises `TypeError` at construction, including for objective-only use.
+# Move that override and its `super()` call to `_score_piece_with_expectation_async`, and
+# forward the complete expectation. PyRIT does not silently bypass the old override or infer
+# how to combine both hooks. Legacy hooks on unmigrated leaves still work for objective-only
+# calls, but cannot accept other typed criteria.
 #
 # Generic family scorers consume a `Scorable` without assuming that it resolves to a
 # message. Message scorers also support message-specific entry points and policy. Generic
