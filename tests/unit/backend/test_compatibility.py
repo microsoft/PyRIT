@@ -4,6 +4,7 @@
 """Strict lockstep behavior through the production middleware ordering."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -19,6 +20,9 @@ from pyrit.backend.main import app, lifespan
 from pyrit.backend.middleware.auth import AuthenticatedUser, EntraAuthMiddleware
 from pyrit.backend.middleware.compatibility import CompatibilityAPI, CompatibilityMiddleware
 from pyrit.backend.routes.version import VersionResponse
+from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
+from pyrit.memory import CentralMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 
@@ -302,6 +306,53 @@ def test_version_is_neutral_but_authenticated(
     assert "compatibility_id" in VersionResponse.model_json_schema()["required"]
 
 
+@pytest.mark.parametrize("fail_startup", [False, True], ids=["initializing", "restart-required"])
+async def test_version_handshake_preserves_runtime_recovery_async(
+    guarded_app: FastAPI,
+    compatibility_id: str,
+    compatibility_headers: dict[str, str],
+    graph_user: AuthenticatedUser,
+    tmp_path: Path,
+    fail_startup: bool,
+) -> None:
+    config_path = tmp_path / "broken.yaml"
+    config_path.write_text("broken: [", encoding="utf-8")
+    source = ConfigurationFileService(config_file_value=str(config_path))
+    runtime = RuntimeLifecycle(app=guarded_app, source=source)
+    guarded_app.state.runtime_lifecycle = runtime
+    guarded_app.state.configuration_file_service = source
+    if fail_startup:
+        await runtime.startup_async()
+    assert runtime.state == ("restart-required" if fail_startup else "initializing")
+    graph_user.is_admin = True
+    auth_headers = {"Authorization": "Bearer token"}
+    business_headers = {**auth_headers, **compatibility_headers}
+    with (
+        TestClient(guarded_app) as client,
+        patch.object(EntraAuthMiddleware, "_authenticate_with_graph_async", return_value=graph_user),
+        patch.object(CentralMemory, "get_memory_instance", side_effect=RuntimeError("Memory unavailable")),
+    ):
+        assert client.get("/api/version").status_code == 401
+        version = client.get("/api/version", headers=auth_headers)
+        assert version.status_code == 200
+        assert version.json()["compatibility_id"] == compatibility_id
+        assert version.json()["database_info"] is None
+        assert version.headers["x-content-type-options"] == "nosniff"
+        assert version.headers["x-request-id"]
+
+        configuration = client.get("/api/config", headers=business_headers)
+        assert configuration.status_code == 200
+        assert configuration.json()["content"] == "broken: ["
+        for marker, expected_status in [(None, 400), ("invalid", 400), ("0.14.0+g" + "b" * 40, 409)]:
+            headers = dict(auth_headers)
+            if marker is not None:
+                headers[_compatibility.COMPATIBILITY_HEADER] = marker
+            assert client.get("/api/config", headers=headers).status_code == expected_status
+
+        assert client.post("/api/compatibility-probe", headers=business_headers).status_code == 503
+        assert guarded_app.state.effects == []
+
+
 def test_auth_access_is_guarded_then_authorized(
     guarded_client: TestClient, compatibility_headers: dict[str, str], graph_user: AuthenticatedUser
 ) -> None:
@@ -440,17 +491,16 @@ async def test_lifespan_identity_is_shared_by_guard_and_version(
 ) -> None:
     del guarded_app.state.compatibility_id
     startup_id = "0.14.0+g" + "b" * 40
+    scenario_run_service = MagicMock(
+        reconcile_interrupted_runs_async=AsyncMock(return_value=0),
+        shutdown_async=AsyncMock(),
+    )
     with (
         patch.object(_compatibility, "get_compatibility_id", return_value=startup_id) as startup_reader,
         patch.object(ConfigurationLoader, "load_with_overrides", return_value=ConfigurationLoader()),
         patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
-        patch(
-            "pyrit.backend.main.get_scenario_run_service",
-            return_value=MagicMock(
-                reconcile_interrupted_runs_async=AsyncMock(return_value=0),
-                shutdown_async=AsyncMock(),
-            ),
-        ),
+        patch("pyrit.backend.services.runtime_lifecycle.get_scenario_run_service", return_value=scenario_run_service),
+        patch("pyrit.backend.services.runtime_lifecycle.peek_scenario_run_service", return_value=scenario_run_service),
         patch("pyrit.backend.main.setup_frontend"),
         patch.object(EntraAuthMiddleware, "_authenticate_with_graph_async", return_value=graph_user),
     ):
@@ -476,6 +526,8 @@ async def test_lifespan_identity_is_shared_by_guard_and_version(
     assert mismatched.status_code == 409
     assert mismatched.json()["expected"] == startup_id
     startup_reader.assert_called_once()
+    scenario_run_service.reconcile_interrupted_runs_async.assert_awaited_once()
+    scenario_run_service.shutdown_async.assert_awaited_once()
 
 
 @pytest.mark.parametrize("reason", ["missing stamp", "malformed stamp"])
