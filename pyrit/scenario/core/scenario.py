@@ -1105,21 +1105,9 @@ class Scenario(ABC):
         Returns:
             ScenarioRunPlan: The versioned run plan.
         """
-        return self._build_run_plan_from(atomic_attacks=self._atomic_attacks)
-
-    def _build_run_plan_from(self, *, atomic_attacks: Sequence[AtomicAttack]) -> ScenarioRunPlan:
-        """
-        Build the normalized run plan for the given atomic attacks.
-
-        Args:
-            atomic_attacks (Sequence[AtomicAttack]): The atomic attacks to describe.
-
-        Returns:
-            ScenarioRunPlan: The versioned run plan.
-        """
         seed_groups: dict[str, ScenarioRunPlanSeedGroup] = {}
         atomic_groups: list[ScenarioRunPlanAtomicGroup] = []
-        for atomic_attack in atomic_attacks:
+        for atomic_attack in self._atomic_attacks:
             technique_name = atomic_attack.technique_name
             if not isinstance(technique_name, str):
                 technique_name = atomic_attack.display_group
@@ -1129,7 +1117,7 @@ class Scenario(ABC):
             )
             seed_group_ids: list[str] = []
             seen_seed_group_ids: set[str] = set()
-            for seed_group in atomic_attack.seed_groups:
+            for seed_group in self._get_planned_seed_groups(atomic_attack=atomic_attack):
                 seed_group_id = seed_group.logical_id
                 if seed_group_id in seen_seed_group_ids:
                     continue
@@ -1172,6 +1160,19 @@ class Scenario(ABC):
             atomic_groups=atomic_groups,
             seed_groups=list(seed_groups.values()),
         )
+
+    def _get_planned_seed_groups(self, *, atomic_attack: AtomicAttack) -> Sequence[AttackSeedGroup]:
+        """
+        Return the seed groups the run plan lists for an atomic attack.
+
+        Args:
+            atomic_attack (AtomicAttack): The initialized atomic attack.
+
+        Returns:
+            Sequence[AttackSeedGroup]: The attack's seed groups. Subclasses that satisfy some
+                objectives without executing them (like cached benchmark results) add those back.
+        """
+        return atomic_attack.seed_groups
 
     @staticmethod
     def _get_atomic_group_id(*, atomic_attack: AtomicAttack) -> str:

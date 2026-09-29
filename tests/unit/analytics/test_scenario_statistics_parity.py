@@ -22,13 +22,17 @@ from pyrit.common.utils import to_sha256
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     ComponentIdentifier,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
     ScenarioRunState,
+    SeedObjective,
+    SeedPrompt,
 )
 from pyrit.output.scenario_result.json import JsonScenarioResultPrinter
 from unit.mocks import make_scenario_result
@@ -43,6 +47,8 @@ class _Attempt:
     outcome: AttackOutcome
     eval_hash: str | None = "eval"
     seed_group_id: str | None = None
+    # Prompt context carried only by the atomic identifier's seeds, like legacy rows without seed attribution.
+    seed_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -140,6 +146,15 @@ _HISTORIES = {
             _Attempt("attack", "A", AttackOutcome.SUCCESS, eval_hash=None, seed_group_id="a"),
         ],
     ),
+    "legacy_seed_groups_sharing_an_objective": _History(
+        # No saved plan or seed attribution; the atomic identifiers' seeds tell the two seed groups apart,
+        # so these are two units (one recovered from an error), not one unit retried.
+        attempts=[
+            _Attempt("attack", "A", AttackOutcome.FAILURE, seed_context="context one"),
+            _Attempt("attack", "A", AttackOutcome.ERROR, seed_context="context two"),
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_context="context two"),
+        ],
+    ),
     "display_groups": _History(
         plan=_plan(
             _group(name="base64", eval_hash="e1", seed_ids=["a", "b"], display_group="encoding"),
@@ -171,6 +186,7 @@ _EXPECTED_OVERALL = {
     "legacy_error_matched_by_saved_plan": 100,
     "technique_configurations_sharing_a_name": 50,
     "legacy_attempt_with_ambiguous_name": 0,
+    "legacy_seed_groups_sharing_an_objective": 50,
     "display_groups": 50,
     "empty_history": None,
 }
@@ -197,6 +213,14 @@ def _persist(memory: MemoryInterface, history: _History) -> str:
             attribution_data["parent_eval_hash"] = attempt.eval_hash
         if attempt.seed_group_id is not None:
             attribution_data["seed_group_id"] = attempt.seed_group_id
+        atomic_attack_identifier = None
+        if attempt.seed_context is not None:
+            atomic_attack_identifier = AtomicAttackIdentifier.build(
+                attack_identifier=ComponentIdentifier(class_name="MockAttack", class_module="tests"),
+                seed_group=AttackSeedGroup(
+                    seeds=[SeedObjective(value=attempt.objective), SeedPrompt(value=attempt.seed_context)]
+                ),
+            )
         attack_results.append(
             AttackResult(
                 conversation_id=f"conversation-{index}",
@@ -205,6 +229,7 @@ def _persist(memory: MemoryInterface, history: _History) -> str:
                 timestamp=_T0 + timedelta(seconds=index),
                 attribution_parent_id=str(scenario_result_id),
                 attribution_data=attribution_data,
+                atomic_attack_identifier=atomic_attack_identifier,
             )
         )
     if attack_results:

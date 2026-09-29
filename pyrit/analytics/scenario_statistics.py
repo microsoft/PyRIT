@@ -170,8 +170,8 @@ def resolve_execution_unit(
 
     The atomic group is the planned group matching the atomic attack name and technique configuration,
     or a hash of both for attempts the plan does not describe. The seed group comes from, in order: the
-    persisted attribution, the atomic identifier's logical seed group, a unique objective match in the
-    planned group, and finally a hash of the objective (legacy rows).
+    persisted attribution, an objective match in the planned group, the atomic identifier's seeds, and
+    finally a hash of the objective (legacy rows). The SQL history query follows the same order.
 
     Returns:
         ScenarioExecutionUnit: The resolved execution unit.
@@ -187,8 +187,6 @@ def resolve_execution_unit(
         atomic_group_id = planned_group.id
 
     seed_group_id = attributed_seed_group_id or ""
-    if not seed_group_id and atomic_attack_identifier is not None and atomic_attack_identifier.seed_identifiers:
-        seed_group_id = atomic_attack_identifier.logical_seed_group_id
     if not seed_group_id:
         matching_seed_ids = plan_lookup.seed_ids_by_group_and_objective.get(
             (atomic_group_id, objective_sha256 or to_sha256(objective)),
@@ -196,6 +194,9 @@ def resolve_execution_unit(
         )
         if len(matching_seed_ids) == 1:
             seed_group_id = matching_seed_ids[0]
+    if not seed_group_id and atomic_attack_identifier is not None and atomic_attack_identifier.seed_identifiers:
+        # Keeps legacy seed groups that share an objective apart.
+        seed_group_id = atomic_attack_identifier.logical_seed_group_id
     if not seed_group_id:
         seed_group_id = config_hash({"objective": objective})
     return ScenarioExecutionUnit(atomic_group_id=atomic_group_id, seed_group_id=seed_group_id)

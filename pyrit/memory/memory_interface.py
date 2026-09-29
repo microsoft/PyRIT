@@ -1809,9 +1809,13 @@ class MemoryInterface(abc.ABC):
         """Return a compact persisted start-time expression when the backend supports one."""
         return literal(None)
 
-    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """
         Return backend-specific JSON expressions for scenario attempt unit attribution.
+
+        The expressions are the atomic attack name, the technique hash, the attributed seed group
+        (NULL when absent), and a key built from the atomic identifier's ordered seed hashes (NULL
+        when it has none).
 
         Raises:
             NotImplementedError: If the memory backend does not support Scenario history queries.
@@ -5207,14 +5211,25 @@ class MemoryInterface(abc.ABC):
         Returns:
             Any: A statement selecting one aggregate row per scenario run with attempts.
         """
-        atomic_name, technique_hash, seed_group_id = self._get_scenario_attempt_unit_expressions()
+        atomic_name, technique_hash, attributed_seed_group_id, identifier_seed_key = (
+            self._get_scenario_attempt_unit_expressions()
+        )
+        # Same fallback order as pyrit.analytics.scenario_statistics.resolve_execution_unit, minus the plan
+        # match: identifier seeds keep legacy seed groups sharing an objective apart, then the objective hash.
+        fallback_seed_id = func.coalesce(
+            attributed_seed_group_id,
+            literal("seeds:", Unicode).concat(type_coerce(identifier_seed_key, Unicode)),
+            AttackResultEntry.objective_sha256,
+            "",
+        )
         attempts = (
             select(
                 AttackResultEntry.id.label("attempt_id"),
                 AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
                 atomic_name.label("atomic_attack_name"),
                 technique_hash.label("technique_eval_hash"),
-                seed_group_id.label("seed_group_id"),
+                attributed_seed_group_id.label("attributed_seed_group_id"),
+                fallback_seed_id.label("seed_group_id"),
                 AttackResultEntry.objective_sha256.label("objective_sha256"),
                 AttackResultEntry.outcome.label("outcome"),
                 AttackResultEntry.timestamp.label("timestamp"),
@@ -5341,9 +5356,9 @@ class MemoryInterface(abc.ABC):
             )
             .subquery("history_planned_units")
         )
-        # An attempt persisted without seed-group attribution falls back to its objective hash,
-        # so it is matched against the planned seed group carrying that same objective hash.
-        seed_matches_exactly = planned.c.seed_group_id == attempts.c.seed_group_id
+        # An attempt persisted without seed-group attribution is matched to the planned seed group in its
+        # atomic group carrying the same objective hash (objectives are unique within an atomic group).
+        seed_matches_exactly = planned.c.seed_group_id == attempts.c.attributed_seed_group_id
         match_condition = and_(
             planned.c.scenario_result_id == attempts.c.scenario_result_id,
             planned.c.atomic_attack_name == attempts.c.atomic_attack_name,
@@ -5355,8 +5370,8 @@ class MemoryInterface(abc.ABC):
             or_(
                 seed_matches_exactly,
                 and_(
-                    attempts.c.seed_group_id == attempts.c.objective_sha256,
-                    planned.c.objective_sha256 == attempts.c.seed_group_id,
+                    attempts.c.attributed_seed_group_id.is_(None),
+                    planned.c.objective_sha256 == attempts.c.objective_sha256,
                 ),
             ),
         )

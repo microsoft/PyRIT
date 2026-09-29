@@ -730,7 +730,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """Return the persisted execution start without loading full scenario metadata."""
         return func.json_value(ScenarioResultEntry.scenario_metadata, "$.started_at")
 
-    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """Return SQL Server JSON expressions for persisted scenario attempt attribution."""
         atomic_name = func.coalesce(
             func.json_value(AttackResultEntry.attribution_data, '$."parent_collection"'),
@@ -740,12 +740,21 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             func.json_value(AttackResultEntry.attribution_data, '$."parent_eval_hash"'),
             "",
         )
-        seed_group_id = func.coalesce(
+        attributed_seed_group_id = func.nullif(
             func.json_value(AttackResultEntry.attribution_data, '$."seed_group_id"'),
-            AttackResultEntry.objective_sha256,
             "",
         )
-        return atomic_name, technique_hash, seed_group_id
+        identifier_seed_key = literal_column(
+            f"""(
+                SELECT STRING_AGG(CAST(JSON_VALUE([attempt_seed].[value], '$.hash') AS NVARCHAR(MAX)), ',')
+                    WITHIN GROUP (ORDER BY CAST([attempt_seed].[key] AS INT))
+                FROM OPENJSON(
+                    [{AttackResultEntry.__tablename__}].[atomic_attack_identifier],
+                    '$.children.seed_identifiers'
+                ) AS [attempt_seed]
+            )"""
+        )
+        return atomic_name, technique_hash, attributed_seed_group_id, identifier_seed_key
 
     def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
         """Return SQL Server run-plan expansions for planned units and planned seed groups."""
