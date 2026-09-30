@@ -17,6 +17,7 @@ from typing import (
 
 from openai.types.responses import FunctionToolParam, Response, ResponseOutputRefusal, ResponseOutputText
 from openai.types.shared import ReasoningEffort
+from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
@@ -33,8 +34,10 @@ from pyrit.models import (
     PromptDataType,
     PromptResponseError,
 )
+from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
 from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider, _ScopedToolProvider, collect_tools_async
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
@@ -79,6 +82,15 @@ class MessagePieceType(str, Enum):
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
 
+class _ResponseToolCallContent(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    type: str = Field(min_length=1, pattern=r"\S")
+    call_id: str | None = None
+    query: str | None = None
+    name: str | None = None
+    arguments: str | None = None
+
+
 class OpenAIResponseTarget(OpenAITarget):
     """
     Enables communication with endpoints that support the OpenAI Response API.
@@ -89,6 +101,7 @@ class OpenAIResponseTarget(OpenAITarget):
     https://platform.openai.com/docs/api-reference/responses/create
     """
 
+    _SUPPORTS_TOOL_CALL_HISTORY = True
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -124,6 +137,7 @@ class OpenAIResponseTarget(OpenAITarget):
         reasoning_summary: Literal["auto", "concise", "detailed"] | None = None,
         extra_body_parameters: dict[str, Any] | None = None,
         fail_on_missing_function: bool = False,
+        execute_tools: bool = True,
         custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
@@ -163,6 +177,10 @@ class OpenAIResponseTarget(OpenAITarget):
                 an unknown function or does not output a function; if False, return a structured error so we can
                 wrap it as function_call_output and let the model potentially recover
                 (e.g., pick another tool or ask for clarification).
+            execute_tools: Whether to execute returned calls locally. If False, return
+                the first response without running registered functions. Tool discovery,
+                provider scopes, and advertisement remain enabled. This does not disable
+                provider-hosted tools configured in extra_body_parameters.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
@@ -201,6 +219,8 @@ class OpenAIResponseTarget(OpenAITarget):
         self._tools_initialized = False
         self._tool_initialization_lock = asyncio.Lock()
         self._fail_on_missing_function: bool = fail_on_missing_function
+        self._execute_tools = execute_tools
+        self._suppress_tools = False
 
         # Extract the grammar 'tool' if one is present
         # See
@@ -215,6 +235,18 @@ class OpenAIResponseTarget(OpenAITarget):
                     tool_name = tool.get("name")
                     logger.debug("Detected grammar tool: %s", tool_name)
                     self._grammar_name = tool_name
+
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """Check stored tool history through the pure serializers used for sending."""
+        super().validate_tool_history(messages)
+        for message in messages:
+            for piece in message.message_pieces:
+                if piece.converted_value_data_type == "tool_call":
+                    self._serialize_tool_call(piece)
+                elif piece.converted_value_data_type == "function_call":
+                    self._serialize_function_call(piece)
+                elif piece.converted_value_data_type == "function_call_output":
+                    self._serialize_function_call_output(piece)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -231,6 +263,7 @@ class OpenAIResponseTarget(OpenAITarget):
                 "reasoning_effort": self._reasoning_effort,
                 "reasoning_summary": self._reasoning_summary,
                 "extra_body_parameters": self._extra_body_parameters,
+                "execute_tools": None if self._execute_tools else False,
                 "tools": sorted(
                     (self._to_openai_function_tool(tool=tool) for tool in self._direct_tools),
                     key=lambda tool: tool["name"],
@@ -297,16 +330,18 @@ class OpenAIResponseTarget(OpenAITarget):
         return {"role": "developer", "content": content}
 
     def _serialize_function_call(self, piece: MessagePiece) -> "ResponseFunctionToolCallParam":
-        stored = json.loads(piece.original_value)
+        call = parse_function_call(piece)
+        if not isinstance(call.function, FunctionCall):
+            raise ValueError("Function-call history requires structured function arguments.")
         return {
-            "type": stored["type"],
-            "call_id": stored["call_id"],
-            "name": stored["name"],
-            "arguments": stored["arguments"],
+            "type": "function_call",
+            "call_id": call.id,
+            "name": call.function.name,
+            "arguments": call.function.arguments,
         }
 
     def _serialize_tool_call(self, piece: MessagePiece) -> dict[str, Any]:
-        stored = json.loads(piece.original_value)
+        stored = _ResponseToolCallContent.model_validate_json(piece.converted_value).model_dump(exclude_unset=True)
         if stored.get("type") == "web_search_call":
             return {
                 "type": stored["type"],
@@ -318,13 +353,10 @@ class OpenAIResponseTarget(OpenAITarget):
         return filtered
 
     def _serialize_function_call_output(self, piece: MessagePiece) -> "FunctionCallOutput":
-        payload = json.loads(piece.original_value)
-        output = payload.get("output")
-        if not isinstance(output, str):
-            output = json.dumps(output, separators=(",", ":"))
+        call_id, output = parse_function_call_output(piece)
         return {
             "type": "function_call_output",
-            "call_id": payload["call_id"],
+            "call_id": call_id,
             "output": output,
         }
 
@@ -413,7 +445,8 @@ class OpenAIResponseTarget(OpenAITarget):
         Raises:
             ValueError: If the conversation contains an unsupported input.
         """
-        await self._initialize_tools_async()
+        if not self._suppress_tools:
+            await self._initialize_tools_async()
         input_items = await self._build_input_for_multi_modal_async(conversation)
 
         text_format = self._build_text_format(json_config=json_config)
@@ -433,7 +466,7 @@ class OpenAIResponseTarget(OpenAITarget):
         if self._extra_body_parameters:
             body_parameters.update(self._extra_body_parameters)
 
-        if self._tools:
+        if self._tools and not self._suppress_tools:
             advertised_tools = [self._to_openai_function_tool(tool=tool) for tool in self._tools]
             body_parameters["tools"] = [*body_parameters.get("tools", []), *advertised_tools]
 
@@ -591,7 +624,7 @@ class OpenAIResponseTarget(OpenAITarget):
             The normalizer will persist all of these to memory.
         """
         async with AsyncExitStack() as provider_stack:
-            for provider in self._tool_providers:
+            for provider in () if self._suppress_tools else self._tool_providers:
                 if isinstance(provider, _ScopedToolProvider):
                     await provider_stack.enter_async_context(provider.execution_scope_async())
             return await self._run_tool_call_loop_async(normalized_conversation=normalized_conversation)
@@ -613,6 +646,8 @@ class OpenAIResponseTarget(OpenAITarget):
             body = await self._construct_request_body_async(conversation=working_conversation, json_config=json_config)
 
             result = await self._send_model_request_async(body=body, request=message)
+            if not self._execute_tools:
+                return [result]
 
             # Add result to conversation and responses list
             working_conversation.append(result)

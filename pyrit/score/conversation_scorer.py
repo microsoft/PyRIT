@@ -133,7 +133,9 @@ class ConversationScorer(MessageScorer, ABC):
                 # A scorer can narrow this further: supported_roles=["user", "assistant"] leaves
                 # tool output out of the scored text.
                 if piece.api_role in ["user", "assistant", "tool"] and self._validator.is_role_supported(piece):
-                    role_display = "Assistant (simulated)" if piece.is_simulated else piece.api_role.capitalize()
+                    role_display = piece.api_role.capitalize()
+                    if piece.is_simulated:
+                        role_display += " (simulated)"
                     # For blocked pieces with partial content, use the partial content
                     # instead of the error JSON when should_score_blocked_content is enabled
                     if (
