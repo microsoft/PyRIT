@@ -15,7 +15,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import urlparse
 
 from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select, update
@@ -4801,7 +4801,8 @@ class MemoryInterface(abc.ABC):
         for (labels,) in are_rows:
             if not isinstance(labels, dict):
                 continue
-            for key, value in labels.items():
+            # Persisted JSON can contain legacy values outside the ORM's declared type.
+            for key, value in cast("Mapping[str, object]", labels).items():
                 if key in {"operator", "operation"}:
                     continue
                 if isinstance(value, str):
@@ -4820,6 +4821,7 @@ class MemoryInterface(abc.ABC):
                 .filter(AttackResultEntry.operator.isnot(None))
                 .distinct()
                 .all()
+                if value is not None
             ]
             operations = [
                 value
@@ -4827,6 +4829,7 @@ class MemoryInterface(abc.ABC):
                 .filter(AttackResultEntry.operation.isnot(None))
                 .distinct()
                 .all()
+                if value is not None
             ]
         return {"operators": sorted(operators), "operations": sorted(operations)}
 
@@ -5401,7 +5404,7 @@ class MemoryInterface(abc.ABC):
         for (labels,) in rows:
             if not isinstance(labels, dict):
                 continue
-            for key, value in labels.items():
+            for key, value in cast("Mapping[str, object]", labels).items():
                 if isinstance(value, str):
                     label_values.setdefault(key, set()).add(value)
         return {key: sorted(values) for key, values in sorted(label_values.items())}
