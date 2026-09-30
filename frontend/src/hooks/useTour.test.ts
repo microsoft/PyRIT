@@ -161,7 +161,7 @@ describe('useTour', () => {
 
   it('does not advance a missing-anchor step after the tour is cancelled', () => {
     document.querySelector('[data-tour="scanner-catalog"]')?.remove()
-    const deferredFrames: FrameRequestCallback[] = []
+    const deferredFrames: Parameters<typeof window.requestAnimationFrame>[0][] = []
     jest.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
       deferredFrames.push(cb)
       return 0
