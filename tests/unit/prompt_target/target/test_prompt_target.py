@@ -85,6 +85,39 @@ async def test_set_system_prompt_adds_memory(
     assert chats[0].api_role == "system"
 
 
+@pytest.mark.parametrize("multi_turn,editable_history", [(False, True), (True, False)])
+async def test_set_system_prompt_rejects_unsupported_history_without_writing(
+    azure_openai_target: OpenAIChatTarget, multi_turn: bool, editable_history: bool
+) -> None:
+    azure_openai_target.apply_capabilities(
+        capabilities=TargetCapabilities(supports_multi_turn=multi_turn, supports_editable_history=editable_history)
+    )
+    with pytest.raises(ValueError, match="multi-turn conversations and editable history"):
+        await azure_openai_target.set_system_prompt_async(system_prompt="rejected", conversation_id="unsupported")
+    assert await azure_openai_target._memory.get_message_pieces_async(conversation_id="unsupported") == []
+
+
+async def test_set_system_prompt_preserves_existing_conversation(azure_openai_target: OpenAIChatTarget) -> None:
+    memory = azure_openai_target._memory
+    piece = MessagePiece(role="user", original_value="existing", conversation_id="existing")
+    await memory.add_message_to_memory_async(request=piece.to_message())
+
+    with pytest.raises(RuntimeError, match="Conversation already exists"):
+        await azure_openai_target.set_system_prompt_async(system_prompt="rejected", conversation_id="existing")
+
+    stored = await memory.get_message_pieces_async(conversation_id="existing")
+    assert [(item.id, item.converted_value) for item in stored] == [(piece.id, "existing")]
+
+
+async def test_dispose_db_engine_awaits_memory_cleanup(azure_openai_target: OpenAIChatTarget) -> None:
+    with (
+        patch.object(azure_openai_target._memory, "dispose_engine_async", new_callable=AsyncMock) as dispose,
+        patch.object(azure_openai_target._memory, "dispose_engine", side_effect=AssertionError("Sync cleanup")),
+    ):
+        await azure_openai_target.dispose_db_engine_async()
+    dispose.assert_awaited_once()
+
+
 async def test_send_prompt_with_system_calls_chat_complete(
     azure_openai_target: OpenAIChatTarget,
     openai_response_json: dict,

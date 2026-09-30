@@ -73,6 +73,29 @@ async def test_get_similar_chat_messages_by_embedding(mock_memory_interface, sam
     assert similar_messages[0].metric == "cosine_similarity"
 
 
+async def test_embedding_search_skips_missing_vectors_and_includes_threshold_boundary(
+    mock_memory_interface: MagicMock, sample_message_pieces: Sequence[MessagePiece]
+) -> None:
+    matching = EmbeddingDataEntry(id=sample_message_pieces[0].id, embedding=[1.0, 0.0], embedding_type_name="test")
+    missing = EmbeddingDataEntry(id=sample_message_pieces[1].id, embedding=None, embedding_type_name="test")
+    orthogonal = EmbeddingDataEntry(id=sample_message_pieces[2].id, embedding=[0.0, 1.0], embedding_type_name="test")
+    mock_memory_interface.get_all_embeddings_async.return_value = [missing, matching, orthogonal]
+    mock_memory_interface.get_all_embeddings.return_value = [missing, matching, orthogonal]
+    analytics = ConversationAnalytics(memory_interface=mock_memory_interface)
+
+    actual = await analytics.get_similar_chat_messages_by_embedding_async(
+        chat_message_embedding=[1.0, 0.0], threshold=1.0
+    )
+    with pytest.warns(DeprecationWarning, match="get_similar_chat_messages_by_embedding"):
+        legacy = analytics.get_similar_chat_messages_by_embedding(chat_message_embedding=[1.0, 0.0], threshold=1.0)
+    for matches in (actual, legacy):
+        assert len(matches) == 1
+        assert matches[0].uuid == matching.id
+        assert matches[0].score == 1.0
+        assert matches[0].metric == "cosine_similarity"
+    mock_memory_interface.get_all_embeddings_async.assert_awaited_once()
+
+
 @pytest.mark.parametrize(
     "a,b",
     [

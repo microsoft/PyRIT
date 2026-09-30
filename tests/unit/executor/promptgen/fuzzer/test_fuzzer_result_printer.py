@@ -2,11 +2,14 @@
 # Licensed under the MIT license.
 
 import re
+from unittest.mock import patch
 
 import pytest
 
 from pyrit.converter import AnsiAttackConverter
 from pyrit.executor.promptgen.fuzzer import FuzzerResult, FuzzerResultPrinter
+from pyrit.memory import SQLiteMemory
+from pyrit.models import MessagePiece, Score, ScoreStatus
 
 # The printer's own colors are SGR sequences, so those are stripped before asserting - but only
 # when the printer was asked for them. With colors disabled nothing may reach the terminal.
@@ -22,6 +25,59 @@ def _assert_no_live_control_characters(printed: str, *, enable_colors: bool) -> 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestFuzzerResultPrinter:
+    @pytest.mark.parametrize("undetermined", [False, True])
+    async def test_formatted_result_reads_conversation_and_scores_async(
+        self, sqlite_instance: SQLiteMemory, capsys: pytest.CaptureFixture[str], undetermined: bool
+    ) -> None:
+        request = MessagePiece(role="user", original_value="test question", conversation_id="jailbreak")
+        response = MessagePiece(role="assistant", original_value="test answer", conversation_id="jailbreak")
+        for piece in (request, response):
+            await sqlite_instance.add_message_to_memory_async(request=piece.to_message())
+        await sqlite_instance.add_scores_to_memory_async(
+            scores=[
+                Score(
+                    score_type="true_false",
+                    score_value=None if undetermined else "true",
+                    status=ScoreStatus.UNDETERMINED if undetermined else ScoreStatus.COMPLETE,
+                    score_rationale="judge explanation",
+                    message_piece_id=response.id,
+                )
+            ]
+        )
+        result = FuzzerResult(jailbreak_conversation_ids=["jailbreak"])
+        with (
+            patch.object(sqlite_instance, "get_message_pieces", side_effect=AssertionError("Sync read")),
+            patch.object(sqlite_instance, "get_prompt_scores", side_effect=AssertionError("Sync score read")),
+        ):
+            await result.print_formatted_async(enable_colors=False, width=80)
+
+        output = capsys.readouterr().out
+        assert "Conversation 1 (ID: jailbreak)" in output
+        assert "USER:" in output and "test question" in output
+        assert "ASSISTANT:" in output and "test answer" in output
+        value = "undetermined" if undetermined else "True"
+        assert f"Score: {value} | judge explanation" in output
+        assert output.count("Score:") == 1
+        assert "\x1b" not in output
+
+    @pytest.mark.parametrize("conversation_ids", [[], ["missing"]])
+    async def test_formatted_result_handles_missing_conversations(
+        self, capsys: pytest.CaptureFixture[str], conversation_ids: list[str]
+    ) -> None:
+        await FuzzerResult(jailbreak_conversation_ids=conversation_ids).print_formatted_async(enable_colors=False)
+
+        output = capsys.readouterr().out
+        expected = "No conversation data found" if conversation_ids else "No jailbreak conversations found"
+        assert expected in output
+        assert "End of Fuzzer Results" in output
+
+    def test_legacy_formatted_result_warns_and_preserves_output(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.warns(DeprecationWarning, match="FuzzerResult.print_formatted"):
+            FuzzerResult(successful_templates=["example {{ prompt }}"]).print_formatted(enable_colors=False)
+        output = capsys.readouterr().out
+        assert "example {{ prompt }}" in output
+        assert "End of Fuzzer Results" in output
+
     @pytest.mark.parametrize("enable_colors", [True, False])
     @pytest.mark.parametrize("payload", AnsiAttackConverter.LIVE_PAYLOADS)
     async def test_print_result_escapes_control_characters(self, payload: str, enable_colors: bool, capsys) -> None:
