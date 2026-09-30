@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.util.types import AnyValue
     from pydantic import JsonValue
 
     from pyrit.score.observation.trace_client import InMemoryTraceClient
@@ -95,12 +97,9 @@ class InMemoryTraceExporter(SpanExporter):
         context = span.get_span_context()
         if context is None or not context.is_valid or span.start_time is None:
             raise ValueError("An SDK span must have valid identity and start time.")
-        attributes: dict[str, JsonValue] = {}
-        for key, value in (span.attributes or {}).items():
-            if value is None or isinstance(value, (str, bool, int, float)):
-                attributes[key] = value
-            else:
-                attributes[key] = list(value)
+        attributes = {
+            key: InMemoryTraceExporter._convert_attribute(value) for key, value in (span.attributes or {}).items()
+        }
         return TraceSpan(
             trace_id=f"{context.trace_id:032x}",
             span_id=f"{context.span_id:016x}",
@@ -111,3 +110,17 @@ class InMemoryTraceExporter(SpanExporter):
             status=TraceSpanStatus(span.status.status_code.name.lower()),
             sampled=context.trace_flags.sampled,
         )
+
+    @staticmethod
+    def _convert_attribute(value: AnyValue) -> JsonValue:
+        """
+        Convert SDK attributes recursively, representing bytes as integer arrays.
+
+        Returns:
+            JsonValue: The attribute with mappings preserved and sequences converted to lists.
+        """
+        if value is None or isinstance(value, (str, bool, int, float)):
+            return value
+        if isinstance(value, Mapping):
+            return {key: InMemoryTraceExporter._convert_attribute(item) for key, item in value.items()}
+        return [InMemoryTraceExporter._convert_attribute(item) for item in value]

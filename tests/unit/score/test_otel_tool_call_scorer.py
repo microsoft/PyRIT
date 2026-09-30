@@ -11,6 +11,8 @@ from opentelemetry.sdk.trace import ReadableSpan, SpanLimits, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
+from opentelemetry.util.types import AnyValue
+from pydantic import JsonValue
 from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.memory import SQLiteMemory
@@ -313,6 +315,40 @@ async def test_real_sdk_export_and_existing_global_provider_are_preserved_async(
         await asyncio.to_thread(provider.shutdown)
     assert trace.get_tracer_provider() is previous_provider
     assert not exporter.force_flush()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),
+        ("lookup", "lookup"),
+        (True, True),
+        (3, 3),
+        (1.5, 1.5),
+        (("lookup", "summarize"), ["lookup", "summarize"]),
+        (b"\x00\xff", [0, 255]),
+        ({"tool": "lookup", "metadata": {"success": True}}, {"tool": "lookup", "metadata": {"success": True}}),
+        (({"steps": ("lookup", None)}, b"\x00\xff"), [{"steps": ["lookup", None]}, [0, 255]]),
+        ({"nested": {"bytes": b"\x00\xff", "empty": ()}}, {"nested": {"bytes": [0, 255], "empty": []}}),
+    ],
+)
+async def test_sdk_attribute_values_round_trip_as_json_async(*, value: AnyValue, expected: JsonValue) -> None:
+    client = InMemoryTraceClient()
+    provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attribute_length=SpanLimits.UNSET))
+    provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
+    try:
+        with provider.get_tracer(__name__).start_as_current_span("tool", attributes={"value": value}) as span:
+            scope = TraceScorable(trace_ids=(f"{span.get_span_context().trace_id:032x}",))
+        assert await asyncio.to_thread(provider.force_flush)
+        result = await client.get_spans_async(query=TraceQuery(scope=scope))
+        assert len(result.spans) == 1
+        retained = result.spans[0]
+        assert retained.attributes == {"value": expected}
+        assert TraceSpan.model_validate_json(retained.model_dump_json()) == retained
+        assert "capture_failed" not in result.coverage.reasons
+    finally:
+        await asyncio.to_thread(provider.shutdown)
+        client.close()
 
 
 async def test_limits_duplicates_and_late_spans_keep_coverage_honest_async() -> None:
