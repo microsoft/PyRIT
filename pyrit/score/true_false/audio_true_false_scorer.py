@@ -30,11 +30,11 @@ class AudioTrueFalseScorer(MessageTrueFalseScorer):
 
         Args:
             text_capable_scorer: A TrueFalseScorer capable of processing text.
-                This scorer will be used to evaluate the transcribed audio content.
+                It must evaluate the transcript without stored conversation history.
             validator: Validator for the scorer. Defaults to audio_path data type validator.
 
         Raises:
-            ValueError: If text_capable_scorer does not support text data type.
+            ValueError: If text_capable_scorer does not support text or requires stored conversation history.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
         self._audio_helper = AudioTranscriptHelper(

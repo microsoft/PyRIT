@@ -9,7 +9,7 @@ import inspect
 import logging
 from abc import abstractmethod
 from contextlib import nullcontext
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
@@ -266,6 +266,9 @@ class MessageScorer(Scorer):
 
     Subclasses implement ``_score_async``, which still receives a ``Message``.
     """
+
+    # True when scoring needs other stored turns from the source conversation.
+    _REQUIRES_CONVERSATION_HISTORY: ClassVar[bool] = False
 
     #: When False, a blocked response from the scorer's own LLM produces an undetermined
     #: score instead of raising.

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import av
 
@@ -12,6 +13,9 @@ from pyrit.converter import AzureSpeechAudioToTextConverter
 from pyrit.models import MessagePiece, Score, ScoringExpectation
 from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.observation.execution import _suppress_observation_collection
+
+if TYPE_CHECKING:
+    from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +117,7 @@ class AudioTranscriptHelper:
                 the transcribed audio content.
 
         Raises:
-            ValueError: If text_capable_scorer does not support text data type.
+            ValueError: If text_capable_scorer does not support text or requires stored conversation history.
         """
         self._validate_text_scorer(text_capable_scorer)
         self.text_scorer = text_capable_scorer
@@ -121,19 +125,28 @@ class AudioTranscriptHelper:
     @staticmethod
     def _validate_text_scorer(scorer: MessageScorer) -> None:
         """
-        Validate that a scorer supports the text data type.
+        Validate that a scorer can evaluate a transcript without stored conversation history.
 
         Args:
             scorer (MessageScorer): The scorer to validate.
 
         Raises:
-            ValueError: If the scorer does not support text data type.
+            ValueError: If the scorer does not support text or requires stored conversation history.
         """
         if "text" not in scorer._validator._supported_data_types:
             raise ValueError(
                 f"text_capable_scorer must support 'text' data type. "
                 f"Supported types: {scorer._validator._supported_data_types}"
             )
+        pending: list[Scorer] = [scorer]
+        while pending:
+            child = pending.pop()
+            if isinstance(child, MessageScorer) and child._REQUIRES_CONVERSATION_HISTORY:
+                raise ValueError(
+                    f"{type(child).__name__} requires stored conversation history and cannot score an isolated "
+                    "audio transcript. Use a transcript-only text scorer."
+                )
+            pending.extend(child._get_child_scorers())
 
     async def _score_audio_async(
         self, *, message_piece: MessagePiece, expectation: ScoringExpectation | None
