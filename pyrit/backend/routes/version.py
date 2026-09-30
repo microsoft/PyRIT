@@ -38,6 +38,7 @@ class VersionResponse(BaseModel):
     """Version information response model."""
 
     version: str
+    compatibility_id: str
     source: str | None = None
     commit: str | None = None
     modified: bool | None = None
@@ -92,6 +93,7 @@ async def get_version_async(request: Request) -> VersionResponse:
 
     return VersionResponse(
         version=version,
+        compatibility_id=request.app.state.compatibility_id,
         source=source,
         commit=commit,
         modified=modified,
