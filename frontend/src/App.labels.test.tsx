@@ -35,6 +35,9 @@ jest.mock('@/utils/conversationExport', () => ({
 }))
 
 jest.mock('@/services/api', () => ({
+  runtimeApi: {
+    getReadiness: jest.fn().mockResolvedValue({ ready: true, state: 'ready', generation: '' }),
+  },
   authApi: { getAccess: jest.fn().mockResolvedValue({ isAdmin: false }) },
   versionApi: { getVersion: jest.fn() },
   labelsApi: { getLabels: jest.fn() },

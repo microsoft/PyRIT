@@ -425,3 +425,29 @@ def test_init_accepts_threshold_within_unit_range(patch_central_database, thresh
     scorer = create_mock_float_scorer(0.9)
     threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=threshold)
     assert threshold_scorer.threshold == threshold
+
+
+def test_with_scorer_block_policy_reaches_wrapped_scorer(patch_central_database):
+    """The threshold wrapper has no policy of its own, so it must delegate to its leaf."""
+    from pyrit.score import PlagiarismScorer
+
+    inner = PlagiarismScorer(reference_text="unused")
+    inner.raise_if_scorer_blocks = True
+    scorer = FloatScaleThresholdScorer(scorer=inner, threshold=0.5)
+
+    scoped = scorer.with_scorer_block_policy(raise_if_scorer_blocks=False)
+
+    assert scoped is not scorer
+    assert scoped._scorer.raise_if_scorer_blocks is False
+    assert inner.raise_if_scorer_blocks is True
+
+
+def test_with_scorer_block_policy_returns_self_when_already_compliant(patch_central_database):
+    """Returning self keeps shared instances from being copied for no reason."""
+    from pyrit.score import PlagiarismScorer
+
+    inner = PlagiarismScorer(reference_text="unused")
+    inner.raise_if_scorer_blocks = True
+    scorer = FloatScaleThresholdScorer(scorer=inner, threshold=0.5)
+
+    assert scorer.with_scorer_block_policy(raise_if_scorer_blocks=True) is scorer
