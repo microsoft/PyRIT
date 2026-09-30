@@ -125,6 +125,7 @@ class TestPromptInjectAtomicAttacks:
         attack = scenario._atomic_attacks[0]
         assert attack.atomic_attack_name == "ignore_print__goal_0"
         assert attack.display_group == "custom goal"
+        assert attack.technique_name == "ignore_print"
         assert len(attack.seed_groups) == 12
         converter = attack.attack_technique.attack.get_request_converters()[0].converters[0]
         for group in attack.seed_groups:

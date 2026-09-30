@@ -2819,7 +2819,13 @@ class MemoryInterface(abc.ABC):
         self.add_message_pieces_to_memory(message_pieces=message_pieces)
 
         if self.memory_embedding:
-            for piece in message_pieces:
+            # Embeddings power text similarity search and only describe text pieces.
+            # A multimodal message (e.g. text plus an image_path piece) must still
+            # persist instead of failing the whole write, and pieces flagged
+            # not_in_memory are never persisted, so no embedding row may reference them.
+            for piece in pieces_to_persist:
+                if piece.converted_value_data_type != "text":
+                    continue
                 embedding_entry = self.memory_embedding.generate_embedding_memory_data(message_piece=piece)
                 embedding_entries.append(embedding_entry)
 
@@ -3047,8 +3053,10 @@ class MemoryInterface(abc.ABC):
         Args:
             value (str): The value to match. By default this matches by substring; pass exact=True to
                 require full-string equality instead. If None, all values are returned.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to False (substring matching).
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
+                and ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list
+                elements (case-insensitive) rather than substrings of the stored list. Defaults to False
+                (substring matching).
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -3104,12 +3112,14 @@ class MemoryInterface(abc.ABC):
         elif seed_type is not None:
             conditions.append(SeedEntry.seed_type == seed_type)
 
-        self._add_list_conditions(field=SeedEntry.harm_categories, values=harm_categories, conditions=conditions)
-        self._add_list_conditions(field=SeedEntry.authors, values=authors, conditions=conditions)
-        self._add_list_conditions(field=SeedEntry.groups, values=groups, conditions=conditions)
+        self._add_list_conditions(
+            field=SeedEntry.harm_categories, values=harm_categories, conditions=conditions, exact=exact
+        )
+        self._add_list_conditions(field=SeedEntry.authors, values=authors, conditions=conditions, exact=exact)
+        self._add_list_conditions(field=SeedEntry.groups, values=groups, conditions=conditions, exact=exact)
 
         if parameters:
-            self._add_list_conditions(field=SeedEntry.parameters, values=parameters, conditions=conditions)
+            self._add_list_conditions(field=SeedEntry.parameters, values=parameters, conditions=conditions, exact=exact)
 
         if metadata:
             conditions.append(self._get_seed_metadata_conditions(metadata=metadata))
@@ -3229,10 +3239,11 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
-                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
-                by substring.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring, and
+                ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list elements
+                (case-insensitive), so ``harm_categories=["hate"]`` does not also remove seeds tagged
+                ``"hate_speech"``. Defaults to True for the remove methods (the safer choice for deletion).
+                Note this differs from get_seeds, which always matches these filters by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -3246,9 +3257,9 @@ class MemoryInterface(abc.ABC):
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             added_by (str): The user who added the prompts.
-            authors (Sequence[str]): A list of authors to filter by.
-                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
-                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors (Sequence[str]): A list of authors to filter by. With exact=True (the default) each author
+                must match a stored author exactly (case-insensitive); with exact=False this filters by substring.
+                If None, all authors are considered.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
@@ -3344,10 +3355,11 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
-                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
-                by substring.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring, and
+                ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list elements
+                (case-insensitive), so ``harm_categories=["hate"]`` does not also remove seeds tagged
+                ``"hate_speech"``. Defaults to True for the remove methods (the safer choice for deletion).
+                Note this differs from get_seeds, which always matches these filters by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -3361,9 +3373,9 @@ class MemoryInterface(abc.ABC):
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             added_by (str): The user who added the prompts.
-            authors (Sequence[str]): A list of authors to filter by.
-                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
-                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors (Sequence[str]): A list of authors to filter by. With exact=True (the default) each author
+                must match a stored author exactly (case-insensitive); with exact=False this filters by substring.
+                If None, all authors are considered.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
@@ -3431,11 +3443,25 @@ class MemoryInterface(abc.ABC):
 
     def _add_list_conditions(
         self,
+        *,
         field: InstrumentedAttribute[Any],
         conditions: "list[ColumnElement[bool]]",
         values: Sequence[str] | None = None,
+        exact: bool = False,
     ) -> None:
-        if values:
+        if not values:
+            return
+        if exact:
+            # Match whole list elements (case-insensitive) so "hate" does not match "hate_speech" or "whatever".
+            conditions.append(
+                self._get_condition_json_array_match(
+                    json_column=field,
+                    property_path="$",
+                    array_to_match=list(values),
+                    match_mode="all",
+                )
+            )
+        else:
             conditions.extend(field.contains(value) for value in values)
 
     async def _serialize_seed_value_async(self, prompt: Seed) -> str:

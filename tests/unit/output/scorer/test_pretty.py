@@ -250,6 +250,39 @@ async def test_write_async_harm_omits_optional_fields(mock_find, mock_eval_id_cl
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_prints_agreement_split_when_present(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_harm_metrics(
+        num_human_raters=3,
+        contested_threshold=0.5,
+        num_unanimous_responses=40,
+        num_contested_responses=10,
+        mean_absolute_error_unanimous=0.05,
+        mean_absolute_error_contested=0.2,
+    )
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="violence")
+    output = capsys.readouterr().out
+    assert "MAE on unanimous rows: 0.0500 (n=40)" in output
+    assert "MAE on contested rows: 0.2000 (n=10)" in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_omits_agreement_split_for_single_rater(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_harm_metrics(num_human_raters=1)
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="violence")
+    output = capsys.readouterr().out
+    assert "MAE on unanimous rows" not in output
+    assert "MAE on contested rows" not in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 async def test_write_async_harm_no_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="no_data")

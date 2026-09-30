@@ -156,6 +156,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         sampling: SamplingStrategy | None = None,
         loss: LossFunction | None = None,
         candidate_filter: CandidateFilter | None = None,
+        use_prefix_cache: bool = False,
     ) -> None:
         """Initialize a GCG attack with optional algorithm extensions."""
         super().__init__(
@@ -173,6 +174,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         self._sampling = sampling
         self._loss = loss
         self._candidate_filter = candidate_filter
+        self._use_prefix_cache = use_prefix_cache
 
     def _resolve_sampling(self) -> SamplingStrategy:
         sampling: SamplingStrategy | None = getattr(self, "_sampling", None)
@@ -332,6 +334,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
             prompts=self.prompts,
             loss_function=loss_function,
             main_device=main_device,
+            use_prefix_cache=getattr(self, "_use_prefix_cache", False),
         )
         eval_batch = evaluator.evaluate_candidates(
             control_candidates_by_group=candidate_batch.control_candidates_by_group,

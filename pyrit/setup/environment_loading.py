@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import dotenv
 from dotenv.main import DotEnv
 from dotenv.parser import parse_stream
+from dotenv.variables import parse_variables
 
 from pyrit.common import path
 from pyrit.common.text_helper import is_non_empty_string
@@ -500,6 +501,7 @@ async def _resolve_environment_candidates_async(
     override_candidates: Mapping[str, Sequence[tuple[str, str | None]]],
     strict: bool,
     silent: bool,
+    destination: dict[str, str] | None = None,
 ) -> None:
     """
     Resolve complete Key Vault references from winning environment assignments.
@@ -508,6 +510,7 @@ async def _resolve_environment_candidates_async(
         KeyVaultInitializationException: If strict validation or secret retrieval fails.
         ValueError: If a referenced secret has no value.
     """
+    environment = os.environ if destination is None else destination
     parsed_references: list[tuple[str, str, str, str | None]] = []
     variable_names = ordinary_candidates.keys() | override_candidates.keys()
     for variable_name in variable_names:
@@ -519,7 +522,7 @@ async def _resolve_environment_candidates_async(
         candidates.extend((value, vault_url, True) for value, vault_url in ordinary_candidates.get(variable_name, ()))
         for value, expected_vault_url, resolve_reference in candidates:
             if not resolve_reference:
-                os.environ[variable_name] = value
+                environment[variable_name] = value
                 break
             try:
                 reference = _parse_akv_reference(
@@ -540,14 +543,14 @@ async def _resolve_environment_candidates_async(
                 logger.warning(message)
                 continue
             if reference is None:
-                os.environ[variable_name] = value
+                environment[variable_name] = value
                 break
             vault_url, secret_name, secret_version = reference
-            os.environ[variable_name] = value
+            environment[variable_name] = value
             parsed_references.append((variable_name, vault_url, secret_name, secret_version))
             break
         else:
-            os.environ.pop(variable_name, None)
+            environment.pop(variable_name, None)
 
     if not parsed_references:
         return
@@ -571,7 +574,7 @@ async def _resolve_environment_candidates_async(
                             f"AKV secret '{secret_name}' referenced by environment variable "
                             f"'{variable_name}' has no value."
                         )
-                    os.environ[variable_name] = secret.value
+                    environment[variable_name] = secret.value
                 except KeyVaultInitializationException:
                     raise
                 except Exception as error:
@@ -580,3 +583,95 @@ async def _resolve_environment_candidates_async(
                         error=error,
                     )
                     raise wrapped_error from error
+
+
+async def resolve_environment_async(
+    *,
+    env_files: Sequence[pathlib.Path] | None,
+    env_akv_ref: Sequence[str] | None,
+    env_akv_strict: bool,
+    silent: bool = True,
+) -> dict[str, str]:
+    """
+    Resolve replacement assignments without changing the process environment.
+
+    Returns:
+        dict[str, str]: Current source assignments, with interpolation and secrets resolved.
+
+    Raises:
+        ValueError: If sources, references, or interpolation are invalid.
+    """
+    validate_env_akv_strict(env_akv_strict=env_akv_strict)
+    if os.environ.get("PYTHON_DOTENV_DISABLED", "").casefold() in _DOTENV_DISABLED_VALUES:
+        return {}
+    if isinstance(env_akv_ref, str) or (env_akv_ref and len(env_akv_ref) > 1):
+        raise ValueError("Expected at most one Key Vault bootstrap reference.")
+    ordinary: dict[str, list[tuple[str, str | None]]] = {}
+    overrides: dict[str, list[tuple[str, str | None]]] = {}
+    if env_akv_ref:
+        document, vault = await _fetch_akv_document_async(
+            secret_url=env_akv_ref[0], strict=env_akv_strict, silent=silent
+        )
+        for key, value in dotenv.dotenv_values(stream=StringIO(document), interpolate=False).items():
+            if value is not None:
+                ordinary.setdefault(key, []).append((value, vault))
+
+    def read_files() -> None:
+        selected = (
+            list(env_files)
+            if env_files is not None
+            else [
+                candidate
+                for candidate in (
+                    ([] if env_akv_ref else [path.CONFIGURATION_DIRECTORY_PATH / ".env"])
+                    + [path.CONFIGURATION_DIRECTORY_PATH / ".env.local"]
+                )
+                if candidate.exists()
+            ]
+        )
+        for file in selected:
+            if not file.exists():
+                raise ValueError("Configured environment file is missing.")
+            candidates = overrides if file.name == ".env.local" else ordinary
+            for key, value in dotenv.dotenv_values(file, interpolate=False).items():
+                if value is not None:
+                    candidates.setdefault(key, []).append((value, None))
+
+    await asyncio.to_thread(read_files)
+    resolved: dict[str, str] = {}
+    names = ordinary.keys() | overrides.keys()
+
+    async def interpolate_async(key: str, visiting: set[str]) -> str | None:
+        if key in resolved:
+            return resolved[key]
+        if key in visiting:
+            raise ValueError("Cyclic environment interpolation.")
+        visiting = visiting | {key}
+        candidates = [*reversed(overrides.get(key, [])), *ordinary.get(key, [])]
+        for value, vault in candidates:
+            values = dict(os.environ)
+            atoms = list(parse_variables(value))
+            for atom in atoms:
+                name = getattr(atom, "name", None)
+                if name in names:
+                    replacement = await interpolate_async(name, visiting)
+                    if replacement is not None:
+                        values[name] = replacement
+            expanded = "".join(atom.resolve(values) for atom in atoms)
+            candidate: dict[str, str] = {}
+            await _resolve_environment_candidates_async(
+                process_environment={},
+                ordinary_candidates={key: [(expanded, vault)]},
+                override_candidates={},
+                strict=env_akv_strict,
+                silent=silent,
+                destination=candidate,
+            )
+            if key in candidate:
+                resolved[key] = candidate[key]
+                return resolved[key]
+        return None
+
+    for key in names:
+        await interpolate_async(key, set())
+    return resolved
