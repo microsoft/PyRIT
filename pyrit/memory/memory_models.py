@@ -839,6 +839,7 @@ class AttackIdentifierEntry(ComponentIdentifierEntry[AttackIdentifier]):
     adversarial_system_prompt: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     adversarial_seed_prompt: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     adversarial_prompt_template: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    use_score_as_feedback: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     objective_target_hash: Mapped[str | None] = mapped_column(
         String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
     )
