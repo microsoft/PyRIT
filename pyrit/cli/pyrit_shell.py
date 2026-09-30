@@ -213,12 +213,16 @@ class PyRITShell(cmd.Cmd):
         from pyrit.cli._auth import CliAuthenticationError
         from pyrit.cli._config_reader import ConfigError
         from pyrit.cli._output import print_error_with_hint
-        from pyrit.cli.api_client import PyRITApiClient
+        from pyrit.cli.api_client import CompatibilityError, PyRITApiClient
 
         self._base_url = base_url
         try:
             client = PyRITApiClient(base_url=base_url, auth_mode=self._resolve_auth_mode())
             self._run_async(client.__aenter__(), timeout=None)
+        except CompatibilityError as exc:
+            self._api_client = None
+            _print_shell_exception(exc=exc)
+            return False
         except CliAuthenticationError as exc:
             self._api_client = None
             print_error_with_hint(
@@ -234,7 +238,7 @@ class PyRITShell(cmd.Cmd):
             self._api_client = None
             print_error_with_hint(
                 message=f"Could not initialize the client for {base_url}: {exc}",
-                hint="Check the server's /api/auth/config endpoint and your network connection.",
+                hint="Check the server's /api/auth/config and /api/version endpoints and your network connection.",
             )
             return False
 
@@ -458,6 +462,7 @@ class PyRITShell(cmd.Cmd):
             print_scenario_run_progress,
             print_scenario_run_summary,
         )
+        from pyrit.cli.api_client import CompatibilityError
         from pyrit.cli.pyrit_scan import _is_read_timeout, _print_cli_exception, _print_debug_traceback
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import RunScenarioRequest
@@ -574,6 +579,11 @@ class PyRITShell(cmd.Cmd):
             except Exception:
                 print("Warning: could not cancel scenario run.")
             print("Returning to shell.")
+            return
+
+        except CompatibilityError as exc:
+            _print_shell_exception(exc=exc)
+            print("Polling stopped; the server run may still be active. Returning to shell.")
             return
 
         # Print results
