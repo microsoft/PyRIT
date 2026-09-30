@@ -219,6 +219,18 @@ async def test_send_prompt_async_allows_configured_internal_destination(mock_req
 
 
 @patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_without_callback_stores_decoded_text(mock_request, patch_central_database):
+    target = HTTPTarget(http_request="POST /api HTTP/1.1\nHost: example.com\n\n{PROMPT}")
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="prompt")])
+    body = "Sure \u2014 here\u2019s the answer:\nStep 1: caf\u00e9"
+    mock_request.return_value = httpx.Response(200, content=body.encode("utf-8"))
+
+    response = await target.send_prompt_async(message=message)
+
+    assert response[0].get_value() == body
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
 async def test_send_prompt_async_follows_redirects_when_enabled(mock_request, patch_central_database):
     target = HTTPTarget(
         http_request="POST /api HTTP/1.1\nHost: example.com\n\n",
@@ -334,8 +346,7 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
         )
     ]
 
-    mock_response = MagicMock()
-    mock_response.content = b"<html><body>Match: 1234</body></html>"
+    mock_response = httpx.Response(200, content=b"<html><body>Match: 1234</body></html>")
     mock_request.return_value = mock_response
 
     response = await mock_http_target.send_prompt_async(message=message)
