@@ -233,7 +233,6 @@ class ScenarioProgressReadModel:
         *,
         scenario_result: ScenarioResult,
         plan: ScenarioRunPlan | None,
-        plan_lookup: ScenarioPlanLookup,
     ) -> tuple[int, int, int, int]:
         """
         Calculate planned-unit totals without inflating retries or error attempts.
