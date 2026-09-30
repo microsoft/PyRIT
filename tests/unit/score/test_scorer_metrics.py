@@ -1,9 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import dataclasses
 import json
 from pathlib import Path
 from unittest.mock import patch
+
+import numpy as np
+import pytest
 
 from pyrit.models import ComponentIdentifier
 from pyrit.score import (
@@ -63,6 +67,79 @@ class TestScorerMetricsSerialization:
             f.write(json_str)
         loaded = ObjectiveScorerMetrics.from_json_file(str(file_path))
         assert loaded == metrics
+
+    def test_harm_metrics_to_json_serializes_trial_scores(self, tmp_path):
+        trial_scores = np.array([[0.2, 0.4], [0.2, 0.4]])
+        metrics = HarmScorerMetrics(
+            num_responses=2,
+            num_human_raters=2,
+            mean_absolute_error=0.1,
+            mae_standard_error=0.01,
+            t_statistic=1.0,
+            p_value=0.05,
+            krippendorff_alpha_combined=0.8,
+            num_scorer_trials=2,
+            trial_scores=trial_scores,
+        )
+
+        json_str = metrics.to_json()
+
+        assert json.loads(json_str)["trial_scores"] == [[0.2, 0.4], [0.2, 0.4]]
+
+        file_path = tmp_path / "metrics.json"
+        with open(file_path, "w") as f:
+            f.write(json_str)
+        loaded = HarmScorerMetrics.from_json_file(str(file_path))
+
+        assert isinstance(loaded.trial_scores, np.ndarray)
+        assert loaded.trial_scores.shape == trial_scores.shape
+        assert loaded.trial_scores.tolist() == trial_scores.tolist()
+        assert loaded.mean_absolute_error == 0.1
+        assert loaded.num_scorer_trials == 2
+
+    def test_objective_metrics_round_trip_keeps_every_serializable_field(self, tmp_path):
+        metrics = ObjectiveScorerMetrics(
+            num_responses=2,
+            num_human_raters=1,
+            accuracy=0.9,
+            accuracy_standard_error=0.05,
+            f1_score=0.8,
+            precision=0.85,
+            recall=0.75,
+            num_scorer_trials=3,
+            dataset_name="test_dataset",
+            dataset_version="1.0",
+            average_score_time_seconds=0.5,
+            trial_scores=np.array([[True, False], [False, False], [True, True]]),
+        )
+
+        json_str = metrics.to_json()
+        file_path = tmp_path / "metrics.json"
+        with open(file_path, "w") as f:
+            f.write(json_str)
+        loaded = ObjectiveScorerMetrics.from_json_file(str(file_path))
+
+        expected = dataclasses.asdict(metrics)
+        expected.pop("trial_scores")
+        actual = dataclasses.asdict(loaded)
+        actual.pop("trial_scores")
+        assert actual == expected
+        assert loaded.trial_scores.tolist() == [[True, False], [False, False], [True, True]]
+
+    def test_to_json_rejects_values_that_are_not_numpy_or_json(self):
+        metrics = ObjectiveScorerMetrics(
+            num_responses=10,
+            num_human_raters=3,
+            accuracy=0.9,
+            accuracy_standard_error=0.05,
+            f1_score=0.8,
+            precision=0.85,
+            recall=0.75,
+            dataset_name=object(),  # type: ignore[arg-type]
+        )
+
+        with pytest.raises(TypeError, match="Object of type object is not JSON serializable"):
+            metrics.to_json()
 
 
 class TestScorerMetricsWithIdentity:

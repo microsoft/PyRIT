@@ -263,3 +263,10 @@ def test_image_rotation_converter_custom_fill_color(sample_image_bytes):
     # Check that a corner pixel (exposed area) has the fill color
     corner_pixel = rotated_image.getpixel((0, 0))
     assert corner_pixel[:3] == fill_color
+
+
+@pytest.mark.parametrize("angle", [float("nan"), float("inf"), float("-inf")])
+def test_invalid_angle_non_finite(angle: float) -> None:
+    """Non-finite rotation angles should fail during converter construction."""
+    with pytest.raises(ValueError, match="Angle must be finite"):
+        ImageRotationConverter(angle=angle)

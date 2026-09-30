@@ -3,8 +3,6 @@ data_type: text
 description: |
   System prompt for the ImagePromptStyleConverter. Instructs an LLM to expand a short user objective
   into a detailed image generation prompt using the provided photographic style and scene variation.
-authors:
-  - AI Red Team
 groups:
   - AI Red Team
 source: AI Red Team

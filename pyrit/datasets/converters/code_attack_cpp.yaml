@@ -14,7 +14,10 @@ authors:
   - Lizhuang Ma
 groups:
   - Shanghai Jiao Tong University
-source: https://github.com/renqibing/CodeAttack
+  - The Chinese University of Hong Kong
+  - Shanghai Artificial Intelligence Laboratory
+  - East China Normal University
+source: https://github.com/AI45Lab/CodeAttack
 parameters:
   - wrapped_input
 data_type: text

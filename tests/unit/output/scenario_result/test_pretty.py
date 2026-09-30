@@ -240,3 +240,50 @@ async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsy
     await sorting_printer.write_async(result)
     # Tied 100% groups retain their original relative order; 0% group goes last.
     assert _group_order(capsys.readouterr().out) == ["first_success", "second_success", "fail"]
+
+
+# --- attacks view ---
+
+
+async def test_render_attacks_lists_each_attack(printer):
+    a1 = _attack_result(objective="obj-1")
+    a2 = _attack_result(outcome=AttackOutcome.FAILURE, objective="obj-2")
+    result = _scenario_result(attack_results={"tech_a": [a1], "tech_b": [a2]})
+
+    text = await printer.render_async(result, view="attacks")
+
+    assert "Attack Results" in text
+    assert "obj-1" in text
+    assert "obj-2" in text
+    assert a1.attack_result_id in text
+    assert a2.attack_result_id in text
+    assert "tech_a" in text
+    assert "tech_b" in text
+    assert "Total attacks: 2" in text
+
+
+async def test_render_attacks_limit_truncates(printer):
+    attacks = [_attack_result(objective=f"o{i}") for i in range(3)]
+    result = _scenario_result(attack_results={"tech_a": attacks})
+
+    text = await printer.render_async(result, view="attacks", limit=1)
+
+    assert "Showing 1 of 3 attacks" in text
+
+
+async def test_render_attacks_filters_by_ids(printer):
+    keep = _attack_result(objective="keep")
+    drop = _attack_result(objective="drop")
+    result = _scenario_result(attack_results={"tech_a": [keep, drop]})
+
+    text = await printer.render_async(result, view="attacks", attack_result_ids=[keep.attack_result_id])
+
+    assert "keep" in text
+    assert "drop" not in text
+    assert "Total attacks: 1" in text
+
+
+async def test_render_attacks_empty(printer):
+    # Build directly (the _scenario_result helper substitutes a default for {}).
+    text = await printer.render_async(make_scenario_result(attack_results={}), view="attacks")
+    assert "No attack results" in text

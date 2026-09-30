@@ -28,7 +28,6 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixCombo,
     build_baseline_atomic_attack,
     build_matrix_atomic_attacks,
-    resolve_technique_factories,
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import TrueFalseScorer
@@ -170,8 +169,7 @@ class TestMatrixAdversarialForwarding:
             technique_factories={"tech": factory},
             dataset_groups={"ds": [_seed_group(objective="o1")]},
         )
-        # No adversarial_chat is forwarded into create() when the axis is collapsed.
-        assert "adversarial_chat" not in factory.create.call_args.kwargs
+        assert factory.create.call_args.kwargs["adversarial_chat"] is None
         assert result[0]._adversarial_chat is baked
 
     def test_no_target_axis_stamps_factory_resolved_adversarial_chat(self):
@@ -186,7 +184,7 @@ class TestMatrixAdversarialForwarding:
             technique_factories={"tech": factory},
             dataset_groups={"ds": [_seed_group(objective="o1")]},
         )
-        assert "adversarial_chat" not in factory.create.call_args.kwargs
+        assert factory.create.call_args.kwargs["adversarial_chat"] is None
         assert result[0]._adversarial_chat is resolved
 
 
@@ -205,6 +203,7 @@ class TestMatrixCustomCallbacks:
         )
         assert result[0].atomic_attack_name == "advA:tech"
         assert result[0].display_group == "advA"
+        assert result[0].technique_name == "tech"
 
     def test_callbacks_receive_full_combo(self):
         builder = _builder()
@@ -387,40 +386,26 @@ def _patch_registry(factories: dict):
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestResolveTechniqueFactories:
-    """``resolve_technique_factories`` filters the registry to the selected techniques."""
+class TestLegacyReExports:
+    """Ensure backward compatibility of re-exports in matrix_atomic_attack_builder and pyrit.scenario.core."""
 
-    def test_keeps_only_selected_in_order(self):
-        factories = {
-            "alpha": _mock_factory(name="alpha"),
-            "beta": _mock_factory(name="beta"),
-            "gamma": _mock_factory(name="gamma"),
-        }
-        context = _context(techniques=[_technique("beta"), _technique("alpha")])
-        with _patch_registry(factories):
-            resolved = resolve_technique_factories(context=context)
-        assert list(resolved.keys()) == ["beta", "alpha"]
+    def test_legacy_re_exports_are_identical_objects(self):
+        import pyrit.scenario.core as scenario_core
+        import pyrit.scenario.core._technique_resolution as new_module
+        import pyrit.scenario.core.matrix_atomic_attack_builder as legacy_module
 
-    def test_drops_techniques_without_factory(self):
-        factories = {"alpha": _mock_factory(name="alpha")}
-        context = _context(techniques=[_technique("alpha"), _technique("missing")])
-        with _patch_registry(factories):
-            resolved = resolve_technique_factories(context=context)
-        assert list(resolved.keys()) == ["alpha"]
-
-    def test_extra_factories_merged_and_override_registry(self):
-        registry_factories = {"alpha": _mock_factory(name="alpha")}
-        local_alpha = _mock_factory(name="alpha")
-        local_only = _mock_factory(name="local")
-        context = _context(techniques=[_technique("alpha"), _technique("local")])
-        with _patch_registry(registry_factories):
-            resolved = resolve_technique_factories(
-                context=context,
-                extra_factories={"alpha": local_alpha, "local": local_only},
-            )
-        assert list(resolved.keys()) == ["alpha", "local"]
-        assert resolved["alpha"] is local_alpha  # extra overrides the registry factory of the same name
-        assert resolved["local"] is local_only  # local-only factory is selectable without global registration
+        assert legacy_module.TechniqueResolutionError is new_module.TechniqueResolutionError
+        assert legacy_module.resolve_technique_factories is new_module.resolve_technique_factories
+        assert (
+            legacy_module.resolve_technique_factories_for_techniques
+            is new_module.resolve_technique_factories_for_techniques
+        )
+        assert scenario_core.TechniqueResolutionError is new_module.TechniqueResolutionError
+        assert scenario_core.resolve_technique_factories is new_module.resolve_technique_factories
+        assert (
+            scenario_core.resolve_technique_factories_for_techniques
+            is new_module.resolve_technique_factories_for_techniques
+        )
 
 
 @pytest.mark.usefixtures("patch_central_database")

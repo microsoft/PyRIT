@@ -13,6 +13,7 @@ from pyrit.converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
     AskToDecodeConverter,
+    CharNoiseConverter,
     CharSwapConverter,
     ColloquialWordswapConverter,
     Converter,
@@ -21,6 +22,7 @@ from pyrit.converter import (
     InsertPunctuationConverter,
     LeetspeakConverter,
     MathObfuscationConverter,
+    PinyinConverter,
     RandomCapitalLettersConverter,
     SearchReplaceConverter,
     TemplateSegmentConverter,
@@ -28,7 +30,17 @@ from pyrit.converter import (
     WordProportionSelectionStrategy,
     ZalgoConverter,
 )
+from pyrit.converter.pinyin_converter import PinyinMode
 from pyrit.models import PromptDataType
+
+
+def _pinyin_converter_cases() -> list[tuple[Callable[[], Converter], str]]:
+    prompt = "\u94f6\u884c\u97f3\u4e50\u91cd\u5e86\u4eca\u5929\u5929\u6c14"
+    return [
+        (lambda: PinyinConverter(proportion=0.5), prompt),
+        (lambda: PinyinConverter(mode="initial", proportion=0.5), prompt),
+        (lambda: PinyinConverter(mode="mixed", proportion=0.5), prompt),
+    ]
 
 
 def _stochastic_converter_cases() -> list[tuple[Callable[[], Converter], str]]:
@@ -45,6 +57,7 @@ def _stochastic_converter_cases() -> list[tuple[Callable[[], Converter], str]]:
             "deterministic character swapping output",
         ),
         (lambda: InsertPunctuationConverter(word_swap_ratio=0.5), "deterministic punctuation output"),
+        (lambda: CharNoiseConverter(noise_probability=0.5), "deterministic character noise output"),
         (AnsiAttackConverter, "deterministic ANSI output"),
         (TemplateSegmentConverter, "deterministic template segment output"),
         (
@@ -58,6 +71,7 @@ def _stochastic_converter_cases() -> list[tuple[Callable[[], Converter], str]]:
         (MathObfuscationConverter, "deterministic math output"),
         (lambda: SearchReplaceConverter(pattern="x", replace=["a", "b", "c"]), "xxx"),
         (UnicodeConfusableConverter, "deterministic confusable output"),
+        *_pinyin_converter_cases(),
     ]
 
 
@@ -183,6 +197,34 @@ async def test_explicit_converter_seed_overrides_initialized_seed() -> None:
         word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5),
     )
     prompt = "alpha bravo charlie delta echo foxtrot golf hotel"
+
+    configure_random_seed(seed=1)
+    first = await converter.convert_async(prompt=prompt)
+    configure_random_seed(seed=99)
+    second = await converter.convert_async(prompt=prompt)
+
+    assert first == second
+
+
+@pytest.mark.parametrize(("converter_factory", "prompt"), _pinyin_converter_cases())
+async def test_pinyin_initialized_seed_is_parallel_order_independent_async(
+    *, converter_factory: Callable[[], Converter], prompt: str
+) -> None:
+    configure_random_seed(seed=42)
+    converter = converter_factory()
+    prompts = [prompt, f"{prompt} {prompt}"]
+
+    serial = [await converter.convert_async(prompt=value) for value in prompts]
+    forward = await asyncio.gather(*(converter.convert_async(prompt=value) for value in prompts))
+    reverse = await asyncio.gather(*(converter.convert_async(prompt=value) for value in reversed(prompts)))
+
+    assert serial == forward == list(reversed(reverse))
+
+
+@pytest.mark.parametrize("mode", ["full", "initial", "mixed"])
+async def test_pinyin_explicit_seed_overrides_initialized_seed_async(mode: PinyinMode) -> None:
+    converter = PinyinConverter(mode=mode, proportion=0.5, seed=7)
+    prompt = "\u94f6\u884c\u97f3\u4e50\u91cd\u5e86\u4eca\u5929\u5929\u6c14"
 
     configure_random_seed(seed=1)
     first = await converter.convert_async(prompt=prompt)

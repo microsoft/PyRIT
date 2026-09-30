@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.identifiers.evaluation_markers import EvalMarker, Evaluate, Exclude, Include, Unwrap
     from pyrit.models.identifiers.identifier_filters import IdentifierFilter, IdentifierType
+    from pyrit.models.identifiers.identifier_projection import project_behavioral_identity
     from pyrit.models.identifiers.param_markers import Param, ParamMarker
     from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
     from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
@@ -84,6 +85,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "config_hash": "pyrit.models.identifiers.component_identifier",
     "IdentifierFilter": "pyrit.models.identifiers.identifier_filters",
     "IdentifierType": "pyrit.models.identifiers.identifier_filters",
+    "project_behavioral_identity": "pyrit.models.identifiers.identifier_projection",
 }
 
 __all__ = list(_LAZY_EXPORTS)

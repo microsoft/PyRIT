@@ -196,6 +196,29 @@ async def test_general_float_scorer_score_async_min_max_range(patch_central_data
     assert "Description." in score[0].score_value_description
 
 
+async def test_general_float_scorer_retries_out_of_range_score(patch_central_database):
+    def _response(score_value: int) -> Message:
+        return Message(
+            message_pieces=[
+                MessagePiece(role="assistant", original_value=f'{{"score_value": {score_value}, "rationale": "r"}}')
+            ]
+        )
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(side_effect=[[_response(150)], [_response(40)]])
+
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+    )
+    score = await scorer.score_text_async(text="prompt", objective="obj")
+
+    assert chat_target.send_prompt_async.call_count == 2
+    assert abs(float(score[0].score_value) - 0.4) < 1e-6
+
+
 def test_general_float_scorer_init_invalid_min_max():
     with pytest.raises(ValueError):
         NumericRange(minimum_value=10, maximum_value=5, category="test")
@@ -227,6 +250,43 @@ def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_da
     with _patch.object(scorer, "get_identifier", return_value=mock_identifier):
         result = scorer.get_scorer_metrics()
     assert result is None
+
+
+def test_get_scorer_metrics_uses_configured_result_file(patch_central_database, tmp_path):
+    from unittest.mock import patch as _patch
+
+    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+    )
+    scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
+        human_labeled_datasets_files=["harm/*.csv"],
+        result_file="harm/representational_metrics.jsonl",
+        harm_category="REPRESENTATIONAL",
+    )
+    result_file = tmp_path / "harm" / "representational_metrics.jsonl"
+    result_file.parent.mkdir()
+    result_file.touch()
+    mock_identifier = MagicMock(eval_hash="abc123")
+    mock_metrics = MagicMock()
+
+    with (
+        _patch.object(scorer, "get_identifier", return_value=mock_identifier),
+        _patch("pyrit.common.path.SCORER_EVALS_PATH", tmp_path),
+        _patch(
+            "pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash",
+            return_value=mock_metrics,
+        ) as mock_find,
+    ):
+        result = scorer.get_scorer_metrics()
+
+    assert result is mock_metrics
+    mock_find.assert_called_once_with(eval_hash="abc123", file_path=result_file)
 
 
 def test_general_float_scale_no_chat_target_raises():

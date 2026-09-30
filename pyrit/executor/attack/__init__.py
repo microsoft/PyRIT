@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         AttackParameters,
         AttackScoringConfig,
         AttackStrategy,
+        attack_outcome_from_score,
     )
     from pyrit.executor.attack.multi_turn import (
         ChunkedRequestAttack,
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
         PAIRAttack,
         RedTeamingAttack,
         RTASystemPromptPaths,
+        SimulatedConversationResult,
         TAPAttack,
         TAPAttackContext,
         TAPAttackResult,
@@ -50,6 +52,7 @@ if TYPE_CHECKING:
     from pyrit.executor.attack.single_turn import (
         ManyShotJailbreakAttack,
         PromptSendingAttack,
+        PromptSendingAttackParameters,
         SingleTurnAttackContext,
         SingleTurnAttackStrategy,
         SkeletonKeyAttack,
@@ -65,6 +68,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AttackParameters": "pyrit.executor.attack.core",
     "AttackScoringConfig": "pyrit.executor.attack.core",
     "AttackStrategy": "pyrit.executor.attack.core",
+    "attack_outcome_from_score": "pyrit.executor.attack.core",
     "BargeInAttack": "pyrit.executor.attack.streaming",
     "BargeInAttackContext": "pyrit.executor.attack.streaming",
     "ChunkedRequestAttack": "pyrit.executor.attack.multi_turn",
@@ -83,8 +87,10 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PAIRAttack": "pyrit.executor.attack.multi_turn",
     "PrependedConversationConfig": "pyrit.executor.attack.component",
     "PromptSendingAttack": "pyrit.executor.attack.single_turn",
+    "PromptSendingAttackParameters": "pyrit.executor.attack.single_turn",
     "RTASystemPromptPaths": "pyrit.executor.attack.multi_turn",
     "RedTeamingAttack": "pyrit.executor.attack.multi_turn",
+    "SimulatedConversationResult": "pyrit.executor.attack.multi_turn",
     "SequenceCompletionPolicy": "pyrit.executor.attack.compound",
     "SequentialAttack": "pyrit.executor.attack.compound",
     "SequentialAttackResult": "pyrit.executor.attack.compound",

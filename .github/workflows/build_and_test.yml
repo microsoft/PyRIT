@@ -9,17 +9,18 @@ on:
   push:
     branches:
       - "main"
+      - "releases/v*"
   pull_request:
     branches:
       - "main"
-      - "release/**"
+      - "releases/**"
   merge_group:
   workflow_dispatch:
 
 concurrency:
   # This ensures after each commit the old jobs are cancelled and the new ones
   # run instead.
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -52,7 +53,7 @@ jobs:
             pre-commit-${{ runner.os }}-
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           # Install a specific version of uv.
           version: "0.9.17"
@@ -75,8 +76,12 @@ jobs:
         # latent violations in untouched files, including the tests/integration,
         # tests/partner_integration, and tests/end_to_end tiers, are caught before
         # merge instead of only on the post-merge run against main.
+        shell: bash
         run: |
           git fetch origin main
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            git fetch origin "$GITHUB_BASE_REF"
+          fi
           uv run pre-commit run --all-files
 
   # Main job runs only if pre-commit succeeded
@@ -85,7 +90,7 @@ jobs:
       fail-fast: true
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
         package_name: ["pyrit"]
         package_extras: ["dev", "dev_all"]
     runs-on: ${{ matrix.os }}
@@ -104,7 +109,7 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           # Install a specific version of uv.
           version: "0.9.17"
@@ -127,8 +132,17 @@ jobs:
       - name: Run unit tests
         run: make unit-test-junit
 
+      - name: Upload JUnit results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: (success() || failure()) && runner.os == 'Linux'
+        with:
+          name: junit-results-${{ matrix.python }}-${{ matrix.package_extras }}
+          path: '**/test-*.xml'
+          if-no-files-found: ignore
+
       - name: Publish Pytest Results
         uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
-        if: runner.os == 'ubuntu-latest'
+        if: (success() || failure()) && runner.os == 'Linux'
         with:
+          check_name: Pytest (${{ matrix.python }}, ${{ matrix.package_extras }})
           files: '**/test-*.xml'

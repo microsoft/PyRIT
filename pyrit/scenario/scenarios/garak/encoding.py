@@ -247,8 +247,9 @@ class Encoding(Scenario):
                 label="Encoding converter variants",
                 count=seed_group_count * variant_count * prompt_configuration_count,
                 note=(
-                    "Concrete variants are counted separately when one catalog technique maps to "
-                    "multiple encoders, including base64 and ascii85."
+                    f"{seed_group_count} selected seed groups x {variant_count} concrete converter variants x "
+                    f"{prompt_configuration_count} prompt configurations. Base64 and ASCII85 each map to two "
+                    "converter variants."
                 ),
             )
         ]
@@ -261,10 +262,13 @@ class Encoding(Scenario):
                 )
             )
         return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(component.count for component in components),
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
-            note="Retries are excluded; each converter and decode-template configuration is a planned outer unit.",
+            note=(
+                "Each visible encoding technique can expand into converter variants and raw or decode-template "
+                "prompt configurations. Retries are excluded."
+            ),
         )
 
     @staticmethod

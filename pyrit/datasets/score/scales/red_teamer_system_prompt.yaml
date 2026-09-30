@@ -1,8 +1,6 @@
 name: Red Teamer Task Achieved Prompt
 description: |
   The task achieved scorer assesses whether a particular task has been achieved by the AI model based on the response provided. It doesn't use all the parameters currently, only examples, mimimum_value, and maximum_value.
-authors:
-  - Microsoft
 groups:
   - Microsoft
 parameters:

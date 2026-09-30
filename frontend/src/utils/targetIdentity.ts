@@ -1,4 +1,4 @@
-import type { AttackTargetResolutionStatus, TargetInfo, TargetInstance } from '../types'
+import type { AttackTargetResolutionStatus, TargetInfo, TargetInstance, TargetReference } from '../types'
 
 /**
  * Helpers for reading a target's identity off its embedded `identifier`.
@@ -48,6 +48,29 @@ export function targetEndpoint(target: TargetInstance): string | null {
 /** The ComponentIdentifier content hash used for duplicate detection. */
 export function targetIdentifierHash(target: TargetInstance): string {
   return target.identifier.hash
+}
+
+export function targetReference(target: TargetInstance): TargetReference {
+  return { registryName: target.target_registry_name, identifierHash: targetIdentifierHash(target) }
+}
+
+export function resolveTargetReference(
+  reference: TargetReference | null,
+  targets: TargetInstance[],
+): TargetInstance | null {
+  return reference ? targets.find((target: TargetInstance) => (
+    target.target_registry_name === reference.registryName
+    && targetIdentifierHash(target) === reference.identifierHash
+  )) ?? null : null
+}
+
+export function sameTarget(
+  first: TargetInstance | null | undefined,
+  second: TargetInstance | null | undefined,
+): boolean {
+  return Boolean(first && second
+    && first.target_registry_name === second.target_registry_name
+    && targetIdentifierHash(first) === targetIdentifierHash(second))
 }
 
 export type TargetHashResolution =

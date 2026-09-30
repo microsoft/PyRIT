@@ -4,15 +4,14 @@ import {
   Caption1,
   Tooltip,
   Text,
-  tokens,
   mergeClasses,
 } from '@fluentui/react-components'
 import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular, OpenRegular, ArrowSyncRegular } from '@fluentui/react-icons'
-import type { AttackTargetResolutionStatus, MessageAttachment, TargetInstance } from '../../types'
+import type { AttackTargetResolutionStatus, ChatSendOutcome, MessageAttachment, PieceConversion, TargetInstance } from '../../types'
 import { isTargetResolutionBlocking } from '../../utils/targetIdentity'
 import { useChatInputAreaStyles } from './ChatInputArea.styles'
 import SystemPromptSetup from './SystemPromptSetup'
-import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
+import { PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
 
 // ---------------------------------------------------------------------------
 // Reusable status banner
@@ -83,7 +82,7 @@ function TargetResolutionBanner({
         className={styles.statusBanner}
         textClassName={styles.statusBannerText}
         icon={<ArrowSyncRegular fontSize={18} />}
-        text="Verifying this attack's target before enabling changes..."
+        text="Verifying this attack's target before sending messages..."
         testId="target-resolution-loading-banner"
       />
     )
@@ -94,7 +93,7 @@ function TargetResolutionBanner({
         className={styles.statusBanner}
         textClassName={styles.statusBannerText}
         icon={<WarningRegular fontSize={18} />}
-        text="Target verification failed. This conversation remains read-only."
+        text="Target verification failed. Sending is disabled; human scores can still be changed by the same operator."
         buttonText="Retry"
         buttonIcon={<ArrowSyncRegular />}
         onButtonClick={onRetry}
@@ -110,7 +109,7 @@ function TargetResolutionBanner({
         className={styles.statusBanner}
         textClassName={styles.statusBannerText}
         icon={<WarningRegular fontSize={18} />}
-        text="The target used by this attack is not currently registered. This conversation is read-only."
+        text="The target used by this attack is not currently registered. Sending is disabled; human scores can still be changed by the same operator."
         buttonText="Retry"
         buttonIcon={<ArrowSyncRegular />}
         onButtonClick={onRetry}
@@ -143,7 +142,7 @@ function TargetResolutionBanner({
         className={styles.statusBanner}
         textClassName={styles.statusBannerText}
         icon={<WarningRegular fontSize={18} />}
-        text="This attack does not contain a complete target identity. The original conversation is read-only."
+        text="This attack does not contain a complete target identity. Sending is disabled; human scores can still be changed by the same operator."
         buttonText={canUseAsTemplate ? 'Continue with your target' : 'Configure Target'}
         buttonIcon={canUseAsTemplate ? <CopyRegular /> : <SettingsRegular />}
         onButtonClick={canUseAsTemplate ? onUseAsTemplate : onConfigureTarget}
@@ -162,9 +161,9 @@ function TargetResolutionBanner({
 
 interface AttachmentListProps {
   attachments: MessageAttachment[]
-  mediaConversions: Array<{ pieceType: string; convertedValue: string; convertedDataType: string }>
+  mediaConversions: Array<Pick<PieceConversion, 'pieceId' | 'convertedValue' | 'convertedDataType'>>
   onRemove: (index: number) => void
-  onClearMediaConversion: (pieceType: string) => void
+  onClearMediaConversion: (pieceId: string) => void
   formatFileSize: (bytes: number) => string
   styles: ReturnType<typeof useChatInputAreaStyles>
 }
@@ -174,9 +173,9 @@ function AttachmentList({ attachments, mediaConversions, onRemove, onClearMediaC
   return (
     <div className={styles.attachmentsContainer}>
       {attachments.map((att, index) => {
-        const conversion = mediaConversions.find((mc) => mc.pieceType === att.type)
+        const conversion = mediaConversions.find((mc) => mc.pieceId === att.draftId)
         return (
-          <div key={index} className={styles.attachmentGroup}>
+          <div key={att.draftId} className={styles.attachmentGroup}>
             <div className={styles.attachmentRow}>
               <span className={styles.attachmentContent}>
                 {conversion && <span className={styles.originalBadge}>Original</span>}
@@ -208,7 +207,7 @@ function AttachmentList({ attachments, mediaConversions, onRemove, onClearMediaC
                   size="small"
                   className={styles.dismissBtn}
                   icon={<DismissRegular />}
-                  onClick={() => onClearMediaConversion(att.type)}
+                  onClick={() => onClearMediaConversion(conversion.pieceId)}
                   data-testid={`clear-media-conversion-${att.type}`}
                 />
               </div>
@@ -240,7 +239,7 @@ interface TextInputRowsProps {
 }
 
 function TextInputRows({ input, convertedValue, convertedFileChip, disabled, textareaRef, convertedRef, onInput, onKeyDown, onConvertedValueChange, onClearConvertedFileChip, styles, textInputClassName }: TextInputRowsProps) {
-  const hasConversion = Boolean(convertedValue) || Boolean(convertedFileChip)
+  const hasConversion = convertedValue != null || Boolean(convertedFileChip)
   const convertedTextareaId = useId()
   return (
     <>
@@ -260,7 +259,7 @@ function TextInputRows({ input, convertedValue, convertedFileChip, disabled, tex
           data-testid="chat-input"
         />
       </div>
-      {convertedValue && (
+      {convertedValue != null && (
         <div className={styles.convertedRow} data-testid="converted-indicator">
           <label htmlFor={convertedTextareaId} className={styles.convertedBadge}>
             Converted prompt
@@ -276,7 +275,7 @@ function TextInputRows({ input, convertedValue, convertedFileChip, disabled, tex
           />
         </div>
       )}
-      {!convertedValue && convertedFileChip && (
+      {convertedValue == null && convertedFileChip && (
         <div className={styles.convertedFileBlock} data-testid="converted-file-chip">
           <div className={styles.convertedRow}>
             <span className={styles.convertedBadge}>Converted</span>
@@ -406,11 +405,20 @@ const formatModalityLabel = (modality: string): string => modality.replace('_pat
 export interface ChatInputAreaHandle {
   addAttachment: (att: MessageAttachment) => void
   setText: (text: string) => void
+  restoreDraft: (text: string, attachments: MessageAttachment[]) => void
+  focus: () => void
+  getDraftRevision: () => number
 }
 
 interface ChatInputAreaProps {
-  onSend: (originalValue: string, convertedValue: string | undefined, attachments: MessageAttachment[]) => void
+  onSend: (
+    originalValue: string,
+    convertedValue: string | undefined,
+    attachments: MessageAttachment[],
+  ) => Promise<ChatSendOutcome>
+  conversionRevisionKey?: string
   disabled?: boolean
+  sendDisabled?: boolean
   activeTarget?: TargetInstance | null
   singleTurnLimitReached?: boolean
   onNewConversation: () => void
@@ -420,19 +428,19 @@ interface ChatInputAreaProps {
   onRetryTargetResolution?: () => void
   onUseAsTemplate: () => void
   attackOperator?: string
-  noTargetSelected?: boolean
   onConfigureTarget: () => void
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
   onInputChange: (value: string) => void
-  onAttachmentsChange: (types: string[], data: Record<string, string>) => void
+  onAttachmentsChange: (attachments: MessageAttachment[]) => void
   convertedValue?: string | null
   originalValue?: string | null
   onClearConversion: () => void
+  onClearAllConversions?: () => void
   onConvertedValueChange: (value: string) => void
   converterOutputDataTypes?: string[]
-  mediaConversions?: Array<{ pieceType: string; convertedValue: string; convertedDataType: string }>
-  onClearMediaConversion: (pieceType: string) => void
+  mediaConversions?: Array<Pick<PieceConversion, 'pieceId' | 'convertedValue' | 'convertedDataType'>>
+  onClearMediaConversion: (pieceId: string) => void
   /** Chip describing a text→file conversion (e.g. PDFConverter output). */
   convertedFileChip?: ConvertedFileChip | null
   onClearConvertedFileChip?: () => void
@@ -444,13 +452,24 @@ interface ChatInputAreaProps {
   onSystemPromptChange?: (value: string) => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, conversionRevisionKey = '', disabled = false, sendDisabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onClearAllConversions = () => {}, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const convertedRef = useRef<HTMLTextAreaElement>(null)
+  const inputRef = useRef('')
+  const attachmentsRef = useRef<MessageAttachment[]>([])
+  const draftRevisionRef = useRef(0)
+  const previousConversionRevisionKeyRef = useRef(conversionRevisionKey)
+
+  useLayoutEffect(() => {
+    if (previousConversionRevisionKeyRef.current !== conversionRevisionKey) {
+      previousConversionRevisionKeyRef.current = conversionRevisionKey
+      draftRevisionRef.current += 1
+    }
+  }, [conversionRevisionKey])
 
   // Derive unsupported types from attachments AND converter outputs
   const unsupportedAttachmentTypes = getUnsupportedAttachmentTypes(attachments, activeTarget)
@@ -458,18 +477,35 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const hasUnsupportedModalities =
     unsupportedAttachmentTypes.length > 0 || unsupportedConverterOutputTypes.length > 0
 
-  const hasConversion = convertedValue != null && convertedValue !== ''
+  const hasConversion = convertedValue != null
   const textInputClassName = hasConversion
     ? mergeClasses(styles.textInput, styles.textInputShared)
     : styles.textInput
 
   useImperativeHandle(ref, () => ({
     addAttachment: (att: MessageAttachment) => {
-      setAttachments(prev => [...prev, att])
+      const nextAttachments = [...attachmentsRef.current, withDraftIdentity({ ...att, draftId: undefined })]
+      attachmentsRef.current = nextAttachments
+      draftRevisionRef.current += 1
+      setAttachments(nextAttachments)
     },
     setText: (text: string) => {
+      inputRef.current = text
+      draftRevisionRef.current += 1
       setInput(text)
     },
+    restoreDraft: (text: string, draftAttachments: MessageAttachment[]) => {
+      const restoredAttachments = draftAttachments.map(withDraftIdentity)
+      inputRef.current = text
+      attachmentsRef.current = restoredAttachments
+      draftRevisionRef.current += 1
+      setInput(text)
+      setAttachments(restoredAttachments)
+    },
+    focus: () => {
+      textareaRef.current?.focus()
+    },
+    getDraftRevision: () => draftRevisionRef.current,
   }))
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -487,37 +523,58 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       else if (file.type.startsWith('audio/')) type = 'audio'
       else if (file.type.startsWith('video/')) type = 'video'
 
-      newAttachments.push({
+      newAttachments.push(withDraftIdentity({
         type,
         name: file.name,
         url,
         mimeType: file.type,
         size: file.size,
         file,
-      })
+      }))
     }
 
-    setAttachments([...attachments, ...newAttachments])
+    const nextAttachments = [...attachmentsRef.current, ...newAttachments]
+    attachmentsRef.current = nextAttachments
+    draftRevisionRef.current += 1
+    setAttachments(nextAttachments)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
   }
 
   const removeAttachment = (index: number) => {
-    const newAttachments = [...attachments]
+    const newAttachments = [...attachmentsRef.current]
     URL.revokeObjectURL(newAttachments[index].url)
     newAttachments.splice(index, 1)
+    attachmentsRef.current = newAttachments
+    draftRevisionRef.current += 1
     setAttachments(newAttachments)
   }
 
-  const handleSend = () => {
-    if ((input || attachments.length > 0) && !disabled && !hasUnsupportedModalities) {
-      onSend(input, convertedValue ?? undefined, attachments)
-      setInput('')
-      setAttachments([])
-      onClearConversion()
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto'
+  const handleSend = async (): Promise<void> => {
+    if (
+      (input || convertedValue != null || convertedFileChip || attachments.length > 0)
+      && !disabled
+      && !sendDisabled
+      && !hasUnsupportedModalities
+    ) {
+      const submittedInput = inputRef.current
+      const submittedAttachments = attachmentsRef.current
+      const submittedRevision = draftRevisionRef.current
+      const outcome = await onSend(submittedInput, convertedValue ?? undefined, submittedAttachments)
+      if (
+        outcome.clearDraft
+        && draftRevisionRef.current === submittedRevision
+      ) {
+        inputRef.current = ''
+        attachmentsRef.current = []
+        draftRevisionRef.current += 1
+        setInput('')
+        setAttachments([])
+        onClearAllConversions()
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto'
+        }
       }
     }
   }
@@ -532,7 +589,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      handleSend()
+      void handleSend()
     }
   }
 
@@ -554,39 +611,13 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     }
   }, [convertedValue])
 
-  useEffect(() => {
-    const types = [...new Set(attachments.map((a) => a.type))]
-
-    // Convert the first attachment per media type to a base64 data URI for the
-    // converter panel. Only one attachment per type is supported because the
-    // converter panel operates on a single value per piece type.
-    let cancelled = false
-    const buildData = async () => {
-      const data: Record<string, string> = {}
-      for (const att of attachments) {
-        if (cancelled) return
-        if (!data[att.type] && att.file) {
-          const reader = new FileReader()
-          const base64 = await new Promise<string>((resolve, reject) => {
-            reader.onload = () => resolve(reader.result as string)
-            reader.onerror = () => reject(reader.error)
-            reader.readAsDataURL(att.file!)
-          })
-          if (cancelled) return
-          data[att.type] = base64
-        }
-      }
-      if (!cancelled) {
-        onAttachmentsChange(types, data)
-      }
-    }
-
-    void buildData()
-
-    return () => { cancelled = true }
+  useLayoutEffect(() => {
+    onAttachmentsChange(attachments)
   }, [attachments, onAttachmentsChange])
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    inputRef.current = e.target.value
+    draftRevisionRef.current += 1
     setInput(e.target.value)
   }
 
@@ -607,20 +638,6 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onConfigureTarget={onConfigureTarget}
             onUseAsTemplate={onUseAsTemplate}
             styles={styles}
-          />
-        ) : noTargetSelected ? (
-          <StatusBanner
-            className={styles.noTargetBanner}
-            textClassName={styles.noTargetText}
-            icon={<WarningRegular fontSize={18} style={{ color: tokens.colorPaletteRedForeground1 }} />}
-            text="No target selected"
-            buttonText="Configure Target"
-            buttonIcon={<SettingsRegular />}
-            onButtonClick={onConfigureTarget}
-            testId="no-target-banner"
-            buttonTestId="configure-target-input-btn"
-            buttonClassName={styles.touchTarget}
-            tourTarget="chat-prerequisite"
           />
         ) : operatorLocked ? (
           <StatusBanner
@@ -674,6 +691,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
           <input
             ref={fileInputRef}
             type="file"
+            data-testid="file-input"
             multiple
             accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt"
             style={{ display: 'none' }}
@@ -765,13 +783,15 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                   className={styles.sendButton}
                   appearance="primary"
                   icon={<SendRegular />}
-                  onClick={handleSend}
-                  disabled={disabled || (!input && attachments.length === 0) || hasUnsupportedModalities}
+                  onClick={() => { void handleSend() }}
+                  disabled={disabled || sendDisabled
+                    || (!input && convertedValue == null && !convertedFileChip && attachments.length === 0)
+                    || hasUnsupportedModalities}
                   aria-label="Send message"
                   data-testid="send-message-btn"
                 />
               </Tooltip>
-              {convertedValue && (
+              {convertedValue != null && (
                 <Tooltip content="Clear conversion" relationship="label">
                   <Button
                     appearance="subtle"

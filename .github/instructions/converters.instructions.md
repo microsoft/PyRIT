@@ -14,11 +14,10 @@ All converters MUST inherit from `Converter` and implement:
 
 ```python
 class MyConverter(Converter):
-    SUPPORTED_INPUT_TYPES = ("text",)    # Required — non-empty tuple of PromptDataType values
-    SUPPORTED_OUTPUT_TYPES = ("text",)   # Required — non-empty tuple of PromptDataType values
+    SUPPORTED_INPUT_TYPES = ("text",)  # Required — non-empty tuple of PromptDataType values
+    SUPPORTED_OUTPUT_TYPES = ("text",)  # Required — non-empty tuple of PromptDataType values
 
-    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        ...
+    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult: ...
 ```
 
 Missing or empty `SUPPORTED_INPUT_TYPES` / `SUPPORTED_OUTPUT_TYPES` raises `TypeError` at class definition time via `__init_subclass__`.
@@ -51,8 +50,8 @@ All converters inherit `Identifiable`. Override `_build_identifier()` to include
 ```python
 def _build_identifier(self) -> ComponentIdentifier:
     return self._create_identifier(
-        params={"encoding": self._encoding},           # Behavioral params only
-        children={"target": self._target.get_identifier()}  # If converter wraps a target
+        params={"encoding": self._encoding},  # Behavioral params only
+        children={"target": self._target.get_identifier()},  # If converter wraps a target
     )
 ```
 
@@ -78,10 +77,10 @@ Use keyword-only arguments. Use `@apply_defaults` if the converter accepts targe
 ```python
 from pyrit.common.apply_defaults import apply_defaults
 
+
 class MyConverter(Converter):
     @apply_defaults
-    def __init__(self, *, target: PromptTarget, template: str = "default") -> None:
-        ...
+    def __init__(self, *, target: PromptTarget, template: str = "default") -> None: ...
 ```
 
 ### Keyword-only ``__init__`` is enforced
@@ -97,13 +96,14 @@ The check is satisfied by either of:
 ```python
 def __init__(self, *, foo: str, bar: int = 0) -> None: ...
 
+
 def __init__(self, *args: str, foo: str = "") -> None: ...  # *args after self
 ```
 
 It rejects:
 
 ```python
-def __init__(self, foo: str, bar: int = 0) -> None: ...    # missing *
+def __init__(self, foo: str, bar: int = 0) -> None: ...  # missing *
 ```
 
 ## Exports and External Updates

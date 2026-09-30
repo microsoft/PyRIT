@@ -42,24 +42,18 @@ class TestIsGeneralTechnique:
         with pytest.raises(ValueError, match="SeedObjective cannot be a general technique"):
             SeedObjective(value="Test objective", is_general_technique=True)
 
-    def test_seed_simulated_conversation_defaults_to_true(self, tmp_path):
+    def test_seed_simulated_conversation_defaults_to_true(self):
         """Test that SeedSimulatedConversation.is_general_technique defaults to True."""
-        adv_path = tmp_path / "adversarial.yaml"
-        adv_path.write_text("value: Adversarial\ndata_type: text")
-
         sim = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt(value="Adversarial", parameters=["objective"]),
             num_turns=2,
         )
         assert sim.is_general_technique is True
 
-    def test_seed_simulated_conversation_can_be_set_false(self, tmp_path):
+    def test_seed_simulated_conversation_can_be_set_false(self):
         """Test that SeedSimulatedConversation.is_general_technique can be overridden to False."""
-        adv_path = tmp_path / "adversarial.yaml"
-        adv_path.write_text("value: Adversarial\ndata_type: text")
-
         sim = SeedSimulatedConversation(
-            adversarial_chat_system_prompt_path=adv_path,
+            adversarial_chat_system_prompt=SeedPrompt(value="Adversarial", parameters=["objective"]),
             num_turns=2,
             is_general_technique=False,
         )
@@ -113,16 +107,13 @@ class TestAttackTechniqueSeedGroupInit:
                 ]
             )
 
-    def test_init_with_simulated_conversation(self, tmp_path):
+    def test_init_with_simulated_conversation(self):
         """Test initialization with SeedSimulatedConversation (defaults to general technique)."""
-        adv_path = tmp_path / "adversarial.yaml"
-        adv_path.write_text("value: Adversarial\ndata_type: text")
-
         group = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
                     num_turns=3,
-                    adversarial_chat_system_prompt_path=adv_path,
+                    adversarial_chat_system_prompt=SeedPrompt(value="Adversarial", parameters=["objective"]),
                 ),
                 SeedPrompt(
                     value="Technique prompt", data_type="text", sequence=10, role="user", is_general_technique=True

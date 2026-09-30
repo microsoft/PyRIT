@@ -29,7 +29,9 @@ Semantics:
   * ``Evaluate.Include()`` — include the child, projecting its subtree with the
     child type's own markers (the default for an unmarked field). ``only_params``
     overrides that projection for this slot, restricting the child subtree to the
-    named params (propagating downward).
+    named params (propagating downward). ``unordered_when`` names a parent param
+    that must be exactly ``True`` to sort the projected child hashes. Duplicates
+    are retained; stored child order and the content hash are not changed.
   * ``Evaluate.Exclude()`` — drop the child entirely from the eval hash.
   * ``Evaluate.Unwrap()`` — mark a wrapper passthrough slot. When an identifier of
     the owning type is projected as a behavioral child, the eval hash "looks
@@ -61,10 +63,14 @@ class Include(EvalMarker):
             child's subtree to these param names (overriding the child type's own
             projection and propagating downward). ``None`` means use the child
             type's own projection.
+        unordered_when (str | None): For a child field, the parent boolean param
+            that opts this list into order-independent evaluation identity.
+            Missing or non-true values keep the list ordered.
     """
 
     fallback: str | None = None
     only_params: frozenset[str] | None = None
+    unordered_when: str | None = None
 
 
 @dataclass(frozen=True)

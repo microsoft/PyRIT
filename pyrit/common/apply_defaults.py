@@ -293,7 +293,7 @@ def apply_defaults_to_method(method: Callable[..., T]) -> Callable[..., T]:
                         f"Either pass the parameter explicitly or register a default using set_default_value()."
                     )
                 # If None was explicitly passed and parameter has REQUIRED_VALUE as default, also raise
-                elif param_value is None:
+                else:
                     # Check if the parameter's default in the signature is REQUIRED_VALUE
                     param_obj = sig.parameters.get(param_name)
                     if param_obj and isinstance(param_obj.default, _RequiredValueSentinel):

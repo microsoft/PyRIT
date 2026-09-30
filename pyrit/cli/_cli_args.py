@@ -61,9 +61,9 @@ class ScenarioResultView(str, Enum):
     OVERVIEW = "overview"
     #: One row per individual attack result.
     ATTACKS = "attacks"
-    #: Individual messages for each attack result conversation.
+    #: Per-attack summary plus the message transcript for each attack result.
     CONVERSATIONS = "conversations"
-    #: All of the above.
+    #: The scenario overview followed by every attack's conversation.
     FULL = "full"
 
 
@@ -450,7 +450,7 @@ def add_results_arguments(*, parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="{" + ",".join(view.value for view in ScenarioResultView) + "}",
         help="Result granularity: 'overview' (aggregate, default), 'attacks' (per-attack table), "
-        "'conversations' (per-attack message transcripts), or 'full' (attacks + conversations)",
+        "'conversations' (per-attack summary + message transcript), or 'full' (overview + conversations)",
     )
     group.add_argument(
         "--attack-result-ids",
@@ -464,6 +464,20 @@ def add_results_arguments(*, parser: argparse.ArgumentParser) -> None:
         metavar="N",
         help="Show at most N attacks (ignored for --view overview; defaults to 5 for "
         "--view conversations/full when no --attack-result-ids is given)",
+    )
+    group.add_argument(
+        "--format",
+        choices=["pretty", "json", "html"],
+        default="pretty",
+        help="Output format: 'pretty' (default, human-readable), 'json' (structured, one document), "
+        "or 'html' (a shareable full report; requires --output)",
+    )
+    group.add_argument(
+        "--output",
+        "-o",
+        metavar="PATH",
+        help="Write the output to PATH instead of stdout (requires --format json). "
+        "For pretty output, redirect with '> file' instead.",
     )
 
 

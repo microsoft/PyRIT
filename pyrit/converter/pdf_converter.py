@@ -164,12 +164,12 @@ class PDFConverter(Converter):
         # Return the result
         return ConverterResult(output_text=pdf_serializer.value, output_type="binary_path")
 
-    def _prepare_content(self, prompt: str) -> str:
+    def _prepare_content(self, prompt: object) -> str:
         """
         Prepare the content for the PDF, either from a template or directly from the prompt.
 
         Args:
-            prompt (str): The input prompt.
+            prompt (object): Raw text or dictionary-compatible template input to validate.
 
         Returns:
             str: The prepared content.

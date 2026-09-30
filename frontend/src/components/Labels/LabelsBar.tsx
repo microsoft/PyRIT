@@ -22,6 +22,7 @@ import { useLabelsBarStyles } from './LabelsBar.styles'
 
 const validateValue = (value: string): string | null => {
   if (!value) return 'Value is required'
+  if (value.length > 128) return 'Values must be 128 characters or fewer'
   if (value !== value.toLowerCase()) return 'Values must be lowercase'
   if (!/^[a-z0-9_]+$/.test(value)) return 'Only lowercase letters, numbers, underscores'
   return null
@@ -32,6 +33,8 @@ const DUMMY_VALUES: Record<string, string> = {
   operation: 'op_trash_panda',
 }
 
+const METADATA_KEYS = new Set(['operator', 'operation'])
+
 // Fluent's listbox renders every option as a real component, so a long list
 // stalls opening and typing. Past this many, you narrow the list by typing.
 const MAX_LISTED = 200
@@ -39,6 +42,7 @@ const MAX_LISTED = 200
 interface LabelsBarProps {
   labels: Record<string, string>
   onLabelsChange: (labels: Record<string, string>) => void
+  operatorReadOnly?: boolean
 }
 
 interface OperationPickerProps {
@@ -168,7 +172,7 @@ function OperationPicker({
   )
 }
 
-export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
+export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = false }: LabelsBarProps) {
   const styles = useLabelsBarStyles()
   const [isPopoverOpen, setIsPopoverOpen] = useState(false)
   const [newKey, setNewKey] = useState('')
@@ -218,7 +222,9 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
       // so keep anything already collected rather than replacing outright.
       .then(resp => setExistingLabels(prev => ({
         ...resp.labels,
-        operation: [...new Set([...(resp.labels.operation || []), ...(prev.operation || [])])],
+        // TODO(PyRIT 1.4): Remove the labels.* fallbacks with legacy attribution aliases.
+        operator: [...new Set([...(resp.operators ?? resp.labels.operator ?? []), ...(prev.operator || [])])],
+        operation: [...new Set([...(resp.operations ?? resp.labels.operation ?? []), ...(prev.operation || [])])],
       })))
       .catch(() => setLabelsFailed(true))
       .finally(() => setLabelsLoading(false))
@@ -228,13 +234,17 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     return DUMMY_VALUES[key] === value
   }, [])
 
-  const hasDummyValues = Object.entries(labels).some(([k, v]) => isDummyValue(k, v))
+  const placeholderKeys = Object.entries(labels)
+    .filter(([key, value]) => isDummyValue(key, value))
+    .map(([key]) => key)
+  const hasDummyValues = placeholderKeys.length > 0
 
   const validateKey = (key: string): string | null => {
     if (!key) return 'Key is required'
     if (key !== key.toLowerCase()) return 'Labels must be lowercase'
     if (!/^[a-z][a-z0-9_]*$/.test(key)) return 'Only lowercase letters, numbers, underscores'
     if (key in labels) return 'Label key already exists'
+    if (METADATA_KEYS.has(key)) return 'Set operator and operation in the bar'
     return null
   }
 
@@ -267,6 +277,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   }
 
   const handleStartEdit = (key: string) => {
+    if (key === 'operator' && operatorReadOnly) return
     editSession.current += 1
     setEditingLabel(key)
     setEditValue(labels[key])
@@ -336,23 +347,25 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   }
 
   // Suggestions: show existing keys not yet used, and values for the current key
-  const suggestedKeys = Object.keys(existingLabels).filter(k => !(k in labels))
+  const suggestedKeys = Object.keys(existingLabels)
+    .filter(key => !METADATA_KEYS.has(key) && !(key in labels))
   const suggestedValues = (editingLabel ? existingLabels[editingLabel] : existingLabels[newKey]) || []
 
-  // Layout: the labels icon (with total count badge) is always the first
+  // Layout: the labels icon (with custom-label count badge) is always the first
   // element on the bar. We then render as many full chips as fit, in
-  // declaration order. The icon's popover always shows the full list and
-  // the add form, so the user can reach everything regardless of how many
-  // chips are currently visible. The inline "+ Add" button is only shown
-  // when every chip already fits — otherwise the popover already covers
-  // the same flow.
+  // declaration order. Metadata stays in the bar; custom labels that do not
+  // fit remain available in the popover.
   const rootRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const ICON_BUTTON_WIDTH_PX = 56  // labels icon + count badge + gap
   const ADD_BUTTON_WIDTH_PX = 60   // "+ Add" button
   const [visibleCount, setVisibleCount] = useState(Infinity)
 
-  const labelEntries = useMemo(() => Object.entries(labels), [labels])
+  const headerEntries = useMemo(() => Object.entries(labels), [labels])
+  const labelEntries = useMemo(
+    () => headerEntries.filter(([key]) => !METADATA_KEYS.has(key)),
+    [headerEntries]
+  )
 
   useEffect(() => {
     const root = rootRef.current
@@ -407,7 +420,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     if (root.parentElement) observer.observe(root.parentElement)
     check()
     return () => observer.disconnect()
-  }, [labelEntries])
+  }, [headerEntries])
 
   const renderValueEditor = (key: string, value: string) => {
     // Whatever is deferred below belongs to this edit, and only this one.
@@ -455,6 +468,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             }, 150))
           }}
           style={{ width: '120px' }}
+          aria-label={`Value for ${key} label`}
           data-testid={`edit-label-${key}`}
         />
         {error && <Text size={200} className={styles.errorText}>{error}</Text>}
@@ -483,6 +497,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
 
   const renderLabelBadge = (key: string, value: string, idx: number) => {
     const isDummy = isDummyValue(key, value)
+    const isReadOnly = key === 'operator' && operatorReadOnly
     const isRequired = key === 'operator' || key === 'operation'
     // The popover renders its own editor, so only one is mounted at a time.
     const isEditing = editingLabel === key && !isPopoverOpen
@@ -520,7 +535,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
       >
         <Tooltip
-          content={isDummy ? `Placeholder value — click to change` : `Click to edit`}
+          content={isReadOnly ? 'Derived from your signed-in account' : isDummy ? `Placeholder value — click to change` : `Click to edit`}
           relationship="description"
         >
           <div
@@ -528,8 +543,9 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             onClick={() => handleStartEdit(key)}
             onKeyDown={e => handleStartEditKeyDown(e, key)}
             role="button"
-            tabIndex={0}
-            aria-label={`Edit ${key} label, currently ${value}`}
+            tabIndex={isReadOnly ? -1 : 0}
+            aria-disabled={isReadOnly}
+            aria-label={isReadOnly ? `Signed-in operator: ${value}` : `Edit ${key}${isRequired ? '' : ' label'}, currently ${value}`}
             data-testid={`label-${key}`}
           >
             <Text size={200} weight="semibold">{key}:</Text>
@@ -551,51 +567,49 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     )
   }
 
+  const renderPopoverEntry = (key: string, value: string) => {
+    if (editingLabel === key) {
+      return (
+        <div key={key} className={styles.inputRow} style={{ position: 'relative' }}>
+          {renderValueEditor(key, value)}
+        </div>
+      )
+    }
+    return (
+      <div
+        key={key}
+        className={`${styles.labelBadge} ${isDummyValue(key, value) ? styles.labelDummy : styles.labelNormal}`}
+        style={{ flexShrink: 0 }}
+        onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
+      >
+        <div
+          className={styles.labelEdit}
+          onClick={() => handleStartEdit(key)}
+          onKeyDown={e => handleStartEditKeyDown(e, key)}
+          role="button"
+          tabIndex={0}
+          aria-label={`Edit ${key} label, currently ${value}`}
+          data-testid={`popover-label-${key}`}
+        >
+          <Text size={200} weight="semibold">{key}:</Text>
+          <Text size={200}>{value}</Text>
+        </div>
+        <Button
+          className={styles.removeBtn}
+          appearance="transparent"
+          size="small"
+          icon={<DismissRegular fontSize={12} />}
+          onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
+          aria-label={`Remove ${key} label`}
+          data-testid={`popover-remove-label-${key}`}
+        />
+      </div>
+    )
+  }
+
   const renderLabelsList = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      {labelEntries.map(([key, value]) => {
-        const isDummy = isDummyValue(key, value)
-        const isRequired = key === 'operator' || key === 'operation'
-        if (editingLabel === key) {
-          return (
-            <div key={key} className={styles.inputRow} style={{ position: 'relative' }}>
-              {renderValueEditor(key, value)}
-            </div>
-          )
-        }
-        return (
-          <div
-            key={key}
-            className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
-            style={{ flexShrink: 0 }}
-            onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
-          >
-            <div
-              className={styles.labelEdit}
-              onClick={() => handleStartEdit(key)}
-              onKeyDown={e => handleStartEditKeyDown(e, key)}
-              role="button"
-              tabIndex={0}
-              aria-label={`Edit ${key} label, currently ${value}`}
-              data-testid={`popover-label-${key}`}
-            >
-              <Text size={200} weight="semibold">{key}:</Text>
-              <Text size={200}>{value}</Text>
-            </div>
-            {!isRequired && (
-              <Button
-                className={styles.removeBtn}
-                appearance="transparent"
-                size="small"
-                icon={<DismissRegular fontSize={12} />}
-                onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
-                aria-label={`Remove ${key} label`}
-                data-testid={`popover-remove-label-${key}`}
-              />
-            )}
-          </div>
-        )
-      })}
+      {labelEntries.map(([key, value]) => renderPopoverEntry(key, value))}
     </div>
   )
 
@@ -606,6 +620,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           className={styles.inputField}
           size="small"
           placeholder="key"
+          aria-label="Label key"
           value={newKey}
           onChange={(_, d) => { setNewKey(d.value.toLowerCase()); setError('') }}
           onKeyDown={handleAddKeyDown}
@@ -615,6 +630,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           className={styles.inputField}
           size="small"
           placeholder="value"
+          aria-label="Label value"
           value={newValue}
           onChange={(_, d) => { setNewValue(d.value.toLowerCase()); setError('') }}
           onKeyDown={handleAddKeyDown}
@@ -668,11 +684,30 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   return (
     <div className={styles.root} data-testid="labels-bar" ref={rootRef}>
       {hasDummyValues && (
-        <Tooltip content="Some labels have placeholder values — update them for proper tracking" relationship="description">
-          <span className={styles.warningIcon} data-testid="labels-warning">
-            <WarningRegular fontSize={16} />
-          </span>
-        </Tooltip>
+        <Popover>
+          <PopoverTrigger disableButtonEnhancement>
+            <Button
+              appearance="subtle"
+              size="small"
+              icon={<WarningRegular />}
+              className={styles.warningIcon}
+              data-testid="labels-warning"
+              aria-label="Show warnings"
+            />
+          </PopoverTrigger>
+          <PopoverSurface className={styles.popover} aria-label="Warnings">
+            <div className={styles.popoverSurface}>
+              <Text as="h2" weight="semibold" size={300}>Warnings</Text>
+              <Text size={200}>
+                {`Set ${placeholderKeys.join(' and ')} in the bar. ${
+                  placeholderKeys.length === 1
+                    ? 'The current value is a placeholder.'
+                    : 'The current values are placeholders.'
+                }`}
+              </Text>
+            </div>
+          </PopoverSurface>
+        </Popover>
       )}
 
       {/*
@@ -685,7 +720,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         aria-hidden="true"
         className={styles.measureRow}
       >
-        {labelEntries.map(([key, value], idx) => (
+        {headerEntries.map(([key, value], idx) => (
           <span
             key={key}
             data-label-idx={idx}
@@ -698,10 +733,10 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
       </div>
 
       {/*
-        Labels icon + total count. Always present, anchored leftmost.
-        Clicking opens a popover with the full label list and add form
-        — so even when every chip fits, this is still the canonical
-        entry point for editing/adding labels.
+        Labels icon + custom-label count. Always present, anchored leftmost.
+        Clicking opens a popover with the custom-label list and the add
+        form — so even when every chip fits, this is still
+        the canonical entry point for editing/adding labels.
       */}
       <Popover open={isPopoverOpen} onOpenChange={(_, d) => { setIsPopoverOpen(d.open); setError(''); if (!d.open) setEditingLabel(null) }}>
         <PopoverTrigger>
@@ -725,20 +760,20 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             </Button>
           </Tooltip>
         </PopoverTrigger>
-        <PopoverSurface>
+        <PopoverSurface className={styles.popover}>
           <div className={styles.popoverSurface}>
-            <Text weight="semibold" size={300}>All Labels</Text>
+            <Text as="h2" weight="semibold" size={300}>Default Labels</Text>
+            <Text size={200}>added to new attacks and scans</Text>
             {renderLabelsList()}
             <div className={styles.popoverDivider} />
-            <Text weight="semibold" size={300}>Add Label</Text>
             {renderAddForm()}
           </div>
         </PopoverSurface>
       </Popover>
 
       <div className={styles.labelsContainer}>
-        {labelEntries
-          .slice(0, visibleCount === Infinity ? labelEntries.length : visibleCount)
+        {headerEntries
+          .filter(([key], idx) => METADATA_KEYS.has(key) || idx < visibleCount)
           .map(([key, value], idx) => renderLabelBadge(key, value, idx))}
       </div>
     </div>

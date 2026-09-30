@@ -448,8 +448,8 @@ def build_content_filter_message(
 
     Rather than raising, blocked responses are surfaced as an error Message so attacks can
     continue. When ``partial_content`` is available it is attached to each piece as
-    ``prompt_metadata["partial_content"]`` so scorers with ``score_blocked_content=True`` can
-    still evaluate what the model produced.
+    ``prompt_metadata["partial_content"]`` so scorers can still evaluate what the model
+    produced before the block.
 
     Args:
         response (Any): The Chat Completions response object (or an object exposing

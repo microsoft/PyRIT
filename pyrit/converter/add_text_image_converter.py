@@ -5,6 +5,7 @@ import base64
 import hashlib
 import logging
 from io import BytesIO
+from pathlib import Path
 from typing import cast
 
 from PIL import Image, ImageFont
@@ -34,7 +35,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
         self,
         *,
         text_to_add: str,
-        font_name: str | None = None,
+        font_name: Path | None = None,
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int = 15,
         x_pos: int = 10,
@@ -45,7 +46,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
 
         Args:
             text_to_add (str): Text to add to an image.
-            font_name (str | None): Path of font to use. Must be a TrueType font (.ttf).
+            font_name (Path | None): Path of font to use. Must be a TrueType font (.ttf).
                 Defaults to None which uses Pillow's built-in default font.
             color (tuple): Color to print text in, using RGB values. Defaults to (0, 0, 0).
             font_size (int): Size of font to use. Defaults to 15.
@@ -57,10 +58,10 @@ class AddTextImageConverter(_BaseImageTextConverter):
         """
         if text_to_add.strip() == "":
             raise ValueError("Please provide valid text_to_add value")
-        if font_name is not None and not font_name.endswith(".ttf"):
+        if font_name is not None and Path(font_name).suffix.lower() != ".ttf":
             raise ValueError("The specified font must be a TrueType font with a .ttf extension")
         self._text_to_add = text_to_add
-        self._font_name = font_name
+        self._font_name = str(font_name) if font_name is not None else None
         self._font_size = font_size
         self._font = self._load_font()
         self._color = color

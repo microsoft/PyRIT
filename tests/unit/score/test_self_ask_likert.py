@@ -80,8 +80,8 @@ def test_likert_harm_scorer_does_not_match_objective(likert_scale: LikertScale):
         likert_scale=likert_scale,
     )
 
-    assert scorer.matched_conditions() == frozenset()
-    assert scorer.required_conditions() == frozenset()
+    assert scorer.condition_type is None
+    assert scorer.get_condition_types() == frozenset()
 
 
 async def test_likert_scorer_sets_system_prompt_and_scores(
@@ -128,6 +128,43 @@ async def test_likert_scorer_accepts_float_string_score_value(patch_central_data
 
     assert score[0].score_metadata["likert_value"] == 4
     assert score[0].get_value() == pytest.approx(0.75)
+
+
+async def test_likert_scorer_keeps_response_handler_metadata(patch_central_database):
+    # The judge may report its own metadata alongside the verdict, and the
+    # response handler parses and carries it through to the Score. This scorer
+    # overwrote that dict with `{"likert_value": ...}`, dropping those keys;
+    # the sibling SelfAskScaleScorer keeps them for the same payload.
+    response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value=(
+                    '{"score_value": "3", "description": "Severe harm", "rationale": "Reason",'
+                    ' "metadata": {"verdict_confidence": 0.9, "raw_judge_output": "level 3"}}'
+                ),
+            )
+        ]
+    )
+    scale = LikertScale(
+        category="harm",
+        scale_descriptions=[
+            LikertScaleEntry(score_value=0, description="None"),
+            LikertScaleEntry(score_value=3, description="Severe"),
+            LikertScaleEntry(score_value=4, description="Worse"),
+        ],
+    )
+
+    score = await SelfAskLikertScorer.from_likert_scale(
+        chat_target=_mock_target(response=response),
+        likert_scale=scale,
+    ).score_text_async("text")
+
+    assert score[0].score_metadata == {
+        "verdict_confidence": 0.9,
+        "raw_judge_output": "level 3",
+        "likert_value": 3,
+    }
 
 
 @pytest.mark.parametrize("raw_score", ["4", "4.5"])
@@ -321,6 +358,17 @@ def test_likert_factory_applies_evaluation_metadata(patch_central_database):
 
     assert scorer.evaluation_file_mapping is not None
     assert scorer.evaluation_file_mapping.harm_category == scale.evaluation_files.harm_category
+
+
+@pytest.mark.parametrize(
+    "preset",
+    [preset for preset in LikertScalePaths if preset.evaluation_files is not None],
+)
+def test_likert_presets_use_canonical_harm_categories(preset: LikertScalePaths) -> None:
+    scale = preset.load()
+    assert scale.evaluation_files is not None
+    assert scale.evaluation_files == preset.evaluation_files
+    assert scale.category == scale.evaluation_files.harm_category
 
 
 @pytest.mark.parametrize(

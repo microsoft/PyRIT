@@ -202,8 +202,12 @@ class Converter(Identifiable):
         self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
     ) -> ConverterResult:
         """
-        Convert substrings within a prompt that are enclosed by specified start and end tokens. If there are no tokens
-        present, the entire prompt is converted.
+        Convert marked text regions, consuming their delimiters and preserving all unmarked text.
+
+        Regions may span multiple lines but must be non-empty and cannot nest. Without
+        delimiters, the entire prompt is converted, including non-text inputs. Selected
+        regions require text input and text output. All delimiters are validated before
+        any conversion is invoked.
 
         Args:
             prompt (str): The input prompt containing text to be converted.
@@ -214,35 +218,72 @@ class Converter(Identifiable):
                 relatively distinct.
 
         Returns:
-            str: The prompt with specified substrings converted.
+            ConverterResult: The prompt with specified substrings converted.
 
         Raises:
-            ValueError: If the input is inconsistent.
+            ValueError: If delimiters are empty, regions are malformed, or selected
+                regions cannot be converted from text to text.
         """
+        if not start_token or not end_token:
+            raise ValueError("Start and end tokens must be non-empty.")
         if input_type != "text" and (start_token in prompt or end_token in prompt):
             raise ValueError("Input type must be text when start or end tokens are present.")
 
-        # Find all matches between start_token and end_token
-        pattern = re.escape(start_token) + "(.*?)" + re.escape(end_token)
-        matches = re.findall(pattern, prompt)
-
-        if not matches:
-            # No tokens found, convert the entire prompt
+        spans = self._get_token_spans(prompt=prompt, start_token=start_token, end_token=end_token)
+        if not spans:
             return await self.convert_async(prompt=prompt, input_type=input_type)
 
-        if prompt.count(start_token) != prompt.count(end_token):
-            raise ValueError("Uneven number of start tokens and end tokens.")
+        if not self.input_supported("text") or not self.output_supported("text"):
+            raise ValueError("Selected-region conversion requires a converter supporting text input and text output.")
 
-        tasks = [self._replace_text_match_async(match) for match in matches]
+        tasks = [
+            self._replace_text_match_async(prompt[start + len(start_token) : end - len(end_token)])
+            for start, end in spans
+        ]
         converted_parts = await asyncio.gather(*tasks)
 
-        for original, converted in zip(matches, converted_parts, strict=False):
-            prompt = prompt.replace(f"{start_token}{original}{end_token}", converted.output_text, 1)
-
-        return ConverterResult(output_text=prompt, output_type="text")
+        parts: list[str] = []
+        previous_end = 0
+        for (start, end), converted in zip(spans, converted_parts, strict=True):
+            parts.extend((prompt[previous_end:start], converted.output_text))
+            previous_end = end
+        parts.append(prompt[previous_end:])
+        return ConverterResult(output_text="".join(parts), output_type="text")
 
     async def _replace_text_match_async(self, match: str) -> ConverterResult:
-        return await self.convert_async(prompt=match, input_type="text")
+        result = await self.convert_async(prompt=match, input_type="text")
+        if result.output_type != "text":
+            raise ValueError(f"Selected-region conversion requires text output, but received {result.output_type}.")
+        return result
+
+    def _get_token_spans(self, *, prompt: str, start_token: str, end_token: str) -> list[tuple[int, int]]:
+        """
+        Validate delimiters and return marked spans in the original prompt.
+
+        Returns:
+            The start and end offsets for each marked region.
+
+        Raises:
+            ValueError: If the marker sequence is unmatched or nested.
+        """
+        tokens = sorted({start_token, end_token}, key=len, reverse=True)
+        pattern = "|".join(re.escape(token) for token in tokens)
+        spans: list[tuple[int, int]] = []
+        region_start: int | None = None
+        for token in re.finditer(pattern, prompt):
+            is_start = token.group() == start_token and (start_token != end_token or region_start is None)
+            if is_start:
+                if region_start is not None:
+                    raise ValueError(f"Nested start token at position {token.start()} is not allowed.")
+                region_start = token.start()
+            else:
+                if region_start is None:
+                    raise ValueError(f"Unmatched end token at position {token.start()}.")
+                spans.append((region_start, token.end()))
+                region_start = None
+        if region_start is not None:
+            raise ValueError(f"Unmatched start token at position {region_start}.")
+        return spans
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

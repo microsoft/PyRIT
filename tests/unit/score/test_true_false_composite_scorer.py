@@ -7,14 +7,21 @@ import pytest
 from unit.mocks import store_message
 
 from pyrit.memory.central_memory import CentralMemory
-from pyrit.models import ComponentIdentifier, MatchesObjective, Message, MessagePiece, Score, ScoringExpectation
+from pyrit.models import (
+    ComponentIdentifier,
+    MatchesObjective,
+    Message,
+    MessagePiece,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score import (
-    FloatScaleScorer,
+    MessageFloatScaleScorer,
     MessageScorable,
+    MessageTrueFalseScorer,
     ScorerPromptValidator,
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
-    TrueFalseScorer,
 )
 
 
@@ -26,7 +33,7 @@ def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
     )
 
 
-class MockScorer(TrueFalseScorer):
+class MockScorer(MessageTrueFalseScorer):
     """A mock scorer for testing purposes."""
 
     def _score_aggregator(self, score_list):
@@ -169,7 +176,7 @@ async def test_composite_scorer_majority_false(mock_request, true_scorer, false_
 
 
 def test_composite_scorer_invalid_scorer_type():
-    class InvalidScorer(FloatScaleScorer):
+    class InvalidScorer(MessageFloatScaleScorer):
         def __init__(self):
             self._validator = MagicMock()
 
@@ -195,7 +202,29 @@ async def test_composite_scorer_with_task(mock_request, true_scorer):
     assert scores[0].objective == task
 
 
-async def test_composite_routes_full_expectation_to_matching_and_nonmatching_leaves(mock_request):
+async def test_composite_scorer_is_silent_when_all_children_are_not_applicable(mock_request, true_scorer):
+    true_scorer._validator = ScorerPromptValidator(supported_roles=["assistant"])
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+
+    assert scores == []
+
+
+async def test_composite_scorer_ignores_non_applicable_child(mock_request, true_scorer, false_scorer):
+    false_scorer._validator = ScorerPromptValidator(supported_roles=["assistant"])
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.OR,
+        scorers=[false_scorer, true_scorer],
+    )
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+
+    assert len(scores) == 1
+    assert scores[0].get_value() is True
+
+
+async def test_composite_routes_supported_conditions_to_each_leaf(mock_request):
     objective_scorer = MockScorer(
         score_value=True,
         score_rationale="objective",
@@ -216,10 +245,10 @@ async def test_composite_routes_full_expectation_to_matching_and_nonmatching_lea
         expectation=expectation,
     )
 
-    assert scorer.matched_conditions() == frozenset({MatchesObjective})
-    assert scorer.required_conditions() == frozenset({MatchesObjective})
+    assert scorer.condition_type is None
+    assert scorer.get_condition_types() == frozenset({MatchesObjective})
     assert objective_scorer.received_expectations == [expectation]
-    assert fixed_criterion_scorer.received_expectations == [expectation]
+    assert fixed_criterion_scorer.received_expectations == [expectation.model_copy(update={"conditions": ()})]
 
 
 def test_composite_scorer_empty_scorers_list():
@@ -263,3 +292,36 @@ def test_get_chat_target_returns_none_when_no_sub_scorer_has_target(patch_centra
         scorers=[scorer1, scorer2],
     )
     assert composite.get_chat_target() is None
+
+
+def test_with_scorer_block_policy_reaches_every_constituent(patch_central_database):
+    """A composite holds the leaves that call the LLM, so the policy has to fan out."""
+    from pyrit.score import SubStringScorer
+
+    scorer1 = SubStringScorer(substring="a")
+    scorer2 = SubStringScorer(substring="b")
+    scorer1.raise_if_scorer_blocks = True
+    scorer2.raise_if_scorer_blocks = True
+
+    composite = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[scorer1, scorer2],
+    )
+
+    scoped = composite.with_scorer_block_policy(raise_if_scorer_blocks=False)
+
+    assert scoped is not composite
+    assert [s.raise_if_scorer_blocks for s in scoped._scorers] == [False, False]
+    assert [s.raise_if_scorer_blocks for s in composite._scorers] == [True, True]
+
+
+def test_with_scorer_block_policy_returns_self_when_already_compliant(patch_central_database):
+    """Returning self keeps shared instances from being copied for no reason."""
+    from pyrit.score import SubStringScorer
+
+    scorer1 = SubStringScorer(substring="a")
+    scorer1.raise_if_scorer_blocks = True
+
+    composite = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[scorer1])
+
+    assert composite.with_scorer_block_policy(raise_if_scorer_blocks=True) is composite

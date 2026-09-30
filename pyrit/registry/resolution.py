@@ -15,7 +15,7 @@ responsibilities:
   the identifier promotes as a reference to another registry (an included field
   typed as a child identifier, e.g. ``TargetIdentifier``) becomes a registry
   **reference**; every other parameter becomes a plain value parameter whose
-  ``param_type`` is the annotation with ``Optional[X]`` reduced to ``X``.
+  ``param_type`` preserves the annotation, including nullability.
 - **Resolve from a constructor** (``resolve_constructor_args``): derive the
   contract for a class and turn a flat dict of raw arguments into
   constructor-ready keyword arguments — coercing simple string values via
@@ -38,12 +38,18 @@ from __future__ import annotations
 
 import copy
 import inspect
+import logging
 import re
 import types
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin
+from collections.abc import Collection, Sequence
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin, get_type_hints
+
+from pydantic import TypeAdapter, ValidationError
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
 from pyrit.common.brick_contract import init_parameters_are_forwarded
+from pyrit.models import StructuredParameterValue
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 
 # Re-exported so ``from pyrit.registry.resolution import display_choices`` keeps working;
@@ -64,6 +70,7 @@ _SKIPPED_PARAM_NAMES: frozenset[str] = frozenset({"self", "args", "kwargs"})
 #: ``inspect.Parameter.empty`` for an unannotated parameter. Aliased to ``Any``
 #: because no single static type captures all of these; the name documents intent.
 TypeAnnotation: TypeAlias = Any
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +130,85 @@ def _default_for(param: inspect.Parameter) -> Any:
     return param.default
 
 
+def _structured_variant_types(annotation: TypeAnnotation) -> dict[str, type[StructuredParameterValue]] | None:
+    """
+    Return the named implementations declared by a structured-input annotation.
+
+    Returns:
+        dict[str, type[StructuredParameterValue]] | None: The declared variants, or None when the annotation
+            is not a structured input.
+
+    Raises:
+        TypeError: If the provider returns an invalid mapping or unrelated classes.
+    """
+    base_type = _unwrap_optional(annotation)
+    if not isinstance(base_type, type) or not issubclass(base_type, StructuredParameterValue):
+        return None
+    variants = base_type.get_registry_input_variants()
+    if not isinstance(variants, dict) or not all(
+        isinstance(name, str) and isinstance(implementation, type) for name, implementation in variants.items()
+    ):
+        raise TypeError("get_registry_input_variants() must return dict[str, type].")
+    if not all(issubclass(implementation, base_type) for implementation in variants.values()):
+        raise TypeError(f"get_registry_input_variants() implementations must inherit from {base_type.__name__}.")
+    return variants
+
+
+def _json_input_type(annotation: TypeAnnotation) -> TypeAnnotation:
+    """
+    Project Python-only input annotations onto equivalent JSON-native types.
+
+    Returns:
+        TypeAnnotation: The JSON-native equivalent, or the original annotation.
+    """
+    allows_none = type(None) in get_args(annotation)
+    unwrapped = _unwrap_optional(annotation)
+    origin = get_origin(unwrapped)
+
+    if origin in (Union, types.UnionType):
+        members = get_args(unwrapped)
+        if members and all(member is str or get_origin(member) is re.Pattern for member in members):
+            result: TypeAnnotation = str
+        else:
+            return annotation
+    elif origin is re.Pattern:
+        result = str
+    elif origin in (list, Collection, Sequence) and len(get_args(unwrapped)) == 1:
+        element_type = get_args(unwrapped)[0]
+        result = list[element_type]
+    else:
+        return annotation
+
+    return result | None if allows_none else result
+
+
+def _structured_variant_parameters(annotation: TypeAnnotation) -> dict[str, list[Parameter]] | None:
+    """
+    Derive JSON-native constructor parameters for a structured input's safe variants.
+
+    Returns:
+        dict[str, list[Parameter]] | None: Parameters keyed by variant, or None
+            when the annotation is not a structured input.
+    """
+    variants = _structured_variant_types(annotation)
+    if variants is None:
+        return None
+    return {name: _json_input_parameters(implementation) for name, implementation in variants.items()}
+
+
+def _json_input_parameters(cls: type) -> list[Parameter]:
+    """
+    Derive constructor parameters with JSON-compatible input annotations.
+
+    Returns:
+        list[Parameter]: The constructor's input parameters.
+    """
+    return [
+        parameter.model_copy(update={"param_type": _json_input_type(parameter.param_type)})
+        for parameter in derive_parameters(cls=cls)
+    ]
+
+
 def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
     """
     Return the constructor signatures that form ``cls``'s build contract.
@@ -149,7 +235,21 @@ def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
             signature = inspect.signature(init)
         except (ValueError, TypeError) as exc:
             raise ValueError(f"Failed to inspect __init__ signature for '{cls.__name__}': {exc}") from exc
-        sources.append((owner, signature))
+        constructor = inspect.unwrap(init)
+        namespace = {**vars(owner), owner.__name__: owner}
+        parameters = []
+        for param in signature.parameters.values():
+            try:
+                annotation = get_type_hints(
+                    types.SimpleNamespace(__annotations__={param.name: param.annotation}),
+                    globalns=getattr(constructor, "__globals__", {}),
+                    localns=namespace,
+                )[param.name]
+            except (NameError, TypeError, AttributeError, SyntaxError) as exc:
+                logger.debug("Unresolved annotation for %s.%s: %s", owner.__name__, param.name, exc)
+                annotation = param.annotation
+            parameters.append(param.replace(annotation=annotation))
+        sources.append((owner, signature.replace(parameters=parameters)))
 
         if not init_parameters_are_forwarded(init) or index + 1 == len(owners):
             break
@@ -195,13 +295,14 @@ def _parameters_from_signature(
             )
             continue
 
-        param_type = None if param.annotation is inspect.Parameter.empty else _unwrap_optional(param.annotation)
+        param_type = None if param.annotation is inspect.Parameter.empty else param.annotation
         parameters.append(
             Parameter(
                 name=name,
                 description=descriptions.get(name, ""),
                 default=_default_for(param),
                 param_type=param_type,
+                variants=_structured_variant_parameters(param_type),
             )
         )
     return parameters
@@ -213,7 +314,7 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
 
     Maps each settable constructor parameter to a ``Parameter``: parameters the
     identifier promotes as references carry a ``RegistryReference``; plain
-    parameters carry an ``Optional``-unwrapped ``param_type``. When a constructor
+    parameters carry the full constructor annotation as ``param_type``. When a constructor
     explicitly declares that its ``**kwargs`` are forwarded, the next constructor
     in MRO order is merged. Child declarations take precedence over same-named
     base declarations.
@@ -467,6 +568,7 @@ def resolve_constructor_args(
                 f"Unknown parameter '{name}' for '{cls.__name__}'. Valid parameters: {sorted(by_name.keys())}"
             )
 
+        value_type = _unwrap_optional(param.param_type)
         if param.reference is not None:
             getter = _registry_getter_for_component_type(param.reference.component_type)
             if getter is None:
@@ -481,7 +583,11 @@ def resolve_constructor_args(
                 name=name,
                 annotation=param.reference.annotation,
             )
-        elif isinstance(value, str) and param.is_string_coercible:
+        elif param.variants is not None:
+            resolved[name] = _resolve_structured_input(parameter=param, value=value)
+        elif (isinstance(value, str) and param.is_string_coercible) or (
+            isinstance(value_type, type) and issubclass(value_type, Enum)
+        ):
             try:
                 resolved[name] = param.coerce_value(value)
             except (ValueError, TypeError) as e:
@@ -490,6 +596,66 @@ def resolve_constructor_args(
             resolved[name] = value
 
     return resolved
+
+
+def _resolve_structured_input(*, parameter: Parameter, value: Any) -> Any:
+    """
+    Build a declared structured-input variant from its JSON representation.
+
+    Returns:
+        Any: An existing structured input, None, or the constructed variant.
+
+    Raises:
+        ValueError: If the input shape, variant, or nested parameters are invalid.
+    """
+    annotation = _unwrap_optional(parameter.param_type)
+    if isinstance(annotation, type) and isinstance(value, annotation):
+        return value
+    if value is None and type(None) in get_args(parameter.param_type):
+        return None
+
+    try:
+        if not isinstance(value, dict) or set(value) - {"type", "parameters"}:
+            raise ValueError("expected an object with 'type' and optional 'parameters'")
+        variants = _structured_variant_types(annotation)
+        if variants is None:
+            raise ValueError("annotation does not declare structured input variants")
+        name = value.get("type")
+        if not isinstance(name, str) or name not in variants:
+            raise ValueError(f"type must be one of {list(variants)}")
+        supplied = value.get("parameters", {})
+        if not isinstance(supplied, dict):
+            raise ValueError("parameters must be an object")
+
+        implementation = variants[name]
+        declared = {nested.name: nested for nested in _json_input_parameters(implementation)}
+        unknown = supplied.keys() - declared.keys()
+        if unknown:
+            raise ValueError(f"unknown parameters for '{name}': {sorted(unknown)}")
+        missing = [nested.name for nested in declared.values() if nested.required and nested.name not in supplied]
+        if missing:
+            raise ValueError(f"missing parameters for '{name}': {missing}")
+        args = {key: _coerce_structured_input(parameter=declared[key], value=raw) for key, raw in supplied.items()}
+        return implementation(**args)
+    except (ValueError, re.error) as exc:
+        raise ValueError(f"Parameter '{parameter.name}': {exc}") from exc
+
+
+def _coerce_structured_input(*, parameter: Parameter, value: Any) -> Any:
+    """
+    Validate a JSON-native nested value before applying shared coercion.
+
+    Returns:
+        Any: The validated and coerced nested value.
+
+    Raises:
+        ValueError: If the value does not match the declared JSON type.
+    """
+    try:
+        TypeAdapter(parameter.param_type).validate_python(value, strict=True)
+    except ValidationError as exc:
+        raise ValueError(f"'{parameter.name}' expects {parameter.type_name}: {exc}") from exc
+    return parameter.coerce_value(value)
 
 
 # ---------------------------------------------------------------------------

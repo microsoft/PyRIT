@@ -33,7 +33,7 @@ Set up a PyRIT development environment on your local machine.
    wget -qO- https://astral.sh/uv/install.sh | sh
    ```
 
-2. **Python 3.10-3.14**: PyRIT supports these versions, and CI tests all of them. The repository does
+2. **Python 3.11-3.14**: PyRIT supports these versions, and CI tests all of them. The repository does
    not pin an interpreter, so `uv` selects a compatible one for you (downloading it if needed).
 
 3. **Git**. Git is required to clone the repo locally. It is available to download [here](https://git-scm.com/downloads).

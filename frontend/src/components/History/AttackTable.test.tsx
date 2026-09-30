@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import AttackTable from './AttackTable'
@@ -24,7 +24,9 @@ const sampleAttacks: AttackSummary[] = [
     last_message_preview: 'Hello world',
     message_count: 5,
     related_conversation_ids: ['rel-1'],
-    labels: { operator: 'alice', operation: 'op_one', custom: 'val' },
+    operator: 'alice',
+    operation: 'op_one',
+    labels: { custom: 'val' },
     created_at: '2026-01-15T10:30:00Z',
     updated_at: '2026-01-15T11:00:00Z',
   },
@@ -255,6 +257,28 @@ describe('AttackTable', () => {
 
     // ar-1: 1 related + 1 main = 2
     expect(screen.getByText('2')).toBeInTheDocument()
+  })
+
+  it('should count pruned and preparation conversations but not adversarial conversations', () => {
+    const attack: AttackSummary = {
+      ...sampleAttacks[0],
+      attack_result_id: 'ar-related-types',
+      related_conversation_ids: ['pruned-1', 'preparation-1', 'adversarial-1'],
+      related_conversations: [
+        { conversation_id: 'pruned-1', conversation_type: 'pruned' },
+        { conversation_id: 'preparation-1', conversation_type: 'preparation' },
+        { conversation_id: 'adversarial-1', conversation_type: 'adversarial' },
+      ],
+    }
+
+    render(
+      <TestWrapper>
+        <AttackTable {...defaultProps} attacks={[attack]} />
+      </TestWrapper>
+    )
+
+    const row = screen.getByTestId('attack-row-ar-related-types')
+    expect(within(row).getByText('3')).toBeInTheDocument()
   })
 
   it('should show converter badges', () => {

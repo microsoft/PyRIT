@@ -7,6 +7,7 @@ export const useConverterPanelStyles = makeStyles({
     flexDirection: 'row',
     height: '100%',
     flexShrink: 0,
+    maxWidth: 'calc(100vw - 56px)',
   },
   root: {
     display: 'flex',
@@ -65,41 +66,51 @@ export const useConverterPanelStyles = makeStyles({
     justifyContent: 'center',
     paddingTop: tokens.spacingVerticalL,
   },
-  outputFilterRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: tokens.spacingHorizontalXXS,
-    flexWrap: 'wrap',
-  },
-  filterChip: {
-    minWidth: 'auto',
-    padding: `0 ${tokens.spacingHorizontalS}`,
-    height: '24px',
-    fontSize: tokens.fontSizeBase200,
-  },
   converterList: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalS,
+    flex: 1,
   },
-  groupHeader: {
-    fontWeight: tokens.fontWeightSemibold as unknown as string,
-    fontSize: tokens.fontSizeBase200,
+  converterPicker: {
+    width: '100%',
   },
-  header_text: {
-    color: tokens.colorPaletteBlueForeground2,
+  converterPickerListbox: {
+    maxHeight: 'min(40rem, 75vh)',
+    overflowY: 'auto',
   },
-  header_image_path: {
-    color: tokens.colorPaletteGreenForeground2,
+  createOption: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    width: '100%',
+    gap: tokens.spacingHorizontalS,
+    whiteSpace: 'normal',
   },
-  header_audio_path: {
-    color: tokens.colorPaletteYellowForeground2,
+  registeredOption: {
+    display: 'flex',
+    flexDirection: 'column',
+    width: '100%',
+    minWidth: 0,
+    gap: tokens.spacingVerticalXXS,
+    whiteSpace: 'normal',
   },
-  header_video_path: {
-    color: tokens.colorPalettePurpleForeground2,
+  optionText: {
+    display: 'flex',
+    flexDirection: 'column',
+    minWidth: 0,
+    gap: tokens.spacingVerticalXXS,
   },
-  header_binary_path: {
-    color: tokens.colorPaletteRedForeground2,
+  optionHeader: {
+    display: 'flex',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    minWidth: 0,
+    gap: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+  },
+  optionType: {
+    color: tokens.colorNeutralForeground3,
+    fontFamily: tokens.fontFamilyMonospace,
   },
   converterCard: {
     display: 'flex',
@@ -110,25 +121,105 @@ export const useConverterPanelStyles = makeStyles({
     border: `1px solid ${tokens.colorNeutralStroke1}`,
     backgroundColor: tokens.colorNeutralBackground1,
   },
+  converterCardHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: tokens.spacingHorizontalS,
+    cursor: 'grab',
+    userSelect: 'none',
+    ':active': {
+      cursor: 'grabbing',
+    },
+  },
+  dragHandle: {
+    ...mobileTouchTarget,
+    cursor: 'grab',
+    flexShrink: 0,
+    ':active': {
+      cursor: 'grabbing',
+    },
+  },
+  previewButton: {
+    ...mobileTouchTarget,
+    alignSelf: 'flex-start',
+  },
+  textEditor: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXS,
+  },
+  highlightEditor: {
+    position: 'relative',
+    minHeight: '80px',
+    borderRadius: tokens.borderRadiusMedium,
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    ':focus-within': {
+      borderTopColor: tokens.colorBrandStroke1,
+      borderRightColor: tokens.colorBrandStroke1,
+      borderBottomColor: tokens.colorBrandStroke1,
+      borderLeftColor: tokens.colorBrandStroke1,
+      boxShadow: `0 0 0 1px ${tokens.colorBrandBackground2}`,
+    },
+  },
+  highlightLayer: {
+    position: 'absolute',
+    inset: 0,
+    margin: 0,
+    padding: tokens.spacingVerticalS,
+    overflow: 'hidden',
+    scrollbarGutter: 'stable',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'break-word',
+    pointerEvents: 'none',
+    fontFamily: tokens.fontFamilyMonospace,
+    fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200,
+    color: tokens.colorNeutralForeground1,
+    boxSizing: 'border-box',
+    '& mark': {
+      color: tokens.colorPaletteMarigoldForeground2,
+      backgroundColor: tokens.colorPaletteMarigoldBackground2,
+      borderRadius: tokens.borderRadiusSmall,
+    },
+  },
+  editableValue: {
+    position: 'relative',
+    display: 'block',
+    width: '100%',
+    minHeight: '80px',
+    padding: tokens.spacingVerticalS,
+    resize: 'vertical',
+    overflow: 'auto',
+    scrollbarGutter: 'stable',
+    border: 0,
+    outline: 0,
+    boxSizing: 'border-box',
+    backgroundColor: 'transparent',
+    color: 'transparent',
+    caretColor: tokens.colorNeutralForeground1,
+    fontFamily: tokens.fontFamilyMonospace,
+    fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200,
+    overflowWrap: 'break-word',
+    '&::placeholder': {
+      color: tokens.colorNeutralForeground4,
+    },
+  },
+  selectionButton: {
+    ...mobileTouchTarget,
+    alignSelf: 'flex-start',
+  },
+  addConvertedButton: {
+    alignSelf: 'stretch',
+    marginTop: 'auto',
+  },
   converterName: {
     minWidth: 0,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-  },
-  metaRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: tokens.spacingHorizontalXS,
-    rowGap: tokens.spacingVerticalXXS,
-  },
-  badgeText: {
-    color: tokens.colorNeutralForeground2,
-  },
-  emptyState: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalS,
   },
   llmBadge: {
     display: 'inline-block',
@@ -141,140 +232,33 @@ export const useConverterPanelStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold as unknown as string,
     verticalAlign: 'middle',
   },
-  optionContent: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
-    gap: tokens.spacingHorizontalXS,
-  },
   optionBadges: {
     display: 'flex',
     alignItems: 'center',
     gap: '2px',
     flexShrink: 0,
   },
-  typeBadge: {
-    display: 'inline-block',
-    padding: `0 3px`,
-    borderRadius: tokens.borderRadiusSmall,
-    fontSize: '10px',
-    fontWeight: tokens.fontWeightSemibold as unknown as string,
-    lineHeight: '16px',
-    verticalAlign: 'middle',
-  },
-  typeArrow: {
-    fontSize: '10px',
-    color: tokens.colorNeutralForeground3,
-  },
-  // Input type colors (solid backgrounds)
-  input_text: {
-    backgroundColor: tokens.colorPaletteBlueBackground2,
-    color: tokens.colorPaletteBlueForeground2,
-  },
-  input_image_path: {
-    backgroundColor: tokens.colorPaletteGreenBackground2,
-    color: tokens.colorPaletteGreenForeground2,
-  },
-  input_audio_path: {
-    backgroundColor: tokens.colorPaletteYellowBackground2,
-    color: tokens.colorPaletteYellowForeground2,
-  },
-  input_video_path: {
-    backgroundColor: tokens.colorPalettePurpleBackground2,
-    color: tokens.colorPalettePurpleForeground2,
-  },
-  // Output type colors (outlined/lighter)
-  output_text: {
-    backgroundColor: 'transparent',
-    color: tokens.colorPaletteBlueForeground2,
-    border: `1px solid ${tokens.colorPaletteBlueBorderActive}`,
-  },
-  output_image_path: {
-    backgroundColor: 'transparent',
-    color: tokens.colorPaletteGreenForeground2,
-    border: `1px solid ${tokens.colorPaletteGreenBorderActive}`,
-  },
-  output_audio_path: {
-    backgroundColor: 'transparent',
-    color: tokens.colorPaletteYellowForeground2,
-    border: `1px solid ${tokens.colorPaletteYellowBorderActive}`,
-  },
-  output_video_path: {
-    backgroundColor: 'transparent',
-    color: tokens.colorPalettePurpleForeground2,
-    border: `1px solid ${tokens.colorPalettePurpleBorderActive}`,
-  },
-  outputSection: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXS,
-    marginTop: tokens.spacingVerticalS,
-  },
-  paramsSection: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalS,
-    padding: tokens.spacingVerticalS,
-    borderRadius: tokens.borderRadiusMedium,
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
-    backgroundColor: tokens.colorNeutralBackground1,
-  },
-  paramsSectionHeader: {
-    justifyContent: 'flex-start',
-    fontWeight: tokens.fontWeightSemibold as unknown as string,
-    padding: 0,
-  },
   touchTarget: {
     ...mobileTouchTarget,
-  },
-  paramBlock: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXXS,
-  },
-  paramLabel: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: tokens.spacingHorizontalXXS,
-  },
-  paramInfo: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    color: tokens.colorNeutralForeground3,
-    cursor: 'help',
-  },
-  paramInputError: {
-    borderTopColor: tokens.colorPaletteRedBorder1,
-    borderRightColor: tokens.colorPaletteRedBorder1,
-    borderBottomColor: tokens.colorPaletteRedBorder1,
-    borderLeftColor: tokens.colorPaletteRedBorder1,
-    ':focus': {
-      borderTopColor: tokens.colorPaletteRedBorder1,
-      borderRightColor: tokens.colorPaletteRedBorder1,
-      borderBottomColor: tokens.colorPaletteRedBorder1,
-      borderLeftColor: tokens.colorPaletteRedBorder1,
-    },
-  },
-  paramErrorText: {
-    color: tokens.colorPaletteRedForeground1,
-    fontWeight: tokens.fontWeightSemibold as unknown as string,
-  },
-  filePickerRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: tokens.spacingHorizontalXS,
   },
   outputBox: {
     padding: tokens.spacingVerticalS,
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke1}`,
-    backgroundColor: tokens.colorNeutralBackground1,
+    backgroundColor: tokens.colorNeutralBackground2,
     minHeight: '80px',
-    whiteSpace: 'pre-wrap' as const,
-    wordBreak: 'break-word' as const,
     overflowY: 'auto' as const,
-    maxHeight: '200px',
+    maxHeight: '18rem',
+  },
+  valueSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXS,
+  },
+  valueLabel: {
+    color: tokens.colorNeutralForeground3,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
   },
   previewPre: {
     margin: 0,
@@ -283,6 +267,10 @@ export const useConverterPanelStyles = makeStyles({
     fontFamily: tokens.fontFamilyMonospace,
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground1,
+  },
+  emptyPreview: {
+    color: tokens.colorNeutralForeground4,
+    fontStyle: 'italic',
   },
   errorBody: {
     whiteSpace: 'pre-wrap',

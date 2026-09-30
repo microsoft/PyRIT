@@ -4,7 +4,7 @@
 import io
 import json
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -161,10 +161,10 @@ class TestRemoteDatasetLoader:
             (None, None),
             ("", None),
             ("not-a-date", None),
-            ("2026-06-15T14:54:11.981Z", datetime(2026, 6, 15, 14, 54, 11, 981000, tzinfo=timezone.utc)),
+            ("2026-06-15T14:54:11.981Z", datetime(2026, 6, 15, 14, 54, 11, 981000, tzinfo=UTC)),
             (
                 "2025-09-20T04:09:11.080923+00:00",
-                datetime(2025, 9, 20, 4, 9, 11, 80923, tzinfo=timezone.utc),
+                datetime(2025, 9, 20, 4, 9, 11, 80923, tzinfo=UTC),
             ),
         ],
     )
@@ -179,6 +179,18 @@ class TestRemoteDatasetLoader:
                 source_type="public_url",
                 cache=False,
             )
+
+    def test_fetch_from_url_cache_false_does_not_write_temp_file(self, tmp_path):
+        """Fetching with cache=False must not abandon a dataset copy in the system temp dir."""
+        loader = ConcreteRemoteLoader()
+        source = tmp_path / "data.json"
+        source.write_text('[{"key": "value"}]', encoding="utf-8")
+
+        with patch("tempfile.NamedTemporaryFile") as tmp_file:
+            result = loader._fetch_from_url(source=str(source), source_type="file", cache=False)
+
+        assert result == [{"key": "value"}]
+        tmp_file.assert_not_called()
 
     def test_fetch_from_public_url_non_json_file_type(self):
         loader = ConcreteRemoteLoader()

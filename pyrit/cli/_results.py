@@ -2,109 +2,32 @@
 # Licensed under the MIT license.
 
 """
-Typed payloads and builders for the ``scenario-results`` command.
+View resolution, ``--limit`` policy, and attack selection for the
+``scenario-results`` command.
 
-A *view* selects the data (one of these payloads); a *format* serializes it.
-Keeping the payload a Pydantic model makes it the single source of truth: the
-console renderer reads it today, and ``--output json`` will serialize the same
-object in a later phase, so every format stays consistent.
-
-This module imports ``pydantic`` and is therefore loaded only from deferred
-(post-parse) call sites, never on the CLI ``--help`` path. The lightweight
-``ScenarioResultView`` enum lives in ``pyrit.cli._cli_args`` for that reason.
+Rendering is delegated to ``pyrit.output`` (the scenario, attacks, and conversation
+printers); this module holds only the CLI-side flag policy and the objective-scorer
+key helper (attack selection is shared via ``pyrit.output._derivation.select_attacks``).
+``ScenarioResultView`` lives in ``pyrit.cli._cli_args`` so the argument parsers can
+reference it cheaply.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from pydantic import BaseModel, Field
+import sys
+from typing import TYPE_CHECKING
 
 from pyrit.cli._cli_args import ScenarioResultView
 
 if TYPE_CHECKING:
-    from pyrit.cli.api_client import PyRITApiClient
-    from pyrit.models import AttackResult, ScenarioResult
+    from pyrit.models import ScenarioResult
+    from pyrit.output.sink import Sink
 
-#: Default cap on how many attacks the expensive views (``conversations`` /
-#: ``full``) render when the user gives neither ``--attack-result-ids`` nor
-#: ``--limit``. Unlike ``attacks`` (a single embedded read), these views make a
-#: per-attack message fetch, so an unbounded run could pull many transcripts.
+#: Default cap on how many attacks the transcript-fetching views (``conversations``
+#: and ``full``) render when the user gives neither ``--attack-result-ids`` nor
+#: ``--limit``. Unlike ``attacks`` (a single embedded read), these make a per-attack
+#: message fetch, so an unbounded run could pull many transcripts.
 _DEFAULT_HEAVY_VIEW_LIMIT = 5
-
-
-class AttackRow(BaseModel):
-    """A single attack result rendered as one row of the attacks table."""
-
-    attack_result_id: str
-    atomic_attack_name: str
-    objective: str
-    outcome: str
-    executed_turns: int
-    score_value: str | None = None
-
-
-class AttacksTablePayload(BaseModel):
-    """
-    The ``attacks`` view: one row per attack result in a scenario run.
-
-    ``total`` is the number of attacks that matched the selection before
-    ``--limit`` was applied; ``len(rows)`` is how many are actually included.
-    Exposing both lets any renderer show a "showing N of M" note.
-    """
-
-    scenario_result_id: str
-    rows: list[AttackRow] = Field(default_factory=list)
-    total: int = 0
-
-
-class TranscriptScore(BaseModel):
-    """
-    The objective (top-level) score attached to a transcript message.
-
-    A response is often scored by several scorers (refusal, objective,
-    composite, ...), but only the scenario's objective scorer determines
-    success, so the transcript surfaces just that one. ``scorer`` names it so a
-    bare ``true``/``false`` isn't ambiguous about which dimension it measures.
-    """
-
-    scorer: str | None = None
-    value: str | None = None
-    rationale: str | None = None
-
-
-class TranscriptMessage(BaseModel):
-    """One message in a conversation transcript (role, turn, text, objective score)."""
-
-    role: str
-    turn: int
-    text: str
-    score: TranscriptScore | None = None
-
-
-class AttackConversation(BaseModel):
-    """The main-conversation transcript for a single attack result."""
-
-    attack_result_id: str
-    atomic_attack_name: str
-    objective: str
-    outcome: str
-    conversation_id: str
-    messages: list[TranscriptMessage] = Field(default_factory=list)
-
-
-class ConversationsPayload(BaseModel):
-    """
-    The ``conversations`` view: the main-conversation transcript per attack.
-
-    ``total`` is the number of attacks that matched the selection before
-    ``--limit`` was applied; ``len(conversations)`` is how many are actually
-    included. Exposing both lets any renderer show a "showing N of M" note.
-    """
-
-    scenario_result_id: str
-    conversations: list[AttackConversation] = Field(default_factory=list)
-    total: int = 0
 
 
 def resolve_view(*, view: ScenarioResultView | None) -> ScenarioResultView:
@@ -147,7 +70,7 @@ def apply_view_limit_policy(
         view (ScenarioResultView): The resolved view.
         limit (int | None): The requested row cap, if any.
         attack_result_ids (list[str] | None): The attacks the user scoped to, if
-            any. Only consulted for the heavy views' default-limit fallback.
+            any. Only consulted for the transcript views' default-limit fallback.
             Defaults to None.
 
     Returns:
@@ -155,200 +78,78 @@ def apply_view_limit_policy(
     """
     if view is ScenarioResultView.OVERVIEW:
         if limit is not None:
-            print("Note: --limit has no effect with --view overview; ignoring it.")
+            # Advisory notices go to stderr so stdout stays a single valid document (e.g. --format json).
+            print("Note: --limit has no effect with --view overview; ignoring it.", file=sys.stderr)
         return None
     if view in (ScenarioResultView.CONVERSATIONS, ScenarioResultView.FULL):
         if limit is None and not attack_result_ids:
             print(
                 f"Note: no --attack-result-ids or --limit given; showing at most "
                 f"{_DEFAULT_HEAVY_VIEW_LIMIT} conversations. Pass --limit or "
-                "--attack-result-ids to see more."
+                "--attack-result-ids to see more.",
+                file=sys.stderr,
             )
             return _DEFAULT_HEAVY_VIEW_LIMIT
         return limit
     return limit
 
 
-def build_attacks_table_payload(
-    *,
-    result: ScenarioResult,
-    scenario_result_id: str,
-    attack_result_ids: list[str] | None = None,
-    limit: int | None = None,
-) -> AttacksTablePayload:
+def warn_if_view_ignored_by_html(*, view: ScenarioResultView | None) -> None:
     """
-    Build the ``attacks`` payload from an already-fetched scenario result.
+    Warn when an explicit ``--view`` is discarded because ``--format html`` always
+    renders the full report.
 
-    Every ``AttackResult`` is already embedded in *result* (grouped by atomic
-    attack name), so no extra server calls are needed. ``--limit`` is applied
-    here, on the payload, rather than in a renderer, so that all output formats
-    honor it identically.
+    ``html`` is not a rendering of a *view* — it is a fixed complete report — so any
+    ``--view`` other than ``full`` is silently ignored. The parser defaults ``--view``
+    to ``None``, so an explicit value is distinguishable from an omitted one.
 
     Args:
-        result (ScenarioResult): The full scenario result to read attacks from.
-        scenario_result_id (str): The run id, echoed back on the payload.
-        attack_result_ids (list[str] | None): When provided, keep only attacks
-            whose id is in this set. Defaults to None (all attacks).
-        limit (int | None): Maximum number of rows to include. Defaults to None.
-
-    Returns:
-        AttacksTablePayload: The rows plus the pre-limit total.
+        view (ScenarioResultView | None): The raw parsed ``--view``, or ``None`` when omitted.
     """
-    selected = _select_attacks(result=result, attack_result_ids=attack_result_ids)
-    total = len(selected)
-    if limit is not None:
-        selected = selected[:limit]
-
-    rows = [
-        AttackRow(
-            attack_result_id=attack_result.attack_result_id,
-            atomic_attack_name=atomic_attack_name,
-            objective=attack_result.objective,
-            outcome=attack_result.outcome.value,
-            executed_turns=attack_result.executed_turns,
-            score_value=(str(attack_result.last_score.score_value) if attack_result.last_score is not None else None),
-        )
-        for atomic_attack_name, attack_result in selected
-    ]
-    return AttacksTablePayload(scenario_result_id=scenario_result_id, rows=rows, total=total)
-
-
-async def build_conversations_payload_async(
-    *,
-    result: ScenarioResult,
-    client: PyRITApiClient,
-    scenario_result_id: str,
-    attack_result_ids: list[str] | None = None,
-    limit: int | None = None,
-) -> ConversationsPayload:
-    """
-    Build the ``conversations`` payload, fetching each attack's main transcript.
-
-    Unlike the ``attacks`` builder (all data embedded, pure and sync), this view
-    needs one message fetch per attack, so the builder owns the I/O loop. Attack
-    selection and ``--limit`` are applied *before* fetching, so the effective
-    limit gates the number of network calls — not just the rendered rows — and
-    both front-ends share that guard.
-
-    Args:
-        result (ScenarioResult): The full scenario result to read attacks from.
-        client (PyRITApiClient): Client used to fetch each conversation's messages.
-        scenario_result_id (str): The run id, echoed back on the payload.
-        attack_result_ids (list[str] | None): When provided, keep only attacks
-            whose id is in this set. Defaults to None (all attacks).
-        limit (int | None): Maximum number of attacks to fetch. Defaults to None.
-
-    Returns:
-        ConversationsPayload: The per-attack transcripts plus the pre-limit total.
-    """
-    selected = _select_attacks(result=result, attack_result_ids=attack_result_ids)
-    total = len(selected)
-    if limit is not None:
-        selected = selected[:limit]
-
-    objective_hash, objective_class = _objective_scorer_key(result=result)
-    conversations: list[AttackConversation] = []
-    for atomic_attack_name, attack_result in selected:
-        response = await client.get_conversation_messages_async(
-            attack_result_id=attack_result.attack_result_id,
-            conversation_id=attack_result.conversation_id,
-        )
-        messages = [
-            _message_to_transcript(
-                message=message,
-                objective_hash=objective_hash,
-                objective_class=objective_class,
-            )
-            for message in response.get("messages", [])
-        ]
-        conversations.append(
-            AttackConversation(
-                attack_result_id=attack_result.attack_result_id,
-                atomic_attack_name=atomic_attack_name,
-                objective=attack_result.objective,
-                outcome=attack_result.outcome.value,
-                conversation_id=attack_result.conversation_id,
-                messages=messages,
-            )
+    if view is not None and view is not ScenarioResultView.FULL:
+        print(
+            f"Note: --view {view.value} is ignored with --format html; rendering the full report.",
+            file=sys.stderr,
         )
 
-    return ConversationsPayload(
-        scenario_result_id=scenario_result_id,
-        conversations=conversations,
-        total=total,
-    )
+
+#: Formats that ``--output`` can write to a file. Pretty is terminal-oriented
+#: (redirect with ``> file`` instead).
+_FILE_OUTPUT_FORMATS = frozenset({"json", "html"})
 
 
-def _select_attacks(*, result: ScenarioResult, attack_result_ids: list[str] | None) -> list[tuple[str, AttackResult]]:
+def resolve_output_sink(*, output_path: str | None, output_format: str) -> Sink | None:
     """
-    Return ``(atomic_attack_name, attack_result)`` pairs, optionally id-filtered.
-
-    Shared by the ``attacks`` and ``conversations`` builders so both select and
-    order attacks identically.
+    Resolve ``--output`` to a file sink, or ``None`` for stdout.
 
     Args:
-        result (ScenarioResult): The scenario result whose attacks to walk.
-        attack_result_ids (list[str] | None): When provided, keep only attacks
-            whose id is in this set.
+        output_path (str | None): The ``--output`` path, or None when omitted.
+        output_format (str): The resolved ``--format`` value.
 
     Returns:
-        list[tuple[str, AttackResult]]: The selected pairs in scenario order.
+        Sink | None: A ``FileSink`` for *output_path*, or None to use the default (stdout).
+
+    Raises:
+        ValueError: If ``html`` is requested without ``--output``, a file destination is
+            requested for a terminal-oriented format, or its parent directory does not exist.
     """
-    id_filter = set(attack_result_ids) if attack_result_ids else None
-    selected: list[tuple[str, AttackResult]] = []
-    for atomic_attack_name, attack_results in result.attack_results.items():
-        for attack_result in attack_results:
-            if id_filter is not None and attack_result.attack_result_id not in id_filter:
-                continue
-            selected.append((atomic_attack_name, attack_result))
-    return selected
+    if output_format == "html" and output_path is None:
+        raise ValueError("--format html writes a report file and requires --output PATH.")
+    if output_path is None:
+        return None
+    if output_format not in _FILE_OUTPUT_FORMATS:
+        raise ValueError(
+            f"--output writes a document file and requires --format json or html, not {output_format!r}. "
+            "For pretty output, redirect with '> file' instead."
+        )
+    from pathlib import Path
 
+    from pyrit.output.sink import FileSink
 
-def _message_to_transcript(
-    *,
-    message: dict[str, Any],
-    objective_hash: str | None,
-    objective_class: str | None,
-) -> TranscriptMessage:
-    """
-    Map one raw ``MessageView`` payload into a ``TranscriptMessage``.
-
-    Args:
-        message (dict[str, Any]): A single message from the
-            ``ConversationMessagesResponse`` payload.
-        objective_hash (str | None): The objective scorer's identity hash, used
-            to select which of the message's scores to surface.
-        objective_class (str | None): The objective scorer's class name, used as
-            a fallback match when the hash is unavailable.
-
-    Returns:
-        TranscriptMessage: The role, turn, joined text, and objective score.
-    """
-    pieces: list[dict[str, Any]] = message.get("message_pieces") or []
-    return TranscriptMessage(
-        role=str(message.get("role", "")),
-        turn=int(message.get("turn_number", 0) or 0),
-        text=_join_piece_text(pieces=pieces),
-        score=_select_objective_score(
-            pieces=pieces,
-            objective_hash=objective_hash,
-            objective_class=objective_class,
-        ),
-    )
-
-
-def _join_piece_text(*, pieces: list[dict[str, Any]]) -> str:
-    """
-    Join the text of a message's pieces, preferring the converted value.
-
-    Args:
-        pieces (list[dict[str, Any]]): The message's piece payloads.
-
-    Returns:
-        str: The non-empty piece values joined by newlines.
-    """
-    parts = [str(value) for piece in pieces if (value := piece.get("converted_value") or piece.get("original_value"))]
-    return "\n".join(parts)
+    path = Path(output_path)
+    if not path.parent.exists():
+        raise ValueError(f"--output directory does not exist: {path.parent}")
+    return FileSink(path=path)
 
 
 def _objective_scorer_key(*, result: ScenarioResult) -> tuple[str | None, str | None]:
@@ -370,54 +171,3 @@ def _objective_scorer_key(*, result: ScenarioResult) -> tuple[str | None, str | 
     if identifier is None:
         return None, None
     return identifier.hash, identifier.class_name
-
-
-def _select_objective_score(
-    *,
-    pieces: list[dict[str, Any]],
-    objective_hash: str | None,
-    objective_class: str | None,
-) -> TranscriptScore | None:
-    """
-    Pick the objective (top-level) score from a message's pieces.
-
-    A response carries several scores (refusal, objective, composite, ...); only
-    the objective scorer's verdict reflects attack success. Match it by identity
-    hash (exact), falling back to class name, rather than by list order — which
-    is undocumented and would arbitrarily surface an auxiliary sub-score.
-
-    Args:
-        pieces (list[dict[str, Any]]): The message's piece payloads.
-        objective_hash (str | None): The objective scorer's identity hash.
-        objective_class (str | None): The objective scorer's class name (fallback).
-
-    Returns:
-        TranscriptScore | None: The objective score, or ``None`` if not found.
-    """
-    fallback: TranscriptScore | None = None
-    for piece in pieces:
-        for score in piece.get("scores") or []:
-            identifier = score.get("scorer_class_identifier") or {}
-            if objective_hash and identifier.get("hash") == objective_hash:
-                return _to_transcript_score(score=score)
-            if objective_class and fallback is None and score.get("scorer_type") == objective_class:
-                fallback = _to_transcript_score(score=score)
-    return fallback
-
-
-def _to_transcript_score(*, score: dict[str, Any]) -> TranscriptScore:
-    """
-    Map one raw ``ScoreView`` payload into a ``TranscriptScore``.
-
-    Args:
-        score (dict[str, Any]): A single score payload from a message piece.
-
-    Returns:
-        TranscriptScore: The scorer name, value, and rationale.
-    """
-    value = score.get("score_value")
-    return TranscriptScore(
-        scorer=score.get("scorer_type") or None,
-        value=str(value) if value is not None else None,
-        rationale=score.get("score_rationale") or None,
-    )

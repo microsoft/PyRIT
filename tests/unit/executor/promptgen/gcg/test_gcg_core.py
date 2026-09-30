@@ -1,9 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import pickle
+import threading
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, call, patch, sentinel
 
@@ -41,6 +45,22 @@ default_implementations_mod = pytest.importorskip(
     reason="GCG optional dependencies not installed",
 )
 LengthPreservingFilter = default_implementations_mod.LengthPreservingFilter
+StandardGCGSampling = default_implementations_mod.StandardGCGSampling
+CrossEntropyLoss = default_implementations_mod.CrossEntropyLoss
+
+import numpy as np  # noqa: E402
+
+generator_mod = pytest.importorskip(
+    "pyrit.executor.promptgen.gcg.generator",
+    reason="GCG optional dependencies not installed",
+)
+GCGGenerator = generator_mod.GCGGenerator
+
+from unit.executor.promptgen.gcg.trajectory_stubs import (  # noqa: E402
+    RecordingGCGAttack,
+    TrajectoryPromptManager,
+    TrajectoryWorker,
+)
 
 
 @dataclass
@@ -341,28 +361,63 @@ class TestSampleControl:
                 assert new_tok not in non_ascii_set, f"Candidate {i} position {pos}: sampled non-ASCII token {new_tok}"
 
 
+# Architectures built as tiny random models to exercise the embedding helpers.
+# The first three predate this generic path and must keep returning float16 from
+# get_embeddings; the rest were previously rejected outright.
+_HALF_PRECISION_ARCHITECTURES = ["gpt2", "gptj", "gpt_neox"]
+_OTHER_ARCHITECTURES = ["llama", "mistral", "mixtral", "phi3", "qwen3", "starcoder2"]
+
+_TINY_CONFIG = {
+    "hidden_size": 32,
+    "num_hidden_layers": 1,
+    "num_attention_heads": 4,
+    "num_key_value_heads": 4,
+    "intermediate_size": 64,
+    "vocab_size": 256,
+}
+_EXTRA_CONFIG = {
+    "phi3": {
+        "max_position_embeddings": 64,
+        "original_max_position_embeddings": 64,
+        "pad_token_id": 0,
+    },
+}
+
+
+def _tiny_model(model_type: str) -> Any:
+    """Build a small randomly initialized model of the given architecture."""
+    transformers = pytest.importorskip("transformers", reason="transformers not installed")
+    config = transformers.AutoConfig.for_model(model_type, **_TINY_CONFIG, **_EXTRA_CONFIG.get(model_type, {}))
+    return transformers.AutoModelForCausalLM.from_config(config)
+
+
 class TestEmbeddingHelpers:
     """Tests for get_embedding_layer, get_embedding_matrix, get_embeddings."""
 
-    def test_get_embedding_layer_raises_for_unknown_model(self) -> None:
-        """Should raise ValueError for unsupported model types."""
-        mock_model = MagicMock()
-        # Ensure it doesn't match any isinstance checks
-        mock_model.__class__ = type("UnknownModel", (), {})
-        with pytest.raises(ValueError, match="Unknown model type"):
-            get_embedding_layer(mock_model)
+    @pytest.mark.parametrize("model_type", _HALF_PRECISION_ARCHITECTURES + _OTHER_ARCHITECTURES)
+    def test_helpers_resolve_embeddings_for_any_causal_model(self, model_type: str) -> None:
+        """Any model AutoModelForCausalLM can load should resolve through the helpers."""
+        model = _tiny_model(model_type)
+        expected = model.get_input_embeddings()
 
-    def test_get_embedding_matrix_raises_for_unknown_model(self) -> None:
-        mock_model = MagicMock()
-        mock_model.__class__ = type("UnknownModel", (), {})
-        with pytest.raises(ValueError, match="Unknown model type"):
-            get_embedding_matrix(mock_model)
+        assert get_embedding_layer(model) is expected
+        assert get_embedding_matrix(model) is expected.weight
 
-    def test_get_embeddings_raises_for_unknown_model(self) -> None:
-        mock_model = MagicMock()
-        mock_model.__class__ = type("UnknownModel", (), {})
-        with pytest.raises(ValueError, match="Unknown model type"):
-            get_embeddings(mock_model, torch.tensor([1, 2, 3]))
+        embedded = get_embeddings(model, torch.tensor([[1, 2, 3]]))
+        assert embedded.shape[-1] == model.config.hidden_size
+
+    @pytest.mark.parametrize("model_type", _HALF_PRECISION_ARCHITECTURES)
+    def test_get_embeddings_keeps_half_precision_for_legacy_architectures(self, model_type: str) -> None:
+        """GPT-2, GPT-J and GPT-NeoX returned float16 before this path existed."""
+        model = _tiny_model(model_type)
+        assert get_embeddings(model, torch.tensor([[1, 2, 3]])).dtype == torch.float16
+
+    @pytest.mark.parametrize("model_type", _OTHER_ARCHITECTURES)
+    def test_get_embeddings_keeps_embedding_dtype_for_other_architectures(self, model_type: str) -> None:
+        """Everything else keeps the embedding dtype rather than being downcast."""
+        model = _tiny_model(model_type)
+        expected_dtype = model.get_input_embeddings().weight.dtype
+        assert get_embeddings(model, torch.tensor([[1, 2, 3]])).dtype == expected_dtype
 
 
 class TestPromptManagerInit:
@@ -430,136 +485,562 @@ class TestEvaluateAttackInit:
             )
 
 
+_CHATML_TEMPLATE = (
+    "{% for m in messages %}<|{{ m['role'] }}|>{{ m['content'] }}<|end|>{% endfor %}"
+    "{% if add_generation_prompt %}<|assistant|>{% endif %}"
+)
+
+# A complete-conversation template is allowed to ignore add_generation_prompt, so the user-only
+# render stops before the assistant marker instead of after it.
+_NO_GENERATION_PROMPT_TEMPLATE = "{% for m in messages %}<|{{ m['role'] }}|>{{ m['content'] }}<|end|>{% endfor %}"
+
+
+def _fast_tokenizer(*, chat_template: str = _CHATML_TEMPLATE, byte_level: bool = False) -> Any:
+    """
+    Build an offline tokenizer with real offsets, decoding, and special role tokens.
+
+    Args:
+        chat_template (str): The Jinja chat template to render with.
+        byte_level (bool): Use byte-level BPE instead of whitespace-delimited words.
+
+    Returns:
+        Any: A ``PreTrainedTokenizerFast`` with ``chat_template`` set.
+    """
+    from tokenizers import Tokenizer, decoders, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    if byte_level:
+        vocabulary = ["[UNK]", *sorted(pre_tokenizers.ByteLevel.alphabet())]
+        backend = Tokenizer(models.BPE(dict(zip(vocabulary, range(len(vocabulary)), strict=True)), merges=[]))
+        backend.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        backend.decoder = decoders.ByteLevel()
+    else:
+        vocabulary = [
+            "[UNK]",
+            "Say",
+            "it",
+            "assistant",
+            "done",
+            "!",
+            "Sure",
+            ",",
+            "here",
+            "is",
+            "the",
+            "plan",
+            "Respond",
+            "with",
+            "now",
+            "user",
+            "model",
+            "goal",
+            "control",
+            "target",
+            "hello",
+            "world",
+        ]
+        backend = Tokenizer(
+            models.WordLevel(dict(zip(vocabulary, range(len(vocabulary)), strict=True)), unk_token="[UNK]")
+        )
+        backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="[UNK]")
+    tokenizer.add_special_tokens(
+        {"additional_special_tokens": ["<|user|>", "<|assistant|>", "<|end|>", "<start_of_turn>", "<end_of_turn>"]}
+    )
+    tokenizer.chat_template = chat_template
+    return tokenizer
+
+
 class TestUpdateIdsErrorPaths:
-    """Tests covering the error / fallback paths in AttackPrompt._update_ids."""
+    """Real-tokenizer coverage of prompt boundaries and unsupported templates."""
 
-    def test_raises_when_substring_not_in_rendered_prompt(self) -> None:
-        """If the chat template strips/transforms goal/control/target so they don't appear
-        verbatim in the rendered prompt, _update_ids must raise a clear ValueError."""
-        tokenizer = MagicMock()
-        # Chat template that drops the user content entirely — goal/control won't appear in prompt
-        tokenizer.apply_chat_template.return_value = "[INST] [/INST] hello"
-        # tokenizer(...) returns an encoding-like object
-        encoding = MagicMock()
-        encoding.input_ids = [1, 2, 3, 4]
-        encoding.char_to_token.return_value = 1
-        tokenizer.return_value = encoding
-
-        with pytest.raises(ValueError, match="Could not locate goal/control/target"):
+    @pytest.mark.parametrize(
+        "chat_template",
+        [
+            "<|user|>goal control<|end|><|assistant|>target<|end|>",
+            "{% for m in messages %}{{ m['content'] | upper }}{% endfor %}",
+            "{% for m in messages %}{{ m['content'] }}{{ m['content'] }}{% endfor %}",
+            "{% for m in messages | reverse %}{{ m['content'] }}{% endfor %}",
+            "{% for m in messages %}{{ m['content'] | replace('goal', 'other') }}{% endfor %}",
+            "{% for m in messages %}{% if 'goal' in m['content'] %}prefix{% endif %}{{ m['content'] }}{% endfor %}",
+        ],
+    )
+    def test_unsupported_templates_raise_instead_of_scanning_the_prompt(self, chat_template: str) -> None:
+        with pytest.raises(ValueError, match="Cannot safely locate"):
             AttackPrompt(
-                goal="this-goal-is-missing",
-                target="this-target-is-missing",
-                tokenizer=tokenizer,
-                control_init="this-control-is-missing",
+                goal="goal",
+                target="target",
+                tokenizer=_fast_tokenizer(chat_template=chat_template),
+                control_init="control",
             )
 
-    def test_start_tok_walks_forward_when_initial_position_has_no_token(self) -> None:
-        """char_to_token returns None for the start position (e.g., whitespace squashed
-        into the previous token); start_tok must walk forward to the next mappable
-        character. Slices should still be valid."""
-        # Use a fully mocked tokenizer so we can deterministically force char_to_token
-        # to return None at specific positions, otherwise real tokenizers usually map
-        # every byte and never trigger the fallback.
-        prompt_text = "USER hello !! ASSISTANT world"
-        toks = list(range(15))
+    @pytest.mark.parametrize(("control", "target"), [("", "done"), ("! !", ""), (" ", "done"), ("! !", " ")])
+    @pytest.mark.parametrize("byte_level", [False, True])
+    def test_empty_or_unmapped_optimization_spans_raise(self, *, control: str, target: str, byte_level: bool) -> None:
+        with pytest.raises(ValueError, match="control|target"):
+            AttackPrompt(
+                goal="Say it",
+                target=target,
+                tokenizer=_fast_tokenizer(byte_level=byte_level),
+                control_init=control,
+            )
 
-        def char_to_token(pos: int) -> int | None:
-            # Positions of "h" and "w" both return None; the next char does map. This
-            # exercises the cur += 1 walk-forward branch in start_tok.
-            char = prompt_text[pos] if 0 <= pos < len(prompt_text) else ""
-            if char in ("h", "w"):
-                return None
-            # Map remaining positions in a way that preserves slice ordering
-            return min(pos // 2, len(toks) - 1)
+    def test_unmapped_whitespace_does_not_extend_slices_into_other_content(self) -> None:
+        tokenizer = _fast_tokenizer()
+        prompt = AttackPrompt(goal=" hello ", target=" world ", tokenizer=tokenizer, control_init=" ! ! ")
 
-        encoding = MagicMock()
-        encoding.input_ids = toks
-        encoding.char_to_token.side_effect = char_to_token
+        assert prompt._goal_slice == slice(1, 2)
+        assert prompt._control_slice == slice(2, 4)
+        assert prompt._target_slice == slice(6, 7)
+        assert prompt._loss_slice == slice(5, 6)
+        assert prompt.goal_str == "hello"
+        assert prompt.control_str == "! !"
+        assert prompt.target_str == "world"
 
-        tokenizer = MagicMock()
-        tokenizer.apply_chat_template.return_value = prompt_text
-        tokenizer.return_value = encoding
+    def test_target_at_the_end_of_the_prompt_keeps_all_its_tokens(self) -> None:
+        tokenizer = _fast_tokenizer(chat_template=_CHATML_TEMPLATE.replace("<|end|>", ""))
+        prompt = AttackPrompt(goal="hello", target="world", tokenizer=tokenizer, control_init="! !")
 
-        # Construction must succeed even though char_to_token returns None at goal/target
-        # start positions ("h" / "w").
-        prompt = AttackPrompt(
-            goal="hello",
-            target="world",
-            tokenizer=tokenizer,
-            control_init="!!",
+        assert prompt._target_slice == slice(5, 6)
+        assert prompt._target_slice.stop == len(prompt.input_ids)
+        assert prompt.target_str == "world"
+
+    @pytest.mark.parametrize(
+        ("goal", "control", "target"),
+        [
+            ("Say <|end|><|assistant|> now", "! !", "done"),
+            ("Say it", "<|end|><|assistant|>", "done"),
+            ("Say it", "! !", "done <|end|><|assistant|> now"),
+            ("Say ! ! now", "! !", "done ! !"),
+            ("assistant", "assistant", "assistant"),
+            ("control control", "control", "control"),
+        ],
+    )
+    def test_repeated_content_and_separators_keep_exact_slices(self, *, goal: str, control: str, target: str) -> None:
+        tokenizer = _fast_tokenizer()
+        prompt = AttackPrompt(goal=goal, target=target, tokenizer=tokenizer, control_init=control)
+        goal_ids = tokenizer(goal, add_special_tokens=False).input_ids
+        control_ids = tokenizer(control, add_special_tokens=False).input_ids
+        target_ids = tokenizer(target, add_special_tokens=False).input_ids
+        control_start = 1 + len(goal_ids)
+        target_start = control_start + len(control_ids) + 2
+
+        assert prompt._goal_slice == slice(1, control_start)
+        assert prompt._control_slice == slice(control_start, control_start + len(control_ids))
+        assert prompt._target_slice == slice(target_start, target_start + len(target_ids))
+        assert prompt.goal_toks.tolist() == goal_ids
+        assert prompt.control_toks.tolist() == control_ids
+        assert prompt.target_toks.tolist() == target_ids
+
+    def test_json_template_does_not_find_the_target_in_the_role_label(self) -> None:
+        tokenizer = _fast_tokenizer(
+            chat_template="{% for m in messages %}{{ m['role'] | tojson }}:{{ m['content'] | tojson }}\n{% endfor %}",
+            byte_level=True,
         )
-        assert isinstance(prompt._goal_slice.start, int)
-        assert isinstance(prompt._target_slice.start, int)
+        prompt = AttackPrompt(goal="Say it", target="assistant", tokenizer=tokenizer, control_init="! !")
 
-    def test_start_tok_returns_len_toks_when_no_position_maps(self) -> None:
-        """If char_to_token returns None for every position from char_pos to end-of-prompt,
-        start_tok must return len(toks) as a safe fallback (line 211)."""
-        prompt_text = "USER hello !! ASSISTANT world tail"
-        toks = list(range(20))
+        assert prompt.target_str == "assistant"
+        assert prompt.input_str == '"user":"Say it ! !"\n"assistant":"assistant'
+        assert prompt._assistant_role_slice.stop == prompt._target_slice.start
 
-        def char_to_token(pos: int) -> int | None:
-            char = prompt_text[pos] if 0 <= pos < len(prompt_text) else ""
-            # "tail" sits at end and never maps to a token (forces start_tok to exhaust
-            # the loop and hit `return len(toks)`); other content maps normally.
-            tail_start = prompt_text.find("tail")
-            if pos >= tail_start:
-                return None
-            return min(pos // 2, len(toks) - 1)
-
-        encoding = MagicMock()
-        encoding.input_ids = toks
-        encoding.char_to_token.side_effect = char_to_token
-
-        tokenizer = MagicMock()
-        tokenizer.apply_chat_template.return_value = prompt_text
-        tokenizer.return_value = encoding
-
-        # "tail" as the target — its start position and every position after it returns
-        # None, so start_tok exits the while loop and returns len(toks).
-        prompt = AttackPrompt(
-            goal="hello",
-            target="tail",
-            tokenizer=tokenizer,
-            control_init="!!",
+    def test_transformed_real_content_is_rejected_even_when_markers_round_trip(self) -> None:
+        tokenizer = _fast_tokenizer(
+            chat_template="{% for m in messages %}{{ m['role'] | tojson }}:{{ m['content'] | tojson }}\n{% endfor %}"
         )
-        assert prompt._target_slice.start == len(toks)
+        with pytest.raises(ValueError, match="Cannot safely locate"):
+            AttackPrompt(goal='Say "hello"', target="done", tokenizer=tokenizer, control_init="! !")
 
-    def test_end_tok_returns_len_toks_when_target_is_at_prompt_end(self) -> None:
-        """If the target sits at the very end of the rendered prompt,
-        char_to_token(end_pos) returns None — end_tok must clamp to len(toks)
-        (line 201 in attack_manager.py)."""
-        # Fully-mocked tokenizer so we can deterministically force char_to_token to
-        # return None at the position just past the target. Mirrors the pattern used
-        # by the two adjacent tests above.
-        prompt_text = "[INST] hello !! [/INST] world"
-        toks = list(range(10))
-        target_end_pos = len(prompt_text)  # one past the final char of "world"
+    @pytest.mark.parametrize("target", ["caf\u00e9", "\U0001f600", "done"])
+    def test_byte_level_offsets_keep_every_target_byte(self, target: str) -> None:
+        tokenizer = _fast_tokenizer(byte_level=True)
+        prompt = AttackPrompt(goal="Say it", target=target, tokenizer=tokenizer, control_init="! !")
 
-        def char_to_token(pos: int) -> int | None:
-            # Position at/after end-of-prompt has no token → triggers the
-            # `return len(toks)` fallback in end_tok.
-            if pos >= target_end_pos:
-                return None
-            # Everything else maps to a valid token index that preserves ordering.
-            return min(pos // 3, len(toks) - 1)
+        assert prompt.target_toks.tolist() == tokenizer(target, add_special_tokens=False).input_ids
+        assert prompt.target_str == target
+        assert prompt.input_str == f"<|user|>Say it ! !<|end|><|assistant|>{target}"
+        assert prompt._loss_slice == slice(prompt._target_slice.start - 1, prompt._target_slice.stop - 1)
 
-        encoding = MagicMock()
-        encoding.input_ids = toks
-        encoding.char_to_token.side_effect = char_to_token
+    def test_chat_template_special_tokens_are_not_added_twice(self) -> None:
+        from tokenizers import processors
 
-        tokenizer = MagicMock()
-        tokenizer.apply_chat_template.return_value = prompt_text
-        tokenizer.return_value = encoding
+        tokenizer = _fast_tokenizer(chat_template="{{ bos_token }}" + _CHATML_TEMPLATE)
+        tokenizer.add_special_tokens({"bos_token": "<s>"})
+        tokenizer.backend_tokenizer.post_processor = processors.TemplateProcessing(
+            single="<s> $A", special_tokens=[("<s>", tokenizer.bos_token_id)]
+        )
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+
+        assert prompt.input_ids.tolist().count(tokenizer.bos_token_id) == 1
+        assert prompt._goal_slice == slice(2, 4)
+        assert prompt._target_slice == slice(8, 9)
+
+    def test_token_shared_with_assistant_scaffolding_is_rejected(self) -> None:
+        tokenizer = _fast_tokenizer(chat_template="{{ messages[0]['content'] }} week{{ messages[1]['content'] }}")
+        with pytest.raises(ValueError, match="token.*boundary"):
+            AttackPrompt(goal="Say it", target="end", tokenizer=tokenizer, control_init="! !")
+
+    def test_slow_tokenizer_has_an_actionable_error(self) -> None:
+        from transformers import PreTrainedTokenizer
+
+        class SlowTokenizer(PreTrainedTokenizer):
+            def get_vocab(self) -> dict[str, int]:
+                return {"[UNK]": 0}
+
+            def _tokenize(self, text: str, **kwargs: Any) -> list[str]:
+                return text.split()
+
+            def _convert_token_to_id(self, token: str) -> int:
+                return 0
+
+            def _convert_id_to_token(self, index: int) -> str:
+                return "[UNK]"
+
+        tokenizer = SlowTokenizer(unk_token="[UNK]", chat_template=_CHATML_TEMPLATE)
+        assert not tokenizer.is_fast
+        with pytest.raises(ValueError, match="fast tokenizer.*use_fast=True"):
+            AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+
+    def test_probe_rendering_errors_are_not_swallowed(self) -> None:
+        tokenizer = _fast_tokenizer()
+        with (
+            patch.object(
+                tokenizer,
+                "apply_chat_template",
+                side_effect=["<|user|>Say it ! !<|end|><|assistant|>done<|end|>", RuntimeError("probe failed")],
+            ),
+            pytest.raises(RuntimeError, match="probe failed"),
+        ):
+            AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+
+    @pytest.mark.parametrize("byte_level", [False, True])
+    @pytest.mark.parametrize("goal", ["", " \t", " hello ", "hello"])
+    @pytest.mark.parametrize("trim", [False, True])
+    def test_whitespace_and_empty_goals_preserve_content(self, *, byte_level: bool, goal: str, trim: bool) -> None:
+        template = _CHATML_TEMPLATE.replace("m['content']", "m['content'] | trim") if trim else _CHATML_TEMPLATE
+        tokenizer = _fast_tokenizer(chat_template=template, byte_level=byte_level)
+        prompt = AttackPrompt(goal=goal, target=" world ", tokenizer=tokenizer, control_init=" ! ! ")
+
+        assert prompt.goal_str == goal.strip()
+        assert prompt.control_str == "! !"
+        assert prompt.target_str == "world"
+        assert prompt._goal_slice.stop <= prompt._control_slice.start < prompt._control_slice.stop
+        assert prompt._control_slice.stop <= prompt._target_slice.start < prompt._target_slice.stop
+
+    @pytest.mark.parametrize("byte_level", [False, True])
+    def test_control_and_content_setters_recompute_boundaries(self, byte_level: bool) -> None:
+        tokenizer = _fast_tokenizer(byte_level=byte_level)
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+
+        for control in ("assistant", "<|end|><|assistant|>", "! !"):
+            prompt.control_str = control
+            assert prompt.control_toks.tolist() == tokenizer(control, add_special_tokens=False).input_ids
+            assert prompt.goal_str == "Say it"
+            assert prompt.target_str == "done"
+
+        control_ids = tokenizer("assistant", add_special_tokens=False).input_ids
+        prompt.control_toks = torch.tensor(control_ids)
+        prompt.goal_str = ""
+        prompt.target_str = "assistant"
+        assert prompt.goal_toks.numel() == 0
+        assert prompt.control_toks.tolist() == control_ids
+        assert prompt.target_toks.tolist() == control_ids
+        assert prompt._control_slice.stop <= prompt._target_slice.start
+
+    def test_template_without_a_separator_uses_content_positions(self) -> None:
+        tokenizer = _fast_tokenizer(chat_template="{{ messages[0]['content'] }}{{ messages[1]['content'] }}")
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="!")
+
+        assert prompt._control_slice == slice(2, 3)
+        assert prompt._target_slice == slice(3, 4)
+        assert prompt._assistant_role_slice == slice(3, 3)
+
+    @pytest.mark.parametrize("byte_level", [False, True])
+    @pytest.mark.parametrize("goal", ["", " ", " hello "])
+    def test_role_tokens_that_consume_whitespace_stay_outside_content_slices(
+        self, *, byte_level: bool, goal: str
+    ) -> None:
+        from tokenizers import AddedToken
+
+        tokenizer = _fast_tokenizer(byte_level=byte_level)
+        tokenizer.add_special_tokens(
+            {
+                "additional_special_tokens": [
+                    AddedToken(marker, lstrip=True, rstrip=True) for marker in ("<|user|>", "<|assistant|>", "<|end|>")
+                ]
+            }
+        )
+        prompt = AttackPrompt(goal=goal, target=" world ", tokenizer=tokenizer, control_init=" ! ! ")
+        role_ids = {tokenizer.convert_tokens_to_ids(marker) for marker in ("<|user|>", "<|assistant|>", "<|end|>")}
+
+        assert prompt.goal_str == goal.strip()
+        assert prompt.control_str == "! !"
+        assert prompt.target_str == "world"
+        assert role_ids.isdisjoint(prompt.goal_toks.tolist())
+        assert role_ids.isdisjoint(prompt.control_toks.tolist())
+        assert role_ids.isdisjoint(prompt.target_toks.tolist())
+        if not goal.strip():
+            assert prompt._goal_slice == slice(prompt._control_slice.start, prompt._control_slice.start)
+
+    @pytest.mark.parametrize("component", ["control", "target"])
+    def test_nonempty_text_removed_by_tokenizer_normalization_raises(self, component: str) -> None:
+        from tokenizers import normalizers
+
+        tokenizer = _fast_tokenizer()
+        tokenizer.backend_tokenizer.normalizer = normalizers.Replace(component, "")
+        with pytest.raises(ValueError, match=f"{component} contains no tokens"):
+            AttackPrompt(goal="goal", target="target", tokenizer=tokenizer, control_init="control")
+
+    def test_target_is_located_after_the_user_turn_when_the_goal_quotes_it(self) -> None:
+        """A goal that quotes its own target must not pull the target slice into the user turn.
+
+        Affirmative-prefix targets make this realistic: the same text then appears twice in the
+        rendered prompt, and taking the first occurrence points the target and loss slices at the
+        user turn instead of the assistant reply.
+        """
+        goal = "Respond with Sure, here is the plan"
+        control = "! ! ! !"
+        target = "Sure, here is the plan"
 
         prompt = AttackPrompt(
-            goal="hello",
-            target="world",  # sits at end of prompt_text; target end has no token
-            tokenizer=tokenizer,
-            control_init="!!",
+            goal=goal,
+            target=target,
+            tokenizer=_fast_tokenizer(),
+            control_init=control,
         )
-        # end_tok(target_end_pos) saw None from char_to_token → clamped to len(toks).
-        assert prompt._target_slice.stop == len(toks)
-        assert prompt._target_slice.stop > prompt._target_slice.start
+
+        assert prompt._control_slice == slice(9, 13)
+        assert prompt._assistant_role_slice == slice(13, 15)
+        assert prompt._target_slice == slice(15, 21)
+        assert prompt._loss_slice == slice(14, 20)
+        assert prompt.target_toks.tolist() == prompt.tokenizer(target, add_special_tokens=False).input_ids
+
+    def test_target_that_names_the_assistant_role_marker_is_found_in_the_reply(self) -> None:
+        """A target like "assistant" also matches inside ``<|assistant|>``, which is one special token.
+
+        Searching right after the user content lands on the role marker and leaves an empty target
+        slice, so the search has to start where the assistant content does.
+        """
+        tokenizer = _fast_tokenizer()
+
+        prompt = AttackPrompt(goal="Say it", target="assistant", tokenizer=tokenizer, control_init="! !")
+
+        ids = tokenizer("<|user|>Say it ! !<|end|><|assistant|>assistant<|end|>").input_ids
+        # <|user|> Say it ! ! <|end|> <|assistant|> assistant <|end|>
+        assert prompt._control_slice == slice(3, 5)
+        assert prompt._target_slice == slice(7, 8)
+        assert prompt._loss_slice == slice(6, 7)
+        assert ids[6] == tokenizer.convert_tokens_to_ids("<|assistant|>")
+
+    def test_control_that_collides_with_the_role_marker_keeps_its_slice(self) -> None:
+        """An optimized control is decoded vocabulary tokens, so it can contain ordinary words.
+
+        A control holding "assistant" also matches inside ``<|assistant|>``; bounding the search to
+        the user content is what keeps the control slice pointing at the suffix GCG optimizes.
+        """
+        tokenizer = _fast_tokenizer()
+
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="assistant")
+
+        # <|user|> Say it assistant <|end|> <|assistant|> done <|end|>
+        assert prompt._control_slice == slice(3, 4)
+        assert prompt._target_slice == slice(6, 7)
+        assert prompt._loss_slice == slice(5, 6)
+
+    def test_boundary_holds_when_the_template_ignores_the_generation_prompt(self) -> None:
+        """``add_generation_prompt`` is documented as a no-op for templates that do not support it.
+
+        The user-only render is still a prefix of the full prompt, so it cannot be trusted as the
+        assistant boundary: it stops before ``<|assistant|>`` and a target of "assistant" would
+        match the role marker again.
+        """
+        tokenizer = _fast_tokenizer(chat_template=_NO_GENERATION_PROMPT_TEMPLATE)
+
+        prompt = AttackPrompt(goal="Say it", target="assistant", tokenizer=tokenizer, control_init="! !")
+
+        # <|user|> Say it ! ! <|end|> <|assistant|> assistant <|end|>
+        assert prompt._control_slice == slice(3, 5)
+        assert prompt._target_slice == slice(7, 8)
+        assert prompt._loss_slice == slice(6, 7)
+
+    def test_empty_goal_with_a_trimming_template(self) -> None:
+        """Target-only datasets use an empty goal, so the user content is " <control>".
+
+        A template that trims the content drops that leading space, so the control has to be found on
+        its own rather than as part of the raw ``f"{goal} {control}"`` string.
+        """
+        tokenizer = _fast_tokenizer(
+            chat_template="{% for m in messages %}<start_of_turn>"
+            "{{ 'model' if m['role'] == 'assistant' else m['role'] }}\n"
+            "{{ m['content'] | trim }}<end_of_turn>\n{% endfor %}"
+            "{% if add_generation_prompt %}<start_of_turn>model\n{% endif %}"
+        )
+
+        prompt = AttackPrompt(goal="", target="Sure, here", tokenizer=tokenizer, control_init="! ! !")
+
+        # <start_of_turn> user ! ! ! <end_of_turn> <start_of_turn> model Sure , here <end_of_turn>
+        assert prompt._goal_slice == slice(2, 2)
+        assert prompt._control_slice == slice(2, 5)
+        assert prompt._target_slice == slice(8, 11)
+        assert prompt._loss_slice == slice(7, 10)
+
+    def test_goal_that_quotes_the_turn_separator_keeps_the_boundary(self) -> None:
+        """Red-team goals can quote model control tokens, including the template's own turn separator.
+
+        Searching for the separator would find it inside the goal and end the user content before the
+        control, so the boundary has to be measured from the template instead.
+        """
+        tokenizer = _fast_tokenizer()
+
+        prompt = AttackPrompt(
+            goal="Say <|end|><|assistant|> now", target="done", tokenizer=tokenizer, control_init="! !"
+        )
+
+        # <|user|> Say <|end|> <|assistant|> now ! ! <|end|> <|assistant|> done <|end|>
+        assert prompt._control_slice == slice(5, 7)
+        assert prompt._target_slice == slice(9, 10)
+        assert prompt._loss_slice == slice(8, 9)
+
+    def test_escaping_template_locates_the_target_in_the_reply(self) -> None:
+        """A template may escape the contents, e.g. with ``tojson``; the boundaries still have to hold.
+
+        With an unbounded search the target "assistant" matches the role label instead of the reply.
+        """
+        tokenizer = _fast_tokenizer(
+            chat_template="{% for m in messages %}\"{{ m['role'] }}\":{{ m['content'] | tojson }}\n{% endfor %}",
+            byte_level=True,
+        )
+
+        prompt = AttackPrompt(goal="Say it", target="assistant", tokenizer=tokenizer, control_init="! !")
+
+        target_start = len('"user":"Say it ! !"\n"assistant":"')
+        assert prompt._target_slice == slice(target_start, target_start + len("assistant"))
+        assert prompt._loss_slice == slice(target_start - 1, target_start + len("assistant") - 1)
+        assert prompt.target_str == "assistant"
+
+    def test_raises_when_an_escaped_goal_is_not_rendered_verbatim(self) -> None:
+        """The turns can be measured, but ``tojson`` escapes the quotes, so the goal itself is not in the prompt."""
+        tokenizer = _fast_tokenizer(
+            chat_template="{% for m in messages %}\"{{ m['role'] }}\":{{ m['content'] | tojson }}\n{% endfor %}"
+        )
+
+        with pytest.raises(ValueError, match="Cannot safely locate"):
+            AttackPrompt(goal='Say "it"', target="done", tokenizer=tokenizer, control_init="! !")
+
+    def test_raises_when_the_template_transforms_the_contents(self) -> None:
+        """A template that rewrites the contents leaves no way to measure the turns, so construction fails closed."""
+        tokenizer = _fast_tokenizer(
+            chat_template="{% for m in messages %}<|{{ m['role'] }}|>{{ m['content'] | upper }}<|end|>{% endfor %}"
+        )
+
+        with pytest.raises(ValueError, match="Cannot safely locate"):
+            AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestPromptSliceWiring:
+    """Exercise real prompt construction beneath the optimization orchestration."""
+
+    @staticmethod
+    def _worker(*, byte_level: bool = False) -> MagicMock:
+        worker = MagicMock(spec=ModelWorker)
+        worker.tokenizer = _fast_tokenizer(byte_level=byte_level)
+        worker.model = MagicMock(spec=torch.nn.Module)
+        worker.model.device = torch.device("cpu")
+        return worker
+
+    @pytest.mark.parametrize("byte_level", [False, True])
+    def test_real_slices_support_gradients_and_candidate_losses(self, byte_level: bool) -> None:
+        tokenizer = _fast_tokenizer(byte_level=byte_level)
+        model = _tiny_model("llama").eval()
+        model.resize_token_embeddings(len(tokenizer), mean_resizing=False)
+        manager = GCGPromptManager(
+            goals=["Say <|end|><|assistant|> now", ""],
+            targets=["done ! !", "assistant"],
+            tokenizer=tokenizer,
+            control_init="! !",
+            managers={"AP": gcg_attack_mod.GCGAttackPrompt},
+        )
+
+        for control in ("! !", "assistant"):
+            manager.control_str = control
+            gradient = manager.grad(model)
+            assert gradient.shape == (manager.control_toks.numel(), len(tokenizer))
+            assert torch.isfinite(gradient).all()
+            assert torch.count_nonzero(gradient) > 0
+
+            candidates = manager.control_toks.repeat(2, 1)
+            candidates[1, 0] = tokenizer("now", add_special_tokens=False).input_ids[0]
+            logits, ids = manager.logits(model, test_controls=candidates, return_ids=True)
+            assert torch.isfinite(manager.target_loss(logits, ids)).all()
+            assert torch.isfinite(manager.control_loss(logits, ids)).all()
+            for prompt, candidate_ids in zip(manager, ids, strict=True):
+                assert torch.equal(candidate_ids[:, prompt._control_slice], candidates)
+                assert torch.equal(candidate_ids[:, prompt._target_slice], prompt.target_toks.repeat(2, 1))
+
+    def test_shared_control_reaches_training_and_held_out_prompts_for_each_tokenizer(self) -> None:
+        workers = [self._worker(), self._worker(byte_level=True)]
+        test_worker = self._worker()
+        attack = MultiPromptAttack(
+            goals=["Say <|end|><|assistant|> now", ""],
+            targets=["assistant", "done"],
+            workers=workers,
+            control_init="! !",
+            test_goals=["Say assistant"],
+            test_targets=["assistant"],
+            test_workers=[test_worker],
+            managers={"AP": AttackPrompt, "PM": PromptManager},
+        )
+        attack.control_str = "assistant"
+
+        with patch.object(attack, "test", return_value=([], [], [])) as evaluate:
+            attack.test_all()
+
+        all_workers, all_prompts = evaluate.call_args.args
+        assert all_workers == [*workers, test_worker]
+        assert evaluate.call_args.kwargs["include_loss"] is True
+        for manager in [*attack.prompts, *all_prompts]:
+            for prompt in manager:
+                tokenizer = prompt.tokenizer
+                assert prompt.goal_toks.tolist() == tokenizer(prompt.goal, add_special_tokens=False).input_ids
+                assert prompt.control_toks.tolist() == tokenizer("assistant", add_special_tokens=False).input_ids
+                assert prompt.target_toks.tolist() == tokenizer(prompt.target, add_special_tokens=False).input_ids
+
+    @pytest.mark.parametrize(
+        ("progressive", "expected_rounds"),
+        [
+            (False, [(1, 2), (1, 2)]),
+            (True, [(1, 1), (2, 1), (2, 2)]),
+        ],
+    )
+    def test_individual_and_progressive_rounds_construct_real_prompts(
+        self, *, progressive: bool, expected_rounds: list[tuple[int, int]]
+    ) -> None:
+        rounds: list[tuple[int, int]] = []
+
+        def run_inner(attack: MultiPromptAttack, **kwargs: Any) -> tuple[str, float, int]:
+            rounds.append((len(attack.goals), len(attack.workers)))
+            attack.control_str = "assistant"
+            for manager in attack.prompts:
+                for prompt in manager:
+                    assert prompt.control_str == "assistant"
+                    assert (
+                        prompt.target_toks.tolist()
+                        == prompt.tokenizer(prompt.target, add_special_tokens=False).input_ids
+                    )
+            return "assistant", 0.5, 1
+
+        attack_class = ProgressiveMultiPromptAttack if progressive else IndividualPromptAttack
+        attack = attack_class(
+            goals=["Say <|end|><|assistant|> now", ""],
+            targets=["assistant", "done"],
+            workers=[self._worker(), self._worker(byte_level=True)],
+            control_init="! !",
+            managers={"AP": AttackPrompt, "PM": PromptManager, "MPA": MultiPromptAttack},
+        )
+        with patch.object(MultiPromptAttack, "run", autospec=True, side_effect=run_inner):
+            attack.run(n_steps=3, stop_on_success=False, incr_control=False, verbose=False)
+
+        assert rounds == expected_rounds
 
 
 class TestGetWorkersChatTemplateValidation:
@@ -661,6 +1142,7 @@ def test_model_worker_task_payload_excludes_model() -> None:
     [
         (ModelWorkerOperation.GRAD, "grad"),
         (ModelWorkerOperation.LOGITS, "logits"),
+        (ModelWorkerOperation.LOSS, "loss"),
         (ModelWorkerOperation.CONTRAST_LOGITS, "contrast_logits"),
         (ModelWorkerOperation.TEST, "test"),
         (ModelWorkerOperation.TEST_LOSS, "test_loss"),
@@ -711,6 +1193,9 @@ class _Queue:
     def get(self) -> Any:
         return self._items.pop(0)
 
+    def put(self, item: Any) -> None:
+        self._items.append(item)
+
 
 class _WorkerStub:
     def __init__(
@@ -724,11 +1209,29 @@ class _WorkerStub:
         self.model = MagicMock()
         self.model.device = "cpu"
         self.tokenizer = tokenizer
-        self.results = _Queue([gradient, (logits, token_ids)])
+        self.results = _Queue([])
+        self._gradient = gradient
+        self._logits = logits
+        self._token_ids = token_ids
         self.calls: list[tuple] = []
 
     def __call__(self, *args: Any, **kwargs: Any) -> None:
         self.calls.append((args, kwargs))
+        prompt, operation, *operation_args = args
+        if operation is ModelWorkerOperation.GRAD:
+            self.results.put(self._gradient)
+        elif operation is ModelWorkerOperation.LOGITS:
+            self.results.put((self._logits, self._token_ids))
+        elif operation is ModelWorkerOperation.LOSS:
+            loss_function = operation_args[1]
+            self.results.put(
+                loss_function.compute_loss(
+                    logits=self._logits,
+                    token_ids=self._token_ids,
+                    target_slice=prompt._target_slice,
+                    control_slice=prompt._control_slice,
+                )
+            )
 
 
 class _PromptManagerStub:
@@ -961,12 +1464,13 @@ class TestGCGMultiPromptAttackStepWiring:
         grad_args, grad_kwargs = worker.calls[0]
         assert grad_args == (prompt_manager, ModelWorkerOperation.GRAD)
         assert grad_kwargs == {}
-        logits_args, logits_kwargs = worker.calls[1]
-        assert logits_args[0] is prompt
-        assert logits_args[1] is ModelWorkerOperation.LOGITS
-        assert len(logits_args) == 3
-        assert all(argument is not worker.model for argument in logits_args)
-        assert logits_kwargs == {"return_ids": True}
+        loss_args, loss_kwargs = worker.calls[1]
+        assert loss_args[0] is prompt
+        assert loss_args[1] is ModelWorkerOperation.LOSS
+        assert loss_args[2] == legacy_controls
+        assert isinstance(loss_args[3], CrossEntropyLoss)
+        assert all(argument is not worker.model for argument in loss_args)
+        assert loss_kwargs == {"use_prefix_cache": False}
 
     def test_step_uses_custom_protocol_implementations_when_supplied(self) -> None:
         gradient = torch.randn(3, 6)
@@ -1204,6 +1708,23 @@ def test_attack_prompt_logits_builds_attention_mask() -> None:
     assert torch.equal(model.call_args.kwargs["attention_mask"], torch.ones(1, 4, dtype=torch.long))
 
 
+def test_attack_prompt_logits_forwards_selected_positions() -> None:
+    prompt = object.__new__(AttackPrompt)
+    prompt._control_slice = slice(1, 3)
+    prompt.input_ids = torch.tensor([0, 1, 2, 3])
+    prompt.tokenizer = MagicMock()
+    prompt.tokenizer.return_value.input_ids = [5, 6]
+    model = MagicMock()
+    model.device = torch.device("cpu")
+    model.return_value.logits = torch.randn(1, 2, 8)
+    positions = torch.tensor([0, 2])
+
+    logits = prompt.logits(model, test_controls=["candidate"], logits_to_keep=positions)
+
+    assert logits.shape == (1, 2, 8)
+    assert torch.equal(model.call_args.kwargs["logits_to_keep"], positions)
+
+
 def test_prompt_manager_grad_streams_and_sums_prompt_gradients() -> None:
     prompt_manager = object.__new__(PromptManager)
     first_prompt = MagicMock()
@@ -1358,3 +1879,368 @@ def test_token_gradients_raises_when_coordinate_gradient_missing() -> None:
 def test_length_preserving_filter_rejects_unknown_option() -> None:
     with pytest.raises(TypeError, match="Unexpected LengthPreservingFilter option: unexpected"):
         LengthPreservingFilter(unexpected=True)
+
+
+# (attack class, n_workers, n_goals, constructor kwargs) for every execution
+# topology #2490 requires coverage of.
+_TRAJECTORY_TOPOLOGIES: dict[str, tuple[type, int, int, dict[str, bool]]] = {
+    "individual-1w-1g": (IndividualPromptAttack, 1, 1, {}),
+    "individual-1w-2g": (IndividualPromptAttack, 1, 2, {}),
+    "progressive-goals-1w-2g": (
+        ProgressiveMultiPromptAttack,
+        1,
+        2,
+        {"progressive_goals": True, "progressive_models": False},
+    ),
+    "progressive-goals-models-2w-2g": (
+        ProgressiveMultiPromptAttack,
+        2,
+        2,
+        {"progressive_goals": True, "progressive_models": True},
+    ),
+    "multi-2w-2g": (
+        ProgressiveMultiPromptAttack,
+        2,
+        2,
+        {"progressive_goals": False, "progressive_models": False},
+    ),
+}
+
+
+def _run_trajectory(
+    topology: str,
+    *,
+    seed: int,
+    logfile: Path,
+    run_id: str = "",
+    barrier: threading.Barrier | None = None,
+    switches: list[str] | None = None,
+) -> dict[str, Any]:
+    """Drive a real outer attack -> real GCG step loop on stub workers and return everything observable."""
+    attack_cls, n_workers, n_goals, attack_kwargs = _TRAJECTORY_TOPOLOGIES[topology]
+    events: list[Any] = []
+    bundles: list[Any] = []
+    workers = [TrajectoryWorker(i, run_id=run_id, barrier=barrier, events=switches) for i in range(n_workers)]
+    managers = {"PM": TrajectoryPromptManager, "MPA": partial(RecordingGCGAttack, events=events, bundles=bundles)}
+    attack = attack_cls(
+        [f"goal {i}" for i in range(n_goals)],
+        ["10 11", "12 13"][:n_goals],
+        workers,
+        control_init="1 2 3",
+        test_prefixes=[],
+        logfile=str(logfile),
+        managers=managers,
+        **attack_kwargs,
+    )
+    final_control, _ = attack.run(
+        n_steps=4,
+        batch_size=4,
+        topk=6,
+        allow_non_ascii=True,
+        target_weight=1.0,
+        control_weight=0.0,
+        anneal=True,
+        test_steps=1,
+        incr_control=False,
+        stop_on_success=False,
+        verbose=False,
+        random_seed=seed,
+    )
+    # A bundle rebuilt per inner phase would restart every stream; all phases must see the one object.
+    assert bundles and bundles[0] is not None and all(b is bundles[0] for b in bundles), "phases must share one bundle"
+    with open(logfile) as f:
+        log = json.load(f)
+    return {
+        "events": events,
+        "final_control": final_control,
+        "controls": log["controls"],
+        "losses": [round(loss, 6) for loss in log["losses"]],
+    }
+
+
+class TestRandomSeedDeterminism:
+    """Verify that random_seed produces reproducible results across runs."""
+
+    def test_target_augmentation_deterministic_same_seed(self) -> None:
+        """Same seed produces identical augmentation results."""
+        targets = ["Sure, here is how to hack", "Sure, here is how to pick a lock"]
+        rng1 = np.random.default_rng(42)
+        rng2 = np.random.default_rng(42)
+
+        result1, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng1)
+        result2, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng2)
+
+        assert result1 == result2
+
+    def test_target_augmentation_different_seed_can_differ(self) -> None:
+        """Different seeds can produce different augmentation results."""
+        targets = ["Sure, here is how to hack"] * 20
+        rng1 = np.random.default_rng(1)
+        rng2 = np.random.default_rng(999)
+
+        result1, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng1)
+        result2, _ = GCGGenerator._apply_target_augmentation(train_targets=targets, test_targets=[], np_rng=rng2)
+
+        assert result1 != result2
+
+    def test_sampling_deterministic_same_seed(self) -> None:
+        """StandardGCGSampling produces identical candidates with same torch Generator seed."""
+        sampler = StandardGCGSampling()
+        gradient = torch.randn(5, 100)
+        control_tokens = torch.tensor([1, 2, 3, 4, 5], dtype=torch.long)
+        non_ascii = torch.tensor([50], dtype=torch.long)
+
+        gen1 = torch.Generator().manual_seed(42)
+        gen2 = torch.Generator().manual_seed(42)
+
+        result1 = sampler.sample_candidates(
+            gradient=gradient.clone(),
+            control_tokens=control_tokens.clone(),
+            batch_size=8,
+            top_k=10,
+            temperature=1.0,
+            allow_non_ascii=True,
+            non_ascii_tokens=non_ascii,
+            torch_generator=gen1,
+        )
+        result2 = sampler.sample_candidates(
+            gradient=gradient.clone(),
+            control_tokens=control_tokens.clone(),
+            batch_size=8,
+            top_k=10,
+            temperature=1.0,
+            allow_non_ascii=True,
+            non_ascii_tokens=non_ascii,
+            torch_generator=gen2,
+        )
+
+        assert torch.equal(result1, result2)
+
+    def test_sampling_different_seed_can_differ(self) -> None:
+        """Different torch Generator seeds can produce different candidates."""
+        sampler = StandardGCGSampling()
+        gradient = torch.randn(5, 100)
+        control_tokens = torch.tensor([1, 2, 3, 4, 5], dtype=torch.long)
+        non_ascii = torch.tensor([50], dtype=torch.long)
+
+        gen1 = torch.Generator().manual_seed(1)
+        gen2 = torch.Generator().manual_seed(999)
+
+        result1 = sampler.sample_candidates(
+            gradient=gradient.clone(),
+            control_tokens=control_tokens.clone(),
+            batch_size=8,
+            top_k=10,
+            temperature=1.0,
+            allow_non_ascii=True,
+            non_ascii_tokens=non_ascii,
+            torch_generator=gen1,
+        )
+        result2 = sampler.sample_candidates(
+            gradient=gradient.clone(),
+            control_tokens=control_tokens.clone(),
+            batch_size=8,
+            top_k=10,
+            temperature=1.0,
+            allow_non_ascii=True,
+            non_ascii_tokens=non_ascii,
+            torch_generator=gen2,
+        )
+
+        assert not torch.equal(result1, result2)
+
+    @staticmethod
+    def _run_annealing_with_boolean_tracking(
+        seed: int,
+    ) -> tuple[str, list[bool]]:
+        """Run annealing and capture per-step acceptance booleans.
+
+        ``run()`` sets ``self.control_str`` only when a candidate is accepted.
+        We snapshot ``control_str`` at the *start* of each ``step()`` call; a
+        change between consecutive snapshots proves the previous candidate was
+        accepted.  The last step's decision is derived from the final control.
+        """
+        steps = [("c1", 2.1), ("c2", 2.2), ("c3", 2.3)]
+        attack = object.__new__(MultiPromptAttack)
+        attack.prompts = [MagicMock(control_str="initial")]
+        attack.logfile = None
+
+        snapshots: list[str] = []
+        real_step = MagicMock(side_effect=list(steps))
+
+        def tracking_step(**kwargs: Any) -> tuple[str, float]:
+            snapshots.append(attack.control_str)
+            return real_step(**kwargs)
+
+        attack.step = MagicMock(side_effect=tracking_step)
+
+        control, _, _ = attack.run(
+            n_steps=3,
+            prev_loss=2.0,
+            stop_on_success=False,
+            anneal=True,
+            random_seed=seed,
+        )
+
+        accepted = [snapshots[i + 1] != snapshots[i] for i in range(len(snapshots) - 1)]
+        accepted.append(control != snapshots[-1])
+
+        return control, accepted
+
+    def test_annealing_exact_history_same_seed(self) -> None:
+        """Same seed reproduces the exact step-by-step acceptance booleans."""
+        for _ in range(2):
+            control, accepted = self._run_annealing_with_boolean_tracking(seed=42)
+            # seed=42: accept c1 (draw=0.64 < threshold=0.86), accept c2 (draw=0.02 < 0.74),
+            # reject c3 (draw=0.28 > threshold≈0 at temp≈1e-7) → final="c2"
+            assert accepted == [True, True, False]
+            assert control == "c2"
+
+    def test_annealing_exact_history_different_seeds(self) -> None:
+        """Different seeds produce verifiably different acceptance boolean sequences."""
+        control_1, accepted_1 = self._run_annealing_with_boolean_tracking(seed=1)
+        control_999, accepted_999 = self._run_annealing_with_boolean_tracking(seed=999)
+
+        # Pre-computed from random.Random(seed) draws against acceptance_probability.
+        # seed=1: draw=0.13<0.86→accept, draw=0.85>0.74→reject, draw=0.76>≈0→reject
+        assert accepted_1 == [True, False, False]
+        assert control_1 == "c1"
+        # seed=999: draw=0.78<0.86→accept, draw=0.08<0.74→accept, draw=0.87>≈0→reject
+        assert accepted_999 == [True, True, False]
+        assert control_999 == "c2"
+
+    @pytest.mark.parametrize("topology", list(_TRAJECTORY_TOPOLOGIES), ids=list(_TRAJECTORY_TOPOLOGIES))
+    def test_overlapping_runs_reproduce_isolated_trajectories(self, topology: str, tmp_path: Path) -> None:
+        """Two runs executing at the same time follow exactly the trajectories they follow alone.
+
+        Real ``IndividualPromptAttack`` / ``ProgressiveMultiPromptAttack`` drive the real
+        ``GCGMultiPromptAttack.step()`` (Torch sampling, length filter, cross-entropy loss,
+        Python annealing) against stub workers whose outputs are pure functions of their
+        inputs, so the seeded bundle is the only source of randomness. Each run writes a real
+        logfile. A barrier in the stub worker forces the two runs to alternate step by step,
+        so the recorded run-id sequence switches more than the single time a sequential
+        execution would.
+        """
+        baseline_42 = _run_trajectory(topology, seed=42, logfile=tmp_path / "baseline_42.json")
+        baseline_7 = _run_trajectory(topology, seed=7, logfile=tmp_path / "baseline_7.json")
+        assert _run_trajectory(topology, seed=42, logfile=tmp_path / "repeat_42.json") == baseline_42
+        assert baseline_42["events"] != baseline_7["events"]
+
+        barrier = threading.Barrier(2, timeout=10)
+        switches: list[str] = []
+        outcomes: dict[str, Any] = {}
+
+        def run(run_id: str, seed: int) -> None:
+            try:
+                outcomes[run_id] = _run_trajectory(
+                    topology,
+                    seed=seed,
+                    logfile=tmp_path / f"{run_id}.json",
+                    run_id=run_id,
+                    barrier=barrier,
+                    switches=switches,
+                )
+            except BaseException as exc:  # noqa: BLE001 - release the peer thread, then surface the error
+                barrier.abort()
+                outcomes[run_id] = exc
+
+        threads = [threading.Thread(target=run, args=("A", 42)), threading.Thread(target=run, args=("B", 7))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        for outcome in outcomes.values():
+            if isinstance(outcome, BaseException):
+                raise outcome
+        assert sum(a != b for a, b in zip(switches, switches[1:], strict=False)) > 1, switches
+        assert outcomes["A"] == baseline_42
+        assert outcomes["B"] == baseline_7
+
+    def test_run_creates_torch_gen_for_step(self) -> None:
+        """run() sets self._torch_gen so step() can access it for sampling."""
+        attack = object.__new__(MultiPromptAttack)
+        prompt_manager = MagicMock()
+        prompt_manager.control_str = "initial"
+        attack.prompts = [prompt_manager]
+        attack.logfile = None
+        attack.step = MagicMock(return_value=("result", 0.5))
+
+        attack.run(n_steps=1, stop_on_success=False, anneal=False, random_seed=123)
+
+        assert hasattr(attack, "_torch_gens")
+        assert isinstance(attack._torch_gens, dict)
+
+    def test_custom_sampler_without_torch_generator_still_works(self) -> None:
+        """Custom SamplingStrategy that doesn't accept torch_generator still functions
+        even when _torch_gen is set (the seeded run() path)."""
+        gradient = torch.randn(3, 6)
+        logits = torch.randn(2, 8, 10)
+        token_ids = torch.randint(0, 10, (2, 8))
+        control_tokens = torch.tensor([1, 2, 3], dtype=torch.long)
+        disallowed_tokens = torch.tensor([5], dtype=torch.long)
+        tokenizer = MagicMock()
+        tokenizer.decode.return_value = "decoded"
+
+        worker = _WorkerStub(gradient=gradient.clone(), logits=logits, token_ids=token_ids, tokenizer=tokenizer)
+        prompt_manager = MagicMock()
+        prompt_manager.control_toks = control_tokens
+        prompt_manager.disallowed_toks = disallowed_tokens
+
+        sampled_tokens = torch.tensor([[8, 8, 8]], dtype=torch.long)
+        sampling = _SpySampling(sampled_tokens=sampled_tokens)
+
+        attack = object.__new__(GCGMultiPromptAttack)
+        attack._sampling = sampling
+        attack.prompts = [prompt_manager]
+        attack.workers = [worker]
+        attack.models = [MagicMock(device=torch.device("cpu"))]
+        attack.control_str = "test"
+        attack._torch_gens = {0: torch.Generator(device=torch.device("cpu")).manual_seed(42)}
+
+        result = attack._sample_control_candidates(
+            worker_index=0,
+            gradient=gradient,
+            batch_size=1,
+            topk=3,
+            temp=1.0,
+            allow_non_ascii=True,
+        )
+
+        assert torch.equal(result, sampled_tokens)
+
+    def test_multi_device_generators_must_match_sampling_device(self) -> None:
+        """Regression: generators on a different device than the sampling
+        tensor make torch.randint raise.  When workers span devices, all
+        generators must live on workers[0].model.device (the sampling
+        device).  This test goes through the real MPA.run() bundle-creation
+        fallback with workers on different devices.
+
+        ``torch.Generator`` is patched to record each requested device while
+        handing back a CPU generator, because CPU-only PyTorch builds reject
+        ``torch.Generator(device="cuda:0")``. The assertion is on the device
+        each generator was requested on, which is what the regression is about.
+        """
+        attack = object.__new__(MultiPromptAttack)
+        attack.prompts = [MagicMock(control_str="initial")]
+        attack.logfile = None
+        attack.step = MagicMock(return_value=("result", 0.5))
+
+        worker0 = MagicMock()
+        worker0.model.device = torch.device("cuda:0")
+        worker1 = MagicMock()
+        worker1.model.device = torch.device("cuda:1")
+        attack.workers = [worker0, worker1]
+
+        real_generator = torch.Generator  # the patch below also replaces the test's own torch.Generator
+        with patch.object(
+            attack_manager_mod.torch, "Generator", side_effect=lambda device: real_generator()
+        ) as generator_cls:
+            attack.run(n_steps=1, stop_on_success=False, anneal=False, random_seed=42)
+
+        # Both generators must be requested on the sampling device (worker 0), not
+        # their own worker's device.  If worker 1's generator were on cuda:1,
+        # torch.randint with device=cuda:0 would raise RuntimeError.
+        sampling_device = torch.device("cuda:0")
+        assert generator_cls.call_args_list == [call(device=sampling_device), call(device=sampling_device)]
+        assert len(attack._torch_gens) == 2

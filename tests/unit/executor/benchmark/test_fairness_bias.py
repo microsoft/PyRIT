@@ -80,7 +80,7 @@ def sample_attack_result() -> AttackResult:
         outcome=AttackOutcome.SUCCESS,
         outcome_reason="Test completed successfully",
     )
-    result.last_score = mock_score
+    result.automated_score = mock_score
     return result
 
 

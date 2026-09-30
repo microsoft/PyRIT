@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyrit.models import (
+    ContentEntryScorable,
     ContentScorable,
     Message,
     MessagePiece,
@@ -26,23 +27,34 @@ class MessageScorableResolver:
         Resolve supported scorables to the message view consumed by message scorers.
 
         Args:
-            scorable (Scorable): A message reference or loose content.
-            memory (MemoryInterface): Memory used to resolve message references.
+            scorable (Scorable): A message reference, loose content, or a reference to
+                loose content already stored in memory.
+            memory (MemoryInterface): Memory used to resolve references.
 
         Returns:
             Message: The message view to score.
 
         Raises:
             TypeError: If the scorable is not message-shaped.
-            ValueError: If referenced pieces are missing or do not form one message.
+            ValueError: If referenced pieces or content are missing, or the pieces do not
+                form one message.
         """
         if isinstance(scorable, MessageScorable):
             return self._resolve_message_reference(scorable=scorable, memory=memory)
+        if isinstance(scorable, ContentEntryScorable):
+            return self._adapt_content(scorable=self._resolve_content_reference(scorable=scorable, memory=memory))
         if isinstance(scorable, ContentScorable):
             return self._adapt_content(scorable=scorable)
         raise TypeError(
             f"Message scorers cannot score {type(scorable).__name__}. Pass a MessageScorable or a ContentScorable."
         )
+
+    @staticmethod
+    def _resolve_content_reference(*, scorable: ContentEntryScorable, memory: MemoryInterface) -> ContentScorable:
+        content = memory.get_scorable_content(content_ids=[scorable.content_id]).get(scorable.content_id)
+        if content is None:
+            raise ValueError(f"No stored scorable content found for id {scorable.content_id}.")
+        return content
 
     @staticmethod
     def _resolve_message_reference(*, scorable: MessageScorable, memory: MemoryInterface) -> Message:

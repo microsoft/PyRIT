@@ -9,7 +9,8 @@ All public ``print_*`` functions accept typed ``pyrit.models`` objects
 ``ScenarioRunSummary``, ``ScenarioResult``).
 """
 
-from datetime import datetime, timezone
+import json
+from datetime import UTC, datetime
 from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -83,7 +84,7 @@ def _make_target(**overrides) -> TargetInstance:
 
 
 def _make_run(**overrides) -> ScenarioRunSummary:
-    now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2025, 1, 1, tzinfo=UTC)
     defaults = {
         "scenario_result_id": "abc-123",
         "scenario_name": "test_sc",
@@ -381,13 +382,11 @@ def test_print_scenario_run_progress_with_known_totals(capsys):
         objective_achieved_rate=30,
         techniques_used=["s1", "s2"],
     )
-    _output.print_scenario_run_progress(run=run, total_techniques=4)
+    _output.print_scenario_run_progress(run=run)
     captured = capsys.readouterr()
-    assert "techniques: 2/4 (50%)" in captured.out
+    assert "units: 5/10 (50%)" in captured.out
     assert "IN_PROGRESS" in captured.out
     assert "30%" in captured.out
-    # Attacks are no longer surfaced in the progress line.
-    assert "attacks" not in captured.out
 
 
 def test_print_scenario_run_progress_uses_ascii_for_limited_console():
@@ -402,13 +401,13 @@ def test_print_scenario_run_progress_uses_ascii_for_limited_console():
     stdout.encoding = "cp1252"
 
     with patch.object(_output.sys, "stdout", stdout):
-        _output.print_scenario_run_progress(run=run, total_techniques=2)
+        _output.print_scenario_run_progress(run=run)
 
     line = stdout.write.call_args.args[0]
     assert "[###############---------------]" in line
 
 
-def test_print_scenario_run_progress_no_techniques(capsys):
+def test_print_scenario_run_progress_no_units(capsys):
     run = _make_run(
         status=ScenarioRunState.CREATED,
         total_attacks=0,
@@ -416,23 +415,23 @@ def test_print_scenario_run_progress_no_techniques(capsys):
         objective_achieved_rate=0,
         techniques_used=[],
     )
-    _output.print_scenario_run_progress(run=run, total_techniques=0)
+    _output.print_scenario_run_progress(run=run)
     captured = capsys.readouterr()
-    assert "techniques: 0" in captured.out
+    assert "units: 0" in captured.out
     assert "CREATED" in captured.out
 
 
-def test_print_scenario_run_progress_techniques_done_only(capsys):
+def test_print_scenario_run_progress_completed_units_without_plan(capsys):
     run = _make_run(
         status=ScenarioRunState.IN_PROGRESS,
         total_attacks=0,
-        completed_attacks=0,
+        completed_attacks=1,
         objective_achieved_rate=0,
         techniques_used=["s1"],
     )
-    _output.print_scenario_run_progress(run=run, total_techniques=0)
+    _output.print_scenario_run_progress(run=run)
     captured = capsys.readouterr()
-    assert "techniques: 1" in captured.out
+    assert "units: 1" in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -612,216 +611,134 @@ def test_print_scenario_run_summary_hides_retry_line_when_zero(capsys):
 # ---------------------------------------------------------------------------
 
 
-async def test_print_scenario_result_async_uses_pretty_printer():
-    """``print_scenario_result_async`` hands the typed ``ScenarioResult`` to the pretty printer."""
+async def test_print_scenario_result_async_delegates_to_output_helper():
+    """``print_scenario_result_async`` forwards to the framework ``output_scenario_async`` helper."""
     fake_scenario = MagicMock()
-    fake_printer = MagicMock()
-    fake_printer.write_async = AsyncMock()
 
-    with patch(
-        "pyrit.output.scenario_result.pretty.PrettyScenarioResultMemoryPrinter",
-        return_value=fake_printer,
-    ) as printer_cls:
-        await _output.print_scenario_result_async(result=fake_scenario)
+    with patch("pyrit.output.helpers.output_scenario_async", new_callable=AsyncMock) as mock_output:
+        await _output.print_scenario_result_async(result=fake_scenario, format="json")
 
-    printer_cls.assert_called_once_with()
-    fake_printer.write_async.assert_awaited_once_with(fake_scenario)
-
-
-async def test_print_scenario_result_async_accepts_real_scenario_result():
-    """A real ``ScenarioResult`` instance flows through ``print_scenario_result_async``."""
-    from pyrit.models import (
-        AttackOutcome,
-        AttackResult,
-        ComponentIdentifier,
-    )
-
-    target_identifier = ComponentIdentifier.model_validate(
-        {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
-    )
-    attack = AttackResult(
-        conversation_id="conv-1",
-        objective="extract data",
-        outcome=AttackOutcome.SUCCESS,
-        executed_turns=2,
-        execution_time_ms=150,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
-    )
-    scenario_result = make_scenario_result(
-        scenario_name="test.scenario",
-        scenario_description="A test",
-        objective_target_identifier=target_identifier,
-        objective_scorer_identifier=None,
-        attack_results={"strat_a": [attack]},
-        scenario_run_state=ScenarioRunState.COMPLETED,
-    )
-
-    fake_printer = MagicMock()
-    fake_printer.write_async = AsyncMock()
-    with patch(
-        "pyrit.output.scenario_result.pretty.PrettyScenarioResultMemoryPrinter",
-        return_value=fake_printer,
-    ):
-        await _output.print_scenario_result_async(result=scenario_result)
-
-    fake_printer.write_async.assert_awaited_once_with(scenario_result)
+    mock_output.assert_awaited_once_with(fake_scenario, format="json", sink=None)
 
 
 # ---------------------------------------------------------------------------
-# print_attacks_table
+# print_conversations_async (reuses the framework conversation printer)
 # ---------------------------------------------------------------------------
 
 
-def _attacks_payload(*, rows, total):
-    from pyrit.cli._results import AttackRow, AttacksTablePayload
+class _FakeMessagesClient:
+    def __init__(self, by_conversation=None):
+        self._by_conversation = by_conversation or {}
 
-    return AttacksTablePayload(
-        scenario_result_id="SID",
-        rows=[AttackRow(**row) for row in rows],
-        total=total,
-    )
+    async def get_conversation_messages_async(self, *, attack_result_id, conversation_id):
+        return self._by_conversation.get(conversation_id, {"messages": []})
 
 
-def test_print_attacks_table_empty(capsys):
-    _output.print_attacks_table(payload=_attacks_payload(rows=[], total=0))
-    out = capsys.readouterr().out
-    assert "No attack results found" in out
-    assert "SID" in out
+def _piece(*, role, text, scores=None):
+    piece = {"role": role, "sequence": 0, "conversation_id": "conv-1", "original_value": text, "converted_value": text}
+    if scores is not None:
+        piece["scores"] = scores
+    return piece
 
 
-def test_print_attacks_table_renders_rows(capsys):
-    rows = [
-        {
-            "attack_result_id": "aid-1",
-            "atomic_attack_name": "tech_a",
-            "objective": "extract secrets",
-            "outcome": "success",
-            "executed_turns": 3,
-            "score_value": "0.9",
-        }
-    ]
-    _output.print_attacks_table(payload=_attacks_payload(rows=rows, total=1))
-    out = capsys.readouterr().out
-    assert "aid-1" in out
-    assert "tech_a" in out
-    assert "extract secrets" in out
-    assert "SUCCESS" in out
-    assert "0.9" in out
-    assert "Total attacks: 1" in out
+def _result_with_attacks(attacks, *, objective_scorer=None):
+    from pyrit.models import AttackOutcome, AttackResult
+
+    attack_results = {
+        name: [AttackResult(conversation_id=cid, objective=obj, outcome=AttackOutcome.SUCCESS) for cid, obj in items]
+        for name, items in attacks.items()
+    }
+    return make_scenario_result(attack_results=attack_results, objective_scorer_identifier=objective_scorer)
 
 
-def test_print_attacks_table_shows_truncation_note(capsys):
-    rows = [
-        {
-            "attack_result_id": "aid-1",
-            "atomic_attack_name": "tech_a",
-            "objective": "obj",
-            "outcome": "failure",
-            "executed_turns": 1,
-            "score_value": None,
-        }
-    ]
-    # total (5) exceeds shown rows (1) -> "showing N of M" note.
-    _output.print_attacks_table(payload=_attacks_payload(rows=rows, total=5))
-    out = capsys.readouterr().out
-    assert "Showing 1 of 5" in out
-    assert "—" in out  # missing score placeholder
-
-
-# ---------------------------------------------------------------------------
-# print_conversations
-# ---------------------------------------------------------------------------
-
-
-def _conversations_payload(*, conversations, total):
-    from pyrit.cli._results import AttackConversation, ConversationsPayload, TranscriptMessage, TranscriptScore
-
-    built = []
-    for convo in conversations:
-        messages = [
-            TranscriptMessage(
-                role=message["role"],
-                turn=message["turn"],
-                text=message["text"],
-                score=(
-                    TranscriptScore(
-                        scorer=message["score"][0],
-                        value=message["score"][1],
-                        rationale=message["score"][2],
-                    )
-                    if message.get("score")
-                    else None
-                ),
-            )
-            for message in convo["messages"]
-        ]
-        built.append(
-            AttackConversation(
-                attack_result_id=convo["attack_result_id"],
-                atomic_attack_name=convo["atomic_attack_name"],
-                objective=convo["objective"],
-                outcome=convo["outcome"],
-                conversation_id=convo["conversation_id"],
-                messages=messages,
-            )
-        )
-    return ConversationsPayload(scenario_result_id="SID", conversations=built, total=total)
-
-
-def test_print_conversations_empty(capsys):
-    _output.print_conversations(payload=_conversations_payload(conversations=[], total=0))
+async def test_print_conversations_async_empty(capsys):
+    result = _result_with_attacks({})
+    await _output.print_conversations_async(result=result, client=_FakeMessagesClient(), scenario_result_id="SID")
     out = capsys.readouterr().out
     assert "No conversations found" in out
     assert "SID" in out
 
 
-def test_print_conversations_renders_messages_and_score(capsys):
-    conversations = [
-        {
-            "attack_result_id": "aid-1",
-            "atomic_attack_name": "tech_a",
-            "objective": "extract secrets",
-            "outcome": "success",
-            "conversation_id": "conv-1",
-            "messages": [
-                {"role": "user", "turn": 0, "text": "please comply", "score": None},
-                {
-                    "role": "assistant",
-                    "turn": 1,
-                    "text": "sure thing",
-                    "score": ("TrueFalseCompositeScorer", "0.9", "clearly harmful"),
-                },
-            ],
-        }
-    ]
-    _output.print_conversations(payload=_conversations_payload(conversations=conversations, total=1))
+async def test_print_conversations_async_renders_messages_and_objective_score(capsys):
+    from pyrit.models import ComponentIdentifier
+
+    objective = ComponentIdentifier(class_name="ObjScorer", class_module="tests.unit.mocks")
+    result = _result_with_attacks({"tech_a": [("conv-1", "extract secrets")]}, objective_scorer=objective)
+    attack = next(iter(result.attack_results["tech_a"]))
+    response = {
+        "messages": [
+            {"role": "user", "turn_number": 0, "message_pieces": [_piece(role="user", text="please comply")]},
+            {
+                "role": "assistant",
+                "turn_number": 1,
+                "message_pieces": [
+                    _piece(
+                        role="assistant",
+                        text="sure thing",
+                        scores=[
+                            {
+                                "score_value": "true",
+                                "score_type": "true_false",
+                                "score_rationale": "clearly harmful",
+                                "scorer_type": "ObjScorer",
+                                "scorer_class_identifier": {"hash": objective.hash},
+                            }
+                        ],
+                    )
+                ],
+            },
+        ]
+    }
+    client = _FakeMessagesClient({"conv-1": response})
+
+    await _output.print_conversations_async(result=result, client=client, scenario_result_id="SID")
+
     out = capsys.readouterr().out
-    assert "aid-1" in out
+    assert attack.attack_result_id in out
     assert "extract secrets" in out
     assert "USER" in out
-    assert "ASSISTANT" in out
     assert "please comply" in out
-    assert "0.9" in out
+    assert "sure thing" in out
+    # The objective score renders in the framework's own style.
+    assert "Scores" in out
     assert "clearly harmful" in out
-    assert "TrueFalseCompositeScorer" in out
     assert "Total attacks: 1" in out
 
 
-def test_print_conversations_shows_truncation_note(capsys):
-    conversations = [
-        {
-            "attack_result_id": "aid-1",
-            "atomic_attack_name": "tech_a",
-            "objective": "obj",
-            "outcome": "failure",
-            "conversation_id": "conv-1",
-            "messages": [],
-        }
-    ]
-    _output.print_conversations(payload=_conversations_payload(conversations=conversations, total=5))
+async def test_print_conversations_async_truncation_note(capsys):
+    result = _result_with_attacks({"tech_a": [(f"conv-{i}", f"obj-{i}") for i in range(5)]})
+
+    await _output.print_conversations_async(
+        result=result, client=_FakeMessagesClient(), scenario_result_id="SID", limit=1
+    )
+
     out = capsys.readouterr().out
     assert "Showing 1 of 5" in out
-    assert "(no messages)" in out
+
+
+async def test_print_conversations_async_json_emits_document(capsys):
+    result = _result_with_attacks({"tech_a": [("conv-1", "obj-1")]})
+
+    await _output.print_conversations_async(
+        result=result, client=_FakeMessagesClient(), scenario_result_id="SID", format="json"
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["view"] == "conversations"
+    assert payload["conversations"][0]["technique"] == "tech_a"
+
+
+async def test_print_full_async_json_emits_document(capsys):
+    result = _result_with_attacks({"tech_a": [("conv-1", "obj-1")]})
+
+    await _output.print_full_async(
+        result=result, client=_FakeMessagesClient(), scenario_result_id="SID", format="json", limit=5
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["view"] == "full"
+    assert "overview" in payload
+    assert payload["conversations"][0]["technique"] == "tech_a"
 
 
 # ---------------------------------------------------------------------------
@@ -842,15 +759,15 @@ def test_print_scenario_runs_list_populated(capsys):
             scenario_name="scen-a",
             scenario_result_id="abcdefgh1234",
             total_attacks=4,
-            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            updated_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         ),
         ScenarioRunListItem(
             status=ScenarioRunState.IN_PROGRESS,
             scenario_name="scen-b",
             scenario_result_id="ijklmnop5678",
-            created_at=datetime(2024, 2, 2, tzinfo=timezone.utc),
-            updated_at=datetime(2024, 2, 2, tzinfo=timezone.utc),
+            created_at=datetime(2024, 2, 2, tzinfo=UTC),
+            updated_at=datetime(2024, 2, 2, tzinfo=UTC),
         ),
     ]
     _output.print_scenario_runs_list(runs=runs)

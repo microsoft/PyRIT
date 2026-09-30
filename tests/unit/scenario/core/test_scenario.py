@@ -4,16 +4,13 @@
 """Tests for the scenarios.Scenario class."""
 
 import asyncio
+import functools
 from typing import ClassVar
 from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-try:
-    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
-except ImportError:  # pragma: no cover - 3.10 only
-    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
-
+from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -27,6 +24,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
@@ -34,9 +32,11 @@ from pyrit.scenario import (
     ScenarioResult,
 )
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.score import Scorer
+from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from tests.unit.mocks import make_scenario_identifier, make_scenario_result
 
 # Reusable test scorer identifier
@@ -170,7 +170,7 @@ class ConcreteScenario(Scenario):
         # Add required technique_class if not provided
 
         class TestTechnique(ScenarioTechnique):
-            TEST = ("test", {"concrete"})  # Tagged as concrete, not aggregate
+            TEST = ("test", {"concrete"}, "Test technique description.")  # Tagged as concrete, not aggregate
             ALL = ("all", {"all"})
 
             @classmethod
@@ -224,6 +224,34 @@ def test_subclass_implementing_build_atomic_attacks_async_is_concrete():
 class TestScenarioInitialization:
     """Tests for Scenario class initialization."""
 
+    @pytest.mark.parametrize(
+        ("uses_adversarial", "explicit_target", "factory_name", "expected"),
+        [
+            (False, False, "test", False),
+            (True, False, "test", True),
+            (True, True, "test", False),
+            (True, False, "unrelated", False),
+        ],
+    )
+    def test_default_adversarial_usage_from_factories(
+        self, *, uses_adversarial: bool, explicit_target: bool, factory_name: str, expected: bool
+    ) -> None:
+        factory = AttackTechniqueFactory(
+            name=factory_name,
+            attack_class=RedTeamingAttack if uses_adversarial else PromptSendingAttack,
+            adversarial_chat=MagicMock(spec=PromptTarget) if explicit_target else None,
+        )
+        registry = MagicMock(spec=AttackTechniqueRegistry)
+        registry.get_factories.return_value = {factory_name: factory}
+        with patch.object(AttackTechniqueRegistry, "get_registry_singleton", return_value=registry):
+            scenario = ConcreteScenario(version=1)
+            assert scenario.uses_default_adversarial_target is expected
+
+    @pytest.mark.parametrize("uses_default", [False, True])
+    def test_scenario_can_declare_adversarial_usage(self, uses_default: bool) -> None:
+        scenario = ConcreteScenario(version=1, uses_default_adversarial_target=uses_default)
+        assert scenario.uses_default_adversarial_target is uses_default
+
     def test_init_with_valid_params(self, mock_objective_target):
         """Test successful initialization with valid parameters."""
         scenario = ConcreteScenario(
@@ -275,6 +303,7 @@ class TestScenarioInitialization2:
         assert scenario.atomic_attack_count == 0
 
         scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        scenario.set_initial_metadata(metadata={"scheduler_managed_by": "test"})
         await scenario.initialize_async()
 
         assert scenario.atomic_attack_count == len(mock_atomic_attacks)
@@ -282,6 +311,7 @@ class TestScenarioInitialization2:
         [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
         assert stored.metadata["run_plan"]["version"] == 1
         assert len(stored.metadata["run_plan"]["atomic_groups"]) == len(mock_atomic_attacks)
+        assert stored.metadata["scheduler_managed_by"] == "test"
 
     async def test_initialize_async_deduplicates_logical_seed_groups_in_run_plan(self, mock_objective_target) -> None:
         duplicate_seed_groups = [
@@ -307,18 +337,24 @@ class TestScenarioInitialization2:
         expected_seed_id = duplicate_seed_groups[0].logical_id
         assert persisted_plan["atomic_groups"][0]["seed_group_ids"] == [expected_seed_id]
         assert [seed_group["id"] for seed_group in persisted_plan["seed_groups"]] == [expected_seed_id]
-        assert scenario._build_run_plan().model_dump(mode="json") == persisted_plan
+        assert scenario._build_run_plan().model_dump(mode="json", exclude_none=True) == persisted_plan
         assert atomic_attack.seed_groups is duplicate_seed_groups
         assert len(atomic_attack.seed_groups) == 2
 
     async def test_build_run_plan_preserves_unique_seed_group_order(self, mock_objective_target) -> None:
         seed_groups = [
-            AttackSeedGroup(seeds=[SeedObjective(value="first objective")]),
+            AttackSeedGroup(
+                seeds=[
+                    SeedObjective(value="first objective"),
+                    SeedPrompt(value="first prompt", role="user", sequence=0),
+                ]
+            ),
             AttackSeedGroup(seeds=[SeedObjective(value="second objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
         atomic_attack.atomic_attack_name = "unique_attack"
-        atomic_attack.display_group = "unique_attack"
+        atomic_attack.display_group = "custom display group"
+        atomic_attack.technique_name = "test"
         atomic_attack.technique_eval_hash = "unique-technique"
         type(atomic_attack).seed_groups = PropertyMock(return_value=seed_groups)
         scenario = ConcreteScenario(
@@ -333,7 +369,13 @@ class TestScenarioInitialization2:
         plan = scenario._build_run_plan()
         expected_seed_ids = [seed_group.logical_id for seed_group in seed_groups]
         assert plan.atomic_groups[0].seed_group_ids == expected_seed_ids
+        assert plan.atomic_groups[0].display_group == "custom display group"
+        assert plan.atomic_groups[0].technique_name == "test"
+        assert plan.atomic_groups[0].description == "Test technique description."
+        assert plan.atomic_groups[0].tags == ["concrete"]
         assert [seed_group.id for seed_group in plan.seed_groups] == expected_seed_ids
+        assert plan.seed_groups[0].prompts[0].value == "first prompt"
+        assert plan.seed_groups[0].prompts[0].role == "user"
 
     async def test_initialize_async_sets_objective_target(self, mock_objective_target):
         """Test that initialize_async sets objective_target properly."""
@@ -349,6 +391,24 @@ class TestScenarioInitialization2:
         # Verify it's a ComponentIdentifier with the expected class_name
         assert scenario._objective_target_identifier.class_name == "MockTarget"
         assert scenario._objective_target_identifier.class_module == "test"
+
+    async def test_initial_metadata_survives_subclass_metadata_override(self, mock_objective_target):
+        scenario = ConcreteScenario(name="Test Scenario", version=1)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        scenario.set_initial_metadata(metadata={"scheduler_managed_by": "test"})
+
+        with patch.object(
+            scenario,
+            "_build_initial_scenario_metadata",
+            return_value={"scenario_owned": "value"},
+        ):
+            await scenario.initialize_async()
+
+        [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
+        assert stored.metadata == {
+            "scenario_owned": "value",
+            "scheduler_managed_by": "test",
+        }
 
     async def test_initialize_async_requires_objective_target(self):
         """Test that initialize_async raises ValueError when objective_target is None."""
@@ -1058,17 +1118,27 @@ class TestScenarioBaselineOnlyExecution:
         assert resolved_none == resolved_empty
         assert len(resolved_none) > 0
 
+    def test_unknown_technique_raises(self):
+        """Test that an item outside the technique catalog is rejected instead of dropped."""
+        scenario = ConcreteScenario(name="Test", version=1)
+        technique_class = scenario._technique_class
+
+        with pytest.raises(ValueError, match="unsupported techniques"):
+            technique_class.resolve(["not_a_technique"], default=scenario._default_technique)
+
 
 class TestGetDefaultObjectiveScorer:
     """Tests for Scenario._get_default_objective_scorer method."""
 
     @patch("pyrit.scenario.core.scenario.ScorerRegistry")
     def test_returns_registry_scorer_when_tagged(self, mock_registry_cls) -> None:
-        """Test that a tagged scorer from the registry is returned."""
+        """A tagged registry scorer that cannot express the block policy is returned unchanged."""
         from pyrit.score import TrueFalseScorer
 
         mock_scorer = MagicMock(spec=TrueFalseScorer)
         mock_scorer.__class__ = TrueFalseScorer
+        # A scorer with no LLM-backed leaf returns itself rather than a copy.
+        mock_scorer.with_scorer_block_policy.return_value = mock_scorer
 
         mock_entry = MagicMock()
         mock_entry.instance = mock_scorer
@@ -1079,10 +1149,89 @@ class TestGetDefaultObjectiveScorer:
 
         # Mock self with _get_additional_scoring_questions returning empty sequence
         mock_self = MagicMock()
+        mock_self.RAISE_IF_DEFAULT_SCORER_BLOCKS = True
+        mock_self._apply_scorer_block_policy = functools.partial(Scenario._apply_scorer_block_policy, mock_self)
         type(mock_self)._get_additional_scoring_questions = classmethod(lambda cls: [])
 
         result = Scenario._get_default_objective_scorer(mock_self)
         assert result is mock_scorer
+
+    @pytest.mark.parametrize("raise_if_blocks", [True, False])
+    @patch("pyrit.scenario.core.scenario.get_default_scorer_target")
+    @patch("pyrit.scenario.core.scenario.ScorerRegistry")
+    def test_registry_scorer_gets_block_policy_without_mutating_shared_instance(
+        self, mock_registry_cls, mock_get_scorer_target, raise_if_blocks: bool
+    ) -> None:
+        """The registry default is a shared instance, so the policy must land on a copy.
+
+        The shape mirrors the registered ``scale_and_refusal`` default: a composite whose
+        LLM-backed leaves sit behind a threshold wrapper and an inverter. A policy applied
+        only to the composite would never reach them.
+        """
+        from pyrit.score import (
+            FloatScaleThresholdScorer,
+            PlagiarismScorer,
+            SubStringScorer,
+            TrueFalseCompositeScorer,
+            TrueFalseInverterScorer,
+            TrueFalseScoreAggregator,
+        )
+
+        scale_leaf = PlagiarismScorer(reference_text="unused")
+        refusal_leaf = SubStringScorer(substring="unused")
+        scale_leaf.raise_if_scorer_blocks = not raise_if_blocks
+        refusal_leaf.raise_if_scorer_blocks = not raise_if_blocks
+
+        registry_scorer = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.AND,
+            scorers=[
+                FloatScaleThresholdScorer(scorer=scale_leaf, threshold=0.5),
+                TrueFalseInverterScorer(scorer=refusal_leaf),
+            ],
+        )
+
+        mock_entry = MagicMock()
+        mock_entry.instance = registry_scorer
+
+        mock_registry = MagicMock()
+        mock_registry.instances.get_by_tag.return_value = [mock_entry]
+        mock_registry_cls.get_registry_singleton.return_value = mock_registry
+
+        mock_self = MagicMock()
+        mock_self.RAISE_IF_DEFAULT_SCORER_BLOCKS = raise_if_blocks
+        mock_self._apply_scorer_block_policy = functools.partial(Scenario._apply_scorer_block_policy, mock_self)
+        type(mock_self)._get_additional_scoring_questions = classmethod(lambda cls: [])
+
+        result = Scenario._get_default_objective_scorer(mock_self)
+
+        # The policy reached both LLM-backed leaves, not just the composite root.
+        scoped_scale = result._scorers[0]._scorer
+        scoped_refusal = result._scorers[1]._scorer
+        assert scoped_scale.raise_if_scorer_blocks is raise_if_blocks
+        assert scoped_refusal.raise_if_scorer_blocks is raise_if_blocks
+
+        # The shared registry instance and its leaves were left untouched.
+        assert result is not registry_scorer
+        assert scale_leaf.raise_if_scorer_blocks is (not raise_if_blocks)
+        assert refusal_leaf.raise_if_scorer_blocks is (not raise_if_blocks)
+
+    @pytest.mark.parametrize("raise_if_blocks", [True, False])
+    @patch("pyrit.scenario.core.scenario.get_default_scorer_target")
+    @patch("pyrit.scenario.core.scenario.ScorerRegistry")
+    def test_fallback_scorer_carries_block_policy(
+        self, mock_registry_cls, mock_get_scorer_target, raise_if_blocks: bool
+    ) -> None:
+        """With no registered default, the constructed fallback still honors the policy."""
+        mock_registry = MagicMock()
+        mock_registry.instances.get_by_tag.return_value = []
+        mock_registry_cls.get_registry_singleton.return_value = mock_registry
+
+        mock_self = MagicMock()
+        mock_self.RAISE_IF_DEFAULT_SCORER_BLOCKS = raise_if_blocks
+        type(mock_self)._get_additional_scoring_questions = classmethod(lambda cls: [])
+
+        result = Scenario._get_default_objective_scorer(mock_self)
+        assert result._scorer.raise_if_scorer_blocks is raise_if_blocks
 
     @patch("pyrit.scenario.core.scenario.get_default_scorer_target")
     @patch("pyrit.scenario.core.scenario.ScorerRegistry")
@@ -1518,6 +1667,51 @@ class TestValidateStoredScenario:
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioResumption:
     """Tests for scenario resumption logic in initialize_async."""
+
+    @pytest.mark.parametrize("aggregator", [TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND])
+    @pytest.mark.parametrize("replacement_substrings", [["b", "a"], ["a", "c"], ["a", "b", "b"]])
+    async def test_resume_with_composite_scorer_async(
+        self,
+        mock_objective_target: PromptTarget,
+        aggregator: TrueFalseAggregatorFunc,
+        replacement_substrings: list[str],
+    ) -> None:
+        scorer = TrueFalseCompositeScorer(
+            aggregator=aggregator, scorers=[SubStringScorer(substring=value) for value in ("a", "b")]
+        )
+        dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        dataset_config.get_attack_groups_by_dataset_async.return_value = {
+            "default": [AttackSeedGroup(seeds=[SeedObjective(value="test objective")])]
+        }
+        args = {"objective_target": mock_objective_target, "dataset_config": dataset_config}
+        original = ConcreteScenarioWithTrueFalseScorer(name="Composite resume", version=1, objective_scorer=scorer)
+        original.set_params_from_args(args=args)
+        await original.initialize_async()
+        assert original.atomic_attack_count == 1
+        original_id = original._scenario_result_id
+        header = original._memory.get_scenario_result_header(scenario_result_id=original_id)
+        assert header is not None
+        stored_plan = header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
+
+        replacement = TrueFalseCompositeScorer(
+            aggregator=aggregator,
+            scorers=[SubStringScorer(substring=value) for value in replacement_substrings],
+        )
+        resumed = ConcreteScenarioWithTrueFalseScorer(
+            name="Composite resume", version=1, objective_scorer=replacement, scenario_result_id=original_id
+        )
+        resumed.set_params_from_args(args=args)
+        if replacement_substrings != ["b", "a"]:
+            with pytest.raises(ValueError, match="does not match the current"):
+                await resumed.initialize_async()
+            return
+
+        await resumed.initialize_async()
+        assert resumed._scenario_result_id == original_id
+        assert resumed._atomic_attacks[0].objectives == ["test objective"]
+        resumed_header = resumed._memory.get_scenario_result_header(scenario_result_id=original_id)
+        assert resumed_header is not None
+        assert resumed_header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY] == stored_plan
 
     async def test_resume_succeeds_when_stored_result_matches(self, mock_objective_target, mock_atomic_attacks):
         """When scenario_result_id finds a matching result, no new result is created."""

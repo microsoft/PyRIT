@@ -5,8 +5,9 @@
 
 import random
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 attack_manager_mod = pytest.importorskip(
@@ -19,6 +20,7 @@ MultiPromptAttack = attack_manager_mod.MultiPromptAttack
 OptimizationRunState = attack_manager_mod.OptimizationRunState
 ProgressiveMultiPromptAttack = attack_manager_mod.ProgressiveMultiPromptAttack
 ProgressiveScheduleState = attack_manager_mod.ProgressiveScheduleState
+RngBundle = attack_manager_mod.RngBundle
 StopReason = attack_manager_mod.StopReason
 
 
@@ -33,6 +35,30 @@ def _bare_multi_prompt_attack(step_results: list[tuple[str, float]]) -> MultiPro
     attack.logfile = None
     attack.step = MagicMock(side_effect=list(step_results))
     return attack
+
+
+def _acceptance_booleans(attack: MultiPromptAttack, final_control: str) -> list[bool]:
+    """Derive per-step acceptance booleans from control_str snapshots.
+
+    Must be called with an attack whose step() was wrapped by
+    ``_track_acceptance`` before ``run()``.
+    """
+    snapshots: list[str] = attack._acceptance_snapshots  # type: ignore[attr-defined]
+    accepted = [snapshots[i + 1] != snapshots[i] for i in range(len(snapshots) - 1)]
+    accepted.append(final_control != snapshots[-1])
+    return accepted
+
+
+def _track_acceptance(attack: MultiPromptAttack) -> None:
+    """Wrap attack.step to snapshot control_str at entry for boolean tracking."""
+    attack._acceptance_snapshots = []  # type: ignore[attr-defined]
+    real_step = attack.step
+
+    def tracking_step(**kwargs: Any) -> tuple[str, float]:
+        attack._acceptance_snapshots.append(attack.control_str)  # type: ignore[attr-defined]
+        return real_step(**kwargs)
+
+    attack.step = MagicMock(side_effect=tracking_step)  # type: ignore[assignment]
 
 
 class TestStopReason:
@@ -62,6 +88,12 @@ class TestProgressiveScheduleState:
         assert schedule.steps_completed == 0
         assert schedule.loss == float("inf")
         assert schedule.stop_inner_on_success is False
+
+    def test_exported_class_identity_matches_progressive_schedule_module(self) -> None:
+        from pyrit.executor.promptgen.gcg.attack.base import progressive_schedule
+
+        assert ProgressiveScheduleState is progressive_schedule.ProgressiveScheduleState
+        assert attack_manager_mod.ProgressiveScheduleState is progressive_schedule.ProgressiveScheduleState
 
 
 class TestMultiPromptRunStateTracking:
@@ -99,9 +131,12 @@ class TestMultiPromptRunStateTracking:
         # rejected candidate must not become the best result just because a
         # sentinel used to be larger.
         attack = _bare_multi_prompt_attack([("worse", 10.0)])
+        _track_acceptance(attack)
 
         control, loss, steps = attack.run(n_steps=1, prev_loss=1.0, stop_on_success=False, anneal=True)
 
+        # seed=42 (default): 10.0 >> 1.0, threshold≈0 → rejected
+        assert _acceptance_booleans(attack, control) == [False]
         assert control == "initial"
         assert loss == 1.0
         assert steps == 1
@@ -114,14 +149,15 @@ class TestMultiPromptRunStateTracking:
 
     def test_rejected_candidate_keeps_active_suffix_and_loss(self) -> None:
         attack = _bare_multi_prompt_attack([("better", 1.0), ("worse", 5.0)])
-        random.seed(2026)
+        _track_acceptance(attack)
 
-        control, loss, steps = attack.run(n_steps=2, prev_loss=2.0, stop_on_success=False, anneal=True)
+        control, loss, steps = attack.run(
+            n_steps=2, prev_loss=2.0, stop_on_success=False, anneal=True, random_seed=2026
+        )
 
-        # The worse candidate must be rejected by annealing with overwhelming
-        # probability under this seed; the active suffix stays "better" and the
-        # reported loss stays paired with it. The rejected candidate's loss is
-        # still observable through ``candidate_loss``.
+        # seed=2026: 1.0 < 2.0 → accept (strictly better, no draw),
+        # 5.0 >> 1.0, threshold≈0 → reject
+        assert _acceptance_booleans(attack, control) == [True, False]
         assert control == "better"
         assert steps == 2
         state: OptimizationRunState = attack.last_run_state
@@ -131,6 +167,28 @@ class TestMultiPromptRunStateTracking:
         assert state.loss == 1.0
         assert state.candidate_loss == 5.0
         assert state.stop_reason == StopReason.MAX_STEPS_REACHED
+
+    def test_candidate_after_rejection_is_compared_with_active_loss(self) -> None:
+        attack = _bare_multi_prompt_attack([("worse", 5.0), ("still-worse", 4.5)])
+        _track_acceptance(attack)
+
+        control, loss, steps = attack.run(
+            n_steps=2,
+            prev_loss=1.0,
+            stop_on_success=False,
+            anneal=True,
+            random_seed=42,
+        )
+
+        # seed=42: 5.0 >> 1.0, threshold≈0 → reject; 4.5 >> 1.0, threshold≈0 → reject
+        assert _acceptance_booleans(attack, control) == [False, False]
+        assert (control, loss, steps) == ("initial", 1.0, 2)
+        state: OptimizationRunState = attack.last_run_state
+        assert state.control == "initial"
+        assert state.loss == 1.0
+        assert state.candidate_loss == 4.5
+        assert state.best_control == "initial"
+        assert state.best_loss == 1.0
 
     def test_failed_run_clears_stale_last_run_state(self) -> None:
         attack = _bare_multi_prompt_attack([("better", 1.0)])
@@ -171,12 +229,45 @@ class TestMultiPromptRunStateTracking:
     def test_seeded_runs_produce_identical_trajectories(self) -> None:
         results = []
         for _ in range(2):
-            random.seed(1234)
             attack = _bare_multi_prompt_attack([("a", 3.0), ("b", 2.0), ("c", 1.5)])
-            results.append(attack.run(n_steps=3, prev_loss=4.0, stop_on_success=False, anneal=True))
+            results.append(attack.run(n_steps=3, prev_loss=4.0, stop_on_success=False, anneal=True, random_seed=1234))
 
         assert results[0] == results[1]
         assert results[0] == ("c", 1.5, 3)
+
+    def test_direct_run_creates_and_uses_complete_rng_bundle(self) -> None:
+        attack = _bare_multi_prompt_attack([("worse", 2.0)])
+        attack.workers[0].model.device = torch.device("cpu")
+        created_bundles: list[Any] = []
+        create_bundle = RngBundle.from_seed
+
+        def record_bundle(*, base_seed: int, workers: list[Any]) -> Any:
+            bundle = create_bundle(base_seed=base_seed, workers=workers)
+            created_bundles.append(bundle)
+            return bundle
+
+        with patch.object(RngBundle, "from_seed", side_effect=record_bundle) as factory:
+            control, _, _ = attack.run(
+                n_steps=1,
+                prev_loss=1.0,
+                stop_on_success=False,
+                anneal=True,
+                random_seed=123,
+            )
+
+        assert factory.call_count == 1
+        assert factory.call_args.kwargs == {"base_seed": 123, "workers": attack.workers}
+        assert len(created_bundles) == 1
+        bundle = created_bundles[0]
+        assert bundle.base_seed == 123
+        assert bundle.derived_seeds == {0: 123}
+        assert attack._torch_gens is bundle.torch_gens
+        assert control == "initial"
+
+        expected_py_rng = random.Random(123)
+        expected_py_rng.random()
+        assert bundle.py_rng.random() == expected_py_rng.random()
+        assert bundle.np_rng.random() == np.random.default_rng(123).random()
 
 
 class TestGCGCandidateSelection:
@@ -234,7 +325,9 @@ class TestProgressiveRunScheduleState:
         control, steps = progressive.run(n_steps=10, stop_on_success=True)
 
         assert (control, steps) == ("ctrl", 2)
-        schedule: ProgressiveScheduleState = progressive.last_schedule_state
+        schedule = progressive.last_schedule_state
+        assert isinstance(schedule, attack_manager_mod.ProgressiveScheduleState)
+        assert isinstance(schedule, ProgressiveScheduleState)
         assert schedule.steps_completed == 2
         assert schedule.goals_admitted == 1
         assert schedule.workers_admitted == 1
@@ -270,6 +363,7 @@ class TestProgressiveRunScheduleState:
             test_steps=50,
             filter_cand=True,
             verbose=True,
+            random_seed=42,
         )
 
     def test_schedule_loss_carried_on_schedule_object(self) -> None:

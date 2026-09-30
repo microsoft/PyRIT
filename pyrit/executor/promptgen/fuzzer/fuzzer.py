@@ -14,6 +14,7 @@ import numpy as np
 from colorama import Fore, Style
 from pydantic import Field
 
+from pyrit.common.text_helper import escape_control_characters
 from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.exceptions import MissingPromptPlaceholderException, pyrit_placeholder_retry
 from pyrit.executor.core.config import (
@@ -29,9 +30,12 @@ from pyrit.models import (
     ComponentIdentifier,
     Identifiable,
     Message,
+    MessageScorable,
     Score,
+    ScoringExpectation,
     SeedGroup,
     SeedPrompt,
+    UndeterminedScoreError,
 )
 from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
 from pyrit.score import FloatScaleThresholdScorer, Scorer, SelfAskScaleScorer
@@ -318,6 +322,8 @@ class FuzzerResultPrinter:
             text (str): The text to print.
             *colors: Variable number of colorama color constants to apply.
         """
+        # Escape the target's control characters before adding our own color codes.
+        text = escape_control_characters(text)
         if self._enable_colors and colors:
             color_prefix = "".join(colors)
             print(f"{color_prefix}{text}{Style.RESET_ALL}")
@@ -332,8 +338,9 @@ class FuzzerResultPrinter:
             text (str): The text to wrap and print.
             color (str): The color to apply to the text.
         """
-        # Split by existing newlines first to preserve line breaks
-        text_lines = text.split("\n")
+        # Split by existing newlines first to preserve line breaks. Escaping happens before
+        # wrapping so escaped sequences count toward the width and textwrap drops none of them.
+        text_lines = escape_control_characters(text.replace("\r\n", "\n")).split("\n")
 
         for text_line in text_lines:
             if text_line.strip():  # Only wrap non-empty lines
@@ -467,9 +474,11 @@ class FuzzerResultPrinter:
                 scores = self._memory.get_prompt_scores(prompt_ids=[str(message.id)])
                 if scores:
                     score = scores[0]
-                    self._print_colored(
-                        f"{self._indent * 3} Score: {score.get_value()} | {score.score_rationale}", Fore.CYAN
-                    )
+                    try:
+                        score_value = str(score.get_value())
+                    except UndeterminedScoreError:
+                        score_value = "undetermined"
+                    self._print_colored(f"{self._indent * 3} Score: {score_value} | {score.score_rationale}", Fore.CYAN)
                 print()
 
     def _print_footer(self) -> None:
@@ -491,7 +500,7 @@ class FuzzerResultPrinter:
         if result.successful_templates:
             print("Successful Templates:")
             for template in result.successful_templates:
-                print(f"---\n{template}")
+                print(f"---\n{escape_control_characters(template)}")
         else:
             print("No successful templates found.")
 
@@ -1046,8 +1055,9 @@ class FuzzerGenerator(
         response_pieces = [response.message_pieces[0] for response in responses]
 
         # Score with objective scorer
-        return await self._scorer.score_prompts_batch_async(
-            messages=[piece.to_message() for piece in response_pieces], objectives=tasks
+        return await self._scorer.score_batch_async(
+            scorables=[MessageScorable.from_message(piece.to_message()) for piece in response_pieces],
+            expectations=[ScoringExpectation(objective=task) for task in tasks],
         )
 
     def _process_scoring_results(
@@ -1106,7 +1116,10 @@ class FuzzerGenerator(
         Returns:
             True if this is a successful jailbreak.
         """
-        score_value = score.get_value()
+        try:
+            score_value = score.get_value()
+        except UndeterminedScoreError:
+            return False
         # For true_false scores (like from FloatScaleThresholdScorer), check for boolean True
         if score.score_type == "true_false":
             return score_value is True

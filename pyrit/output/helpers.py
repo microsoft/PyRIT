@@ -14,7 +14,9 @@ import os
 from pyrit.models import AttackResult, ComponentIdentifier, Message, ScenarioResult, Score
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
+from pyrit.output.conversation.json import JsonConversationMemoryPrinter
 from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
+from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
@@ -98,7 +100,7 @@ async def output_scenario_async(
 
     Args:
         result (ScenarioResult): The scenario result to print.
-        format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
+        format (OutputFormat): Output format. Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
         sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted so
             that the group with the highest success rate appears first. Defaults to False,
@@ -107,14 +109,50 @@ async def output_scenario_async(
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
+    if format == "json":
+        json_printer = JsonScenarioResultMemoryPrinter(sink=sink or StdoutSink())
+        await json_printer.write_async(result)
+        return
     if format != "pretty":
-        raise ValueError(f"Unsupported format for scenario results: {format!r}. Only 'pretty' is available.")
+        raise ValueError(
+            f"Unsupported format for scenario results: {format!r}. Only 'pretty' and 'json' are available."
+        )
 
     printer = PrettyScenarioResultMemoryPrinter(
         sink=sink or get_default_sink(StdoutSink),
         sort_groups_by_success_rate=sort_groups_by_success_rate,
     )
     await printer.write_async(result)
+
+
+async def output_scenario_attacks_async(
+    result: ScenarioResult,
+    *,
+    attack_result_ids: list[str] | None = None,
+    limit: int | None = None,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print a compact per-attack table for a scenario result.
+
+    Complements ``output_scenario_async`` (which prints the aggregate overview) by
+    listing individual attack results: id, technique, objective, outcome, and score.
+
+    Args:
+        result (ScenarioResult): The scenario result whose attacks to list.
+        attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
+        limit (int | None): Maximum number of attacks to show. Defaults to None.
+        format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
+        sink (Sink | None): Output sink. Defaults to StdoutSink.
+    """
+    if format == "json":
+        json_printer = JsonScenarioResultMemoryPrinter(sink=sink or StdoutSink())
+        await json_printer.write_async(result, view="attacks", attack_result_ids=attack_result_ids, limit=limit)
+        return
+    resolved_sink = sink or get_default_sink(StdoutSink)
+    printer = PrettyScenarioResultMemoryPrinter(sink=resolved_sink)
+    await printer.write_async(result, view="attacks", attack_result_ids=attack_result_ids, limit=limit)
 
 
 async def output_scorer_async(
@@ -133,14 +171,20 @@ async def output_scorer_async(
     Args:
         scorer_identifier (ComponentIdentifier): The scorer identifier.
         harm_category (str | None): The harm category. None for objective scorers.
-        format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
+        format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
 
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
+    if format == "json":
+        from pyrit.output.scorer.json import JsonScorerMemoryPrinter
+
+        json_printer = JsonScorerMemoryPrinter(sink=sink or StdoutSink())
+        await json_printer.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)
+        return
     if format != "pretty":
-        raise ValueError(f"Unsupported format for scorer: {format!r}. Only 'pretty' is available.")
+        raise ValueError(f"Unsupported format for scorer: {format!r}. Only 'pretty' and 'json' are available.")
 
     printer = PrettyScorerMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)
@@ -179,8 +223,16 @@ async def output_conversation_async(
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
+    if format == "json":
+        json_printer = JsonConversationMemoryPrinter(sink=sink or StdoutSink())
+        await json_printer.write_async(
+            messages,
+            include_scores=include_scores,
+            include_reasoning_summaries=include_reasoning_summaries,
+        )
+        return
     if format != "pretty":
-        raise ValueError(f"Unsupported format for conversation: {format!r}. Only 'pretty' is available.")
+        raise ValueError(f"Unsupported format for conversation: {format!r}. Only 'pretty' and 'json' are available.")
 
     printer = PrettyConversationMemoryPrinter(
         sink=sink or get_default_sink(StdoutSink),
@@ -205,14 +257,20 @@ async def output_score_async(
 
     Args:
         scores (list[Score]): The scores to print.
-        format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
+        format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
 
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
+    if format == "json":
+        from pyrit.output.score.json import JsonScorePrinter
+
+        json_printer = JsonScorePrinter(sink=sink or StdoutSink())
+        await json_printer.write_async(scores)
+        return
     if format != "pretty":
-        raise ValueError(f"Unsupported format for scores: {format!r}. Only 'pretty' is available.")
+        raise ValueError(f"Unsupported format for scores: {format!r}. Only 'pretty' and 'json' are available.")
 
     printer = PrettyScorePrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(scores)

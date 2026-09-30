@@ -3,7 +3,7 @@
 
 """Tests for thin-client authentication helpers."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -463,7 +463,7 @@ def test_authentication_record_path_uses_hashed_identity() -> None:
 
 
 def test_device_code_prompt_uses_stderr(capsys) -> None:
-    expires_on = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    expires_on = datetime(2026, 1, 1, tzinfo=UTC)
 
     _auth._print_device_code_prompt("https://microsoft.com/devicelogin", "ABCD-EFGH", expires_on)
 

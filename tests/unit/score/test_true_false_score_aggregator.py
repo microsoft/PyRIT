@@ -27,6 +27,12 @@ def _mk_score(val: bool, *, prr_id: str, rationale: str = "") -> Score:
     )
 
 
+def test_aggregator_accepts_a_generator():
+    scores = (_mk_score(True, prr_id="1") for _ in range(2))
+    res = TrueFalseScoreAggregator.AND(scores)
+    assert res.value is True
+
+
 def test_and_aggregator_all_true():
     scores = [_mk_score(True, prr_id="1"), _mk_score(True, prr_id="1")]
     res = TrueFalseScoreAggregator.AND(scores)

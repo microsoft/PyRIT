@@ -33,7 +33,7 @@ def text_message_piece() -> MessagePiece:
     return get_test_message_piece()
 
 
-async def test_score_async_unsupported_data_type_returns_zero(
+async def test_score_async_unsupported_data_type_returns_empty(
     patch_central_database, audio_message_piece: MessagePiece
 ):
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
@@ -41,12 +41,8 @@ async def test_score_async_unsupported_data_type_returns_zero(
         message_pieces=[audio_message_piece],
     )
 
-    # Unified FloatScaleScorer fallback: when all pieces are filtered out, return a single
-    # Score(0.0) instead of an empty list (mirrors TrueFalseScorer's no-pieces fallback).
     scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
-    assert len(scores) == 1
-    assert scores[0].score_type == "float_scale"
-    assert scores[0].get_value() == 0.0
+    assert scores == []
 
     os.remove(audio_message_piece.converted_value)
 
@@ -234,8 +230,10 @@ async def test_azure_content_filter_scorer_chunks_long_text(patch_central_databa
         scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
 
         mock_client = AsyncMock()
-        # Mock returns for two chunks
-        mock_client.analyze_text.return_value = {"categoriesAnalysis": [{"severity": "3", "category": "Hate"}]}
+        mock_client.analyze_text.side_effect = [
+            {"categoriesAnalysis": [{"severity": "2", "category": "Hate"}]},
+            {"categoriesAnalysis": [{"severity": "5", "category": "Hate"}]},
+        ]
         scorer._azure_cf_client = mock_client
 
         # Create text longer than 10,000 characters (will be split into 2 chunks)
@@ -245,6 +243,8 @@ async def test_azure_content_filter_scorer_chunks_long_text(patch_central_databa
         scores = await scorer.score_text_async(text=long_text)
         assert len(scores) == 1  # One score per category
         assert scores[0].score_category == ["Hate"]
+        assert scores[0].score_value == str(5.0 / 7)
+        assert scores[0].score_metadata == {"azure_severity": 5}
         assert mock_client.analyze_text.call_count == 2  # Called once per chunk
 
 
@@ -269,6 +269,23 @@ async def test_azure_content_filter_scorer_accepts_short_text(patch_central_data
         assert len(scores) == 1
         assert scores[0].score_value == str(3.0 / 7)
         mock_client.analyze_text.assert_called_once()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("length", [0, 9999, 10000, 10001, 20000, 20001])
+async def test_shared_chunking_preserves_request_slices_async(length: int) -> None:
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.VIOLENCE])
+    text = ("0123456789" * 2001)[:length]
+    piece = MessagePiece(role="assistant", original_value=text)
+    with patch.object(scorer._azure_cf_client, "analyze_text", new_callable=AsyncMock) as analyze:
+        analyze.return_value = {"categoriesAnalysis": [{"severity": "2", "category": "Violence"}]}
+        scores = await scorer._score_piece_async(piece)
+    expected = [text[i : i + 10000] for i in range(0, length, 10000)] or [""]
+    assert [call.args[0].text for call in analyze.await_args_list] == expected
+    assert "".join(expected) == text
+    assert len(scores) == 1
+    assert scores[0].message_piece_id == piece.id
+    assert scores[0].score_metadata == {"azure_severity": 2}
 
 
 async def test_evaluate_async_raises_for_multiple_categories():
@@ -305,6 +322,17 @@ async def test_evaluate_async_sets_file_mapping_for_single_category(patch_centra
 
         # Parent evaluate_async should be called
         mock_eval.assert_called_once()
+
+
+async def test_evaluate_async_uses_canonical_sexual_category(patch_central_database):
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.SEXUAL])
+
+    with patch.object(FloatScaleScorer, "evaluate_async", AsyncMock(return_value=None)):
+        await scorer.evaluate_async()
+
+    assert scorer.evaluation_file_mapping is not None
+    assert scorer.evaluation_file_mapping.harm_category == "SEXUAL_CONTENT"
+    assert scorer.evaluation_file_mapping.result_file == "harm/sexual_metrics.jsonl"
 
 
 def test_init_raises_runtime_error_when_api_key_not_string():
@@ -366,3 +394,30 @@ async def test_azure_content_filter_scorer_blocked_default_categories_returns_fo
     assert {s.score_category[0] for s in scores} == {c.value for c in TextCategory}
     for score in scores:
         assert score.get_value() == 0.0
+
+
+async def test_azure_content_filter_scorer_error_preserves_category_shape(patch_central_database):
+    scorer = AzureContentFilterScorer(
+        api_key="foo",
+        endpoint="bar",
+        harm_categories=[TextCategory.HATE, TextCategory.VIOLENCE],
+    )
+    error_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        converted_value="",
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="unknown",
+    )
+    message = Message(message_pieces=[error_piece])
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
+
+    assert len(scores) == 2
+    assert {score.score_category[0] for score in scores} == {
+        TextCategory.HATE.value,
+        TextCategory.VIOLENCE.value,
+    }
+    assert all(score.is_undetermined for score in scores)
+    assert all(score.score_metadata == {"azure_severity": 0} for score in scores)

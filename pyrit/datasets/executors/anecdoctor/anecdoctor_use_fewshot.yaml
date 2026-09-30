@@ -11,7 +11,7 @@ authors:
   - Madeleine Daepp
 groups:
   - Microsoft Research
-source: arxiv tba
+source: https://aclanthology.org/2025.emnlp-main.964.pdf
 parameters:
   - language
   - type

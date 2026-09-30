@@ -3,6 +3,8 @@
 
 from colorama import Style
 
+from pyrit.common.text_helper import escape_control_characters
+
 
 class _PrettyPrinterMixin:
     """Shared ANSI line formatting for pretty printers."""
@@ -20,6 +22,8 @@ class _PrettyPrinterMixin:
         Returns:
             str: The formatted line with trailing newline.
         """
+        # Escape the target's control characters before adding our own color codes.
+        text = escape_control_characters(text)
         if self._enable_colors and colors:
             color_prefix = "".join(colors)
             return f"{color_prefix}{text}{Style.RESET_ALL}\n"

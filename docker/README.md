@@ -127,6 +127,7 @@ Start a new notebook in JupyterLab and try the following:
 
 ```python
 import pyrit
+
 print(pyrit.__version__)
 
 # Example PyRIT usage:

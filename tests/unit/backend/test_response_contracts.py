@@ -13,13 +13,15 @@ stable (sorted) order, and the removed wire aliases (``score_id``,
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyrit.backend.models.attacks import (
     AttackSummary,
+    ConversationMessagesResponse,
     MessagePieceView,
     MessageView,
     ScoreView,
+    TargetResponseStatus,
 )
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -154,15 +156,44 @@ class TestMessageViewContract:
         assert dumped["message_pieces"][0]["role"] == "assistant"
 
 
+class TestConversationMessagesResponseContract:
+    """JSON contract for target response status metadata."""
+
+    def test_dump_has_target_response_status(self) -> None:
+        """Test that target response status and turn linkage are serialized for clients."""
+        response = ConversationMessagesResponse(
+            conversation_id="conv-1",
+            target_response_status=TargetResponseStatus(
+                response_error="processing",
+                request_turn_number=2,
+                response_turn_number=3,
+            ),
+        )
+
+        dumped = response.model_dump(mode="json")
+
+        assert dumped["target_response_status"] == {
+            "response_error": "processing",
+            "request_turn_number": 2,
+            "response_turn_number": 3,
+        }
+
+    def test_dump_has_null_status_without_target_response(self) -> None:
+        """Test that conversations without a target response explicitly serialize null."""
+        response = ConversationMessagesResponse(conversation_id="conv-1")
+
+        assert response.model_dump(mode="json")["target_response_status"] is None
+
+
 class TestAttackSummaryContract:
     """JSON contract for AttackSummary, including set-ordering (R1)."""
 
     def _summary(self, ar: AttackResult) -> AttackSummary:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data = {name: getattr(ar, name) for name in AttackResult.model_fields}
         data.update(
             last_response=None,
-            last_score=None,
+            automated_score=None,
             labels={"env": "prod"},
             message_count=2,
             last_message_preview="hi",

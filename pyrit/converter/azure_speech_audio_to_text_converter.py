@@ -206,10 +206,19 @@ class AzureSpeechAudioToTextConverter(Converter):
         push_stream.write(audio_bytes)
         push_stream.close()
 
-        while not self.done:
+        while not self._recognition_finished():
             time.sleep(0.5)
 
         return "".join(transcribed_text)
+
+    def _recognition_finished(self) -> bool:
+        """
+        Read completion state updated by the speech SDK's callback thread.
+
+        Returns:
+            bool: Whether recognition has finished.
+        """
+        return self.done
 
     def transcript_cb(self, evt: Any, transcript: list[str]) -> None:
         """

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
@@ -185,12 +186,22 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         if categories is not None:
             if not categories:
                 raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
-            valid_categories = {cat.value for cat in VLGuardCategory}
-            invalid_categories = {
-                cat.value if isinstance(cat, VLGuardCategory) else cat for cat in categories
-            } - valid_categories
-            if invalid_categories:
-                raise ValueError(f"Invalid VLGuard categories: {', '.join(invalid_categories)}")
+            self._validate_categories(categories)
+
+    @staticmethod
+    def _validate_categories(categories: Sequence[object]) -> None:
+        """
+        Validate raw category filters.
+
+        Raises:
+            ValueError: If any category is invalid.
+        """
+        valid_categories = {cat.value for cat in VLGuardCategory}
+        invalid_categories = {
+            cat.value if isinstance(cat, VLGuardCategory) else cat for cat in categories
+        } - valid_categories
+        if invalid_categories:
+            raise ValueError(f"Invalid VLGuard categories: {', '.join(str(cat) for cat in invalid_categories)}")
 
     @property
     @override
@@ -324,14 +335,15 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         if self.subset == VLGuardSubset.UNSAFES:
             if instr_resp and "instruction" in instr_resp[0]:
                 return str(instr_resp[0]["instruction"])
-        elif self.subset == VLGuardSubset.SAFE_UNSAFES:
-            for item in instr_resp:
-                if "unsafe_instruction" in item:
-                    return str(item["unsafe_instruction"])
-        elif self.subset == VLGuardSubset.SAFE_SAFES:
-            for item in instr_resp:
-                if "safe_instruction" in item:
-                    return str(item["safe_instruction"])
+        else:
+            instruction_key = {
+                VLGuardSubset.SAFE_UNSAFES: "unsafe_instruction",
+                VLGuardSubset.SAFE_SAFES: "safe_instruction",
+            }.get(self.subset)
+            if instruction_key is not None:
+                for item in instr_resp:
+                    if instruction_key in item:
+                        return str(item[instruction_key])
         return None
 
     async def _download_dataset_files_async(self, *, cache: bool = True) -> tuple[list[dict[str, str]], Path]:

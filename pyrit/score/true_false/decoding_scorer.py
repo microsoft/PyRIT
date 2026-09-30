@@ -10,10 +10,10 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
-class DecodingScorer(TrueFalseScorer):
+class DecodingScorer(MessageTrueFalseScorer):
     """
     Scorer that checks if the request values are in the output using a text matching strategy.
 

@@ -63,6 +63,27 @@ def _strip_surrounding_quotes(token: str) -> str:
     return token
 
 
+def _print_shell_exception(*, exc: BaseException) -> None:
+    """
+    Print a user-facing error line for an exception raised by a shell command.
+
+    Mirrors ``pyrit_scan._print_cli_exception`` but never suggests ``--request-timeout``,
+    which the shell does not accept. A bare ``httpx.ReadTimeout`` stringifies to nothing,
+    so it needs its own line or the command reports an empty error.
+
+    Args:
+        exc (BaseException): The exception caught by the shell command.
+    """
+    from pyrit.cli.pyrit_scan import _is_read_timeout, _print_debug_traceback
+
+    if _is_read_timeout(exc):
+        print("\nError (ReadTimeout): server did not respond in time. Check the server logs for a blocked event loop.")
+    else:
+        print(f"\nError ({type(exc).__name__}): {str(exc) or repr(exc)}")
+
+    _print_debug_traceback(exc)
+
+
 class PyRITShell(cmd.Cmd):
     """
     Interactive shell for PyRIT (thin REST client).
@@ -375,7 +396,7 @@ class PyRITShell(cmd.Cmd):
                 print(f"Error: File not found: {script_path}")
                 return
             try:
-                content = script_path.read_text()
+                content = script_path.read_text(encoding="utf-8")
                 self._run_async(
                     self._api_client.register_initializer_async(name=script_path.stem, script_content=content)
                 )
@@ -437,6 +458,7 @@ class PyRITShell(cmd.Cmd):
             print_scenario_run_progress,
             print_scenario_run_summary,
         )
+        from pyrit.cli.pyrit_scan import _is_read_timeout, _print_cli_exception, _print_debug_traceback
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import RunScenarioRequest
 
@@ -506,14 +528,26 @@ class PyRITShell(cmd.Cmd):
         request = RunScenarioRequest(**request_kwargs)
 
         # Start run
-        total_techniques = len(request.techniques or [])
         print(f"\nRunning scenario: {scenario_name}")
         sys.stdout.flush()
 
         try:
             run = self._run_async(self._api_client.start_scenario_run_async(request=request))
         except Exception as exc:
-            print(f"Error starting scenario: {exc}")
+            if _is_read_timeout(exc):
+                # The server keeps initializing after the client stops waiting, so whether the
+                # run started is unknown. The shell has no --request-timeout, so it handles the
+                # timeout itself rather than going through the shared printer.
+                print("\nERROR: The scenario start request timed out, so it is unknown whether the run started.")
+                print(
+                    "\nError (ReadTimeout): server did not respond in time. Check "
+                    "'scenario-history' before retrying, or the run may be started twice. Check "
+                    "the server logs for a blocked event loop."
+                )
+                _print_debug_traceback(exc)
+            else:
+                print("\nERROR: The scenario could not be started.")
+                _print_cli_exception(exc=exc)
             return
 
         scenario_result_id = run.scenario_result_id
@@ -524,7 +558,7 @@ class PyRITShell(cmd.Cmd):
         try:
             while True:
                 run = self._run_async(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
-                print_scenario_run_progress(run=run, total_techniques=total_techniques)
+                print_scenario_run_progress(run=run)
                 if run.status in {
                     ScenarioRunState.COMPLETED,
                     ScenarioRunState.FAILED,
@@ -550,13 +584,21 @@ class PyRITShell(cmd.Cmd):
                 )
                 self._run_async(print_scenario_result_async(result=detail))
             except Exception as exc:
-                from pyrit.cli.pyrit_scan import _print_cli_exception
-
                 print(
                     "\nERROR: The scenario completed, but its detailed results could not be "
                     "retrieved or parsed from the server."
                 )
-                _print_cli_exception(exc=exc)
+                if _is_read_timeout(exc):
+                    # The shell has no --request-timeout, so it must not reach the shared
+                    # printer, which advises it.
+                    print(
+                        f"\nError (ReadTimeout): server did not respond in time. Retry with "
+                        f"'scenario-results {scenario_result_id}', or check the server logs for a "
+                        "blocked event loop."
+                    )
+                    _print_debug_traceback(exc)
+                else:
+                    _print_cli_exception(exc=exc)
                 print_scenario_run_summary(run=run)
         else:
             print_scenario_run_summary(run=run)
@@ -591,7 +633,7 @@ class PyRITShell(cmd.Cmd):
             runs = self._run_async(self._api_client.list_scenario_runs_async(limit=limit))
             print_scenario_runs_list(runs=runs)
         except Exception as e:
-            print(f"Error: {e}")
+            _print_shell_exception(exc=e)
 
     def do_scenario_results(self, arg: str) -> None:
         """
@@ -600,6 +642,7 @@ class PyRITShell(cmd.Cmd):
         Usage:
             scenario-results <scenario_result_id>
                 [--view overview|attacks|conversations|full]
+                [--format pretty|json|html] [--output PATH]
                 [--attack-result-ids <id> ...] [--limit N]
 
         Views:
@@ -607,9 +650,10 @@ class PyRITShell(cmd.Cmd):
                            rates (the default).
             attacks        One row per attack result (id, objective, outcome,
                            turns, score).
-            conversations  The main-conversation transcript for each attack
-                           (messages plus their scores and full rationale).
-            full           The attacks table followed by the transcripts.
+            conversations  Per-attack summary (outcome, turns, score, objective)
+                           plus the message transcript for each attack.
+            full           The scenario overview followed by every attack's
+                           conversation.
 
         For conversations/full, when neither --attack-result-ids nor --limit is
         given, at most 5 attacks are shown to avoid dumping a whole run.
@@ -620,13 +664,14 @@ class PyRITShell(cmd.Cmd):
         import shlex
 
         from pyrit.cli._cli_args import ScenarioResultView, build_scenario_results_parser
-        from pyrit.cli._output import print_attacks_table, print_conversations, print_scenario_result_async
+        from pyrit.cli._output import print_conversations_async, print_full_async, print_scenario_result_async
         from pyrit.cli._results import (
             apply_view_limit_policy,
-            build_attacks_table_payload,
-            build_conversations_payload_async,
+            resolve_output_sink,
             resolve_view,
+            warn_if_view_ignored_by_html,
         )
+        from pyrit.output import output_scenario_attacks_async
 
         try:
             tokens = shlex.split(arg)
@@ -636,7 +681,8 @@ class PyRITShell(cmd.Cmd):
         if not tokens:
             print(
                 "Usage: scenario-results <scenario_result_id> "
-                "[--view overview|attacks|conversations|full] [--attack-result-ids <id> ...] [--limit N]"
+                "[--view overview|attacks|conversations|full] [--format pretty|json|html] [--output PATH] "
+                "[--attack-result-ids <id> ...] [--limit N]"
             )
             print("Use 'scenario-history' to see available run IDs.")
             return
@@ -648,45 +694,80 @@ class PyRITShell(cmd.Cmd):
             return
 
         view = resolve_view(view=parsed.view)
-        limit = apply_view_limit_policy(view=view, limit=parsed.limit, attack_result_ids=parsed.attack_result_ids)
+        # html always renders a complete report and ignores the default heavy-view cap,
+        # so skip the limit policy (and its warning) for it.
+        if parsed.format == "html":
+            warn_if_view_ignored_by_html(view=parsed.view)
+            limit = parsed.limit
+        else:
+            limit = apply_view_limit_policy(view=view, limit=parsed.limit, attack_result_ids=parsed.attack_result_ids)
+        try:
+            sink = resolve_output_sink(output_path=parsed.output, output_format=parsed.format)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return
 
         try:
             result = self._run_async(
                 self._api_client.get_scenario_run_results_async(scenario_result_id=parsed.scenario_result_id)
             )
         except Exception as exc:
-            print(f"Error: {exc}")
+            _print_shell_exception(exc=exc)
             return
-
-        if view is ScenarioResultView.OVERVIEW:
-            self._run_async(print_scenario_result_async(result=result))
-            return
-
-        if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
-            attacks_payload = build_attacks_table_payload(
-                result=result,
-                scenario_result_id=parsed.scenario_result_id,
-                attack_result_ids=parsed.attack_result_ids,
-                limit=limit,
-            )
-            print_attacks_table(payload=attacks_payload)
-            if view is ScenarioResultView.ATTACKS:
-                return
 
         try:
-            conversations_payload = self._run_async(
-                build_conversations_payload_async(
-                    result=result,
-                    client=self._api_client,
-                    scenario_result_id=parsed.scenario_result_id,
-                    attack_result_ids=parsed.attack_result_ids,
-                    limit=limit,
+            if parsed.format == "html":
+                # html is always the full report regardless of --view; honor only an explicit --limit.
+                self._run_async(
+                    print_full_async(
+                        result=result,
+                        client=self._api_client,
+                        scenario_result_id=parsed.scenario_result_id,
+                        format="html",
+                        sink=sink,
+                        attack_result_ids=parsed.attack_result_ids,
+                        limit=parsed.limit,
+                    )
                 )
-            )
+            elif view is ScenarioResultView.OVERVIEW:
+                self._run_async(print_scenario_result_async(result=result, format=parsed.format, sink=sink))
+            elif view is ScenarioResultView.ATTACKS:
+                self._run_async(
+                    output_scenario_attacks_async(
+                        result,
+                        attack_result_ids=parsed.attack_result_ids,
+                        limit=limit,
+                        format=parsed.format,
+                        sink=sink,
+                    )
+                )
+            elif view is ScenarioResultView.FULL:
+                self._run_async(
+                    print_full_async(
+                        result=result,
+                        client=self._api_client,
+                        scenario_result_id=parsed.scenario_result_id,
+                        format=parsed.format,
+                        sink=sink,
+                        attack_result_ids=parsed.attack_result_ids,
+                        limit=limit,
+                    )
+                )
+            else:
+                self._run_async(
+                    print_conversations_async(
+                        result=result,
+                        client=self._api_client,
+                        scenario_result_id=parsed.scenario_result_id,
+                        format=parsed.format,
+                        sink=sink,
+                        attack_result_ids=parsed.attack_result_ids,
+                        limit=limit,
+                    )
+                )
         except Exception as exc:
-            print(f"Error: {exc}")
+            _print_shell_exception(exc=exc)
             return
-        print_conversations(payload=conversations_payload)
 
     def do_print_scenario(self, arg: str) -> None:
         """

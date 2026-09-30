@@ -2,8 +2,7 @@ import "@testing-library/jest-dom";
 import { configure } from "@testing-library/react";
 import { TextEncoder, TextDecoder } from "util";
 
-// Give async queries a little more headroom than the 1s default: Fluent modal
-// dialogs (tabster modalizer + Textarea) can take longer to mount under load.
+// Give async data and rendering assertions headroom under parallel test load.
 configure({ asyncUtilTimeout: 5000 });
 
 // jsdom omits TextEncoder/TextDecoder, which react-router references at
@@ -17,6 +16,35 @@ process.env.VITE_API_URL = "http://localhost:8000/api";
 process.env.MODE = "test";
 process.env.DEV = "true";
 process.env.PROD = "false";
+
+function isDisplayed(element: HTMLElement): boolean {
+  if (!element.isConnected) {
+    return false;
+  }
+  for (let ancestor: HTMLElement | null = element; ancestor; ancestor = ancestor.parentElement) {
+    if (getComputedStyle(ancestor).display === "none") {
+      return false;
+    }
+  }
+  return true;
+}
+
+// JSDOM has no layout. Without these boxes, Tabster cannot focus dialog controls
+// and can mark the focused dialog surface aria-hidden on its deferred update.
+Object.defineProperty(HTMLElement.prototype, "offsetParent", {
+  configurable: true,
+  get(this: HTMLElement): Element | null {
+    if (!isDisplayed(this) || this === document.body || getComputedStyle(this).position === "fixed") {
+      return null;
+    }
+    return this.parentElement;
+  },
+});
+
+document.body.getBoundingClientRect = (): DOMRect =>
+  isDisplayed(document.body)
+    ? new DOMRect(0, 0, window.innerWidth, window.innerHeight)
+    : new DOMRect();
 
 // Mock window.matchMedia for Fluent UI components
 Object.defineProperty(window, "matchMedia", {

@@ -13,6 +13,7 @@ from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
 from pyrit.converter import (
     CharNoiseConverter,
     CharSwapConverter,
+    CodeAttackConverter,
     RandomCapitalLettersConverter,
     WordProportionSelectionStrategy,
 )
@@ -24,7 +25,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     SkeletonKeyAttack,
 )
-from pyrit.models import SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
@@ -46,6 +47,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="skeleton_key",
             attack_class=SkeletonKeyAttack,
+            description="Builds a multi-step context that asks the target to operate without its usual safety rules.",
             technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory(
@@ -80,11 +82,46 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             ),
         ),
         AttackTechniqueFactory(
+            name="goat",
+            attack_class=RedTeamingAttack,
+            description=(
+                "Generative Offensive Agent Tester (GOAT): an attacker that reasons through "
+                "observation, thought, and strategy selection each turn before replying, "
+                "drawing on a fixed strategy taxonomy (refusal suppression, persona "
+                "modification, hypothetical framing, and more). See "
+                "https://arxiv.org/abs/2410.01606."
+            ),
+            technique_tags=["multi_turn"],
+            attack_kwargs={"max_turns": 5},
+            adversarial_system_prompt=SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat.yaml"),
+            adversarial_seed_prompt=SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat_initial_prompt.yaml"),
+            adversarial_prompt_template=SeedPrompt.from_yaml_file(
+                EXECUTOR_RED_TEAM_PATH / "goat_follow_up_prompt.yaml"
+            ),
+        ),
+        AttackTechniqueFactory(
             name="split_payload",
             attack_class=CrescendoAttack,
+            description="Splits the objective across an escalating conversation to conceal the complete request.",
             technique_tags=["multi_turn"],
             adversarial_system_prompt=SeedPrompt.from_yaml_file(
                 EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "split_payload.yaml"
+            ),
+        ),
+        AttackTechniqueFactory(
+            name="code_attack_framed",
+            attack_class=PromptSendingAttack,
+            description="Encodes the objective as code and adds optional code-completion system framing.",
+            technique_tags=["single_turn", "light"],
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(
+                        converters=[CodeAttackConverter(template=CodeAttackConverter.Template.PYTHON_STACK_VERBOSE)]
+                    )
+                ),
+            },
+            seed_technique=AttackTechniqueSeedGroup.from_system_prompt(
+                SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "code_attack.yaml").value
             ),
         ),
     ]

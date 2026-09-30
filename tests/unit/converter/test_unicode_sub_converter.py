@@ -22,6 +22,12 @@ async def test_unicode_sub_custom_start():
     assert result.output_type == "text"
 
 
+@pytest.mark.parametrize("start_value", [-1, 0x110000])
+def test_unicode_sub_rejects_invalid_start_value(start_value):
+    with pytest.raises(ValueError, match="valid Unicode code point"):
+        UnicodeSubstitutionConverter(start_value=start_value)
+
+
 async def test_unicode_sub_empty():
     converter = UnicodeSubstitutionConverter()
     result = await converter.convert_async(prompt="", input_type="text")

@@ -149,6 +149,27 @@ def get_execution_context() -> ExecutionContext | None:
     return _execution_context.get()
 
 
+def get_exception_execution_context(error: BaseException) -> ExecutionContext | None:
+    """
+    Find the component context attached to an exception or its exception chain.
+
+    Args:
+        error (BaseException): The failure, possibly raised in a child task.
+
+    Returns:
+        ExecutionContext | None: The recorded failure context, if present.
+    """
+    current: BaseException | None = error
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        context = getattr(current, "_pyrit_execution_context", None)
+        if isinstance(context, ExecutionContext):
+            return context
+        current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+    return None
+
+
 def set_execution_context(context: ExecutionContext) -> None:
     """
     Set the current execution context.
@@ -174,7 +195,8 @@ class ExecutionContextManager:
     execution context when entering and exiting a code block.
 
     On successful exit, the context is restored to its previous value.
-    On exception, the context is preserved so exception handlers can access it.
+    On exception, the context is preserved and attached to the failure so handlers
+    can access it even across task boundaries.
     """
 
     context: ExecutionContext
@@ -207,6 +229,9 @@ class ExecutionContextManager:
         if exc_type is None:
             # No exception - restore previous context
             _execution_context.reset(self._token)
+        elif isinstance(exc_val, BaseException) and get_exception_execution_context(exc_val) is None:
+            # Keep the innermost recorded context, including when a caller wraps the failure.
+            exc_val.__dict__["_pyrit_execution_context"] = self.context
         # On exception, leave context in place for exception handlers to read
 
 

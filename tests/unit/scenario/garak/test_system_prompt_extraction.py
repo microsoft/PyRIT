@@ -3,7 +3,7 @@
 
 """Tests for the SystemPromptExtraction scenario."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -100,6 +100,7 @@ class TestSystemPromptExtractionInitialization:
 class TestSystemPromptExtractionAtomicAttacks:
     async def _init(self, scenario, mock_objective_target, techniques=None):
         with (
+            patch.object(scenario._dataset_config, "_collect_named_seeds_async", new_callable=AsyncMock),
             patch.object(SystemPromptExtraction, "_load_system_prompts", return_value=list(SYSTEM_PROMPTS)),
             patch.object(
                 SystemPromptExtraction,

@@ -196,19 +196,17 @@ async function createConversation(
   return body.conversation_id;
 }
 
-/** Activate an exact target instance via the Configuration view. */
+/** Save an objective default and open a new chat with that target. */
 async function activateTarget(
   page: Page,
   targetRegistryName: string,
 ): Promise<void> {
-  await page.getByTitle("Configuration").click();
-  await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10_000 });
+  await page.getByTitle("Registry").click();
+  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10_000 });
   const row = page.getByTestId(`target-row-${targetRegistryName}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
-  const setActiveButton = row.getByRole("button", { name: /set active/i });
-  if (await setActiveButton.isVisible()) {
-    await setActiveButton.click();
-  }
+  await page.getByRole("combobox", { name: "Default objective target", exact: true })
+    .selectOption(targetRegistryName);
   await page.getByTitle("Chat").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
 }
@@ -218,7 +216,7 @@ async function openAttackInHistory(
   page: Page,
   attackResultId: string,
 ): Promise<void> {
-  await page.getByTitle("Attack History").click();
+  await page.getByTitle("History").click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({
     timeout: 10_000,
   });

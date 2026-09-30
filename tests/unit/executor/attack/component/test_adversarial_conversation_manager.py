@@ -8,7 +8,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pyrit.exceptions import BadRequestException, EmptyResponseException, InvalidJsonException, PyritException
+from pyrit.exceptions import (
+    AdversarialChatRefusedException,
+    AdversarialChatResponseBlockedException,
+    BadRequestException,
+    EmptyResponseException,
+    InvalidJsonException,
+    PyritException,
+)
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
     _BLOCKED_FEEDBACK_TEXT,
     _DEFAULT_ADVERSARIAL_SCHEMA_NAME,
@@ -210,6 +217,20 @@ def test_parse_reply_requires_next_message_even_without_required_list():
     # attack loop sends to the objective target.
     with pytest.raises(InvalidJsonException, match="next_message"):
         _parse_adversarial_reply('{"surprise": "x"}', schema=OTHER_SCHEMA)
+
+
+@pytest.mark.parametrize("next_message", ["", " \t\n"], ids=["empty", "whitespace"])
+def test_parse_reply_rejects_blank_next_message(next_message: str) -> None:
+    response = json.dumps(
+        {
+            "next_message": next_message,
+            "rationale": "r",
+            "last_response_summary": "s",
+        }
+    )
+
+    with pytest.raises(InvalidJsonException, match="must contain non-whitespace text"):
+        _parse_adversarial_reply(response, schema=SCHEMA)
 
 
 def test_parse_reply_coerces_non_string_next_message():
@@ -576,7 +597,45 @@ class TestGetNextMessageAsync:
 
         assert exc_info.value.status_code == 200
         assert exc_info.value.message == refusal
+        assert isinstance(exc_info.value, AdversarialChatResponseBlockedException)
         normalizer.send_prompt_async.assert_awaited_once()
+
+    async def test_structured_refusal_is_distinguishable_from_provider_block(self) -> None:
+        """An SDK refusal is the adversarial model's own decision, not a deployment filter."""
+        refusal = "I will not help with that."
+        normalizer = _normalizer(None)
+        normalizer.send_prompt_async.return_value = _blocked_adversarial_response(refusal)
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            prompt_normalizer=normalizer,
+        )
+
+        with pytest.raises(AdversarialChatRefusedException) as exc_info:
+            await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+
+        assert exc_info.value.message == refusal
+
+    async def test_provider_block_without_structured_refusal_is_not_reported_as_a_refusal(self) -> None:
+        """A content filter carries no SDK refusal, so it must stay the generic blocked error."""
+        payload = json.dumps({"status_code": 400, "message": "content filtered"})
+        piece = MessagePiece(
+            role="assistant",
+            original_value=payload,
+            original_value_data_type="error",
+            response_error="blocked",
+        )
+        normalizer = _normalizer(None)
+        normalizer.send_prompt_async.return_value = Message(message_pieces=[piece])
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            prompt_normalizer=normalizer,
+        )
+
+        with pytest.raises(AdversarialChatResponseBlockedException) as exc_info:
+            await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+
+        assert not isinstance(exc_info.value, AdversarialChatRefusedException)
+        assert exc_info.value.message == "content filtered"
 
     @pytest.mark.parametrize("response_error", ["processing", "unknown"])
     async def test_non_blocked_error_preserves_category_without_retry(self, response_error: str) -> None:
@@ -635,6 +694,26 @@ class TestGetNextMessageAsync:
         normalizer = _normalizer(None)
         normalizer.send_prompt_async.side_effect = [
             Message.from_prompt(prompt="totally not json", role="assistant"),
+            Message.from_prompt(prompt=VALID_JSON, role="assistant"),
+        ]
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            prompt_normalizer=normalizer,
+        )
+
+        turn = await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+
+        assert turn.reply is not None
+        assert turn.reply.next_message == "hello target"
+        assert normalizer.send_prompt_async.call_count == 2
+
+    async def test_blank_next_message_retries_then_succeeds(self) -> None:
+        normalizer = _normalizer(None)
+        normalizer.send_prompt_async.side_effect = [
+            Message.from_prompt(
+                prompt='{"next_message": "", "rationale": "r", "last_response_summary": "s"}',
+                role="assistant",
+            ),
             Message.from_prompt(prompt=VALID_JSON, role="assistant"),
         ]
         manager = _manager(

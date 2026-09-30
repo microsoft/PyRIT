@@ -4,7 +4,8 @@
 """Unit tests for the unified Parameter model and its coercion methods."""
 
 from enum import Enum
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Union
 
 import pytest
 from pydantic import ValidationError
@@ -84,6 +85,8 @@ class TestParameterSerialization:
             "required": False,
             "choices": None,
             "is_list": False,
+            "reference_type": None,
+            "variants": None,
         }
 
     def test_excludes_live_only_fields(self) -> None:
@@ -92,6 +95,35 @@ class TestParameterSerialization:
         assert "param_type" not in dumped
         assert "reference" not in dumped
         assert "destination" not in dumped
+
+    def test_reference_type_serializes_component_family(self) -> None:
+        parameter = Parameter(
+            name="target",
+            description="d",
+            reference=RegistryReference(component_type=ComponentType.TARGET),
+        )
+        dumped = parameter.model_dump()
+        restored = Parameter.model_validate(dumped)
+
+        assert dumped["reference_type"] == "target"
+        assert dumped["type_name"] == "str"
+        assert dumped["is_list"] is False
+        assert restored.reference == RegistryReference(component_type=ComponentType.TARGET, annotation=str)
+        assert restored.reference_type == "target"
+
+    def test_list_reference_shape_round_trips(self) -> None:
+        parameter = Parameter(
+            name="targets",
+            description="d",
+            reference=RegistryReference(component_type=ComponentType.TARGET, annotation=list[object]),
+        )
+
+        dumped = parameter.model_dump()
+        restored = Parameter.model_validate(dumped)
+
+        assert dumped["type_name"] == "list[str]"
+        assert dumped["is_list"] is True
+        assert restored.reference == RegistryReference(component_type=ComponentType.TARGET, annotation=list[str])
 
     def test_required_default_serializes_to_none(self) -> None:
         p = Parameter(name="mode", description="d", default=REQUIRED_VALUE, param_type=Literal["a", "b"])
@@ -134,11 +166,81 @@ class TestParameterSerialization:
 
         assert dumped["type_name"] == "int"
 
+    def test_optional_list_preserves_display_and_coercion(self) -> None:
+        parameter = Parameter(name="values", description="", param_type=list[int] | None)
+        parameter.validate()
+        assert parameter.type_name == "list[int]"
+        assert parameter.is_list
+        assert parameter.coerce_value(None) is None
+        assert parameter.coerce_value(["1"]) == [1]
+
+    def test_path_round_trip_preserves_coercion(self) -> None:
+        dumped = Parameter(name="input_path", description="d", param_type=Path).model_dump()
+
+        restored = Parameter.model_validate(dumped)
+
+        assert dumped["type_name"] == "Path"
+        assert restored.param_type is Path
+        assert restored.coerce_value("images/input.jpg") == Path("images/input.jpg")
+
+    def test_optional_path_is_path(self) -> None:
+        parameter = Parameter(name="input_path", description="d", param_type=Path | None)
+
+        assert parameter.is_path is True
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [Path | str, str | Path, Path | str | None, str | Path | None, Union[str, Path]],  # noqa: UP007
+)
+def test_path_or_str_contract_round_trip(annotation: object) -> None:
+    parameter = Parameter(name="source", description="d", param_type=annotation)
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+    url = "https://account.blob.core.windows.net/container/input.png?versionid=123"
+    path = Path("input.png")
+
+    for candidate in (parameter, restored):
+        candidate.validate()
+        assert candidate.is_path is False
+        assert candidate.is_path_or_str is True
+        assert candidate.is_string_coercible is True
+        assert candidate.type_name == "Path | str"
+        assert candidate.is_list is False
+        assert candidate.coerce_value(url) == url
+        assert candidate.coerce_value(path) is path
+        assert candidate.coerce_value("input.png") == "input.png"
+        with pytest.raises(ValueError, match="expects a Path or str"):
+            candidate.coerce_value(123)
+
+
+@pytest.mark.parametrize("annotation", [str, Path, Path | int, str | int, Path | str | int, list[Path | str]])
+def test_path_or_str_does_not_match_other_types(annotation: object) -> None:
+    parameter = Parameter(name="source", description="d", param_type=annotation)
+    assert parameter.is_path_or_str is False
+
+
+def test_optional_path_or_str_accepts_none() -> None:
+    parameter = Parameter(name="source", description="d", param_type=Path | str | None)
+    assert parameter.coerce_value(None) is None
+
+
+def test_list_path_or_str_contract_round_trip() -> None:
+    parameter = Parameter(name="sources", description="d", param_type=list[Path | str])
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+    values = [Path("input.png"), "https://account.blob.core.windows.net/container/input.png"]
+
+    for candidate in (parameter, restored):
+        candidate.validate()
+        assert candidate.type_name == "list[Path | str]"
+        assert candidate.is_list is True
+        assert candidate.is_string_coercible is False
+        assert candidate.coerce_value(values) == values
+
 
 class TestIsScalarParamType:
     """``_is_scalar_param_type`` recognizes plain and constrained scalars."""
 
-    @pytest.mark.parametrize("annotation", [str, int, float, bool, Literal["a", "b"], _Speed])
+    @pytest.mark.parametrize("annotation", [str, int, float, bool, Path, Literal["a", "b"], _Speed])
     def test_scalar_forms(self, annotation: object) -> None:
         assert _is_scalar_param_type(annotation) is True
 
@@ -173,7 +275,7 @@ class TestIsStringCoercible:
 
     @pytest.mark.parametrize(
         "param_type",
-        [str, int, float, bool, Literal["a", "b"], _Speed, int | None, _Speed | None],
+        [str, int, float, bool, Path, Literal["a", "b"], _Speed, int | None, _Speed | None],
     )
     def test_coercible_value_types(self, param_type: object) -> None:
         p = Parameter(name="x", description="d", param_type=param_type)
@@ -239,6 +341,10 @@ class TestCoerceValueScalars:
     def test_str_passthrough(self) -> None:
         p = Parameter(name="s", description="d", param_type=str)
         assert p.coerce_value("hello") == "hello"
+
+    def test_path(self) -> None:
+        p = Parameter(name="path", description="d", param_type=Path)
+        assert p.coerce_value("images/input.jpg") == Path("images/input.jpg")
 
     def test_int_invalid_raises(self) -> None:
         p = Parameter(name="n", description="d", param_type=int)
@@ -363,7 +469,7 @@ class TestValidate:
 
     @pytest.mark.parametrize(
         "param_type",
-        [None, str, int, float, bool, Literal["a", "b"], _Speed, list[str], list[int], list[Literal["a", "b"]]],
+        [None, str, int, float, bool, Path, Literal["a", "b"], _Speed, list[str], list[int], list[Literal["a", "b"]]],
     )
     def test_supported_forms_ok(self, param_type: object) -> None:
         Parameter(name="x", description="d", param_type=param_type).validate()
@@ -391,7 +497,7 @@ class TestValidate:
 
 
 class TestCoercionParity:
-    """Derivation feeds ``coerce_value`` the unwrapped type, so coercion round-trips."""
+    """Derived annotations use the same coercion as declared parameters."""
 
     @pytest.mark.parametrize(
         "annotation, raw, expected",

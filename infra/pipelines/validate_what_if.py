@@ -9,7 +9,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 
 class WhatIfFormatError(ValueError):
@@ -52,11 +52,20 @@ def validate_what_if(
     expected_vnet_id: str,
     expected_subnet_id: str,
     expected_environment_id: str,
+    deployment_mode: Literal["app", "infra"] | None = None,
+    expected_app_id: str | None = None,
 ) -> list[str]:
-    """Return every destructive, cross-scope, protected, or core-create violation."""
+    """Return destructive, cross-scope, protected-resource, and deployment-phase violations."""
     document = _expect_object(payload, context="what-if result")
     changes = _expect_array(document.get("changes"), context="what-if changes")
     resource_group_prefix = f"{deployment_resource_group_id.rstrip('/').casefold()}/"
+    if deployment_mode not in {None, "app", "infra"}:
+        raise WhatIfFormatError("deployment mode must be app or infra")
+    app_id = expected_app_id.rstrip("/").casefold() if expected_app_id else ""
+    if deployment_mode and not re.fullmatch(
+        re.escape(resource_group_prefix) + r"providers/microsoft\.app/containerapps/[^/]+", app_id
+    ):
+        raise WhatIfFormatError("deployment mode requires an expected app ID in the deployment resource group")
     protected_paths = {
         expected_pip_id.rstrip("/").casefold(): {"sku.tier"},
         expected_nat_id.rstrip("/").casefold(): {"properties.scope", "sku.tier"},
@@ -83,6 +92,14 @@ def validate_what_if(
 
         if change_type == "Create" and _CORE_RESOURCE_ID_PATTERN.search(normalized_resource_id):
             violations.append(f"core resource create: {resource_id}")
+
+        if change_type not in {"NoChange", "Ignore"}:
+            if deployment_mode == "app" and (normalized_resource_id != app_id or change_type != "Modify"):
+                violations.append(f"app-only write outside the existing app: {resource_id}")
+            elif deployment_mode == "infra" and (
+                normalized_resource_id == app_id or normalized_resource_id.startswith(f"{app_id}/")
+            ):
+                violations.append(f"infrastructure-only write to the app: {resource_id}")
 
         if normalized_resource_id not in protected_paths or change_type in {"NoChange", "Ignore"}:
             continue
@@ -116,6 +133,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-vnet-id", required=True)
     parser.add_argument("--expected-subnet-id", required=True)
     parser.add_argument("--expected-environment-id", required=True)
+    parser.add_argument("--deployment-mode", choices=("app", "infra"))
+    parser.add_argument("--expected-app-id")
     return parser.parse_args()
 
 
@@ -134,6 +153,8 @@ def main() -> int:
             expected_vnet_id=cast("str", parsed.expected_vnet_id),
             expected_subnet_id=cast("str", parsed.expected_subnet_id),
             expected_environment_id=cast("str", parsed.expected_environment_id),
+            deployment_mode=cast("Literal['app', 'infra'] | None", parsed.deployment_mode),
+            expected_app_id=cast("str | None", parsed.expected_app_id),
         )
     except (OSError, json.JSONDecodeError, WhatIfFormatError) as error:
         print(f"What-if validation failed closed: {error}", file=sys.stderr)

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 
 from jinja2 import StrictUndefined, Undefined
@@ -48,7 +48,7 @@ def _ensure_aware_utc(value: Any) -> Any:
         except ValueError:
             return value
     if isinstance(value, datetime) and value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
     return value
 
 
@@ -137,7 +137,7 @@ class Seed(BaseModel):
     source: str | None = None
 
     # Date when the prompt was added to the dataset
-    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=UTC))
 
     # User who added the prompt to the dataset
     added_by: str | None = None

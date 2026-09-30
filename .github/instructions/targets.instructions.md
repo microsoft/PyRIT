@@ -34,10 +34,7 @@ class MyTarget(PromptTarget):
         )
         self._api_key = api_key
 
-    async def _send_prompt_to_target_async(
-        self, *, normalized_conversation: list[Message]
-    ) -> list[Message]:
-        ...
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]: ...
 ```
 
 ``send_prompt_async`` (the public entry point) is ``@final`` and MUST NOT
@@ -61,13 +58,14 @@ The check is satisfied by either of:
 ```python
 def __init__(self, *, endpoint: str, api_key: str) -> None: ...
 
+
 def __init__(self, *args: Any, **kwargs: Any) -> None: ...  # *args after self
 ```
 
 It rejects:
 
 ```python
-def __init__(self, endpoint: str, api_key: str) -> None: ...    # missing *
+def __init__(self, endpoint: str, api_key: str) -> None: ...  # missing *
 ```
 
 > [!NOTE]

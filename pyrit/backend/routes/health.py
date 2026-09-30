@@ -5,11 +5,27 @@
 Health check endpoints.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 router = APIRouter()
+
+
+@router.get("/runtime")
+async def runtime_readiness_async(request: Request) -> dict[str, str | bool]:
+    """
+    Expose readiness and generation without administrative details.
+
+    Returns:
+        dict[str, str | bool]: Lightweight runtime readiness.
+    """
+    runtime = getattr(request.app.state, "runtime_lifecycle", None)
+    return {
+        "ready": runtime is not None and runtime.state == "ready",
+        "state": runtime.state if runtime else "failed",
+        "generation": runtime.generation if runtime else "",
+    }
 
 
 @router.get("/health")
@@ -27,6 +43,6 @@ async def health_check_async() -> dict[str, str]:
     """
     return {
         "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "service": "pyrit-backend",
     }

@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+import asyncio
 import logging
+import os
 import pathlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pyrit.common.apply_defaults import reset_default_values
@@ -27,7 +29,69 @@ MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
 _load_environment_files = load_environment_files
 
 
-async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
+def validate_reinitialization_memory(*, memory_db_type: str, environment: dict[str, str]) -> MemoryInterface | None:
+    """
+    Reject changed persistence configuration without exposing connection details.
+
+    Returns:
+        MemoryInterface | None: The unchanged live memory, or None before memory creation.
+
+    Raises:
+        ValueError: If the requested memory configuration requires a restart.
+    """
+    if memory_db_type not in get_args(MemoryDatabaseType):
+        raise ValueError("Unsupported memory database type.")
+    try:
+        memory = CentralMemory.get_memory_instance()
+    except ValueError:
+        return None
+    compatible = (
+        isinstance(memory, SQLiteMemory) and memory_db_type == (IN_MEMORY if memory.db_path == ":memory:" else SQLITE)
+    ) or (isinstance(memory, AzureSQLMemory) and memory_db_type == AZURE_SQL)
+    if not compatible:
+        raise ValueError("Memory configuration changed; a backend restart is required.")
+    if isinstance(memory, AzureSQLMemory):
+        effective = {**os.environ, **environment}
+        for key, live in (
+            (memory.AZURE_SQL_DB_CONNECTION_STRING, memory._connection_string),
+            (memory.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL, memory._results_container_url),
+            (memory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN, memory._results_container_sas_token),
+        ):
+            if (effective.get(key) or None) != (live or None):
+                raise ValueError("Memory configuration changed; a backend restart is required.")
+    return memory
+
+
+def reset_setup_registries() -> None:
+    """Discard only PyRIT's setup-owned registries, not persistence singletons."""
+    from pyrit.registry import (
+        AttackTechniqueRegistry,
+        ConverterRegistry,
+        InitializerRegistry,
+        ScenarioRegistry,
+        ScorerRegistry,
+        TargetRegistry,
+    )
+    from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
+
+    reset_dynamic_technique_caches()
+
+    for registry in (
+        AttackTechniqueRegistry,
+        ConverterRegistry,
+        InitializerRegistry,
+        ScenarioRegistry,
+        ScorerRegistry,
+        TargetRegistry,
+    ):
+        registry.reset_registry_singleton()
+
+
+async def _execute_initializers_async(
+    *,
+    initializers: Sequence["PyRITInitializer"],
+    raise_on_initializer_error: bool,
+) -> None:
     """
     Execute PyRITInitializer instances in the order provided.
 
@@ -35,6 +99,8 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
 
     Args:
         initializers: Sequence of PyRITInitializer instances to execute.
+        raise_on_initializer_error: Whether to raise when an initializer fails. If False,
+            log the failure and continue with the remaining initializers.
 
     Raises:
         ValueError: If an initializer is not a PyRITInitializer instance.
@@ -63,9 +129,10 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
 
             logger.debug(f"Successfully executed initializer: {type(initializer).__name__}")
 
-        except Exception as e:
-            logger.error(f"Error executing initializer {type(initializer).__name__}: {e}")
-            raise
+        except Exception:
+            logger.exception("Error executing initializer %s", type(initializer).__name__)
+            if raise_on_initializer_error:
+                raise
 
 
 async def initialize_pyrit_async(
@@ -79,6 +146,7 @@ async def initialize_pyrit_async(
     env_akv_strict: bool = True,
     silent: bool = False,
     seed: int | None = None,
+    raise_on_initializer_error: bool = True,
     **memory_instance_kwargs: Any,
 ) -> None:
     """
@@ -87,9 +155,9 @@ async def initialize_pyrit_async(
     Args:
         memory_db_type (MemoryDatabaseType): The MemoryDatabaseType string literal which indicates the memory
             instance to use for central memory. Options include "InMemory", "SQLite", and "AzureSQL".
-        initialization_scripts (Sequence[str | pathlib.Path] | None): Optional sequence of Python script paths
-            that define PyRITInitializer subclasses. Every initializer subclass defined in each file is
-            loaded and executed. Loading is handled by the InitializerRegistry.
+        initialization_scripts (Sequence[str | pathlib.Path] | None): Optional sequence of local Python script paths
+            that define PyRITInitializer subclasses. Every initializer subclass defined in each file is loaded and
+            executed. Loading is handled by the InitializerRegistry.
         initializers (Sequence[PyRITInitializer] | None): Optional sequence of PyRITInitializer instances
             to execute directly. These provide type-safe, validated configuration with clear documentation.
         load_defaults (bool): If True (default) AND the caller supplies neither ``initializers`` nor
@@ -114,6 +182,8 @@ async def initialize_pyrit_async(
         seed (int | None): Optional root seed for deterministic converter operations. Converters derive
             independent named child streams automatically. Initialize PyRIT before constructing components
             whose defaults are selected randomly. This does not control remote model output.
+        raise_on_initializer_error (bool): If True, raise when loading or executing an initializer fails.
+            If False, log each failure and continue with the remaining initializers. Defaults to True.
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
 
     Raises:
@@ -121,13 +191,10 @@ async def initialize_pyrit_async(
         ValueError: If an unsupported memory_db_type is provided or env_files contains non-existent files.
     """
     validate_env_akv_strict(env_akv_strict=env_akv_strict)
-    configure_random_seed(seed=seed)
     await load_environment_async(
-        env_akv_ref=env_akv_ref,
-        env_files=env_files,
-        env_akv_strict=env_akv_strict,
-        silent=silent,
+        env_akv_ref=env_akv_ref, env_files=env_files, env_akv_strict=env_akv_strict, silent=silent
     )
+    configure_random_seed(seed=seed)
 
     # Reset all default values before executing initialization scripts
     # This ensures a clean state for each initialization
@@ -163,8 +230,19 @@ async def initialize_pyrit_async(
         from pyrit.registry import InitializerRegistry
 
         registry = InitializerRegistry.get_registry_singleton()
-        script_initializers = registry.create_from_script_paths(script_paths=initialization_scripts)
-        all_initializers.extend(script_initializers)
+        script_paths = [pathlib.Path(script_path) for script_path in initialization_scripts]
+        for script_path in script_paths:
+            try:
+                script_initializers = await asyncio.to_thread(
+                    registry.create_from_script_paths,
+                    script_paths=[script_path],
+                    strict=raise_on_initializer_error,
+                )
+                all_initializers.extend(script_initializers)
+            except Exception:
+                logger.exception("Error loading initializers from script %s", script_path)
+                if raise_on_initializer_error:
+                    raise
 
     # When the caller supplies nothing, fall back to the default initializer set so a
     # bare initialize_pyrit_async(...) yields a usable environment (core techniques +
@@ -178,4 +256,23 @@ async def initialize_pyrit_async(
 
     # Execute all initializers in order
     if all_initializers:
-        await _execute_initializers_async(initializers=all_initializers)
+        await _execute_initializers_async(
+            initializers=all_initializers,
+            raise_on_initializer_error=raise_on_initializer_error,
+        )
+
+
+async def reinitialize_pyrit_async(
+    *,
+    memory: MemoryInterface,
+    initializer_factory: Callable[[], Sequence["PyRITInitializer"]],
+    environment_values: dict[str, str],
+    seed: int | None,
+) -> None:
+    """Replace runtime-only setup while retaining the validated memory instance."""
+    os.environ.update(environment_values)
+    configure_random_seed(seed=seed)
+    reset_default_values()
+    CentralMemory.set_memory_instance(memory)
+    initializers = await asyncio.to_thread(initializer_factory)
+    await _execute_initializers_async(initializers=initializers, raise_on_initializer_error=True)

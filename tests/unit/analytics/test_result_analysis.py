@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -193,22 +193,18 @@ def _make_attack_with_target(
     outcome: AttackOutcome = AttackOutcome.SUCCESS,
     timestamp: datetime | None = None,
 ) -> AttackResult:
-    technique = ComponentIdentifier(
+    attack = ComponentIdentifier(
         class_name="PromptSendingAttack",
         class_module="pyrit.executor.attack.single_turn.prompt_sending",
         children={"objective_target": target},
     )
-    atomic = ComponentIdentifier(
-        class_name="AtomicAttack",
-        class_module="pyrit.scenario.core.atomic_attack",
-        children={"attack_technique": technique},
-    )
+    atomic = AtomicAttackIdentifier.build(attack_identifier=attack)
     return AttackResult(
         conversation_id="conv-1",
         objective="test objective",
         atomic_attack_identifier=atomic,
         outcome=outcome,
-        timestamp=timestamp or datetime.now(timezone.utc),
+        timestamp=timestamp or datetime.now(UTC),
     )
 
 
@@ -267,7 +263,7 @@ def test_get_cached_results_for_technique_returns_empty_when_no_candidates():
 def test_get_cached_results_for_technique_sorts_newest_first():
     target = _make_target_component()
     expected_hash = ObjectiveTargetEvaluationIdentifier(target).eval_hash
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     older = _make_attack_with_target(target, timestamp=now - timedelta(hours=2))
     middle = _make_attack_with_target(target, timestamp=now - timedelta(hours=1))
     newest = _make_attack_with_target(target, timestamp=now)
@@ -381,3 +377,26 @@ def test_objective_target_eval_hash_for_missing_objective_target_returns_none():
         outcome=AttackOutcome.SUCCESS,
     )
     assert _objective_target_eval_hash_for(result) is None
+
+
+def test_objective_target_eval_hash_for_legacy_direct_target():
+    """Helper continues to recognize identifiers written before the attack wrapper."""
+    target = _make_target_component()
+    technique = ComponentIdentifier(
+        class_name="AttackTechnique",
+        class_module="pyrit.scenario.core.attack_technique",
+        children={"objective_target": target},
+    )
+    atomic = ComponentIdentifier(
+        class_name="AtomicAttack",
+        class_module="pyrit.scenario.core.atomic_attack",
+        children={"attack_technique": technique},
+    )
+    result = AttackResult(
+        conversation_id="c",
+        objective="o",
+        atomic_attack_identifier=atomic,
+        outcome=AttackOutcome.SUCCESS,
+    )
+
+    assert _objective_target_eval_hash_for(result) == ObjectiveTargetEvaluationIdentifier(target).eval_hash

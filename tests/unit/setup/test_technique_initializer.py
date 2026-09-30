@@ -48,7 +48,15 @@ CORE_TECHNIQUE_NAMES: list[str] = [
     "flip",
 ]
 
-EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "skeleton_key", "best_of_n", "violent_durian", "split_payload"]
+EXTRA_TECHNIQUE_NAMES: list[str] = [
+    "pair",
+    "skeleton_key",
+    "best_of_n",
+    "violent_durian",
+    "goat",
+    "split_payload",
+    "code_attack_framed",
+]
 
 PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
     "crescendo_movie_director",
@@ -193,6 +201,10 @@ class TestBuildTechniqueFactories:
         names = [f.name for f in build_technique_factories()]
         assert len(names) == len(set(names))
 
+    def test_factory_descriptions_are_available_for_catalogs(self):
+        factories = build_technique_factories()
+        assert all(factory.description for factory in factories)
+
 
 # ---------------------------------------------------------------------------
 # TechniqueInitializer class metadata
@@ -256,11 +268,12 @@ class TestPersonaCrescendoFactories:
             assert sim is not None
             assert sim.num_turns == 3
 
-    def test_seed_technique_yaml_path_resolves_to_existing_file(self):
+    def test_seed_technique_carries_resolved_adversarial_prompt(self):
         for f in self._persona_factories():
             sim = f.seed_technique.simulated_conversation_config
             assert sim is not None
-            assert sim.adversarial_chat_system_prompt_path.exists()
+            assert sim.adversarial_chat_system_prompt.value
+            assert sim.adversarial_chat_system_prompt.parameters == ["objective", "max_turns"]
 
 
 class TestPersonaCrescendoYamls:
@@ -323,10 +336,10 @@ class TestContextComplianceTechnique:
         factory = self._context_compliance_factory()
         sim = factory.seed_technique.simulated_conversation_config
         assert sim is not None
-        assert sim.simulated_target_system_prompt_path.name == "context_compliance_target.yaml"
-        assert sim.simulated_target_system_prompt_path.exists()
+        assert sim.simulated_target_system_prompt.name == "simulated_target_context_compliance"
+        assert sim.simulated_target_system_prompt.parameters == ["objective", "num_turns"]
         # No LLM-generated next message: the final turn is a fixed affirmation instead.
-        assert sim.next_message_system_prompt_path is None
+        assert sim.next_message_system_prompt is None
 
     def test_final_user_message_is_fixed_affirmation(self):
         factory = self._context_compliance_factory()
@@ -339,12 +352,12 @@ class TestContextComplianceTechnique:
         assert yes_prompt.role == "user"
         assert yes_prompt.sequence == 2
 
-    def test_adversarial_yaml_resolves_to_existing_file(self):
+    def test_adversarial_prompt_is_resolved(self):
         factory = self._context_compliance_factory()
         sim = factory.seed_technique.simulated_conversation_config
         assert sim is not None
-        assert sim.adversarial_chat_system_prompt_path.name == "context_compliance.yaml"
-        assert sim.adversarial_chat_system_prompt_path.exists()
+        assert sim.adversarial_chat_system_prompt.value
+        assert sim.adversarial_chat_system_prompt.parameters == ["objective", "max_turns"]
 
     def test_tagged_core_single_turn_light(self):
         factory = self._context_compliance_factory()
@@ -413,19 +426,20 @@ class TestRolePlayFactories:
             assert sim is not None
             assert sim.num_turns == 2
 
-    def test_seed_technique_yaml_path_resolves_to_existing_file(self):
+    def test_seed_technique_carries_resolved_adversarial_prompt(self):
         for f in self._role_play_factories():
             sim = f.seed_technique.simulated_conversation_config
             assert sim is not None
-            assert sim.adversarial_chat_system_prompt_path.exists()
+            assert sim.adversarial_chat_system_prompt.value
+            assert sim.adversarial_chat_system_prompt.parameters == ["objective", "max_turns"]
 
     def test_all_use_role_play_next_message_prompt(self):
         for f in self._role_play_factories():
             sim = f.seed_technique.simulated_conversation_config
             assert sim is not None
-            assert sim.next_message_system_prompt_path is not None
-            assert sim.next_message_system_prompt_path.name == "role_play_next_message.yaml"
-            assert sim.next_message_system_prompt_path.exists()
+            assert sim.next_message_system_prompt is not None
+            assert sim.next_message_system_prompt.name == "role_play_next_message_generator"
+            assert sim.next_message_system_prompt.parameters == ["objective", "conversation_context"]
 
 
 class TestRolePlayYamls:
@@ -601,6 +615,143 @@ class TestViolentDurianTechnique:
         await init.initialize_async()
 
         assert "violent_durian" in set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
+
+
+# ---------------------------------------------------------------------------
+# GOAT (opt-in extra technique)
+# ---------------------------------------------------------------------------
+
+
+class TestGoatTechnique:
+    """Tests for the opt-in goat entry in the extra catalog."""
+
+    @staticmethod
+    def _goat_factory():
+        return next(f for f in build_technique_factories(groups=["extra"]) if f.name == "goat")
+
+    def test_in_extra_catalog(self):
+        names = {f.name for f in build_technique_factories(groups=["extra"])}
+        assert "goat" in names
+
+    def test_tagged_extra_not_core_or_default(self):
+        factory = self._goat_factory()
+        assert "core" not in factory.technique_tags
+        assert "default" not in factory.technique_tags
+        assert set(factory.technique_tags) == {"multi_turn", "extra"}
+
+    def test_uses_red_teaming_attack_with_adversarial(self):
+        factory = self._goat_factory()
+        assert factory.attack_class is RedTeamingAttack
+        assert factory.uses_adversarial is True
+
+    def test_has_max_turns_five(self):
+        factory = self._goat_factory()
+        assert factory._attack_kwargs == {"max_turns": 5}
+
+    def test_data_path_resolves_to_file(self):
+        assert (EXECUTOR_RED_TEAM_PATH / "goat.yaml").exists()
+
+    def test_system_prompt_yaml_renders_objective_and_strategies(self):
+        sp = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat.yaml")
+        assert sp.parameters == ["objective"]
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "Refusal Suppression" in rendered
+        assert "next_message" in rendered
+
+    def test_topic_splitting_matches_paper_definition(self):
+        """GOAT's Topic Splitting (paper section 3.1 / Table 1) mixes the objective in
+        among unrelated safe requests within one message -- it is not cross-turn
+        decomposition of the objective into sub-questions."""
+        sp = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat.yaml")
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        assert "Topic Splitting" in rendered
+        assert "unrelated" in rendered.lower()
+        assert "sub-questions" not in rendered.lower()
+
+    def test_strategy_selection_is_not_capped(self):
+        """Paper section 3.1 lets the attacker combine strategies freely; there is no
+        cap in Table 1 or the body text. The prompt must not impose a "ONE or TWO"
+        (or similar numeric) ceiling on how many strategies can be applied per turn."""
+        sp = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat.yaml")
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        assert "ONE or TWO" not in rendered
+        assert "combine" in rendered.lower()
+
+    def test_all_seven_strategies_present_with_table_1_examples(self):
+        """All 7 named strategies from paper Table 1 must be present, each illustrated
+        with the example phrasing Table 1 itself gives (the paper withholds full example
+        conversations for dual-use reasons, but these short example phrases are public)."""
+        sp = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat.yaml")
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        expected_strategies = {
+            "Refusal Suppression": "I cannot",
+            "Dual Response": "unhinged",
+            "Response Priming": "Sure!",
+            "Persona Modification": "You are X",
+            "Hypothetical": "dream",
+            "Topic Splitting": "unrelated",
+            "Opposite Intent": "opposite",
+        }
+        for strategy, example_fragment in expected_strategies.items():
+            assert strategy in rendered, f"{strategy} missing from strategy taxonomy"
+            assert example_fragment in rendered, f"{strategy} missing its Table 1 example ({example_fragment!r})"
+
+    def test_effective_schema_is_four_stage_reasoning_first(self):
+        """Paper section 3.2 has the attacker return four components every turn, in this
+        exact order: observation, thought, strategy, then the message (paper calls the
+        last one "Response"; this schema names it next_message to match every other
+        RedTeamingAttack technique). Structured-output APIs emit fields in schema order,
+        so this order is what makes a non-reasoning model actually reason before it writes."""
+        factory = self._goat_factory()
+        effective_schema = factory._adversarial_system_prompt.response_json_schema
+        assert list(effective_schema["properties"].keys()) == [
+            "observation",
+            "thought",
+            "strategy",
+            "next_message",
+        ]
+        assert effective_schema["required"] == ["observation", "thought", "strategy", "next_message"]
+
+    def test_initial_prompt_wired_and_renders_objective(self):
+        """Paper Figure A.2: the attacker's first message is generated from a dedicated
+        initial-turn prompt, not RedTeamingAttack's generic default."""
+        factory = self._goat_factory()
+        seed_prompt = factory._adversarial_seed_prompt
+        assert seed_prompt is not None
+        assert isinstance(seed_prompt, SeedPrompt)
+        rendered = seed_prompt.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+
+    def test_follow_up_prompt_wired_and_renders_objective_and_feedback(self):
+        """Paper Figure A.3: per-turn follow-up prompts are attacker-specific, not
+        RedTeamingAttack's generic '{{ feedback_text }}' default. The factory's
+        adversarial_prompt_template pass-through (added alongside this technique) is what
+        makes this possible without a new executor."""
+        factory = self._goat_factory()
+        template = factory._adversarial_prompt_template
+        assert template is not None
+        assert isinstance(template, SeedPrompt)
+        rendered = template.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", feedback_text="UNIQUE_FEEDBACK")
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "UNIQUE_FEEDBACK" in rendered
+
+    def test_effective_adversarial_config_uses_goat_prompts(self):
+        """The built AttackAdversarialConfig must actually carry the baked initial/follow-up
+        prompts through to a fresh attack instance, not just hold them unused on the factory."""
+        factory = self._goat_factory()
+        config = factory._build_adversarial_config(create_time_target=MagicMock(spec=PromptTarget))
+        assert isinstance(config.first_message, SeedPrompt)
+        assert "objective" in (config.first_message.parameters or [])
+        assert isinstance(config.adversarial_prompt_template, SeedPrompt)
+        assert "feedback_text" in (config.adversarial_prompt_template.parameters or [])
+
+    async def test_registered_when_extra_selected(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        init.params = {"tags": ["extra"]}
+        await init.initialize_async()
+
+        assert "goat" in set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
 
 
 # ---------------------------------------------------------------------------

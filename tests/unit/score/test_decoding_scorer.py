@@ -34,8 +34,6 @@ def sample_message_pieces():
 class TestDecodingScorer:
     async def test_decoding_scorer_original_value_match(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
-
-        # Mock memory to return the user request
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
         memory.get_request_from_response.return_value = user_message
@@ -45,7 +43,7 @@ class TestDecodingScorer:
             score = await scorer._score_piece_async(assistant_piece)
 
             assert len(score) == 1
-            assert score[0].get_value() is True  # "secret" is in the response
+            assert score[0].get_value() is True
             assert score[0].score_type == "true_false"
             assert score[0].score_category == ["decoding"]
 
@@ -62,7 +60,7 @@ class TestDecodingScorer:
             score = await scorer._score_piece_async(assistant_piece)
 
             assert len(score) == 1
-            assert score[0].get_value() is True  # "encoded_secret" is in the response
+            assert score[0].get_value() is True
 
     async def test_decoding_scorer_metadata_match(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
@@ -77,11 +75,35 @@ class TestDecodingScorer:
             score = await scorer._score_piece_async(assistant_piece)
 
             assert len(score) == 1
-            assert score[0].get_value() is True  # "decoded_secret" from metadata is in response
+            assert score[0].get_value() is True
 
     async def test_decoding_scorer_no_match(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
         assistant_piece.converted_value = "Response with nothing matching"
+
+        memory = MagicMock(MemoryInterface)
+        user_message = Message(message_pieces=[user_piece])
+        memory.get_request_from_response.return_value = user_message
+
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+            scorer = DecodingScorer(categories=["decoding"])
+            score = await scorer._score_piece_async(assistant_piece)
+
+            assert len(score) == 1
+            assert score[0].get_value() is False
+
+    async def test_decoding_scorer_empty_converted_value_does_not_match(
+        self, patch_central_database, sample_message_pieces
+    ):
+        user_piece, _ = sample_message_pieces
+        user_piece.original_value = "secret"
+        user_piece.converted_value = ""
+
+        assistant_piece = MessagePiece(
+            role="assistant",
+            original_value="I refuse",
+            converted_value="I refuse",
+        )
 
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
@@ -103,12 +125,11 @@ class TestDecodingScorer:
         memory.get_request_from_response.return_value = user_message
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
-            # Default is case insensitive
             scorer = DecodingScorer(categories=["decoding"])
             score = await scorer._score_piece_async(assistant_piece)
 
             assert len(score) == 1
-            assert score[0].get_value() is True  # Case insensitive match
+            assert score[0].get_value() is True
 
     async def test_decoding_scorer_case_sensitive(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
@@ -124,11 +145,10 @@ class TestDecodingScorer:
             score = await scorer._score_piece_async(assistant_piece)
 
             assert len(score) == 1
-            assert score[0].get_value() is False  # Case sensitive, no match
+            assert score[0].get_value() is False
 
     async def test_decoding_scorer_approximate_matching(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
-        # Partial match - has some n-grams in common
         assistant_piece.converted_value = "Response with sec ret characters separated"
 
         memory = MagicMock(MemoryInterface)
@@ -136,13 +156,11 @@ class TestDecodingScorer:
         memory.get_request_from_response.return_value = user_message
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
-            # Use approximate matching with low threshold
             text_matcher = ApproximateTextMatching(threshold=0.3, n=3, case_sensitive=False)
             scorer = DecodingScorer(text_matcher=text_matcher, categories=["decoding"])
             score = await scorer._score_piece_async(assistant_piece)
 
             assert len(score) == 1
-            # Should detect partial match with low threshold
 
     async def test_decoding_scorer_approximate_no_match(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
@@ -158,4 +176,4 @@ class TestDecodingScorer:
             score = await scorer._score_piece_async(assistant_piece)
 
             assert len(score) == 1
-            assert score[0].get_value() is False  # Below threshold
+            assert score[0].get_value() is False

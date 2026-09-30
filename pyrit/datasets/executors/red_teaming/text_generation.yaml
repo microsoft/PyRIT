@@ -1,8 +1,6 @@
 name: red_team_text_generation
 description: |
   A general strategy for generating text with an adversarial chat bot
-authors:
-  - AI Red Team
 groups:
   - AI Red Team
 source: AI Red Team

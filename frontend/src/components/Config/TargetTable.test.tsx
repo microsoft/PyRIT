@@ -2,8 +2,10 @@ import { render, screen, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TargetInstance } from '@/types'
+import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import TargetTable from './TargetTable'
 
@@ -12,7 +14,9 @@ jest.mock('./TargetTable.styles', () => ({
 }))
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
+  <UserPreferencesProvider accountKey="local">
+    <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
+  </UserPreferencesProvider>
 )
 
 const sampleTargets: TargetInstance[] = [
@@ -59,8 +63,10 @@ const sampleTargets: TargetInstance[] = [
 describe('TargetTable', () => {
   const defaultProps = {
     targets: sampleTargets,
-    activeTarget: null as TargetInstance | null,
-    onSetActiveTarget: jest.fn(),
+    defaultObjectiveTarget: null as TargetInstance | null,
+    defaultAdversarialTarget: null as TargetInstance | null,
+    onSetDefaultObjectiveTarget: jest.fn(),
+    onSetDefaultAdversarialTarget: jest.fn(),
   }
 
   beforeEach(() => {
@@ -106,68 +112,90 @@ describe('TargetTable', () => {
     expect(screen.getByText('Parameters')).toBeInTheDocument()
   })
 
-  it('should show "Set Active" button for non-active targets', () => {
+  it('should offer stacked selectors with registry names and models, without a defaults column', () => {
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
       </TestWrapper>
     )
 
-    const setActiveButtons = screen.getAllByText('Set Active')
-    expect(setActiveButtons).toHaveLength(3)
+    const summary = screen.getByRole('region', { name: 'Target defaults' })
+    const objective = within(summary).getByRole('combobox', { name: 'Default objective target' })
+    const adversarial = within(summary).getByRole('combobox', { name: 'Default adversarial target' })
+    expect(within(summary).getAllByRole('combobox')).toEqual([objective, adversarial])
+    expect(screen.getByRole('separator')).toBeInTheDocument()
+    expect(within(objective).getAllByRole('option')).toHaveLength(4)
+    expect(within(objective).getByRole('option', { name: 'openai_chat_gpt4 (gpt-4)' })).toHaveValue('openai_chat_gpt4')
+    expect(within(adversarial).getAllByRole('option')).toHaveLength(2)
+    expect(within(adversarial).queryByRole('option', { name: /azure_image_dalle/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: 'Defaults' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Set default' })).not.toBeInTheDocument()
   })
 
-  it('should show "Active" badge for the active target', () => {
+  it('should show the objective default badge and a clear action', () => {
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} activeTarget={sampleTargets[0]} />
+        <TargetTable {...defaultProps} defaultObjectiveTarget={sampleTargets[0]} />
       </TestWrapper>
     )
 
-    // Active badge appears in both the indicator and the table row
-    expect(screen.getAllByText('Active').length).toBeGreaterThanOrEqual(2)
-    const setActiveButtons = screen.getAllByText('Set Active')
-    expect(setActiveButtons).toHaveLength(2)
+    const objective = screen.getByRole('combobox', { name: 'Default objective target' })
+    expect(objective).toHaveValue('openai_chat_gpt4')
+    expect(within(objective).getByRole('option', { name: 'Not set' })).toHaveValue('')
+    expect(within(screen.getByRole('table')).getByLabelText('Default objective target')).toHaveTextContent('Objective')
   })
 
-  it('should show active target indicator above the table', () => {
+  it('should allow the same eligible target to serve both roles and clear them separately', async () => {
+    const user = userEvent.setup()
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} activeTarget={sampleTargets[0]} />
+        <TargetTable
+          {...defaultProps}
+          defaultObjectiveTarget={sampleTargets[0]}
+          defaultAdversarialTarget={sampleTargets[0]}
+        />
       </TestWrapper>
     )
 
-    const activeTargetTable = screen.getByRole('table', { name: 'Active target' })
-    expect(within(activeTargetTable).getByText('openai_chat_gpt4')).toBeInTheDocument()
-
-    const badges = screen.getAllByText('Active')
-    expect(badges.length).toBeGreaterThanOrEqual(2) // one above table + one in row
+    const row = screen.getByRole('row', { name: /openai_chat_gpt4/ })
+    expect(within(row).getByText('Objective')).toBeInTheDocument()
+    expect(within(row).getByText('Adversarial')).toBeInTheDocument()
+    const summary = screen.getByRole('region', { name: 'Target defaults' })
+    await user.selectOptions(within(summary).getByRole('combobox', { name: 'Default objective target' }), '')
+    expect(defaultProps.onSetDefaultObjectiveTarget).toHaveBeenCalledWith(null)
+    expect(defaultProps.onSetDefaultAdversarialTarget).not.toHaveBeenCalled()
+    await user.selectOptions(within(summary).getByRole('combobox', { name: 'Default adversarial target' }), '')
+    expect(defaultProps.onSetDefaultAdversarialTarget).toHaveBeenCalledWith(null)
   })
 
-  it('should not show active target indicator when no target is active', () => {
+  it('should not show default badges when no defaults are selected', () => {
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
       </TestWrapper>
     )
 
-    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('table')).queryByLabelText('Default objective target')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('table')).queryByLabelText('Default adversarial target')).not.toBeInTheDocument()
+    const defaults = within(screen.getByRole('region', { name: 'Target defaults' }))
+    expect(defaults.getByRole('option', { name: 'Not set' })).toHaveValue('')
+    expect(defaults.getByRole('option', { name: 'Use server default' })).toHaveValue('')
   })
 
-  it('should call onSetActiveTarget when "Set Active" is clicked', () => {
-    const onSetActiveTarget = jest.fn()
+  it('should set each role independently', async () => {
+    const user = userEvent.setup()
 
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} onSetActiveTarget={onSetActiveTarget} />
+        <TargetTable {...defaultProps} />
       </TestWrapper>
     )
 
-    const setActiveButtons = screen.getAllByText('Set Active')
-    fireEvent.click(setActiveButtons[1])
-
-    expect(onSetActiveTarget).toHaveBeenCalledTimes(1)
-    expect(onSetActiveTarget).toHaveBeenCalledWith(sampleTargets[1])
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Default objective target' }), 'azure_image_dalle')
+    expect(defaultProps.onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[1])
+    expect(defaultProps.onSetDefaultAdversarialTarget).not.toHaveBeenCalled()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Default adversarial target' }), 'openai_chat_gpt4')
+    expect(defaultProps.onSetDefaultAdversarialTarget).toHaveBeenCalledWith(sampleTargets[0])
   })
 
   it('should handle empty targets list gracefully', () => {
@@ -178,7 +206,33 @@ describe('TargetTable', () => {
     )
 
     expect(screen.getByRole('table')).toBeInTheDocument()
-    expect(screen.queryByText('Set Active')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Set default' })).not.toBeInTheDocument()
+  })
+
+  it('should keep the default summary visible when its target is filtered out', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} defaultObjectiveTarget={sampleTargets[0]} />
+      </TestWrapper>,
+    )
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by type:' }), 'AzureImageTarget')
+    expect(screen.queryByRole('row', { name: /openai_chat_gpt4/ })).not.toBeInTheDocument()
+    const summary = screen.getByRole('region', { name: 'Target defaults' })
+    const objective = within(summary).getByRole('combobox', { name: 'Default objective target' })
+    expect(objective).toHaveValue('openai_chat_gpt4')
+    expect(within(objective).getByRole('option', { name: 'openai_chat_gpt4 (gpt-4)' })).toBeInTheDocument()
+    await user.selectOptions(objective, '')
+    expect(defaultProps.onSetDefaultObjectiveTarget).toHaveBeenCalledWith(null)
+  })
+
+  it('should keep an existing default selected when its option is selected again', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper><TargetTable {...defaultProps} defaultObjectiveTarget={sampleTargets[0]} /></TestWrapper>,
+    )
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Default objective target' }), 'openai_chat_gpt4')
+    expect(defaultProps.onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[0])
   })
 
   it('should show dash when model_name or endpoint is null', () => {
@@ -279,7 +333,7 @@ describe('TargetTable', () => {
 
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} targets={targetWithParams} activeTarget={null} />
+        <TargetTable {...defaultProps} targets={targetWithParams} />
       </TestWrapper>
     )
 
@@ -300,7 +354,7 @@ describe('TargetTable', () => {
 
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} targets={targetWithUnderlying} activeTarget={null} />
+        <TargetTable {...defaultProps} targets={targetWithUnderlying} />
       </TestWrapper>
     )
 
@@ -334,7 +388,7 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    const select = screen.getByRole('combobox')
+    const select = screen.getByRole('combobox', { name: 'Filter by type:' })
 
     // Filter then clear
     fireEvent.change(select, { target: { value: 'OpenAIChatTarget' } })
@@ -401,13 +455,13 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    window.localStorage.setItem(
-      'pyrit.hiddenTargetRegistryNames',
-      JSON.stringify(['azure_image_dalle']),
-    )
+    writeUserPreferences('local', {
+      ...DEFAULT_USER_PREFERENCES,
+      hiddenTargetRegistryNames: ['azure_image_dalle'],
+    })
     await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
 
-    expect(JSON.parse(window.localStorage.getItem('pyrit.hiddenTargetRegistryNames') ?? '[]')).toEqual([
+    expect(readUserPreferences('local').hiddenTargetRegistryNames).toEqual([
       'azure_image_dalle',
       'openai_chat_gpt4',
     ])
@@ -491,8 +545,8 @@ describe('TargetTable', () => {
     fireEvent.click(expandButton)
 
     // Inner targets should now be visible
-    expect(screen.getByText('inner_a')).toBeInTheDocument()
-    expect(screen.getByText('inner_b')).toBeInTheDocument()
+    expect(screen.getByText('#1 inner_a')).toBeInTheDocument()
+    expect(screen.getByText('#2 inner_b')).toBeInTheDocument()
     expect(screen.getByText('https://a.openai.azure.com')).toBeInTheDocument()
     expect(screen.getByText('https://b.openai.azure.com')).toBeInTheDocument()
   })

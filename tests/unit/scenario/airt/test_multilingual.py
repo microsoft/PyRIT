@@ -137,6 +137,16 @@ def _response(text: str) -> list[Message]:
 class TestMultilingual:
     """Validate multilingual technique selection and converter construction."""
 
+    @pytest.mark.parametrize("explicit_target", [False, True])
+    def test_default_adversarial_usage(
+        self, *, explicit_target: bool, mock_adversarial_chat: PromptTarget, mock_objective_scorer: TrueFalseScorer
+    ) -> None:
+        scenario = Multilingual(
+            adversarial_chat=mock_adversarial_chat if explicit_target else None,
+            objective_scorer=mock_objective_scorer,
+        )
+        assert scenario.uses_default_adversarial_target is not explicit_target
+
     def test_technique_catalog_includes_only_translation_compatible_factories(self) -> None:
         technique_class = _build_multilingual_technique()
 
