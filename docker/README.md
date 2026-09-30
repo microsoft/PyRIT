@@ -19,6 +19,12 @@ builder (Docker driver) so it can consume the locally loaded base image rather
 than looking for it in the cached builder's separate image store. Neither
 sequence publishes images.
 
+Local builds record the checked-out commit and require a clean source tree before
+building, so Python and frontend compatibility stamps describe the same source.
+PyPI checks require an exact stamped release from the `pypiVersion` dispatch input
+or the `PYRIT_PYPI_VERSION` repository variable. Missing or invalid configuration
+fails rather than selecting an arbitrary latest release.
+
 The existing `Build Devcontainer`, `Build Production (local)`, `Test Import (local)`,
 `Test GUI (local)`, and `Test Jupyter (local)` check names are retained as result
 gates, along with the four PyPI check names. Each enabled gate requires both its
@@ -30,8 +36,9 @@ PyPI checks remain intentionally skipped on PRs and merge-queue runs. Look at
 and step timings.
 
 GUI and Jupyter checks poll for HTTP 200 for up to 120 seconds, stop early if the
-container exits, and bound each HTTP request. GUI checks also require frontend
-HTML. Each service gets an ephemeral localhost port and its own container, which
+container exits, and bound each HTTP request. GUI checks use the compatibility-neutral
+`/api/health` endpoint and also require frontend HTML; business API compatibility
+enforcement remains enabled. Each service gets an ephemeral localhost port and its own container, which
 is removed on success, failure, or a handled cancellation signal. Failures print
 container state and recent logs. Application errors, including migration failures,
 remain failures rather than being retried or hidden.
@@ -73,21 +80,50 @@ workflow result gates have offline regression coverage in
 
 - [Docker](https://docs.docker.com/get-docker/)
 - [Docker Compose](https://docs.docker.com/compose/install/)
+- Git and a PyRIT source checkout
 
 ## Quick Start
 
+Create the mounted files described in [Environment Variables](#environment-variables)
+first. Run these commands from the repository's `docker/` directory using Bash
+(Git Bash on Windows).
+
+### Source Build Provenance
+
+Compose builds from the local checkout, not the latest PyPI release. Export the
+actual full source commit and an exact `true`/`false` dirty flag before running it:
+
 ```bash
-# Build and start the container in detached mode
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop the container
-docker-compose down
+set -e
+PYRIT_SOURCE_COMMIT=$(git rev-parse --verify HEAD)
+source_status=$(git status --porcelain)
+PYRIT_SOURCE_DIRTY=false
+if [ -n "$source_status" ]; then
+    PYRIT_SOURCE_DIRTY=true
+fi
+export PYRIT_SOURCE_COMMIT PYRIT_SOURCE_DIRTY
 ```
 
-**Access JupyterLab**: Navigate to `http://localhost:8888` in your browser.
+Repeat this setup in each new shell before any Compose command, and after source
+changes before rebuilding. These are host-side build inputs, not API secrets or
+static values to copy into `.env.container.settings`. Dirty local builds warn but
+keep the same compatibility identity; published builds must be clean.
+
+### Build and Start
+
+```bash
+docker build -f ../.devcontainer/Dockerfile -t pyrit-devcontainer ../.devcontainer
+docker compose --profile jupyter up --build -d
+
+# View logs
+docker compose --profile jupyter logs -f
+
+# Stop the container
+docker compose --profile jupyter down
+```
+
+**Access JupyterLab**: Open the localhost URL with its access token from the logs.
+For GUI mode, replace `--profile jupyter` with `--profile gui` and open port 8000.
 
 > 💡 **New to Docker setup?** Check out the [step-by-step installation guide](./../doc/getting_started/install_docker.md) with detailed explanations and troubleshooting tips.
 
@@ -101,14 +137,18 @@ docker-compose down
 The container expects environment files to provide configuration. Create them by copying the provided examples:
 
 ```bash
-cp ../.env.example ../.env
-cp ../.env.local_example ../.env.local
+mkdir -p ~/.pyrit
+cp ../.env_example ~/.pyrit/.env
+cp ../.env_local_example ~/.pyrit/.env.local
 # Note: Example file has underscores, but copy it to a file with dots
 cp .env_container_settings_example .env.container.settings
 ```
 
-- **`.env`** and **`.env.local`**: API keys and secrets (in parent directory)
+- **`.env`** and **`.env.local`**: API keys and secrets (in `~/.pyrit/`, mounted read-only)
 - **`.env.container.settings`**: Container-specific settings like GPU and docs cloning
+
+The source-build inputs `PYRIT_SOURCE_COMMIT` and `PYRIT_SOURCE_DIRTY` come from
+[Source Build Provenance](#source-build-provenance), not the example settings file.
 
 
 ### Adding Your Own Notebooks and Data
@@ -124,40 +164,11 @@ Ensure your `notebooks/` , `data/` and `../assets/` directories have the correct
 chmod -R 777 notebooks/ data/ ../assets
 ```
 
-## Recommended Docker Compose Configuration
+## Docker Compose Configuration
 
-To correctly map your local notebooks and data directories into the container, use the following Docker Compose configuration:
-
-```yaml
-services:
-  pyrit:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: pyrit:latest
-    container_name: pyrit-jupyter
-    ports:
-      - "8888:8888"
-    volumes:
-      - ./notebooks:/app/notebooks
-      - ./data:/app/data
-      - ../assets:/app/assets
-    env_file:
-      - ../.env
-      - ../.env.local
-      - .env.container.settings
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8888 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-volumes:
-  notebooks:
-  data:
-```
+Use the checked-in [docker-compose.yaml](./docker-compose.yaml). It supplies the
+base image and required source build arguments for both the `jupyter` and `gui`
+profiles. Keep these arguments when customizing volume mounts or other settings.
 
 ## Modifying the Configuration
 
@@ -189,8 +200,8 @@ To enable GPU support:
 2. Restart the container:
 
    ```bash
-   docker-compose down
-   docker-compose up -d
+   docker compose --profile jupyter down
+   docker compose --profile jupyter up -d
    ```
 
 ## Troubleshooting
@@ -199,7 +210,8 @@ For detailed troubleshooting steps, see the [Docker Installation Guide - Trouble
 
 **Quick fixes:**
 
-- **JupyterLab not accessible**: Check logs with `docker-compose logs pyrit`
+- **JupyterLab not accessible**: Check logs with `docker compose --profile jupyter logs pyrit-jupyter`
+- **Missing source build variables**: Repeat [Source Build Provenance](#source-build-provenance) in the same shell
 - **Permission issues**: Run `chmod -R 777 notebooks/ data/ ../assets/`
 - **Environment file errors**: Ensure `.env`, `.env.local`, and `.env.container.settings` files exist
 
@@ -208,7 +220,7 @@ For detailed troubleshooting steps, see the [Docker Installation Guide - Trouble
 - **Base Image**: `mcr.microsoft.com/azureml/minimal-py312-inference:latest`
 - **Python**: 3.12
 - **PyTorch**: Latest version with CUDA support
-- **PyRIT**: Installed from PyPI (latest version)
+- **PyRIT**: Built from the source checkout, with matching Python and frontend compatibility stamps
 
 ## Customization
 

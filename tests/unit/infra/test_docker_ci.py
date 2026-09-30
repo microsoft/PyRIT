@@ -168,31 +168,66 @@ def test_pypi_execution_and_gates_preserve_intentional_skips(
     assert (result.returncode == 0) == enabled
 
 
-@pytest.mark.parametrize(("curl_status", "jq_status"), [(0, 0), (22, 0), (0, 4)])
-def test_pypi_lookup_does_not_fall_back_on_network_or_metadata_errors(
-    *, workflow: dict[str, Any], bash_path: str, tmp_path: Path, curl_status: int, jq_status: int
+@pytest.mark.parametrize(
+    ("source_status", "status_exit", "commit_exit"),
+    [("", 0, 0), (" M pyrit/example.py", 0, 0), ("?? new-file", 0, 0), ("", 128, 0), ("", 0, 128)],
+)
+def test_local_provenance_requires_clean_checkout_and_successful_git(
+    *,
+    workflow: dict[str, Any],
+    bash_path: str,
+    tmp_path: Path,
+    source_status: str,
+    status_exit: int,
+    commit_exit: int,
 ) -> None:
-    step = next(step for step in workflow["jobs"]["build-and-test-pypi"]["steps"] if step.get("id") == "pypi-version")
+    steps = workflow["jobs"]["build-and-test-local"]["steps"]
+    step = next(step for step in steps if step.get("id") == "provenance")
+    base = next(step for step in steps if step.get("id") == "devcontainer")
+    production = next(step for step in steps if step.get("id") == "production")
+    assert steps.index(step) < steps.index(base) < steps.index(production)
+    assert "GIT_COMMIT=${{ steps.provenance.outputs.commit }}" in production["with"]["build-args"]
+    assert "GIT_MODIFIED=false" in production["with"]["build-args"]
+    commit = "a" * 40
     output = tmp_path / "outputs"
     result = _run_bash(
         bash_path=bash_path,
         script="""
-curl() { echo '{"info":{"version":"1.0.0"}}'; return "$CURL_STATUS"; }
-jq() { cat >/dev/null; echo 1.0.0; return "$JQ_STATUS"; }
+git() {
+    case "$*" in
+        "status --porcelain") printf '%s' "$SOURCE_STATUS"; return "$STATUS_EXIT";;
+        "rev-parse HEAD") printf '%s\\n' "$SOURCE_COMMIT"; return "$COMMIT_EXIT";;
+        *) echo "Unexpected Git command" >&2; return 97;;
+    esac
+}
 """
         + step["run"],
         environment={
-            "CURL_STATUS": str(curl_status),
-            "JQ_STATUS": str(jq_status),
+            "SOURCE_STATUS": source_status,
+            "STATUS_EXIT": str(status_exit),
+            "SOURCE_COMMIT": commit,
+            "COMMIT_EXIT": str(commit_exit),
             "GITHUB_OUTPUT": output.as_posix(),
         },
     )
-    assert (result.returncode == 0) == (curl_status == 0 and jq_status == 0)
+    assert (result.returncode == 0) == (source_status == "" and status_exit == 0 and commit_exit == 0)
     if result.returncode == 0:
-        assert output.read_text(encoding="utf-8") == "version=1.0.0\n"
+        assert output.read_text(encoding="utf-8") == f"commit={commit}\n"
     else:
         assert not output.exists()
-        assert "Latest PyRIT version" not in result.stdout
+        if source_status:
+            assert "::error::Source checkout must be clean" in result.stdout
+
+
+def test_pypi_build_uses_configured_coordinated_release(workflow: dict[str, Any]) -> None:
+    version_input = workflow["on"]["workflow_dispatch"]["inputs"]["pypiVersion"]
+    assert version_input["type"] == "string"
+    assert version_input["required"] == "false"
+    steps = workflow["jobs"]["build-and-test-pypi"]["steps"]
+    selection = next(step for step in steps if step.get("id") == "pypi-version")
+    production = next(step for step in steps if step.get("id") == "production")
+    assert selection["env"]["PYRIT_PYPI_VERSION"] == "${{ inputs.pypiVersion || vars.PYRIT_PYPI_VERSION }}"
+    assert "PYRIT_VERSION=${{ steps.pypi-version.outputs.version }}" in production["with"]["build-args"]
 
 
 def test_builds_stay_local_and_only_identical_devcontainers_share_cache(workflow: dict[str, Any]) -> None:
