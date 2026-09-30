@@ -73,8 +73,99 @@ Here are some examples:
 | **OpenAIChatTarget** (e.g., GPT-4)  | **Yes** (multi-turn + editable history)           | Designed for conversational prompts (system messages, conversation history, etc.).               |
 | **OpenAIImageTarget**               | **No**                                            | Used for image generation; does not manage conversation history.                                 |
 | **HTTPTarget**                      | **No**                                            | Generic HTTP target. Some apps might allow conversation history, but this target doesn't handle it. |
-| **A2ATarget**                       | **Yes** (per-conversation A2A context)            | Target for Agent-to-Agent (A2A) protocol endpoints using the official a2a-sdk (v0.3 / v1.0).    |
+| **A2ATarget**                       | **No** (multi-turn, but no editable history)     | Text-only Agent-to-Agent endpoints through the official a2a-sdk (v0.3 / v1.0).                |
 | **AzureBlobStorageTarget**          | **No**                                            | Used primarily for storage; not for conversation-based AI.                                       |
+
+## A2A agents
+
+Install the optional client with `pip install "pyrit[a2a]"` (also included in
+`pyrit[all]`). `A2ATarget` uses the official `a2a-sdk` 1.x client for JSON-RPC.
+Set `protocol_version="0.3"` (the default) or `"1.0"` for a known endpoint.
+Set `"auto"` to discover the agent card. Discovery errors are not hidden by
+a fallback to another protocol. Use `agent_card_path` for a non-standard
+relative card path.
+
+The adapter sends one text piece per turn. The agent owns its context and
+history. The target cannot edit or replay that history, send system-role
+messages, enforce native JSON output, or send audio, images, or files.
+Custom capabilities cannot enable these unsupported features or disable
+multi-turn support. Disabling it would squash local history while the agent
+retains the same history. To restore an
+existing upstream context on a new target instance, use
+`set_conversation_context`. A local history without an upstream context ID
+is rejected. `reset_conversation_async` forgets the local mapping; it does
+not delete remote state. Sends and resets for the same conversation are
+serialized. Different conversations can run concurrently.
+`set_conversation_context` raises an error if that conversation is in use.
+
+The target retries submission only after an explicit HTTP 429. Retries use
+the same A2A message ID. Rate-limit errors during polling retry only the poll.
+Polling honors `Retry-After` (seconds or HTTP date), with exponential backoff
+when that header is absent or invalid. The polling deadline bounds these waits.
+`max_requests_per_minute` applies to submission attempts and task polls, not
+agent-card discovery.
+Empty results, task failures, and agent errors that mention a downstream
+rate limit do not cause automatic resubmission. A polling timeout does not
+cancel the remote task. Do not blindly resubmit an action after a timeout.
+`request_timeout_seconds` sets the HTTPX connect, read, write, and pool
+timeouts and defaults to `task_timeout_seconds`. These are per-phase
+timeouts, not a total turn deadline. Instead, pass HTTPX `timeout` for
+per-phase settings or `timeout=None` to disable HTTP timeouts. Do not pass
+both timeout options. Timeouts must be finite and positive.
+`task_timeout_seconds` is a separate deadline that starts after submission
+returns a pending task. It bounds polling, rate-limit waits, and in-flight
+poll requests, even with `timeout=None`. `poll_interval_seconds` must be
+finite and non-negative.
+
+Identifiers include the endpoint, requested protocol, card path, and optional
+`routing_identifier`. Set this non-secret deployment label when HTTP headers
+select a different agent at the same endpoint. Do not put tokens in the URL,
+card path, or routing label. Credentials, HTTP headers, and timeout settings
+are not copied into identifier parameters.
+
+`auth_token` accepts a static token or an async callable that returns a token.
+The callable runs before each HTTP request, including discovery, submission
+retries, and polls. Use a provider that caches tokens and refreshes them
+before expiry. Do not combine `auth_token` with HTTPX `auth` or an
+`Authorization` header. Custom HTTPX authentication is supported when
+`auth_token` is not set.
+
+For Foundry, keep the credential open for the full target operation:
+
+```python
+from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+from pyrit.prompt_target import A2ATarget
+
+async with DefaultAzureCredential() as credential:
+    token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
+    target = A2ATarget(
+        endpoint=agent_endpoint,
+        protocol_version="auto",
+        agent_card_path="agentCard/v1.0",
+        auth_token=token_provider,
+    )
+    responses = await target.send_prompt_async(message=message)
+```
+
+### A2A integration tests
+
+The local tests run an official SDK server on an ephemeral loopback port.
+They cover 0.3 and 1.0, discovery, persisted multi-turn history, task
+continuation, failure, and prevention of duplicate submissions. From a
+development environment with the `all` extra, set `RUN_ALL_TESTS=true` and run:
+
+```text
+uv run pytest tests/integration/targets/test_a2a_target_integration.py -k "not foundry"
+```
+
+The separate Foundry test also requires `RUN_ALL_TESTS=true` and
+`A2A_FOUNDRY_ENDPOINT`. It uses `A2A_FOUNDRY_AUTH_TOKEN` if supplied; otherwise,
+it uses a refreshable Entra token provider through `DefaultAzureCredential` for
+`https://ai.azure.com/.default`. The identity must have access to the agent
+(for example, the Agent Consumer role). `A2A_FOUNDRY_CARD_PATH`
+defaults to `agentCard/v1.0`; set it to
+`agentCard/v0.3` for a preview endpoint. The test requires a successful text
+response, not just a non-empty error. It does not create Azure resources.
 
 ## Target Capabilities
 
