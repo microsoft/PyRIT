@@ -14,6 +14,7 @@ from pyrit.models import (
     MessageScorable,
     Scorable,
     Score,
+    TraceScorable,
     scorable_from_dict,
 )
 from pyrit.models.score.scorable import SCORABLE_TYPES
@@ -149,6 +150,7 @@ def test_every_union_member_round_trips_to_its_own_type():
         MessageScorable(message_piece_ids=(uuid.uuid4(),)),
         ContentScorable(value="hello"),
         ContentEntryScorable(content_id=uuid.uuid4()),
+        TraceScorable(trace_ids=("1" * 32,)),
     ]
 
     assert {type(case) for case in cases} == set(SCORABLE_TYPES)

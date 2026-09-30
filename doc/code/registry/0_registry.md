@@ -54,6 +54,36 @@ show_registry_contents(ScenarioRegistry.get_registry_singleton())
 | Instantiation | Caller provides parameters | Pre-configured by initializer |
 | When to use | Self-contained components with deferred configuration | Components requiring constructor parameters or compositional setup |
 
+## Named Component Construction
+
+Converter, target, and scorer registries use `InstanceHoldingRegistry` to build
+components and store them in their `.instances` registry. Use
+`create_named_instance(name=..., type_name=..., params=...)` to build and register
+a component in one operation. The instance registry stores objects; it does not
+construct them.
+
+Duplicate names raise `ValueError`. Use `.instances.register(..., replace=True)`
+only when replacement is intended. Converter and target registries also reject
+reserved route names such as `catalog` and `types`. Use `.instances.unregister(name)`
+to remove an instance.
+
+Constructor annotations define parameter metadata and coercion. Enum parameters
+accept member names or values. Types that inherit `StructuredParameterValue` declare their
+allowed variants through `get_registry_input_variants()`; the registry
+derives each variant's constructor fields and accepts `{ "type": "<name>",
+"parameters": { ... } }`. Word-selection strategies use this shared mechanism.
+Both enums and structured inputs also accept existing Python objects. Use `Path` for a
+local file input. Use `Path | str` when a component also supports a remote URL.
+For this union, the registry preserves the supplied type: a `Path` stays a `Path`,
+and a string stays a string. It never passes a URL through `Path`. Both union
+orders have the same metadata, `type_name: "Path | str"`, including after a JSON
+round-trip. Optional forms accept `None` in Python; the display type omits `None`,
+as it does for other optional parameters.
+
+The backend owns file-upload handling and cleanup, not the registry. See the
+[registry API migration notes](../../gui/0_gui.md#registry-api-migration-notes)
+for the REST contract and temporary compatibility behavior.
+
 ## See Also
 
 - [Class Registries](1_class_registry.ipynb) - ScenarioRegistry, InitializerRegistry

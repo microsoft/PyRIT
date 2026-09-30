@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from pyrit.common import default_values
 from pyrit.common.logger import logger
-from pyrit.exceptions import clear_execution_context, get_execution_context
+from pyrit.exceptions import clear_execution_context, get_exception_execution_context, get_execution_context
 from pyrit.exceptions.retry_collector import (
     RetryCollector,
     clear_retry_collector,
@@ -359,8 +359,8 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
             await self._handle_event_async(event=StrategyEvent.ON_ERROR, context=context, error=e)
 
             # Build enhanced error message with execution context if available
-            # Note: The context is preserved on exception by ExecutionContextManager
-            exec_context = get_execution_context()
+            # Child tasks carry failure context on the exception, not the caller's ContextVar.
+            exec_context = get_exception_execution_context(e) or get_execution_context()
             if exec_context:
                 error_details = exec_context.get_exception_details()
 

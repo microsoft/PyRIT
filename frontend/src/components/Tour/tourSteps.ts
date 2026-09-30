@@ -18,7 +18,7 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
       target: '[data-tour="sidebar-nav"]',
       content:
         'Ahoy! Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Chat is where you send prompts, ' +
-        'History tracks past attacks, and Targets is where you set up targets. Feel free to try clicking between these views!',
+        'History tracks past attacks, and Registry is where you manage targets and converters. Feel free to try clicking between these views!',
       placement: 'right-start',
       skipBeacon: true,
       viewRequired: 'home',
@@ -26,8 +26,8 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
     {
       target: '[data-tour="labels-card"]',
       content:
-        'Labels like "operator" and "operation" tag every attack you run, making them easy to find later. ' +
-        'Update the defaults before you start!',
+        'The labels bar stays available across views, including scanner setup. Set "operator", "operation", ' +
+        'and other labels here before starting an attack or scan. Existing runs keep their original labels.',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'home',
@@ -35,10 +35,10 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
     {
       target: '[data-tour="target-card"]',
       content: hasActiveTarget
-        ? 'This card shows the target currently active for Chat. To switch targets after the tour, choose Manage targets ' +
-          'and use Set Active in Targets.'
-        : 'Targets are the AI endpoints you\'re testing. This card only shows the current target; target selection happens ' +
-          'in Targets. After the tour, choose Configure a target, then create or choose one and use Set Active there.',
+        ? 'This card shows your default objective target for new chats and scanner runs. Use Manage targets ' +
+          'to change your objective or adversarial defaults in the Target Registry.'
+        : 'Targets are the AI endpoints you test. Select a target from the Chat dropdown, or use the Target Registry ' +
+          'to save objective and adversarial defaults for your account in this browser.',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'home',
@@ -48,11 +48,10 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
         ? '[data-tour="converter-toggle"]'
         : '[data-tour="chat-prerequisite"]',
       content: hasActiveTarget
-        ? 'With a target active, Chat shows the message composer. Use this Toggle converter panel button to transform text ' +
+        ? 'With a chat target selected, Chat shows the message composer. Use this Toggle converter panel button to transform text ' +
           'before sending, such as Base64 encoding or translation.'
-        : 'Chat needs an active target before the message composer is available. After the tour, choose Configure a target to ' +
-          'create or activate one in Targets, then return to Chat. The message input and converter control appear once ' +
-          'a target is active.',
+        : 'Click Select a target in the chat ribbon to enable the message composer. If no targets are registered, ' +
+          'open the Target Registry to create one. Saved chats automatically select their original registered target.',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'chat',

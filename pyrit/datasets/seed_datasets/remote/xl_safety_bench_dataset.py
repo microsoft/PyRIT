@@ -16,7 +16,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +253,16 @@ def _row_value(row: dict[str, str], key: str) -> str:
     return str(row.get(key) or "").strip()
 
 
+def _csv_column_names(columns: Iterable[str | None]) -> set[str]:
+    """
+    Strip header BOMs and omit DictReader's overflow key.
+
+    Returns:
+        set[str]: Normalized column names.
+    """
+    return {column.lstrip("\ufeff") for column in columns if column is not None}
+
+
 def _validate_csv_schema(*, rows: list[dict[str, str]], required_columns: list[str], url: str) -> None:
     """
     Validate that a fetched CSV exposes every column the loader depends on.
@@ -274,7 +284,7 @@ def _validate_csv_schema(*, rows: list[dict[str, str]], required_columns: list[s
         # An empty CSV is handled by the loader's empty-result check; nothing to validate.
         return
 
-    found_columns = {(k.lstrip("\ufeff") if k else k) for k in rows[0] if k is not None}
+    found_columns = _csv_column_names(rows[0])
     missing = [c for c in required_columns if c not in found_columns]
     if missing:
         raise ValueError(

@@ -24,6 +24,7 @@ from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from types import ModuleType
 
     from pyrit.models import Parameter
@@ -71,6 +72,7 @@ class ScenarioMetadata(RegistryMetadata):
     baseline_policy: Literal["enabled", "disabled", "forbidden"] = field(kw_only=True, default="enabled")
 
     include_baseline_by_default: bool = field(kw_only=True, default=True)
+    uses_default_adversarial_target: bool = field(kw_only=True, default=False)
 
 
 class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
@@ -211,6 +213,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             supported_parameters=supported_parameters,
             baseline_policy=instance.BASELINE_ATTACK_POLICY.value,
             include_baseline_by_default=instance.BASELINE_ATTACK_POLICY.value == "enabled",
+            uses_default_adversarial_target=instance.uses_default_adversarial_target,
         )
 
     async def create_and_estimate_async(
@@ -245,6 +248,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         *,
         scenario_params: dict[str, Any] | None = None,
         scenario_result_id: str | None = None,
+        initial_metadata: Mapping[str, Any] | None = None,
         **initialize_kwargs: Any,
     ) -> Scenario:
         """
@@ -274,6 +278,8 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 parameters to set before initialization. Defaults to an empty mapping.
             scenario_result_id (str | None): Existing scenario-result id to resume,
                 or ``None`` to start a fresh run.
+            initial_metadata (Mapping[str, Any] | None): Caller-owned metadata to
+                persist atomically when a fresh scenario result is created.
             **initialize_kwargs (Any): Common run-resolved parameters merged into the
                 param bag (notably ``objective_target``).
 
@@ -287,5 +293,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         merged_args = {**(scenario_params or {}), **initialize_kwargs}
         scenario = self._create_and_configure(name, params=merged_args, constructor_kwargs=constructor_kwargs)
         scenario.set_scenario_registry_name(scenario_registry_name=name)
+        if initial_metadata:
+            scenario.set_initial_metadata(metadata=initial_metadata)
         await scenario.initialize_async()
         return scenario

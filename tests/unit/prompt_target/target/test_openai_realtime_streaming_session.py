@@ -918,22 +918,40 @@ async def test_swap_user_audio_async_inserts_converted_then_deletes_original(sql
     assert create_index < delete_index
 
 
-async def test_swap_user_audio_async_logs_and_swallows_delete_failure(sqlite_instance, caplog):
-    """Best-effort delete: if ``delete`` raises, ``swap`` logs a warning and returns normally."""
+async def test_swap_user_audio_async_propagates_delete_failure(sqlite_instance):
+    """A failed raw-audio deletion must stop response generation."""
     session = _real_session_with_mock_connection(sqlite_instance)
     session._connection.conversation.item.delete.side_effect = RuntimeError("delete blew up")
     event = CommittedEvent(item_id="raw_swap_fail")
 
-    with caplog.at_level("WARNING"):
+    with pytest.raises(RuntimeError, match="delete blew up"):
         await session._swap_user_audio_async(committed_event=event, converted_pcm=b"\x01" * 96)
 
     session._connection.conversation.item.create.assert_awaited_once()
     session._connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_swap_fail")
-    # Even on delete failure, insert must have happened first.
     create_index = session._connection.method_calls.index(call.conversation.item.create(item=ANY))
     delete_index = session._connection.method_calls.index(call.conversation.item.delete(item_id="raw_swap_fail"))
     assert create_index < delete_index
-    assert any("delete failed for raw_swap_fail" in record.message for record in caplog.records)
+
+
+async def test_handle_committed_turn_async_stops_after_raw_audio_delete_failure(sqlite_instance):
+    session = _real_session_with_mock_connection(sqlite_instance)
+    session._dispatcher = MagicMock()
+    session._request_converter_configurations = [MagicMock(name="request_converter_config")]
+    session._prompt_normalizer.convert_audio_async = AsyncMock(return_value=b"converted")
+    session._prompt_normalizer.hash_and_persist_message_async = AsyncMock()
+    session._target.save_audio_async = AsyncMock()
+    session._connection.conversation.item.delete.side_effect = RuntimeError("delete blew up")
+
+    with pytest.raises(RuntimeError, match="delete blew up"):
+        await session._handle_committed_turn_async(
+            event=CommittedEvent(item_id="raw_swap_fail"),
+            raw_pcm=b"\x01" * 96,
+        )
+
+    session._connection.response.create.assert_not_awaited()
+    session._target.save_audio_async.assert_not_awaited()
+    session._prompt_normalizer.hash_and_persist_message_async.assert_not_awaited()
 
 
 # --- _request_response_async ------------------------------------------------

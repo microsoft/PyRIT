@@ -102,22 +102,36 @@ class RegexScorer(MessageTrueFalseScorer):
         text = message_piece.converted_value
         matched: list[str] = [name for name, pattern in self._compiled.items() if pattern.search(text)]
 
+        return [self._build_match_score(message_piece=message_piece, matched=matched, objective=objective)]
+
+    def _build_match_score(
+        self,
+        *,
+        message_piece: MessagePiece,
+        matched: list[str],
+        objective: str | None,
+        description: str = "True if any pattern matched, else False.",
+    ) -> Score:
+        """
+        Build a score from named regex matches without selecting the evidence.
+
+        Returns:
+            Score: The verdict and matching pattern names.
+        """
         detected = bool(matched)
         rationale = f"Matched: {', '.join(matched)}" if detected else ""
 
-        return [
-            Score(
-                score_value=str(detected).lower(),
-                score_value_description="True if any pattern matched, else False.",
-                score_metadata=None,
-                score_type="true_false",
-                score_category=self._score_categories,
-                score_rationale=rationale,
-                scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,
-                objective=objective,
-            )
-        ]
+        return Score(
+            score_value=str(detected).lower(),
+            score_value_description=description,
+            score_metadata=None,
+            score_type="true_false",
+            score_category=self._score_categories,
+            score_rationale=rationale,
+            scorer_class_identifier=self.get_identifier(),
+            message_piece_id=message_piece.id,
+            objective=objective,
+        )
 
 
 class _RegexScorerDefaultsMixin:

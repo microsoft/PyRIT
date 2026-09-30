@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Button,
@@ -12,10 +12,12 @@ import {
 } from '@fluentui/react-components'
 import type { SelectTabData, SelectTabEvent } from '@fluentui/react-components'
 import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
-import { useSearchParams } from 'react-router'
+import { useBeforeUnload, useBlocker, useSearchParams } from 'react-router'
 
 import { configurationApi } from '@/services/api'
+import { useRuntime } from '@/hooks/useRuntime'
 import { toApiError } from '@/services/errors'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import EditorWorkspace from '@/components/EditorWorkspace'
 import Initializers from '@/components/Initializers/Initializers'
 
@@ -23,6 +25,7 @@ import { useConfigurationStyles } from './Configuration.styles'
 import CustomInitializerFiles from './CustomInitializerFiles'
 import EnvironmentFiles from './EnvironmentFiles'
 import YamlEditor from './YamlEditor'
+import Reinitialize from './Reinitialize'
 
 interface StatusMessage {
   intent: 'success' | 'error' | 'warning'
@@ -44,31 +47,52 @@ function configurationTabFromSearchParams(searchParams: URLSearchParams): Config
 }
 
 export default function Configuration() {
+  const { generation } = useRuntime()
   const styles = useConfigurationStyles()
   const [searchParams, setSearchParams] = useSearchParams()
   const [content, setContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
   const [source, setSource] = useState('')
   const [version, setVersion] = useState('')
+  const [liveReinitializationEnabled, setLiveReinitializationEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
+  const loadedSnapshot = useRef<{ generation: string; reloadCount: number } | null>(null)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
+  const [environmentHasUnsavedChanges, setEnvironmentHasUnsavedChanges] = useState(false)
+  const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null)
   const selectedTab = configurationTabFromSearchParams(searchParams)
+  const configurationHasUnsavedChanges = content !== savedContent
+  const hasUnsavedChanges = selectedTab === 'configuration'
+    ? configurationHasUnsavedChanges
+    : selectedTab === 'environment' && environmentHasUnsavedChanges
+  const blocker = useBlocker(hasUnsavedChanges)
+
+  useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
+    if (hasUnsavedChanges) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+  }, [hasUnsavedChanges]))
 
   useEffect(() => {
+    const manualReload = reloadCount !== (loadedSnapshot.current?.reloadCount ?? 0)
+    if (((configurationHasUnsavedChanges || environmentHasUnsavedChanges) && !manualReload) || saving) return
+    if (loadedSnapshot.current?.generation === generation && loadedSnapshot.current.reloadCount === reloadCount) return
     let cancelled = false
 
     const loadContentAsync = async (): Promise<void> => {
-      setLoading(true)
       setStatusMessage(null)
       try {
         const response = await configurationApi.getContent()
         if (!cancelled) {
+          loadedSnapshot.current = { generation, reloadCount }
           setContent(response.content)
           setSavedContent(response.content)
           setSource(response.source)
           setVersion(response.version)
+          setLiveReinitializationEnabled(response.live_reinitialization_enabled)
         }
       } catch (error) {
         if (!cancelled) {
@@ -85,10 +109,19 @@ export default function Configuration() {
     return () => {
       cancelled = true
     }
-  }, [reloadCount])
+  }, [reloadCount, generation, configurationHasUnsavedChanges, environmentHasUnsavedChanges, saving])
 
   const handleReload = (): void => {
-    setReloadCount((currentCount: number) => currentCount + 1)
+    const reload = (): void => {
+      setLoading(true)
+      setReloadCount((currentCount: number) => currentCount + 1)
+    }
+
+    if (configurationHasUnsavedChanges) {
+      setPendingDiscardAction(() => reload)
+      return
+    }
+    reload()
   }
 
   const handleSave = async (): Promise<void> => {
@@ -100,9 +133,10 @@ export default function Configuration() {
       setSavedContent(response.content)
       setSource(response.source)
       setVersion(response.version)
+      setLiveReinitializationEnabled(response.live_reinitialization_enabled)
       setStatusMessage({
         intent: 'success',
-        text: 'Configuration saved. Restart PyRIT to apply these changes.',
+        text: 'Configuration saved. Reinitialize PyRIT to apply these changes.',
       })
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
@@ -110,8 +144,6 @@ export default function Configuration() {
       setSaving(false)
     }
   }
-
-  const hasUnsavedChanges = content !== savedContent
 
   const handleTabSelect = (_: SelectTabEvent, data: SelectTabData): void => {
     if (!isConfigurationTab(data.value) || data.value === selectedTab) {
@@ -127,11 +159,34 @@ export default function Configuration() {
     setSearchParams(nextSearchParams)
   }
 
+  const handleDiscardChanges = (): void => {
+    const discardAction = pendingDiscardAction
+    setPendingDiscardAction(null)
+    setContent(savedContent)
+    if (blocker.state === 'blocked') {
+      blocker.proceed()
+    } else {
+      discardAction?.()
+    }
+  }
+
+  const handleKeepEditing = (): void => {
+    setPendingDiscardAction(null)
+    if (blocker.state === 'blocked') {
+      blocker.reset()
+    }
+  }
+
   return (
     <div className={styles.root}>
       <div className={styles.header}>
         <Text as="h1" size={600} weight="semibold">Configuration</Text>
       </div>
+      <Reinitialize
+        version={version}
+        hasUnsavedChanges={configurationHasUnsavedChanges || environmentHasUnsavedChanges || saving}
+        liveReinitializationEnabled={liveReinitializationEnabled}
+      />
 
       <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>
         <Tab value="configuration">PyRIT Configuration</Tab>
@@ -151,7 +206,12 @@ export default function Configuration() {
       ) : selectedTab === 'initializers' ? (
         <Initializers />
       ) : selectedTab === 'environment' ? (
-        <EnvironmentFiles />
+        <EnvironmentFiles
+          onUnsavedChangesChange={setEnvironmentHasUnsavedChanges}
+          onRequestDiscardChanges={(discardChanges: () => void): void => {
+            setPendingDiscardAction(() => discardChanges)
+          }}
+        />
       ) : loading ? (
         <div className={styles.loadingState}>
           <Spinner label="Loading PyRIT configuration..." />
@@ -172,13 +232,13 @@ export default function Configuration() {
                 disabled={loading || saving}
                 onClick={handleReload}
               >
-                Reload
+                Reload file
               </Button>
               <Button
                 appearance="primary"
                 className={styles.action}
                 icon={<SaveRegular />}
-                disabled={loading || saving || !hasUnsavedChanges}
+                disabled={loading || saving || !configurationHasUnsavedChanges}
                 onClick={() => void handleSave()}
               >
                 {saving ? 'Saving...' : 'Save'}
@@ -189,7 +249,7 @@ export default function Configuration() {
           <Field
             className={styles.editorField}
             label={source}
-            hint={hasUnsavedChanges ? 'Unsaved changes' : 'Changes take effect after PyRIT restarts.'}
+            hint={hasUnsavedChanges ? 'Unsaved changes' : 'Changes take effect after Reinitialize PyRIT.'}
           >
             <YamlEditor
               value={content}
@@ -199,6 +259,16 @@ export default function Configuration() {
           </Field>
         </EditorWorkspace>
       )}
+      <ConfirmDialog
+        open={blocker.state === 'blocked' || pendingDiscardAction !== null}
+        title="Discard unsaved changes?"
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        onConfirm={handleDiscardChanges}
+        onCancel={handleKeepEditing}
+      >
+        Your unsaved configuration changes will be lost if you continue.
+      </ConfirmDialog>
     </div>
   )
 }

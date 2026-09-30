@@ -125,6 +125,7 @@ def _score(*, value: bool, name: str, rationale: str) -> Score:
 def _scorer(name: str) -> MagicMock:
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_async = AsyncMock()
+    scorer.prepare_expectation.side_effect = lambda *, expectation: expectation
     scorer.get_identifier.return_value = _identifier(name)
     return scorer
 
@@ -552,7 +553,10 @@ class TestCrescendoSeededModalityTransitions:
             "question-1",
             "question-2",
         ]
-        assert [call.kwargs["objective"] for call in score_response.await_args_list] == [_OBJECTIVE, _OBJECTIVE]
+        assert [call.kwargs["expectation"].objective for call in score_response.await_args_list] == [
+            _OBJECTIVE,
+            _OBJECTIVE,
+        ]
 
         objective_pieces = attack._memory.get_message_pieces(conversation_id=context.session.conversation_id)
         assert [
@@ -727,7 +731,10 @@ class TestCrescendoSeededModalityTransitions:
             "accepted retry response",
             "final response",
         ]
-        assert [call.kwargs["objective"] for call in score_response.await_args_list] == [_OBJECTIVE, _OBJECTIVE]
+        assert [call.kwargs["expectation"].objective for call in score_response.await_args_list] == [
+            _OBJECTIVE,
+            _OBJECTIVE,
+        ]
 
         pruned_pieces = attack._memory.get_message_pieces(conversation_id=first_conversation_id)
         assert [

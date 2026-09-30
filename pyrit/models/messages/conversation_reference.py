@@ -12,6 +12,7 @@ class ConversationType(Enum):
     """Types of conversations that can be associated with an attack."""
 
     ADVERSARIAL = "adversarial"
+    PREPARATION = "preparation"
     PRUNED = "pruned"
     SCORE = "score"
     CONVERTER = "converter"

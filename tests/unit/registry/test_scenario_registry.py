@@ -45,6 +45,7 @@ class _MetadataScenario:
     """Minimal scenario-shaped metadata source."""
 
     BASELINE_ATTACK_POLICY = BaselineAttackPolicy.Enabled
+    uses_default_adversarial_target = False
 
     @classmethod
     def supported_parameters(cls):
@@ -87,6 +88,7 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
     metadata = ScenarioRegistry()._build_metadata("sample", _MetadataScenario)
 
     assert metadata.default_technique == "default"
+    assert metadata.uses_default_adversarial_target is False
     assert metadata.default_techniques == ("one", "two")
     assert metadata.technique_summaries[0].model_dump() == {
         "name": "one",
@@ -102,6 +104,16 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
         "all": ("one", "two"),
         "default": ("one", "two"),
     }
+
+
+def test_build_metadata_reports_scenario_owned_adversarial_usage() -> None:
+    """The catalog keeps a scenario's declared use of the shared target."""
+
+    class AdversarialScenario(_MetadataScenario):
+        uses_default_adversarial_target = True
+
+    metadata = ScenarioRegistry()._build_metadata("adversarial", AdversarialScenario)
+    assert metadata.uses_default_adversarial_target is True
 
 
 def test_build_metadata_preserves_structured_markdown_separately() -> None:
@@ -132,6 +144,7 @@ async def test_create_and_initialize_async_creates_sets_params_and_initializes()
         "my.scenario",
         scenario_params={"foo": "bar"},
         scenario_result_id="sr-1",
+        initial_metadata={"scheduler_managed_by": "test"},
         objective_target=target,
         max_concurrency=2,
     )
@@ -139,6 +152,7 @@ async def test_create_and_initialize_async_creates_sets_params_and_initializes()
     assert result is scenario
     registry.create_instance.assert_called_once_with("my.scenario", scenario_result_id="sr-1")
     scenario.set_scenario_registry_name.assert_called_once_with(scenario_registry_name="my.scenario")
+    scenario.set_initial_metadata.assert_called_once_with(metadata={"scheduler_managed_by": "test"})
     scenario.set_params_from_args.assert_called_once_with(
         args={"foo": "bar", "objective_target": target, "max_concurrency": 2}
     )

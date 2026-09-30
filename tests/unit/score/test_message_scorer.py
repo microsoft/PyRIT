@@ -274,7 +274,12 @@ class TestScorerBaseIsScorableAgnostic:
 
     def test_message_scorer_satisfies_the_scorable_contract(self):
         assert "_score_scorable_async" not in MessageScorer.__abstractmethods__
-        assert "_score_piece_async" in MessageScorer.__abstractmethods__
+        assert "_score_piece_async" not in MessageScorer.__abstractmethods__
+
+    @pytest.mark.asyncio
+    async def test_message_scorer_rejects_a_leaf_without_a_piece_hook(self):
+        with pytest.raises(NotImplementedError):
+            await MessageScorer._score_piece_async(object(), None)  # type: ignore[arg-type]
 
     def test_message_dependencies_live_on_message_scorer(self):
         # The base keeps 'validator' only as a deprecated shim for pre-2.0 subclasses; the
@@ -693,7 +698,7 @@ class TestInHandMessages:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConditionRouting:
-    """An expectation is a routing envelope, so a condition is consumed or refused."""
+    """Groups check condition coverage; each scorer checks the criteria it uses."""
 
     async def test_matches_objective_reaches_a_message_scorer(self):
         scorer = RecordingScorer(is_objective_required=True)
@@ -714,22 +719,23 @@ class TestConditionRouting:
                 expectation=ScoringExpectation(conditions=(MatchesObjective(),)),
             )
 
-    async def test_unconsumed_condition_raises_instead_of_being_dropped(self):
+    async def test_group_rejects_unconsumed_condition(self):
         class UnroutedCondition(Condition):
             condition_type: Literal["test_unrouted"] = "test_unrouted"
 
         scorer = RecordingScorer()
 
-        with pytest.raises(ValueError, match="does not match the condition"):
-            await scorer.score_async(
-                scorable=MessageScorable.from_message(_assistant_message()),
+        with pytest.raises(ValueError, match="does not support"):
+            await MessageScorer.score_response_multiple_scorers_async(
+                response=_assistant_message(),
+                scorers=[scorer],
                 expectation=ScoringExpectation(conditions=(UnroutedCondition(),)),
             )
 
     async def test_two_conditions_of_one_type_raise(self):
         scorer = RecordingScorer(is_objective_required=True)
 
-        with pytest.raises(ValueError, match="at most one condition"):
+        with pytest.raises(ValueError, match="exactly one condition"):
             await scorer.score_async(
                 scorable=MessageScorable.from_message(_assistant_message()),
                 expectation=ScoringExpectation(
@@ -742,7 +748,7 @@ class TestConditionRouting:
         contextual_scorer = RecordingScorer()
         objective_scorer = RecordingScorer(is_objective_required=True)
 
-        assert contextual_scorer.matched_conditions() == frozenset()
-        assert contextual_scorer.required_conditions() == frozenset()
-        assert objective_scorer.matched_conditions() == frozenset({MatchesObjective})
-        assert objective_scorer.required_conditions() == frozenset({MatchesObjective})
+        assert contextual_scorer.condition_type is None
+        assert contextual_scorer.get_condition_types() == frozenset()
+        assert objective_scorer.condition_type is MatchesObjective
+        assert objective_scorer.get_condition_types() == frozenset({MatchesObjective})

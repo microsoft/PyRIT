@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT license.
+Artwork newly authored for PyRIT with Copilot assistance, not adapted from third-party art.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" fill="none">
+  <g stroke="#c1c8cb" stroke-linecap="round">
+    <path d="m1380 101-9 22m133 32-11 27m-78 94-8 20m152 68-10 25
+      m-181 44-8 20m106 58-11 28m-112 98-9 22m179 38-8 20
+      m-113 90-10 24m-212 54-8 20m-188 80-9 22m-289-16-8 20
+      m-317-52-9 23m-213-86-8 21" stroke-width="3"/>
+    <path d="m1027 50-7 17m183 53-6 15m330-69-6 15m-234 157-8 20
+      m141 64-6 15m-229 50-7 17m292 103-7 17m-64 96-6 15
+      m-169 28-7 18m-138 70-6 15m286 14-6 15m-171 86-7 18
+      m-243-9-6 15m310 130-7 17m-112 34-5 13m-287-9-6 15
+      m-271-30-7 18m-262 22-6 15m-232-10-5 13
+      M71 419l-6 16m30 174-8 20m-26 160-6 15m90 13-7 17
+      m89 22-6 16m334 15-6 15m329-75-6 16" stroke-width="2.5" opacity="0.48"/>
+    <g stroke-width="2.5">
+      <ellipse cx="263" cy="907" rx="37" ry="5"/>
+      <ellipse cx="263" cy="907" rx="85" ry="12" opacity="0.8"/>
+      <ellipse cx="263" cy="907" rx="147" ry="21" opacity="0.45"/>
+      <ellipse cx="905" cy="963" rx="47" ry="6"/>
+      <ellipse cx="905" cy="963" rx="101" ry="14" opacity="0.75"/>
+      <ellipse cx="905" cy="963" rx="174" ry="24" opacity="0.4"/>
+      <ellipse cx="1372" cy="866" rx="30" ry="5"/>
+      <ellipse cx="1372" cy="866" rx="70" ry="11" opacity="0.8"/>
+      <ellipse cx="1372" cy="866" rx="119" ry="19" opacity="0.45"/>
+    </g>
+    <path d="m263 882-6 14m1119-60-6 15m-461 87-6 14" stroke-width="3"/>
+  </g>
+</svg>

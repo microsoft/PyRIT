@@ -12,13 +12,16 @@ from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.models import (
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
+    ScoringExpectation,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
+    TargetIdentifier,
 )
 from pyrit.scenario import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -346,6 +349,67 @@ class TestAtomicAttackExecution:
             call_kwargs = mock_exec.call_args.kwargs
             assert call_kwargs["custom_param"] == "value"
             assert call_kwargs["max_retries"] == 3
+
+    @pytest.mark.parametrize("override", [ScoringExpectation(objective="execution criterion"), None])
+    async def test_run_async_overrides_expectation_without_changing_defaults(
+        self, mock_attack, sample_seed_groups, sample_attack_results, override
+    ):
+        default = ScoringExpectation(objective="default criterion")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            expectation=default,
+            max_retries=3,
+            atomic_attack_name="expectation transport",
+        )
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as execute:
+            execute.return_value = wrap_results(sample_attack_results)
+            await atomic.run_async(expectation=override, max_retries=7)
+            assert execute.call_args.kwargs["expectation"] is override
+            assert execute.call_args.kwargs["max_retries"] == 7
+            await atomic.run_async()
+            assert execute.call_args.kwargs["expectation"] is default
+            assert execute.call_args.kwargs["max_retries"] == 3
+        assert atomic._attack_execute_params == {"expectation": default, "max_retries": 3}
+
+    @pytest.mark.parametrize(
+        "labels", [None, {}, {"new": "run", "shared": "override"}], ids=["none", "empty", "override"]
+    )
+    async def test_run_async_merges_labels_without_changing_defaults(
+        self, mock_attack, sample_seed_groups, sample_attack_results, labels
+    ):
+        defaults = {"scenario": "campaign", "shared": "default"}
+        original_labels = dict(labels) if labels is not None else None
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            memory_labels=defaults,
+            atomic_attack_name="label merge",
+        )
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as execute:
+            execute.return_value = wrap_results(sample_attack_results)
+            await atomic.run_async(memory_labels=labels)
+            merged = execute.call_args.kwargs["memory_labels"]
+            assert merged == {**defaults, **(labels or {})}
+            assert merged is not defaults and merged is not labels
+            await atomic.run_async()
+            assert execute.call_args.kwargs["memory_labels"] == defaults
+        assert defaults == atomic._memory_labels == {"scenario": "campaign", "shared": "default"}
+        assert labels == original_labels
+
+    @pytest.mark.parametrize(
+        "reserved", ["attack", "seed_groups", "adversarial_chat", "objective_scorer", "attribution", "attributions"]
+    )
+    async def test_run_async_rejects_owned_executor_arguments(self, mock_attack, sample_seed_groups, reserved):
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="reserved arguments",
+        )
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as execute:
+            with pytest.raises(ValueError, match="owns these executor arguments"):
+                await atomic.run_async(**{reserved: None})
+            execute.assert_not_called()
 
     async def test_run_async_merges_all_parameters(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test that all parameters are merged and passed correctly."""
@@ -1217,3 +1281,38 @@ class TestAtomicAttackTechniqueEvalHash:
             atomic_attack_name="same",
         )
         assert a1.technique_eval_hash != a2.technique_eval_hash
+
+    def test_hash_differs_for_different_adversarial_prompt_template(self, sample_seed_groups):
+        """Two otherwise-identical adversarial attacks that differ only in their resolved
+        per-turn adversarial_prompt_template must land in different resume buckets --
+        otherwise resuming a scenario after only the follow-up prompt changed would
+        silently reuse results generated under the old template."""
+        adv_target = TargetIdentifier(class_name="AdvChat", class_module="pyrit.test")
+
+        attack_a = MagicMock(spec=AttackStrategy)
+        attack_a.get_identifier.return_value = AttackIdentifier(
+            class_name="RedTeamingAttack",
+            class_module="pyrit.test",
+            adversarial_chat=adv_target,
+            adversarial_prompt_template="A: {{ feedback_text }}",
+        )
+        attack_b = MagicMock(spec=AttackStrategy)
+        attack_b.get_identifier.return_value = AttackIdentifier(
+            class_name="RedTeamingAttack",
+            class_module="pyrit.test",
+            adversarial_chat=adv_target,
+            adversarial_prompt_template="B: {{ feedback_text }}",
+        )
+
+        a1 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=attack_a),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        a2 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=attack_b),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        assert a1.technique_eval_hash != a2.technique_eval_hash
+        assert a1.logical_group_id != a2.logical_group_id

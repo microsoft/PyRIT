@@ -47,6 +47,14 @@ describe('getParameterControlKind', () => {
   it('returns text as the default', () => {
     expect(getParameterControlKind(makeParameter({ name: 'label' }))).toBe('text')
   })
+
+  it('returns structured for parameters with declared variants', () => {
+    const param = makeParameter({
+      name: 'strategy',
+      variants: { counted: [makeParameter({ name: 'count', type_name: 'int', required: true })] },
+    })
+    expect(getParameterControlKind(param)).toBe('structured')
+  })
 })
 
 describe('getInitialFormValues', () => {
@@ -113,6 +121,20 @@ describe('getInitialFormValues', () => {
       days: '',
     })
   })
+
+  it('restores a structured variant and its nested values', () => {
+    const params = [
+      makeParameter({
+        name: 'strategy',
+        variants: { counted: [makeParameter({ name: 'count', type_name: 'int', required: true })] },
+      }),
+    ]
+    expect(getInitialFormValues(params, {
+      strategy: { type: 'counted', parameters: { count: 3 } },
+    })).toEqual({
+      strategy: { type: 'counted', values: { count: '3' } },
+    })
+  })
 })
 
 describe('buildParametersFromForm', () => {
@@ -126,6 +148,22 @@ describe('buildParametersFromForm', () => {
     const params = [makeParameter({ name: 'days', type_name: 'int' })]
     const result = buildParametersFromForm(params, { days: '7' })
     expect(result).toEqual({ ok: true, parameters: { days: 7 } })
+  })
+
+  it('builds a structured variant recursively', () => {
+    const params = [
+      makeParameter({
+        name: 'strategy',
+        variants: { counted: [makeParameter({ name: 'count', type_name: 'int', required: true })] },
+      }),
+    ]
+    const result = buildParametersFromForm(params, {
+      strategy: { type: 'counted', values: { count: '3' } },
+    })
+    expect(result).toEqual({
+      ok: true,
+      parameters: { strategy: { type: 'counted', parameters: { count: 3 } } },
+    })
   })
 
   it('rejects a non-numeric value', () => {
@@ -243,6 +281,18 @@ describe('buildParametersFromForm', () => {
     const params = [makeParameter({ name: 'names', type_name: 'list[str]', is_list: true, required: true })]
     const result = buildParametersFromForm(params, { names: '' })
     expect(result).toEqual({ ok: false, error: 'names is required.' })
+  })
+
+  it.each([false, true])('preserves an explicit empty list (required: %s)', (required) => {
+    const params = [makeParameter({ name: 'names', type_name: 'list[str]', is_list: true, required })]
+    expect(buildParametersFromForm(params, { names: [] })).toEqual({
+      ok: true, parameters: { names: [] },
+    })
+  })
+
+  it('still omits an unset optional list', () => {
+    const params = [makeParameter({ name: 'names', type_name: 'list[str]', is_list: true })]
+    expect(buildParametersFromForm(params, { names: '' })).toEqual({ ok: true, parameters: null })
   })
 
   it('reports a required multiselect with no selection', () => {

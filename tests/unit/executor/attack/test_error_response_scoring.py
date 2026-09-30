@@ -10,11 +10,13 @@ score rather than staying silent.
 """
 
 import uuid
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from unit.mocks import store_message
 
+from pyrit.exceptions import ComponentRole, get_execution_context
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackParameters,
@@ -33,9 +35,10 @@ from pyrit.models import (
     MessagePiece,
     Score,
     ScoreStatus,
+    ScoringExpectation,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import MessageTrueFalseScorer, ScorerPromptValidator, TrueFalseScorer
+from pyrit.score import MessageScorer, MessageTrueFalseScorer, ScorerPromptValidator, TrueFalseScorer
 
 OBJECTIVE = "test objective"
 
@@ -96,7 +99,9 @@ def _build_prompt_sending(target, scorer):
         objective_target=target,
         attack_scoring_config=AttackScoringConfig(objective_scorer=scorer, use_score_as_feedback=False),
     )
-    return attack, lambda response: attack._evaluate_response_async(response=response, objective=OBJECTIVE)
+    return attack, lambda response: attack._evaluate_response_async(
+        response=response, objective=OBJECTIVE, expectation=ScoringExpectation(objective=OBJECTIVE)
+    )
 
 
 def _build_multi_prompt_sending(target, scorer):
@@ -104,7 +109,9 @@ def _build_multi_prompt_sending(target, scorer):
         objective_target=target,
         attack_scoring_config=AttackScoringConfig(objective_scorer=scorer, use_score_as_feedback=False),
     )
-    return attack, lambda response: attack._evaluate_response_async(response=response, objective=OBJECTIVE)
+    return attack, lambda response: attack._evaluate_response_async(
+        response=response, objective=OBJECTIVE, expectation=ScoringExpectation(objective=OBJECTIVE)
+    )
 
 
 def _build_crescendo(target, scorer):
@@ -135,6 +142,35 @@ ATTACK_BUILDERS = [
     _build_multi_prompt_sending,
     _build_crescendo,
 ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("build_attack", ATTACK_BUILDERS, ids=["PromptSending", "MultiPromptSending", "Crescendo"])
+async def test_scoring_group_context_does_not_name_an_objective_scorer_async(
+    mock_target: MagicMock,
+    build_attack: Callable[
+        [PromptTarget, TrueFalseScorer], tuple[object, Callable[[Message], Awaitable[Score | None]]]
+    ],
+) -> None:
+    scorer = MagicMock(spec=TrueFalseScorer)
+    scorer.get_identifier.return_value = _mock_scorer_id("ObjectiveScorer")
+    attack, invoke_scoring = build_attack(mock_target, scorer)
+    response = create_error_response(str(uuid.uuid4()))
+
+    async def check_context_async(**kwargs: object) -> dict[str, list[Score]]:
+        context = get_execution_context()
+        assert context is not None
+        assert context.component_role is ComponentRole.UNKNOWN
+        assert context.component_identifier is None
+        assert context.attack_strategy_name == type(attack).__name__
+        assert context.objective == OBJECTIVE
+        return {"objective_scores": [_undetermined_score(response)], "auxiliary_scores": []}
+
+    with patch.object(
+        MessageScorer, "score_response_async", new_callable=AsyncMock, side_effect=check_context_async
+    ) as score:
+        await invoke_scoring(response)
+    score.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -225,7 +261,9 @@ async def test_error_response_produces_undetermined_outcome(mock_target, patch_c
     conversation_id = str(uuid.uuid4())
     error_response = store_message(create_error_response(conversation_id))
 
-    score = await attack._evaluate_response_async(response=error_response, objective=OBJECTIVE)
+    score = await attack._evaluate_response_async(
+        response=error_response, objective=OBJECTIVE, expectation=ScoringExpectation(objective=OBJECTIVE)
+    )
     context = SingleTurnAttackContext(
         params=AttackParameters(objective=OBJECTIVE),
         conversation_id=conversation_id,

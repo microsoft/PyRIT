@@ -10,6 +10,10 @@ from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.scorer.base import ScorerPrinterBase
 from pyrit.output.sink import Sink
 
+# The evaluator zeroes differences below this as floating-point noise, so a scorer whose MAE
+# matches the constant-guess baseline to within it is treated as a tie, not as beating it.
+_BASELINE_TIE_TOLERANCE = 1e-10
+
 
 class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
     """
@@ -240,6 +244,38 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
         if metrics.mae_standard_error is not None:
             lines.append(
                 self._format_colored(f"{self._indent * 3}• MAE Std Error: ±{metrics.mae_standard_error:.4f}", Fore.CYAN)
+            )
+
+        if metrics.mean_absolute_error_unanimous is not None:
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• MAE on unanimous rows: {metrics.mean_absolute_error_unanimous:.4f}"
+                    f" (n={metrics.num_unanimous_responses})",
+                    Fore.CYAN,
+                )
+            )
+
+        if metrics.mean_absolute_error_contested is not None:
+            contested_color = self._get_quality_color(
+                metrics.mean_absolute_error_contested, higher_is_better=False, good_threshold=0.1, bad_threshold=0.25
+            )
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• MAE on contested rows: {metrics.mean_absolute_error_contested:.4f}"
+                    f" (n={metrics.num_contested_responses})",
+                    contested_color,
+                )
+            )
+
+        baseline_mae = getattr(metrics, "baseline_mean_absolute_error", None)
+        if baseline_mae is not None:
+            beats_baseline = metrics.mean_absolute_error < baseline_mae - _BASELINE_TIE_TOLERANCE
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 3}• Constant-Guess Baseline MAE: {baseline_mae:.4f}"
+                    + ("" if beats_baseline else " (scorer does not beat it)"),
+                    Fore.CYAN if beats_baseline else Fore.RED,
+                )
             )
 
         if metrics.krippendorff_alpha_combined is not None:

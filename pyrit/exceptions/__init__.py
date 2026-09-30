@@ -11,6 +11,8 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 if TYPE_CHECKING:
     from pyrit.exceptions.exception_classes import (
         CONTENT_FILTER_MARKERS,
+        AdversarialChatRefusedException,
+        AdversarialChatResponseBlockedException,
         BadRequestException,
         EmptyResponseException,
         ExperimentalWarning,
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
         ExecutionContextManager,
         clear_execution_context,
         execution_context,
+        get_exception_execution_context,
         get_execution_context,
         set_execution_context,
     )
@@ -46,6 +49,8 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AdversarialChatRefusedException": "pyrit.exceptions.exception_classes",
+    "AdversarialChatResponseBlockedException": "pyrit.exceptions.exception_classes",
     "BadRequestException": "pyrit.exceptions.exception_classes",
     "clear_execution_context": "pyrit.exceptions.exception_context",
     "clear_retry_collector": "pyrit.exceptions.retry_collector",
@@ -55,6 +60,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ExecutionContext": "pyrit.exceptions.exception_context",
     "ExecutionContextManager": "pyrit.exceptions.exception_context",
     "ExperimentalWarning": "pyrit.exceptions.exception_classes",
+    "get_exception_execution_context": "pyrit.exceptions.exception_context",
     "get_execution_context": "pyrit.exceptions.exception_context",
     "get_retry_collector": "pyrit.exceptions.retry_collector",
     "get_retry_max_num_attempts": "pyrit.exceptions.exception_classes",

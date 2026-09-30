@@ -3,12 +3,13 @@
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoreStatus
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoreStatus, ScoringExpectation
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleAggregatorFunc,
     FloatScaleScorerByCategory,
 )
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
+from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.video_scorer import VideoHelper
 
@@ -114,49 +115,40 @@ class VideoFloatScaleScorer(
             sub_scorers=sub_scorer_ids,
         )
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the frame scorer and the optional audio scorer."""
+        image_scorer = self._video_helper.image_scorer
+        return (image_scorer, self.audio_scorer) if self.audio_scorer is not None else (image_scorer,)
+
+    def _get_child_expectations(
+        self, *, expectation: ScoringExpectation | None
+    ) -> tuple[tuple[Scorer, ScoringExpectation | None], ...]:
         """
-        Report the union of conditions matched by the media scorers.
+        Prepare the same transformed contexts that frame and audio judges receive.
 
         Returns:
-            frozenset[type[Condition]]: The matched condition types.
+            tuple: Child scorers and their effective inputs.
         """
-        scorers = [self._video_helper.image_scorer]
-        if self.audio_scorer:
-            scorers.append(self.audio_scorer)
-        conditions: set[type[Condition]] = set()
-        for scorer in scorers:
-            conditions.update(scorer.matched_conditions())
-        return frozenset(conditions)
+        return self._video_helper.get_child_expectations(expectation=expectation, audio_scorer=self.audio_scorer)
 
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the union of conditions required by the media scorers.
-
-        Returns:
-            frozenset[type[Condition]]: The required condition types.
-        """
-        scorers = [self._video_helper.image_scorer]
-        if self.audio_scorer:
-            scorers.append(self.audio_scorer)
-        conditions: set[type[Condition]] = set()
-        for scorer in scorers:
-            conditions.update(scorer.required_conditions())
-        return frozenset(conditions)
-
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score a single video piece by extracting frames and optionally audio, then aggregating their scores.
 
         Args:
             message_piece: The message piece containing the video.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the frame and audio scorers.
 
         Returns:
             List of aggregated scores for the video. Returns one score if using FloatScaleScoreAggregator,
             or multiple scores (one per category) if using FloatScaleScorerByCategory.
         """
-        frame_scores = await self._video_helper._score_frames_async(message_piece=message_piece, objective=objective)
+        objective = expectation.objective if expectation else None
+        frame_scores = await self._video_helper._score_frames_async(
+            message_piece=message_piece, expectation=expectation
+        )
 
         all_scores = list(frame_scores)
         audio_scored = False
@@ -164,14 +156,14 @@ class VideoFloatScaleScorer(
         # Score audio if audio_scorer is provided
         if self.audio_scorer:
             audio_scores = await self._video_helper._score_video_audio_async(
-                message_piece=message_piece, audio_scorer=self.audio_scorer, objective=objective
+                message_piece=message_piece, audio_scorer=self.audio_scorer, expectation=expectation
             )
             if audio_scores:
                 all_scores.extend(audio_scores)
                 audio_scored = True
 
         # Get the ID from the message piece
-        piece_id = message_piece.id if message_piece.id is not None else message_piece.original_prompt_id
+        piece_id = message_piece.id
 
         # Call the aggregator - all aggregators now return list[ScoreAggregatorResult]
         aggregator_results: list[ScoreAggregatorResult] = self._score_aggregator(all_scores)

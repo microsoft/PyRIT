@@ -102,16 +102,21 @@ class AsciiSmugglerConverter(SmugglerConverter):
             str: The decoded message.
         """
         decoded_message = ""
+        found_tag = False
         for char in message:
             code_point = ord(char)
             if 0xE0000 <= code_point <= 0xE007F:
+                found_tag = True
                 decoded_char = chr(code_point - 0xE0000)
                 if not 0x20 <= ord(decoded_char) <= 0x7E:
                     logger.info(f"Potential unicode tag detected: {decoded_char}")
                 else:
                     decoded_message += decoded_char
 
-        if len(decoded_message) != len(message):
+        # A message that is entirely hidden tags decodes to the same length as the input, so
+        # comparing lengths misreports it as having nothing hidden. Track whether a tag code
+        # point was actually seen instead.
+        if found_tag:
             logger.info("Hidden Unicode Tags discovered.")
         else:
             logger.info("No hidden Unicode Tag characters discovered.")

@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select
+from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select, update
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -40,17 +40,21 @@ from pyrit.memory.memory_models import (
     ConversationEntry,
     ConverterIdentifierEntry,
     EmbeddingDataEntry,
+    ObservationEntry,
+    ObservationMessagePieceEntry,
     PromptConverterIdentifierEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
     ScenarioResultEntry,
     ScorableContentEntry,
     ScoreEntry,
+    ScoreObservationEntry,
     ScorerIdentifierEntry,
     SeedEntry,
     SeedIdentifierEntry,
     TargetIdentifierEntry,
 )
+from pyrit.memory.memory_session import _begin_sqlite_write, _lock_observations
 from pyrit.memory.storage import (
     DataTypeSerializer,
     StorageIO,
@@ -77,6 +81,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     MessageScorable,
+    Observation,
     RetryEvent,
     ScenarioAttackResultDelta,
     ScenarioIdentifier,
@@ -88,8 +93,10 @@ from pyrit.models import (
     ScoreStatus,
     Seed,
     SeedDataset,
+    SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
+    SeedObjective,
     SeedType,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
@@ -102,12 +109,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Canonical criteria key of a seed that carries no conditions.
+_NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
+
 
 Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
 
 
-def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[str]) -> tuple[str, ...]:
+def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[object]) -> tuple[str, ...]:
     """
     Validate and snapshot one dedicated attribution filter.
 
@@ -118,11 +128,14 @@ def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[str]
         ValueError: If any value is not a string or exceeds the column limit.
     """
     values = (raw,) if isinstance(raw, str) else tuple(raw)
-    if any(not isinstance(value, str) for value in values):
-        raise ValueError(f"{field} values must be strings")
-    if any(len(value) > ATTRIBUTION_VALUE_MAX_LENGTH for value in values):
+    validated: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError(f"{field} values must be strings")
+        validated.append(value)
+    if any(len(value) > ATTRIBUTION_VALUE_MAX_LENGTH for value in validated):
         raise ValueError(f"{field} values must be at most {ATTRIBUTION_VALUE_MAX_LENGTH} characters")
-    return values
+    return tuple(validated)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -189,6 +202,7 @@ class ScenarioHistoryRunRecord:
     scenario_registry_name: str | None
     plan_atomic_groups: str | list[dict[str, Any]] | None
     plan_seed_id_map: str | list[dict[str, str]] | None
+    started_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -229,6 +243,14 @@ class ScenarioHistoryAggregate:
             latest_attempt_timestamp=None,
             atomic_attack_names=(),
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScenarioRunStateRecord:
+    """Lightweight persisted ID/state projection used for startup reconciliation."""
+
+    scenario_result_id: str
+    state: ScenarioRunState
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -649,9 +671,9 @@ class MemoryInterface(abc.ABC):
         rather than threaded through every write.
 
         Registration is idempotent only for an identical conversation: re-registering the
-        same ``conversation_id`` with the same target is a no-op (so repeated per-turn
-        registration is safe). Re-registering an existing ``conversation_id`` with a
-        different target is a conflict and raises ``ValueError`` -- a conversation is held
+        same ``conversation_id`` with the same target identity is a no-op, even across
+        PyRIT versions (so repeated per-turn registration is safe). Re-registering an existing
+        ``conversation_id`` with a different target is a conflict and raises ``ValueError`` -- a conversation is held
         with exactly one target and is never re-targeted.
 
         Args:
@@ -704,7 +726,20 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the message pieces or converter identifiers cannot be persisted.
         """
-        entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
+        with closing(self.get_session()) as session:
+            try:
+                self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting prompt memory entries: {e}")
+                raise
+
+    def _add_message_pieces_to_session(self, *, session: Session, message_pieces: Sequence[MessagePiece]) -> None:
+        """Insert pieces and their identifiers in the caller's transaction, without committing."""
+        pieces = [piece for piece in message_pieces if not piece.not_in_memory]
+        self._validate_persistable_conversation_ids(message_pieces=pieces)
+        entries = [PromptMemoryEntry(entry=piece) for piece in pieces]
         # Sequence orders messages, so timestamp preserves the input order of pieces within one message.
         latest_timestamp_by_message: dict[tuple[str, int], datetime] = {}
         for entry in entries:
@@ -713,24 +748,17 @@ class MemoryInterface(abc.ABC):
             if latest_timestamp is not None and entry.timestamp <= latest_timestamp:
                 entry.timestamp = latest_timestamp + timedelta(microseconds=1)
             latest_timestamp_by_message[message_key] = entry.timestamp
-        with closing(self.get_session()) as session:
-            try:
-                for piece, entry in zip(message_pieces, entries, strict=True):
-                    for position, identifier in enumerate(piece.converter_identifiers):
-                        converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
-                        self._persist_identifier(session=session, identifier=converter_identifier)
-                        entry.converter_identifier_links.append(
-                            PromptConverterIdentifierEntry(
-                                position=position,
-                                converter_identifier_hash=converter_identifier.hash,
-                            )
-                        )
-                session.add_all(entries)
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error inserting prompt memory entries: {e}")
-                raise
+        for piece, entry in zip(pieces, entries, strict=True):
+            for position, identifier in enumerate(piece.converter_identifiers):
+                converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
+                self._persist_identifier(session=session, identifier=converter_identifier)
+                entry.converter_identifier_links.append(
+                    PromptConverterIdentifierEntry(
+                        position=position,
+                        converter_identifier_hash=converter_identifier.hash,
+                    )
+                )
+        session.add_all(entries)
 
     @staticmethod
     def _validate_persistable_conversation_ids(*, message_pieces: Sequence[MessagePiece]) -> None:
@@ -774,36 +802,43 @@ class MemoryInterface(abc.ABC):
                 with the same id already exists with a different target.
             SQLAlchemyError: If the insert fails.
         """
-        if not conversation.conversation_id:
-            raise ValueError("Cannot register a conversation without a conversation_id.")
-        entry = ConversationEntry(conversation=conversation)
         with closing(self.get_session()) as session:
             try:
-                existing = session.get(ConversationEntry, conversation.conversation_id)
-                if existing is None:
-                    if conversation.target_identifier is not None:
-                        self._persist_target_identifier(
-                            session=session,
-                            target_identifier=TargetIdentifier.from_component_identifier(
-                                conversation.target_identifier
-                            ),
-                        )
-                    session.add(entry)
-                elif (
-                    entry.target_identifier is not None
-                    and existing.target_identifier is not None
-                    and existing.target_identifier != entry.target_identifier
-                ):
-                    raise ValueError(
-                        f"Conversation {conversation.conversation_id} is already registered with a different "
-                        f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
-                        f"target and cannot be re-registered with {entry.target_identifier!r}."
-                    )
+                self._insert_conversation_in_session(session=session, conversation=conversation)
                 session.commit()
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error registering conversation {conversation.conversation_id}: {e}")
                 raise
+
+    def _insert_conversation_in_session(self, *, session: Session, conversation: Conversation) -> None:
+        """
+        Register conversation metadata in the caller's transaction, without committing.
+
+        Raises:
+            ValueError: If the ID is empty or the conversation is already held with a different target.
+        """
+        if not conversation.conversation_id:
+            raise ValueError("Cannot register a conversation without a conversation_id.")
+        entry = ConversationEntry(conversation=conversation)
+        existing = session.get(ConversationEntry, conversation.conversation_id)
+        if existing is None:
+            if conversation.target_identifier is not None:
+                self._persist_target_identifier(
+                    session=session,
+                    target_identifier=TargetIdentifier.from_component_identifier(conversation.target_identifier),
+                )
+            session.add(entry)
+        elif (
+            entry.target_identifier is not None
+            and existing.target_identifier is not None
+            and ComponentIdentifier.model_validate(existing.target_identifier) != conversation.target_identifier
+        ):
+            raise ValueError(
+                f"Conversation {conversation.conversation_id} is already registered with a different "
+                f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
+                f"target and cannot be re-registered with {entry.target_identifier!r}."
+            )
 
     def add_conversation_retry(self, *, conversation_id: str, sequence: int, reason: ConversationRetryReason) -> None:
         """
@@ -1612,6 +1647,25 @@ class MemoryInterface(abc.ABC):
             raise ValueError("update_fields must be provided to update prompt entries.")
         with closing(self.get_session()) as session:
             try:
+                prompt_entry_ids = [entry.id for entry in entries if isinstance(entry, PromptMemoryEntry)]
+                if prompt_entry_ids and session.get_bind().dialect.name == "mssql":
+                    for start in range(0, len(prompt_entry_ids), self._MAX_BIND_VARS):
+                        batch = prompt_entry_ids[start : start + self._MAX_BIND_VARS]
+                        statement = (
+                            select(PromptMemoryEntry)
+                            .where(PromptMemoryEntry.id.in_(batch))
+                            .with_hint(
+                                PromptMemoryEntry,
+                                "WITH (UPDLOCK, HOLDLOCK)",
+                                dialect_name="mssql",
+                            )
+                        )
+                        session.scalars(statement).all()
+                if self._message_pieces_are_observation_referenced_in_session(
+                    session=session,
+                    piece_ids=prompt_entry_ids,
+                ):
+                    raise ValueError("Prompt entries used by scorer observations are immutable.")
                 for entry in entries:
                     entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
                     if entry_in_session is None:
@@ -1695,16 +1749,37 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_scenario_result_label_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
+    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
         """
         Return a database-specific condition for filtering ScenarioResults by labels.
 
         Args:
-            labels: Labels with OR-within-key and AND-across-key semantics.
+            labels: Legacy single-value labels with AND-across-key semantics.
 
         Returns:
             Database-specific SQLAlchemy condition.
         """
+
+    def _get_scenario_result_labels_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
+        """
+        Compose multi-value label filters through the legacy single-value hook.
+
+        Returns:
+            Any: OR-within-key and AND-across-key SQLAlchemy condition.
+        """
+        conditions = []
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if values:
+                conditions.append(
+                    or_(
+                        *(
+                            self._get_scenario_result_label_condition(labels={key: str(value)}).unique_params()
+                            for value in values
+                        )
+                    )
+                )
+        return and_(*conditions)
 
     def _get_scenario_registry_name_condition(self, *, scenario_names: Sequence[str]) -> Any:
         """
@@ -1729,6 +1804,10 @@ class MemoryInterface(abc.ABC):
             f"{type(self).__name__} must implement _get_scenario_history_plan_expressions "
             "to support Scenario history queries."
         )
+
+    def _get_scenario_started_at_expression(self) -> Any:
+        """Return a compact persisted start-time expression when the backend supports one."""
+        return literal(None)
 
     def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
         """
@@ -1760,17 +1839,36 @@ class MemoryInterface(abc.ABC):
             "to support Scenario history queries."
         )
 
-    def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
+    def add_scores_to_memory(
+        self,
+        *,
+        scores: Sequence[Score],
+        observations: Sequence[Observation] = (),
+    ) -> None:
         """
         Persist scores whose loose-content anchors need no asynchronous file copy.
 
         File-backed ``ContentScorable`` values must use ``add_scores_to_memory_async``
         so the source bytes can be copied into managed results storage.
         """
-        self._add_scores_to_memory(scores=scores, prepared_content_hashes={})
+        self._add_scores_to_memory(
+            scores=scores,
+            observations=observations,
+            prepared_content_hashes={},
+        )
 
-    async def add_scores_to_memory_async(self, *, scores: Sequence[Score]) -> None:
-        """Prepare file-backed loose content, then persist the scores and their anchors."""
+    async def add_scores_to_memory_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        observations: Sequence[Observation] = (),
+    ) -> None:
+        """
+        Prepare file-backed loose content, then persist scores and observations.
+
+        Raises:
+            ValueError: If an observation does not match its scored content.
+        """
         media_scorables = list(
             dict.fromkeys(
                 score.scorable
@@ -1779,7 +1877,7 @@ class MemoryInterface(abc.ABC):
             )
         )
         if not media_scorables:
-            self.add_scores_to_memory(scores=scores)
+            self.add_scores_to_memory(scores=scores, observations=observations)
             return
 
         prepared_content = await asyncio.gather(
@@ -1802,6 +1900,7 @@ class MemoryInterface(abc.ABC):
 
         self._add_scores_to_memory(
             scores=scores_to_persist,
+            observations=observations,
             prepared_content_hashes=prepared_hashes,
         )
         for original_score, copied_score in copied_scores:
@@ -1848,6 +1947,7 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         scores: Sequence[Score],
+        observations: Sequence[Observation],
         prepared_content_hashes: Mapping[ContentScorable, str],
     ) -> None:
         """
@@ -1866,7 +1966,72 @@ class MemoryInterface(abc.ABC):
         score's input can still be recovered when it was never a conversation turn.
 
         Raises:
+            ValueError: If observation IDs, references, or managed anchors are invalid.
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
+        """
+        observations = [Observation.model_validate(observation.model_dump()) for observation in observations]
+        new_ids, referenced_ids = self._validate_score_inputs(scores=scores, observations=observations)
+        with closing(self.get_session()) as session:
+            try:
+                _begin_sqlite_write(session)
+                self._validate_observation_links(
+                    session=session,
+                    new_observation_ids=new_ids,
+                    referenced_observation_ids=referenced_ids,
+                )
+                canonical_scores = self._resolve_score_message_anchors(session=session, scores=scores)
+                content_entries, persisted_scores, persisted_observations = self._prepare_score_anchors(
+                    scores=canonical_scores,
+                    observations=observations,
+                    prepared_content_hashes=prepared_content_hashes,
+                )
+                session.add_all(content_entries)
+                session.flush()
+                self._validate_observation_evidence(session=session, observations=persisted_observations)
+                self._persist_score_rows(session=session, scores=persisted_scores, observations=persisted_observations)
+                session.commit()
+            except SQLAlchemyError:
+                session.rollback()
+                logger.exception("Error inserting scores")
+                raise
+            except ValueError:
+                session.rollback()
+                raise
+        for score, persisted in zip(scores, persisted_scores, strict=True):
+            score.message_piece_id = persisted.message_piece_id
+            score.scorable = persisted.scorable
+
+    @staticmethod
+    def _validate_score_inputs(
+        *, scores: Sequence[Score], observations: Sequence[Observation]
+    ) -> tuple[set[str], set[str]]:
+        """
+        Validate request-local IDs and digests without changing caller-owned scores.
+
+        Returns:
+            tuple[set[str], set[str]]: New and referenced observation IDs.
+
+        Raises:
+            ValueError: If new observations are unreferenced, duplicated, or invalid.
+        """
+        observations_by_id = {str(observation.id): observation for observation in observations}
+        if len(observations_by_id) != len(observations):
+            raise ValueError("New observations must have unique IDs.")
+        referenced_observation_ids = {
+            str(observation_id) for score in scores for observation_id in score.observation_ids
+        }
+        unreferenced = set(observations_by_id) - referenced_observation_ids
+        if unreferenced:
+            raise ValueError(f"New observations are not referenced by a score: {sorted(unreferenced)}.")
+        return set(observations_by_id), referenced_observation_ids
+
+    @classmethod
+    def _resolve_score_message_anchors(cls, *, session: Session, scores: Sequence[Score]) -> list[Score]:
+        """
+        Canonicalize legacy score anchors inside the transaction, not observation evidence.
+
+        Returns:
+            list[Score]: Score copies with original-message anchors.
         """
         referenced_piece_ids = {str(score.message_piece_id) for score in scores if score.message_piece_id}
         referenced_piece_ids.update(
@@ -1875,65 +2040,108 @@ class MemoryInterface(abc.ABC):
             if isinstance(score.scorable, MessageScorable)
             for piece_id in score.scorable.message_piece_ids
         )
-        pieces_by_id = {
-            str(piece.id): piece
-            for piece in (
-                self.get_message_pieces(prompt_ids=sorted(referenced_piece_ids)) if referenced_piece_ids else []
-            )
-        }
-        original_ids: dict[str, uuid.UUID] = {
-            piece_id: original_prompt_id
-            for piece_id, piece in pieces_by_id.items()
-            if (original_prompt_id := piece.original_prompt_id) is not None and original_prompt_id != piece.id
-        }
+        pieces_by_id = cls._load_score_message_pieces(session=session, piece_ids=sorted(referenced_piece_ids))
+        original_ids = {str(piece.id): piece.original_prompt_id or piece.id for piece in pieces_by_id.values()}
+        canonical_scores: list[Score] = []
         for score in scores:
-            if score.message_piece_id and str(score.message_piece_id) not in pieces_by_id:
+            canonical = score.model_copy()
+            if score.message_piece_id and uuid.UUID(str(score.message_piece_id)) not in pieces_by_id:
                 logger.error(f"MessagePiece with ID {score.message_piece_id} not found in memory.")
             if score.message_piece_id and (original_id := original_ids.get(str(score.message_piece_id))):
-                score.message_piece_id = original_id  # type: ignore[ty:invalid-assignment]
+                canonical.message_piece_id = original_id  # type: ignore[ty:invalid-assignment]
             if isinstance(score.scorable, MessageScorable):
                 mapped_piece_ids: tuple[uuid.UUID, ...] = tuple(
                     original_ids.get(str(piece_id), uuid.UUID(str(piece_id)))
                     for piece_id in score.scorable.message_piece_ids
                 )
                 if mapped_piece_ids != score.scorable.message_piece_ids:
-                    score.scorable = MessageScorable(message_piece_ids=mapped_piece_ids)
-        content_entries, anchor_rewrites = self._store_scorable_content(
-            scores=scores,
+                    canonical.scorable = MessageScorable(message_piece_ids=mapped_piece_ids)
+            canonical_scores.append(canonical)
+        return canonical_scores
+
+    @classmethod
+    def _prepare_score_anchors(
+        cls,
+        *,
+        scores: Sequence[Score],
+        observations: Sequence[Observation],
+        prepared_content_hashes: Mapping[ContentScorable, str],
+    ) -> tuple[list[ScorableContentEntry], list[Score], list[Observation]]:
+        """
+        Build content rows and replace loose anchors on persistence-only copies.
+
+        Returns:
+            tuple[list[ScorableContentEntry], list[Score], list[Observation]]: Rows and anchored copies.
+        """
+        content_scorables = list(
+            dict.fromkeys(
+                [score.scorable for score in scores if isinstance(score.scorable, ContentScorable)]
+                + [
+                    observation.scorable
+                    for observation in observations
+                    if isinstance(observation.scorable, ContentScorable)
+                ]
+            )
+        )
+        content_entries, content_anchors = cls._store_scorable_content(
+            scorables=content_scorables,
             prepared_content_hashes=prepared_content_hashes,
         )
-        anchors_by_score = {id(score): anchor for score, anchor in anchor_rewrites}
         persisted_scores = [
-            score.model_copy(update={"scorable": anchors_by_score[id(score)]})
-            if id(score) in anchors_by_score
+            score.model_copy(update={"scorable": content_anchors[score.scorable]})
+            if isinstance(score.scorable, ContentScorable)
             else score
             for score in scores
         ]
-        entries = [ScoreEntry(entry=score) for score in persisted_scores]
-        with closing(self.get_session()) as session:
-            try:
-                session.add_all(content_entries)
-                for entry in entries:
-                    if entry.scorer_class_identifier:
-                        self._persist_scorer_identifier(
-                            session=session,
-                            scorer_identifier=ScorerIdentifier.model_validate(entry.scorer_class_identifier),
-                        )
-                session.add_all(entries)
-                session.commit()
-                for score, anchor in anchor_rewrites:
-                    score.scorable = anchor
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error inserting scores: {e}")
-                raise
+        persisted_observations = [
+            observation.model_copy(update={"scorable": content_anchors[observation.scorable]})
+            if isinstance(observation.scorable, ContentScorable)
+            else observation
+            for observation in observations
+        ]
+        return content_entries, persisted_scores, persisted_observations
+
+    def _persist_score_rows(
+        self, *, session: Session, scores: Sequence[Score], observations: Sequence[Observation]
+    ) -> None:
+        """Build score, observation, identifier, and ordered-link rows in one session."""
+        entries = [ScoreEntry(entry=score) for score in scores]
+        observation_entries = [ObservationEntry(entry=observation) for observation in observations]
+        observation_message_links = [
+            ObservationMessagePieceEntry(
+                observation_id=observation.id,
+                position=position,
+                message_piece_id=piece_id,
+            )
+            for observation in observations
+            for position, piece_id in enumerate(observation.response_message_piece_ids)
+        ]
+        score_observation_links = [
+            ScoreObservationEntry(
+                score_id=uuid.UUID(str(score.id)),
+                position=position,
+                observation_id=observation_id,
+            )
+            for score in scores
+            for position, observation_id in enumerate(score.observation_ids)
+        ]
+        for entry in entries:
+            if entry.scorer_class_identifier:
+                self._persist_scorer_identifier(
+                    session=session,
+                    scorer_identifier=ScorerIdentifier.model_validate(entry.scorer_class_identifier),
+                )
+        session.add_all(observation_entries)
+        session.add_all(observation_message_links)
+        session.add_all(entries)
+        session.add_all(score_observation_links)
 
     @staticmethod
     def _store_scorable_content(
         *,
-        scores: Sequence[Score],
+        scorables: Sequence[ContentScorable],
         prepared_content_hashes: Mapping[ContentScorable, str],
-    ) -> tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
+    ) -> tuple[list[ScorableContentEntry], dict[ContentScorable, ContentEntryScorable]]:
         """
         Turn loose-content anchors into stored references.
 
@@ -1941,36 +2149,124 @@ class MemoryInterface(abc.ABC):
         scores over one input (a category per harm, say) does not duplicate it.
 
         Returns:
-            tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
-                Content rows to insert and anchor rewrites to publish after commit.
+            tuple[list[ScorableContentEntry], dict[ContentScorable, ContentEntryScorable]]:
+                Content rows to insert and the durable anchor for each loose scorable.
 
         Raises:
             ValueError: If file-backed content was not prepared through the async path.
         """
-        rows: dict[ContentScorable, ScorableContentEntry] = {}
-        anchor_rewrites: list[tuple[Score, ContentEntryScorable]] = []
-        for score in scores:
-            scorable = score.scorable
-            if not isinstance(scorable, ContentScorable):
-                continue
-            row = rows.get(scorable)
-            if row is None:
-                value_sha256 = prepared_content_hashes.get(scorable)
-                if scorable.data_type in MEDIA_PATH_DATA_TYPES and value_sha256 is None:
-                    raise ValueError(
-                        "File-backed ContentScorable values require add_scores_to_memory_async "
-                        "so PyRIT can copy the source bytes into managed storage."
-                    )
-                row = ScorableContentEntry(
-                    id=uuid.uuid4(),
-                    value=scorable.value,
-                    value_sha256=value_sha256 or hashlib.sha256(scorable.value.encode("utf-8")).hexdigest(),
-                    data_type=scorable.data_type,
-                    timestamp=datetime.now(tz=UTC),
+        rows: list[ScorableContentEntry] = []
+        anchors: dict[ContentScorable, ContentEntryScorable] = {}
+        for scorable in scorables:
+            value_sha256 = prepared_content_hashes.get(scorable)
+            if scorable.data_type in MEDIA_PATH_DATA_TYPES and value_sha256 is None:
+                raise ValueError(
+                    "File-backed ContentScorable values require add_scores_to_memory_async "
+                    "so PyRIT can copy the source bytes into managed storage."
                 )
-                rows[scorable] = row
-            anchor_rewrites.append((score, ContentEntryScorable(content_id=row.id, data_type=scorable.data_type)))
-        return list(rows.values()), anchor_rewrites
+            row = ScorableContentEntry(
+                id=uuid.uuid4(),
+                value=scorable.value,
+                value_sha256=value_sha256 or hashlib.sha256(scorable.value.encode("utf-8")).hexdigest(),
+                data_type=scorable.data_type,
+                timestamp=datetime.now(tz=UTC),
+            )
+            rows.append(row)
+            anchors[scorable] = ContentEntryScorable(content_id=row.id, data_type=scorable.data_type)
+        return rows, anchors
+
+    @classmethod
+    def _validate_observation_links(
+        cls,
+        *,
+        session: Session,
+        new_observation_ids: set[str],
+        referenced_observation_ids: set[str],
+    ) -> None:
+        """
+        Reject conflicting new IDs and links to observations that do not exist.
+
+        Raises:
+            ValueError: If a new ID conflicts or a referenced observation does not exist.
+        """
+        existing = _lock_observations(
+            session=session, observation_ids=sorted(new_observation_ids | referenced_observation_ids)
+        )
+        conflicts = new_observation_ids & existing
+        if conflicts:
+            raise ValueError(f"New observation IDs already exist: {sorted(conflicts)}.")
+        missing = referenced_observation_ids - new_observation_ids - existing
+        if missing:
+            raise ValueError(f"Score references observations not found in memory: {sorted(missing)}.")
+
+    @classmethod
+    def _validate_observation_evidence(
+        cls,
+        *,
+        session: Session,
+        observations: Sequence[Observation],
+    ) -> None:
+        """
+        Verify observation digests against canonical rows in the score transaction.
+
+        Raises:
+            ValueError: If referenced response or scored evidence is missing or modified.
+        """
+        piece_ids = {piece_id for observation in observations for piece_id in observation.evidence_message_piece_ids}
+        pieces_by_id = cls._load_score_message_pieces(session=session, piece_ids=sorted(piece_ids, key=str))
+        content_ids = {
+            observation.scorable_content_id
+            for observation in observations
+            if observation.scorable_content_id is not None
+        }
+        content_by_id: dict[uuid.UUID, tuple[ContentScorable, str]] = {}
+        content_id_values = list(content_ids)
+        for start in range(0, len(content_id_values), cls._MAX_BIND_VARS):
+            batch = content_id_values[start : start + cls._MAX_BIND_VARS]
+            statement = select(ScorableContentEntry).where(ScorableContentEntry.id.in_(batch))
+            if session.get_bind().dialect.name == "mssql":
+                statement = statement.with_hint(ScorableContentEntry, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
+            entries = session.scalars(statement)
+            content_by_id.update(
+                {
+                    entry.id: (
+                        ContentScorable(
+                            value=entry.value,
+                            data_type=entry.data_type,
+                        ),
+                        entry.value_sha256,
+                    )
+                    for entry in entries
+                }
+            )
+
+        for observation in observations:
+            observation.validate_evidence(
+                message_pieces=pieces_by_id,
+                stored_content=content_by_id.get(observation.scorable_content_id)
+                if observation.scorable_content_id is not None
+                else None,
+            )
+
+    @classmethod
+    def _load_score_message_pieces(
+        cls, *, session: Session, piece_ids: Sequence[uuid.UUID | str]
+    ) -> dict[uuid.UUID, MessagePiece]:
+        """
+        Read canonical message values while retaining SQL Server evidence locks.
+
+        Returns:
+            dict[uuid.UUID, MessagePiece]: Canonical pieces indexed by their exact IDs.
+        """
+        pieces_by_id: dict[uuid.UUID, MessagePiece] = {}
+        for start in range(0, len(piece_ids), cls._MAX_BIND_VARS):
+            statement = select(PromptMemoryEntry).where(
+                PromptMemoryEntry.id.in_(piece_ids[start : start + cls._MAX_BIND_VARS])
+            )
+            if session.get_bind().dialect.name == "mssql":
+                statement = statement.with_hint(PromptMemoryEntry, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
+            pieces_by_id.update({entry.id: entry.get_message_piece() for entry in session.scalars(statement)})
+        return pieces_by_id
 
     def get_scorable_content(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, ContentScorable]:
         """
@@ -1995,6 +2291,54 @@ class MemoryInterface(abc.ABC):
             for entry in entries
             if entry.value is not None
         }
+
+    def get_scorable_content_hashes(
+        self,
+        *,
+        content_ids: Sequence[uuid.UUID | str],
+    ) -> dict[uuid.UUID, str]:
+        """
+        Load the immutable content digest for stored score anchors.
+
+        Returns:
+            dict[uuid.UUID, str]: SHA-256 digests by content ID.
+        """
+        if not content_ids:
+            return {}
+        entries = self._execute_batched_query(
+            ScorableContentEntry,
+            batch_column=ScorableContentEntry.id,
+            batch_values=[str(content_id) for content_id in content_ids],
+        )
+        return {entry.id: entry.value_sha256 for entry in entries}
+
+    def get_observations(
+        self,
+        *,
+        observation_ids: Sequence[uuid.UUID | str],
+    ) -> list[Observation]:
+        """
+        Load observations by ID.
+
+        Args:
+            observation_ids (Sequence[uuid.UUID | str]): Observation IDs to load.
+
+        Returns:
+            list[Observation]: Stored observations in the requested order. Missing IDs are omitted.
+        """
+        if not observation_ids:
+            return []
+        entries = self._execute_batched_query(
+            ObservationEntry,
+            batch_column=ObservationEntry.id,
+            batch_values=[str(observation_id) for observation_id in observation_ids],
+        )
+        entries_by_id = {str(entry.id): entry for entry in entries}
+        return [
+            entries_by_id[str(observation_id)].get_observation()
+            for observation_id in observation_ids
+            if str(observation_id) in entries_by_id
+        ]
 
     @classmethod
     def _persist_scorer_identifier(cls, *, session: Any, scorer_identifier: ScorerIdentifier) -> None:
@@ -2475,7 +2819,13 @@ class MemoryInterface(abc.ABC):
         self.add_message_pieces_to_memory(message_pieces=message_pieces)
 
         if self.memory_embedding:
-            for piece in message_pieces:
+            # Embeddings power text similarity search and only describe text pieces.
+            # A multimodal message (e.g. text plus an image_path piece) must still
+            # persist instead of failing the whole write, and pieces flagged
+            # not_in_memory are never persisted, so no embedding row may reference them.
+            for piece in pieces_to_persist:
+                if piece.converted_value_data_type != "text":
+                    continue
                 embedding_entry = self.memory_embedding.generate_embedding_memory_data(message_piece=piece)
                 embedding_entries.append(embedding_entry)
 
@@ -2511,6 +2861,7 @@ class MemoryInterface(abc.ABC):
 
         Raises:
             ValueError: If update_fields is empty or not provided.
+            ValueError: If an entry is immutable observation evidence.
         """
         if not update_fields:
             raise ValueError("update_fields must be provided to update prompt entries.")
@@ -2522,6 +2873,9 @@ class MemoryInterface(abc.ABC):
         if not entries_to_update:
             logger.info(f"No entries found with conversation_id {conversation_id} to update.")
             return False
+        entry_ids = [entry.id for entry in entries_to_update if isinstance(entry, PromptMemoryEntry)]
+        if self._message_pieces_are_observation_referenced(piece_ids=entry_ids):
+            raise ValueError(f"Conversation {conversation_id} contains immutable scorer observation evidence.")
 
         # Use the utility function to update the entries
         success = self._update_entries(entries=entries_to_update, update_fields=update_fields)
@@ -2531,6 +2885,54 @@ class MemoryInterface(abc.ABC):
         else:
             logger.error(f"Failed to update entries with conversation_id {conversation_id}.")
         return success
+
+    def _message_pieces_are_observation_referenced(
+        self,
+        *,
+        piece_ids: Sequence[uuid.UUID],
+    ) -> bool:
+        """
+        Check whether message pieces are retained by an LLM observation.
+
+        Returns:
+            bool: True when any piece is a scored input or retained judge response.
+        """
+        if not piece_ids:
+            return False
+        with closing(self.get_session()) as session:
+            return self._message_pieces_are_observation_referenced_in_session(
+                session=session,
+                piece_ids=piece_ids,
+            )
+
+    @classmethod
+    def _message_pieces_are_observation_referenced_in_session(
+        cls,
+        *,
+        session: Session,
+        piece_ids: Sequence[uuid.UUID],
+    ) -> bool:
+        """
+        Check observation references in the caller's transaction.
+
+        Returns:
+            bool: True when any message piece is immutable observation evidence.
+        """
+        for start in range(0, len(piece_ids), cls._MAX_BIND_VARS):
+            batch = piece_ids[start : start + cls._MAX_BIND_VARS]
+            response_link = session.scalar(
+                select(ObservationMessagePieceEntry.observation_id)
+                .where(ObservationMessagePieceEntry.message_piece_id.in_(batch))
+                .limit(1)
+            )
+            if response_link is not None:
+                return True
+            scored_observation = session.scalar(
+                select(ObservationEntry.id).where(ObservationEntry.scored_message_piece_id.in_(batch)).limit(1)
+            )
+            if scored_observation is not None:
+                return True
+        return False
 
     def update_prompt_metadata_by_conversation_id(
         self, *, conversation_id: str, prompt_metadata: dict[str, str | int]
@@ -2651,8 +3053,10 @@ class MemoryInterface(abc.ABC):
         Args:
             value (str): The value to match. By default this matches by substring; pass exact=True to
                 require full-string equality instead. If None, all values are returned.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to False (substring matching).
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
+                and ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list
+                elements (case-insensitive) rather than substrings of the stored list. Defaults to False
+                (substring matching).
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -2708,12 +3112,14 @@ class MemoryInterface(abc.ABC):
         elif seed_type is not None:
             conditions.append(SeedEntry.seed_type == seed_type)
 
-        self._add_list_conditions(field=SeedEntry.harm_categories, values=harm_categories, conditions=conditions)
-        self._add_list_conditions(field=SeedEntry.authors, values=authors, conditions=conditions)
-        self._add_list_conditions(field=SeedEntry.groups, values=groups, conditions=conditions)
+        self._add_list_conditions(
+            field=SeedEntry.harm_categories, values=harm_categories, conditions=conditions, exact=exact
+        )
+        self._add_list_conditions(field=SeedEntry.authors, values=authors, conditions=conditions, exact=exact)
+        self._add_list_conditions(field=SeedEntry.groups, values=groups, conditions=conditions, exact=exact)
 
         if parameters:
-            self._add_list_conditions(field=SeedEntry.parameters, values=parameters, conditions=conditions)
+            self._add_list_conditions(field=SeedEntry.parameters, values=parameters, conditions=conditions, exact=exact)
 
         if metadata:
             conditions.append(self._get_seed_metadata_conditions(metadata=metadata))
@@ -2833,10 +3239,11 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
-                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
-                by substring.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring, and
+                ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list elements
+                (case-insensitive), so ``harm_categories=["hate"]`` does not also remove seeds tagged
+                ``"hate_speech"``. Defaults to True for the remove methods (the safer choice for deletion).
+                Note this differs from get_seeds, which always matches these filters by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -2850,9 +3257,9 @@ class MemoryInterface(abc.ABC):
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             added_by (str): The user who added the prompts.
-            authors (Sequence[str]): A list of authors to filter by.
-                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
-                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors (Sequence[str]): A list of authors to filter by. With exact=True (the default) each author
+                must match a stored author exactly (case-insensitive); with exact=False this filters by substring.
+                If None, all authors are considered.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
@@ -2948,10 +3355,11 @@ class MemoryInterface(abc.ABC):
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
-            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
-                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
-                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
-                by substring.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring, and
+                ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list elements
+                (case-insensitive), so ``harm_categories=["hate"]`` does not also remove seeds tagged
+                ``"hate_speech"``. Defaults to True for the remove methods (the safer choice for deletion).
+                Note this differs from get_seeds, which always matches these filters by substring.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are considered.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
@@ -2965,9 +3373,9 @@ class MemoryInterface(abc.ABC):
             all harm categories are considered.
                 Specifying multiple harm categories matches only prompts that are marked with all harm categories.
             added_by (str): The user who added the prompts.
-            authors (Sequence[str]): A list of authors to filter by.
-                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
-                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            authors (Sequence[str]): A list of authors to filter by. With exact=True (the default) each author
+                must match a stored author exactly (case-insensitive); with exact=False this filters by substring.
+                If None, all authors are considered.
             groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
             source (str): The source to filter by. If None, all sources are considered.
             seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
@@ -3035,11 +3443,25 @@ class MemoryInterface(abc.ABC):
 
     def _add_list_conditions(
         self,
+        *,
         field: InstrumentedAttribute[Any],
         conditions: "list[ColumnElement[bool]]",
         values: Sequence[str] | None = None,
+        exact: bool = False,
     ) -> None:
-        if values:
+        if not values:
+            return
+        if exact:
+            # Match whole list elements (case-insensitive) so "hate" does not match "hate_speech" or "whatever".
+            conditions.append(
+                self._get_condition_json_array_match(
+                    json_column=field,
+                    property_path="$",
+                    array_to_match=list(values),
+                    match_mode="all",
+                )
+            )
+        else:
             conditions.extend(field.contains(value) for value in values)
 
     async def _serialize_seed_value_async(self, prompt: Seed) -> str:
@@ -3116,8 +3538,12 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Seeds already present in storage are skipped. Duplicates *within* ``seeds`` are all
-        inserted, because the check looks at what storage held when the call started.
+        Seeds with the same value hash, dataset, and canonical conditions already present
+        in storage are skipped. Duplicates *within* ``seeds`` are all inserted, because the
+        check looks at what storage held when the call started.
+        Groups introducing new objective criteria retain the other seeds in the same group
+        even when their content is already stored in another group. When a stored seed is
+        copied to a new group, its caller-visible ID is updated after successful insertion.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -3131,25 +3557,101 @@ class MemoryInterface(abc.ABC):
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
         existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
+        new_condition_group_ids = self._get_new_condition_group_ids(
+            seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
+        )
+        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in new_condition_group_ids]
+        stored_groups = (
+            {
+                entry.id: entry.prompt_group_id
+                for entry in self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.id, batch_values=retained_seed_ids
+                )
+            }
+            if retained_seed_ids
+            else {}
+        )
 
         entries: MutableSequence[SeedEntry] = []
+        copied_seed_ids: list[tuple[Seed, uuid.UUID]] = []
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
+            conditions_key = self._seed_conditions_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
-            if prompt.dataset_name:
-                if (prompt.value_sha256, prompt.dataset_name) in existing_pairs:
+            if prompt.prompt_group_id in new_condition_group_ids:
+                if prompt.id in stored_groups and stored_groups[prompt.id] == prompt.prompt_group_id:
                     continue
-            elif prompt.value_sha256 in existing_hashes:
+                entry = SeedEntry(entry=prompt)
+                if prompt.id in stored_groups:
+                    entry.id = uuid.uuid4()
+                    copied_seed_ids.append((prompt, entry.id))
+                entries.append(entry)
+                continue
+            if prompt.dataset_name:
+                if (prompt.value_sha256, prompt.dataset_name, conditions_key) in existing_pairs:
+                    continue
+            elif (prompt.value_sha256, conditions_key) in existing_hashes:
                 continue
             entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
+        for prompt, new_id in copied_seed_ids:
+            prompt.id = new_id
 
-    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed]) -> tuple[set[tuple[str, str]], set[str]]:
+    @staticmethod
+    def _seed_conditions_key(seed: Seed) -> str:
         """
-        Look up which of these seeds' hashes are already stored.
+        Serialize criteria canonically, preserving condition order.
+
+        Returns:
+            str: Canonical JSON used for criteria identity.
+        """
+        conditions = seed.model_dump(mode="json", include={"conditions"}).get("conditions", [])
+        if not conditions:
+            return _NO_CONDITIONS_KEY
+        return json.dumps(conditions, sort_keys=True, separators=(",", ":"))
+
+    def _get_new_condition_group_ids(
+        self,
+        *,
+        seeds: Sequence[Seed],
+        existing_pairs: set[tuple[str, str, str]],
+        existing_hashes: set[tuple[str, str]],
+    ) -> set[uuid.UUID]:
+        """
+        Identify groups whose newly authored criteria require retaining all input seeds.
+
+        Other seeds in the same group do not own conditions. Their ordinary content
+        deduplication must not strip them from a new condition-bearing group, or from a group that
+        removes previously stored criteria. Purely condition-free loading is unchanged.
+
+        Returns:
+            set[uuid.UUID]: Group IDs whose complete input membership must be retained.
+        """
+        conditions_by_value: dict[tuple[str, str | None], set[str]] = {}
+        for value_hash, dataset, conditions in existing_pairs:
+            conditions_by_value.setdefault((value_hash, dataset), set()).add(conditions)
+        for value_hash, conditions in existing_hashes:
+            conditions_by_value.setdefault((value_hash, None), set()).add(conditions)
+
+        group_ids: set[uuid.UUID] = set()
+        for seed in seeds:
+            if not isinstance(seed, SeedObjective) or seed.prompt_group_id is None or not seed.value_sha256:
+                continue
+            stored_conditions = conditions_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
+            if self._seed_conditions_key(seed) in stored_conditions:
+                continue
+            if seed.conditions or stored_conditions - {_NO_CONDITIONS_KEY}:
+                group_ids.add(seed.prompt_group_id)
+        return group_ids
+
+    def _get_existing_seed_keys(
+        self, *, seeds: Sequence[Seed]
+    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
+        """
+        Look up which value hashes and canonical conditions are already stored.
 
         Queries in chunks rather than once per seed, which otherwise dominates the cost of
         loading a large dataset. ``get_seeds`` issues the statement directly instead of going
@@ -3166,9 +3668,9 @@ class MemoryInterface(abc.ABC):
             seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
 
         Returns:
-            tuple[set[tuple[str, str]], set[str]]: The stored (value_sha256, dataset_name)
-                pairs keyed by the requested dataset name, and the stored hashes irrespective
-                of dataset.
+            tuple[set[tuple[str, str, str]], set[tuple[str, str]]]: The stored
+                (value_sha256, dataset_name, conditions) keys, using the requested
+                dataset name, and (value_sha256, conditions) keys irrespective of dataset.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
         for prompt in seeds:
@@ -3178,8 +3680,8 @@ class MemoryInterface(abc.ABC):
                 # cannot disagree.
                 hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
 
-        existing_pairs: set[tuple[str, str]] = set()
-        existing_hashes: set[str] = set()
+        existing_pairs: set[tuple[str, str, str]] = set()
+        existing_hashes: set[tuple[str, str]] = set()
         for dataset_name, dataset_hashes in hashes_by_dataset.items():
             hashes = sorted(dataset_hashes)
             # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
@@ -3190,13 +3692,14 @@ class MemoryInterface(abc.ABC):
                 for existing in self.get_seeds(value_sha256=chunk, dataset_name=dataset_name):
                     if not existing.value_sha256:
                         continue
+                    conditions_key = self._seed_conditions_key(existing)
                     if dataset_name:
                         # The database decided the name matched, so record the name that was
                         # asked for; the stored spelling can differ under a case-insensitive
                         # collation.
-                        existing_pairs.add((existing.value_sha256, dataset_name))
+                        existing_pairs.add((existing.value_sha256, dataset_name, conditions_key))
                     else:
-                        existing_hashes.add(existing.value_sha256)
+                        existing_hashes.add((existing.value_sha256, conditions_key))
 
         return existing_pairs, existing_hashes
 
@@ -3210,6 +3713,126 @@ class MemoryInterface(abc.ABC):
         """
         for dataset in datasets:
             await self.add_seeds_to_memory_async(seeds=dataset.seeds, added_by=added_by)
+
+    def get_seed_dataset_summaries(self) -> Sequence[SeedDatasetSummary]:
+        """
+        Return aggregate metadata for datasets already loaded in memory.
+
+        The queries intentionally project only dataset metadata and counts. Seed values and
+        media are never hydrated, so callers can build dataset cards without materializing
+        every prompt or fetching providers.
+
+        Named dataset grouping and metadata matching stay on the original collated
+        dataset_name column. NULL and empty names are aggregated separately into the
+        unnamed population so their shared logical groups are counted exactly once.
+
+        Returns:
+            Sequence[SeedDatasetSummary]: One summary for each stored dataset, including
+            a single deterministic entry for seeds without a dataset name.
+        """
+        try:
+            logical_example_id = func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id)
+            named_condition = and_(SeedEntry.dataset_name.is_not(None), SeedEntry.dataset_name != "")
+            unnamed_condition = or_(SeedEntry.dataset_name.is_(None), SeedEntry.dataset_name == "")
+
+            named_aggregate = (
+                select(
+                    SeedEntry.dataset_name.label("dataset_name"),
+                    func.count().label("seed_pieces"),
+                    func.count(func.distinct(logical_example_id)).label("logical_examples"),
+                    func.sum(case((SeedEntry.seed_type == "objective", 1), else_=0)).label("objectives"),
+                )
+                .where(named_condition)
+                .group_by(SeedEntry.dataset_name)
+                .subquery()
+            )
+            named_metadata = (
+                select(
+                    SeedEntry.dataset_name.label("dataset_name"),
+                    SeedEntry.data_type,
+                    SeedEntry.harm_categories,
+                )
+                .where(named_condition)
+                .distinct()
+                .subquery()
+            )
+            named_statement = select(
+                named_aggregate.c.dataset_name,
+                named_aggregate.c.seed_pieces,
+                named_aggregate.c.logical_examples,
+                named_aggregate.c.objectives,
+                named_metadata.c.data_type,
+                named_metadata.c.harm_categories,
+            ).join(
+                named_metadata,
+                named_aggregate.c.dataset_name == named_metadata.c.dataset_name,
+            )
+
+            unnamed_aggregate = (
+                select(
+                    literal(None, type_=SeedEntry.dataset_name.type).label("dataset_name"),
+                    func.count().label("seed_pieces"),
+                    func.count(func.distinct(logical_example_id)).label("logical_examples"),
+                    func.sum(case((SeedEntry.seed_type == "objective", 1), else_=0)).label("objectives"),
+                )
+                .where(unnamed_condition)
+                .subquery()
+            )
+            unnamed_metadata = (
+                select(SeedEntry.data_type, SeedEntry.harm_categories).where(unnamed_condition).distinct().subquery()
+            )
+            unnamed_statement = select(
+                unnamed_aggregate.c.dataset_name,
+                unnamed_aggregate.c.seed_pieces,
+                unnamed_aggregate.c.logical_examples,
+                unnamed_aggregate.c.objectives,
+                unnamed_metadata.c.data_type,
+                unnamed_metadata.c.harm_categories,
+            ).select_from(unnamed_aggregate.join(unnamed_metadata, literal(True)))
+
+            combined_statement = named_statement.union_all(unnamed_statement)
+
+            with closing(self.get_session()) as session:
+                rows = session.execute(combined_statement).all()
+
+            summaries_by_dataset: dict[str | None, dict[str, Any]] = {}
+            dataset_order: list[str | None] = []
+            for row in rows:
+                dataset_name = row.dataset_name
+                if dataset_name not in summaries_by_dataset:
+                    summaries_by_dataset[dataset_name] = {
+                        "seed_pieces": int(row.seed_pieces or 0),
+                        "logical_examples": int(row.logical_examples or 0),
+                        "objectives": int(row.objectives or 0),
+                        "modalities": set(),
+                        "harm_categories": set(),
+                        "has_unlabeled_harm_categories": False,
+                    }
+                    dataset_order.append(dataset_name)
+                summary = summaries_by_dataset[dataset_name]
+                if row.data_type:
+                    summary["modalities"].add(row.data_type)
+                categories = row.harm_categories or []
+                if categories:
+                    summary["harm_categories"].update(categories)
+                else:
+                    summary["has_unlabeled_harm_categories"] = True
+
+            return [
+                SeedDatasetSummary(
+                    dataset_name=dataset_name,
+                    logical_examples=summaries_by_dataset[dataset_name]["logical_examples"],
+                    seed_pieces=summaries_by_dataset[dataset_name]["seed_pieces"],
+                    objectives=summaries_by_dataset[dataset_name]["objectives"],
+                    modalities=tuple(sorted(summaries_by_dataset[dataset_name]["modalities"])),
+                    harm_categories=tuple(sorted(summaries_by_dataset[dataset_name]["harm_categories"])),
+                    has_unlabeled_harm_categories=summaries_by_dataset[dataset_name]["has_unlabeled_harm_categories"],
+                )
+                for dataset_name in dataset_order
+            ]
+        except Exception as e:
+            logger.exception(f"Failed to retrieve dataset summaries with error {e}")
+            raise
 
     def get_seed_dataset_names(self) -> Sequence[str]:
         """
@@ -3454,6 +4077,102 @@ class MemoryInterface(abc.ABC):
             except SQLAlchemyError:
                 session.rollback()
                 raise
+
+    def add_conversation_branches_to_attack(
+        self,
+        *,
+        attack_result_id: str,
+        conversations: Sequence[Conversation],
+        message_pieces: Sequence[MessagePiece],
+        source_conversation: Conversation | None = None,
+    ) -> bool:
+        """
+        Atomically store prepared conversations, copied pieces, and their attack references.
+
+        The caller prepares the copies. This method only persists them, preserving the usual
+        conversation and message insertion invariants. A supplied source must still be an
+        active objective conversation when the transaction acquires the attack's write lock.
+
+        Returns:
+            bool: False when the attack no longer exists.
+
+        Raises:
+            ValueError: If the source is unrelated, branch IDs repeat, or pieces belong elsewhere.
+            SQLAlchemyError: If persistence fails; the complete preparation is rolled back.
+        """
+        conversation_ids = [conversation.conversation_id for conversation in conversations]
+        if len(set(conversation_ids)) != len(conversation_ids):
+            raise ValueError("Prepared branch conversation IDs must be unique")
+        if source_conversation and source_conversation.conversation_id in conversation_ids:
+            raise ValueError("A prepared branch cannot replace the source conversation")
+        if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
+            raise ValueError("Copied message pieces must belong to the prepared branches")
+
+        with closing(self.get_session()) as session, session.begin():
+            entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
+            if entry is None:
+                return False
+            if source_conversation is not None:
+                active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
+                if source_conversation.conversation_id not in active_ids:
+                    raise ValueError("Source conversation is not an active objective conversation of this attack")
+                self._insert_conversation_in_session(session=session, conversation=source_conversation)
+            for conversation in conversations:
+                self._insert_conversation_in_session(session=session, conversation=conversation)
+            self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
+            pruned_ids = list(entry.pruned_conversation_ids or [])
+            for conversation_id in conversation_ids:
+                if conversation_id != entry.conversation_id and conversation_id not in pruned_ids:
+                    pruned_ids.append(conversation_id)
+            entry.pruned_conversation_ids = pruned_ids or None
+            entry.timestamp = datetime.now(UTC)
+        return True
+
+    def promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
+        """
+        Promote an existing related conversation without losing concurrent branch additions.
+
+        Returns:
+            bool: False when the attack no longer exists.
+
+        Raises:
+            ValueError: If the requested conversation is not part of this attack.
+            SQLAlchemyError: If the transaction fails.
+        """
+        with closing(self.get_session()) as session, session.begin():
+            entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
+            if entry is None:
+                return False
+            if entry.conversation_id == conversation_id:
+                return True
+            pruned = list(entry.pruned_conversation_ids or [])
+            if conversation_id not in pruned:
+                raise ValueError(f"Conversation '{conversation_id}' is not part of this attack")
+            pruned = [item for item in pruned if item != conversation_id]
+            if entry.conversation_id not in pruned:
+                pruned.append(entry.conversation_id)
+            entry.pruned_conversation_ids = pruned or None
+            entry.conversation_id = conversation_id
+            entry.timestamp = datetime.now(UTC)
+        return True
+
+    @staticmethod
+    def _get_locked_attack_result(*, session: Session, attack_result_id: str) -> AttackResultEntry | None:
+        """
+        Acquire the write lock before reading references, on SQLite and SQL Server alike.
+
+        Returns:
+            AttackResultEntry | None: The current row, held until the caller ends its transaction.
+        """
+        result_id = uuid.UUID(attack_result_id)
+        # SELECT FOR UPDATE does not provide the required guard on both supported backends.
+        session.execute(
+            update(AttackResultEntry)
+            .where(AttackResultEntry.id == result_id)
+            .values(timestamp=AttackResultEntry.timestamp)
+            .execution_options(synchronize_session=False)
+        )
+        return session.get(AttackResultEntry, result_id, populate_existing=True)
 
     def update_attack_result(self, *, conversation_id: str, update_fields: dict[str, Any]) -> bool:
         """
@@ -4163,6 +4882,29 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
+        self.update_scenario_run_state_and_metadata_fields(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state=scenario_run_state,
+            error_message=error_message,
+            error_type=error_type,
+            metadata_fields={},
+        )
+
+    def update_scenario_run_state_and_metadata_fields(
+        self,
+        *,
+        scenario_result_id: str,
+        scenario_run_state: ScenarioRunState,
+        metadata_fields: Mapping[str, Any],
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        """
+        Update run state and merge scenario metadata in one transaction.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
         with closing(self.get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
 
@@ -4172,6 +4914,9 @@ class MemoryInterface(abc.ABC):
             entry.scenario_run_state = scenario_run_state.value
             entry.error_message = error_message
             entry.error_type = error_type
+            if metadata_fields:
+                entry.scenario_metadata = {**(entry.scenario_metadata or {}), **metadata_fields}
+                flag_modified(entry, "scenario_metadata")
             if scenario_run_state in (
                 ScenarioRunState.COMPLETED,
                 ScenarioRunState.FAILED,
@@ -4271,11 +5016,71 @@ class MemoryInterface(abc.ABC):
             entry.scenario_metadata = metadata if metadata else None
             session.commit()
 
+    def update_scenario_metadata_fields(
+        self,
+        *,
+        scenario_result_id: str,
+        fields: Mapping[str, Any],
+    ) -> None:
+        """
+        Merge selected fields into persisted scenario metadata in one transaction.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+            if not entry:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+            entry.scenario_metadata = {**(entry.scenario_metadata or {}), **fields}
+            flag_modified(entry, "scenario_metadata")
+            session.commit()
+
     def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
         with closing(self.get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
             return entry.get_scenario_result() if entry is not None else None
+
+    def get_scenario_run_state_page(
+        self,
+        *,
+        states: Sequence[ScenarioRunState],
+        after_id: str | None = None,
+        limit: int = 500,
+    ) -> tuple[list[ScenarioRunStateRecord], bool]:
+        """
+        Return one bounded ID/state page without hydrating ScenarioResults or AttackResults.
+
+        Returns:
+            tuple[list[ScenarioRunStateRecord], bool]: State records and whether another page exists.
+
+        Raises:
+            ValueError: If the limit or cursor ID is invalid.
+        """
+        if limit < 1 or limit > 500:
+            raise ValueError("Scenario run state projection limit must be between 1 and 500.")
+        conditions = [ScenarioResultEntry.scenario_run_state.in_([state.value for state in states])]
+        if after_id is not None:
+            conditions.append(ScenarioResultEntry.id > uuid.UUID(after_id))
+        statement = (
+            select(ScenarioResultEntry.id, ScenarioResultEntry.scenario_run_state)
+            .where(and_(*conditions))
+            .order_by(ScenarioResultEntry.id.asc())
+            .limit(limit + 1)
+        )
+        with closing(self.get_session()) as session:
+            rows = session.execute(statement).all()
+        return (
+            [
+                ScenarioRunStateRecord(
+                    scenario_result_id=str(row.id),
+                    state=ScenarioRunState(row.scenario_run_state),
+                )
+                for row in rows[:limit]
+            ],
+            len(rows) > limit,
+        )
 
     def get_scenario_run_history_page(
         self,
@@ -4302,104 +5107,23 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the limit, cursor ID, or label keys are invalid.
         """
-        if limit < 1 or limit > 100:
-            raise ValueError("Scenario history limit must be between 1 and 100.")
+        from pyrit.memory._scenario_history import _ScenarioHistoryQueries
 
-        conditions: list[Any] = []
-        effective_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
-        if effective_names:
-            conditions.append(
-                or_(
-                    ScenarioResultEntry.scenario_name.in_(effective_names),
-                    self._get_scenario_registry_name_condition(scenario_names=effective_names),
-                )
-            )
-        effective_statuses = sorted({status.strip().upper() for status in statuses or [] if status.strip()})
-        if effective_statuses:
-            conditions.append(ScenarioResultEntry.scenario_run_state.in_(effective_statuses))
-        effective_labels = {
-            key: value
-            for key, value in (labels or {}).items()
-            if (isinstance(value, str) and value) or (not isinstance(value, str) and len(value) > 0)
-        }
-        invalid_keys = sorted(key for key in effective_labels if not self._LABEL_KEY_PATTERN.fullmatch(key))
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
-            )
-        if effective_labels:
-            conditions.append(self._get_scenario_result_label_condition(labels=effective_labels))
-        if cursor is not None:
-            cursor_id = uuid.UUID(cursor.scenario_result_id)
-            conditions.append(
-                or_(
-                    ScenarioResultEntry.timestamp < cursor.timestamp,
-                    and_(
-                        ScenarioResultEntry.timestamp == cursor.timestamp,
-                        ScenarioResultEntry.id < cursor_id,
-                    ),
-                )
-            )
-
-        statement = select(
-            ScenarioResultEntry.id,
-            ScenarioResultEntry.scenario_name,
-            ScenarioResultEntry.scenario_version,
-            ScenarioResultEntry.pyrit_version,
-            ScenarioResultEntry.scenario_identifier,
-            ScenarioResultEntry.objective_target_identifier,
-            ScenarioResultEntry.scenario_run_state,
-            ScenarioResultEntry.labels,
-            ScenarioResultEntry.timestamp,
-            ScenarioResultEntry.completion_time,
-            ScenarioResultEntry.error_message,
-            ScenarioResultEntry.error_type,
-            *(
-                expression.label(label)
-                for expression, label in zip(
-                    self._get_scenario_history_plan_expressions(),
-                    ("scenario_registry_name", "plan_atomic_groups", "plan_seed_id_map"),
-                    strict=True,
-                )
-            ),
+        queries = _ScenarioHistoryQueries(memory=self)
+        records, has_more = queries.get_page(
+            scenario_names=scenario_names,
+            statuses=statuses,
+            labels=labels,
+            cursor=cursor,
+            limit=limit,
         )
-        if conditions:
-            statement = statement.where(and_(*conditions))
-        statement = statement.order_by(
-            ScenarioResultEntry.timestamp.desc(),
-            ScenarioResultEntry.id.desc(),
-        ).limit(limit + 1)
-        with closing(self.get_session()) as session:
-            rows = session.execute(statement).all()
-        page_rows = rows[:limit]
-
-        records = [
-            ScenarioHistoryRunRecord(
-                scenario_result_id=str(row.id),
-                scenario_name=row.scenario_name,
-                scenario_version=row.scenario_version,
-                pyrit_version=row.pyrit_version,
-                scenario_identifier=row.scenario_identifier or {},
-                objective_target_identifier=row.objective_target_identifier or {},
-                status=row.scenario_run_state,
-                labels=row.labels or {},
-                created_at=row.timestamp,
-                completed_at=row.completion_time,
-                error_message=row.error_message,
-                error_type=row.error_type,
-                scenario_registry_name=row.scenario_registry_name,
-                plan_atomic_groups=row.plan_atomic_groups,
-                plan_seed_id_map=row.plan_seed_id_map,
-            )
-            for row in page_rows
-        ]
         aggregates = self.get_scenario_history_aggregates(
             scenario_result_ids=[record.scenario_result_id for record in records],
             plan_scenario_ids=[
                 record.scenario_result_id for record in records if record.plan_atomic_groups is not None
             ],
         )
-        return records, aggregates, len(rows) > limit
+        return records, aggregates, has_more
 
     def get_scenario_history_aggregates(
         self,
@@ -4494,7 +5218,13 @@ class MemoryInterface(abc.ABC):
                 AttackResultEntry.objective_sha256.label("objective_sha256"),
                 AttackResultEntry.outcome.label("outcome"),
                 AttackResultEntry.timestamp.label("timestamp"),
-                func.coalesce(AttackResultEntry.total_retries, 0).label("total_retries"),
+                case(
+                    (
+                        func.coalesce(AttackResultEntry.total_retries, 0) > 0,
+                        func.coalesce(AttackResultEntry.total_retries, 0),
+                    ),
+                    else_=0,
+                ).label("total_retries"),
             )
             .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
             .subquery("history_attempts")
@@ -4645,6 +5375,18 @@ class MemoryInterface(abc.ABC):
                 else_=1,
             ).label("is_planned"),
         ).where(matched.c.match_rank == 1)
+
+    @staticmethod
+    def _parse_scenario_started_at(*, raw_value: Any) -> datetime | None:
+        """
+        Parse a persisted aware scenario start timestamp.
+
+        Returns:
+            datetime | None: Aware start timestamp, or None for legacy or malformed values.
+        """
+        from pyrit.memory._scenario_history import _parse_scenario_started_at
+
+        return _parse_scenario_started_at(raw_value=raw_value)
 
     def get_unique_scenario_labels(self) -> dict[str, list[str]]:
         """Return all unique label values across scenario results."""

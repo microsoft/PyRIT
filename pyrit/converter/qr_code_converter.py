@@ -59,7 +59,6 @@ class QRCodeConverter(Converter):
         self._finder_dark_color = finder_dark_color or dark_color
         self._finder_light_color = finder_light_color or light_color
         self._border_color = border_color or light_color
-        self._img_serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -95,8 +94,10 @@ class QRCodeConverter(Converter):
             raise ValueError("Input type not supported")
         if prompt.strip() == "":
             raise ValueError("Please provide valid text value")
-        # Generate random unique filename
-        img_serializer_file = str(await self._img_serializer.get_data_filename_async())
+        # A serializer caches its file path after the first call, so build one per conversion
+        # to give every image a unique filename.
+        img_serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
+        img_serializer_file = str(await img_serializer.get_data_filename_async())
 
         # Create QRCode object
         qr = segno.make_qr(prompt)

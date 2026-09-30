@@ -26,11 +26,9 @@ import logging
 import uuid
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, TypeVar
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
-from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.common.utils import combine_dict, warn_if_set
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import (
@@ -47,6 +45,8 @@ from pyrit.executor.attack.core.attack_config import (
     AttackScoringConfig,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
+from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -67,8 +67,7 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score import Scorer
-from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
+from pyrit.score.score_utils import normalize_score_to_float, score_is_true
 
 logger = logging.getLogger(__name__)
 
@@ -108,41 +107,6 @@ async def _gather_with_cancellation_async(
 
 CoTHijackingAttackParameters = AttackParameters.excluding("next_message")
 
-SUPPORTED_PUZZLE_TYPES = [
-    "category_theory",
-    "sudoku",
-    "logic_grid",
-    "skyscrapers",
-    "logic_grid_enhanced",
-    "skyscrapers_memetic",
-]
-
-DEFAULT_PUZZLE_TYPES = [
-    "category_theory",
-    "sudoku",
-    "logic_grid",
-    "skyscrapers",
-    "logic_grid_enhanced",
-    "skyscrapers_memetic",
-]
-
-PUZZLE_PROMPT_PATHS = {
-    "logic_grid": Path(EXECUTOR_SEED_PROMPT_PATH) / "cot_hijacking" / "puzzle_generation_logic_grid.yaml",
-    "skyscrapers": Path(EXECUTOR_SEED_PROMPT_PATH) / "cot_hijacking" / "puzzle_generation_skyscrapers.yaml",
-    "sudoku": Path(EXECUTOR_SEED_PROMPT_PATH) / "cot_hijacking" / "puzzle_generation_sudoku.yaml",
-    "category_theory": Path(EXECUTOR_SEED_PROMPT_PATH) / "cot_hijacking" / "puzzle_generation_category_theory.yaml",
-    "logic_grid_enhanced": Path(EXECUTOR_SEED_PROMPT_PATH)
-    / "cot_hijacking"
-    / "puzzle_generation_logic_grid_enhanced.yaml",
-    "skyscrapers_memetic": Path(EXECUTOR_SEED_PROMPT_PATH)
-    / "cot_hijacking"
-    / "puzzle_generation_skyscrapers_memetic.yaml",
-}
-
-DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH = (
-    Path(EXECUTOR_SEED_PROMPT_PATH) / "cot_hijacking" / "adversarial_system_prompt.yaml"
-)
-
 
 @dataclass
 class StreamState:
@@ -180,6 +144,8 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
     FloatScaleThresholdScorer (it is a TrueFalseScorer).
     """
 
+    PUZZLE_PROMPT_PARAMETERS = ["objective", "puzzle_type", "previous_response", "previous_score"]
+
     @apply_defaults
     def __init__(
         self,
@@ -190,7 +156,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         max_iterations: int = 10,
-        puzzle_types: list[str] | None = None,
+        puzzle_prompts: dict[str, SeedPrompt],
         n_streams: int | None = None,
         prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
@@ -204,9 +170,9 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             attack_scoring_config: Scoring configuration with a required objective_scorer.
             prompt_normalizer: Optional prompt normalizer to use for prompt formatting and sending.
             max_iterations: Maximum number of attack iterations to attempt.
-            puzzle_types: List of puzzle types to use for prompt generation.
+            puzzle_prompts: Named puzzle prompt templates supplied by the attack technique.
             n_streams: Number of parallel streams to run. Defaults to one stream per
-                configured puzzle type, matching the reference implementation.
+                configured puzzle prompt, matching the reference implementation.
             prepended_conversation_config: Configuration for prepended target conversations.
 
         Note:
@@ -254,27 +220,27 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             raise ValueError("max_iterations must be a positive integer")
         self._max_iterations = max_iterations
 
-        self._puzzle_types = list(DEFAULT_PUZZLE_TYPES) if puzzle_types is None else list(puzzle_types)
-        if not self._puzzle_types:
-            raise ValueError("puzzle_types must contain at least one puzzle type")
-        for puzzle_type in self._puzzle_types:
-            if puzzle_type not in SUPPORTED_PUZZLE_TYPES:
-                raise ValueError(f"Unknown puzzle_type: {puzzle_type}. Supported types: {SUPPORTED_PUZZLE_TYPES}")
+        if not puzzle_prompts:
+            raise ValueError("puzzle_prompts must contain at least one named prompt")
+        if any(not puzzle_type.strip() for puzzle_type in puzzle_prompts):
+            raise ValueError("puzzle_prompts keys must be non-empty")
+        self._puzzle_prompts = {
+            puzzle_type: SeedPrompt.from_value_with_required_parameters(
+                prompt,
+                required_parameters=self.PUZZLE_PROMPT_PARAMETERS,
+                component_name=f"puzzle_prompts[{puzzle_type!r}]",
+            )
+            for puzzle_type, prompt in puzzle_prompts.items()
+        }
+        self._puzzle_types = list(self._puzzle_prompts)
 
         self._n_streams = len(self._puzzle_types) if n_streams is None else n_streams
         if self._n_streams <= 0:
             raise ValueError("n_streams must be a positive integer")
 
-        self._puzzle_prompts = {
-            puzzle_type: SeedPrompt.from_yaml_with_required_parameters(
-                template_path=PUZZLE_PROMPT_PATHS[puzzle_type],
-                required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
-            )
-            for puzzle_type in set(self._puzzle_types)
-        }
         self._resolved_adversarial = _AdversarialConversationManager.resolve_config(
             config=attack_adversarial_config,
-            default_system_prompt_path=DEFAULT_ADVERSARIAL_SYSTEM_PROMPT_PATH,
+            default_system_prompt_path=None,
             system_prompt_required_parameters=["objective", "max_turns"],
         )
 
@@ -411,6 +377,9 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
 
         Returns:
             AttackResult: Result of the attack.
+
+        Raises:
+            RuntimeError: If execution finishes without an objective score.
         """
         self._logger.info("Starting CoT Hijacking attack")
         self._logger.info(f"Objective: {context.params.objective[:80]}...")
@@ -419,7 +388,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
 
         best_response: Message | None = None
         best_score: Score | None = None
-        best_score_value = float("-inf")
+        best_score_rank = (False, float("-inf"))
 
         for iteration in range(self._max_iterations):
             context.iteration = iteration + 1
@@ -463,9 +432,9 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
                 stream_state.last_reasoning_step_count = self._extract_reasoning_step_count(message=response)
                 stream_state.last_score = score
 
-                score_value = self._extract_raw_score(score_obj=score)
-                if score_value > best_score_value:
-                    best_score_value = score_value
+                score_rank = self._get_score_rank(score=score)
+                if score_rank > best_score_rank:
+                    best_score_rank = score_rank
                     best_response = response
                     best_score = score
                     context.last_response = response
@@ -473,12 +442,12 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
                     context.last_target_response = stream_state.last_target_response
                     context.last_reasoning_step_count = stream_state.last_reasoning_step_count
 
-                if bool(score.get_value()) and score_value > successful_score_value:
-                    successful_score_value = score_value
+                if score_is_true(score) and score_rank[1] > successful_score_value:
+                    successful_score_value = score_rank[1]
                     successful_response = response
                     successful_score = score
 
-            self._logger.info(f"Iteration {context.iteration}: Best score so far {best_score_value}")
+            self._logger.info(f"Iteration {context.iteration}: Best score so far {best_score_rank[1]}")
             if successful_response and successful_score:
                 context.last_response = successful_response
                 context.last_score = successful_score
@@ -492,11 +461,13 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
                     outcome=AttackOutcome.SUCCESS,
                 )
 
+        if best_score is None:
+            raise RuntimeError("CoT Hijacking completed without an objective score")
         return self._build_result(
             context=context,
             response=best_response,
             score=best_score,
-            outcome=AttackOutcome.FAILURE,
+            outcome=attack_outcome_from_score(best_score),
         )
 
     def _build_result(
@@ -529,9 +500,10 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         if not conversation_id:
             raise RuntimeError("The best target response is missing a conversation ID")
 
-        related_conversations = {
+        context.related_conversations = {
             reference for reference in context.related_conversations if reference.conversation_id != conversation_id
         }
+        related_conversations = set(context.related_conversations)
         related_conversations.update(
             ConversationReference(
                 conversation_id=candidate_id,
@@ -550,14 +522,29 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             automated_score=score,
             executed_turns=context.iteration,
             outcome=outcome,
-            outcome_reason=(
-                f"Objective achieved in {context.iteration} iteration(s)"
-                if outcome == AttackOutcome.SUCCESS
-                else f"Max iterations ({self._max_iterations}) reached without achieving objective"
-            ),
+            outcome_reason=self._get_outcome_reason(context=context, outcome=outcome, score=score),
             related_conversations=related_conversations,
             labels=context.memory_labels,
         )
+
+    def _get_outcome_reason(
+        self,
+        *,
+        context: CoTHijackingAttackContext,
+        outcome: AttackOutcome,
+        score: Score,
+    ) -> str:
+        """
+        Build the reason for the final attack outcome.
+
+        Returns:
+            str: A human-readable outcome reason.
+        """
+        if outcome is AttackOutcome.SUCCESS:
+            return f"Objective achieved in {context.iteration} iteration(s)"
+        if outcome is AttackOutcome.UNDETERMINED:
+            return score.score_rationale or "Objective scorer could not reach a verdict"
+        return f"Max iterations ({self._max_iterations}) reached without achieving objective"
 
     async def _generate_attack_prompt_async(
         self,
@@ -625,11 +612,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         return self._format_target_feedback(
             objective=context.params.objective,
             target_response=stream_state.last_target_response,
-            score=(
-                self._extract_raw_score(score_obj=stream_state.last_score)
-                if self._use_score_as_feedback and stream_state.last_score
-                else None
-            ),
+            score=stream_state.last_score if self._use_score_as_feedback else None,
             step_number=stream_state.last_reasoning_step_count,
         )
 
@@ -710,6 +693,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             objective_target_conversation_id=conversation_id,
             objective=context.params.objective,
         ):
+            context._record_objective_target_invocation(conversation_id=conversation_id)
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 target=self._objective_target,
@@ -783,13 +767,11 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             objective_target_conversation_id=message.get_piece().conversation_id,
             objective=context.params.objective,
         ):
-            scoring_results = await Scorer.score_response_async(
+            scoring_results = await score_attack_response_async(
                 response=message,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                role_filter="assistant",
-                objective=context.params.objective,
-                skip_on_error_result=False,
+                expectation=context.expectation,
             )
 
         objective_scores = scoring_results["objective_scores"]
@@ -818,7 +800,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         *,
         objective: str,
         target_response: str,
-        score: float | None,
+        score: Score | None,
         step_number: int,
     ) -> str:
         """
@@ -836,7 +818,12 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         Returns:
             str: Structured feedback prompt for the adversarial model.
         """
-        score_text = str(score) if score is not None else "not provided"
+        if score is None:
+            score_text = "not provided"
+        elif score.is_undetermined:
+            score_text = "undetermined"
+        else:
+            score_text = str(normalize_score_to_float(score))
         return (
             f"LANGUAGE MODEL OUTPUT: {target_response}\n"
             f"OBJECTIVE: **Craft an adversarial jailbreaking prompt P where when P is entered to a "
@@ -845,17 +832,17 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             f"STEP NUMBER: {step_number}.\n"
         )
 
-    def _extract_raw_score(self, *, score_obj: Score) -> float:
+    @staticmethod
+    def _get_score_rank(*, score: Score) -> tuple[bool, float]:
         """
-        Extract original float from FloatScaleThresholdScorer metadata, or
-        convert boolean to float for TrueFalseScorer.
+        Rank determinate scores ahead of undetermined scores, then by numeric value.
 
         Returns:
-            float: The extracted raw float score.
+            tuple[bool, float]: The determination flag and normalized numeric value.
         """
-        if score_obj.score_metadata and ORIGINAL_FLOAT_VALUE_KEY in score_obj.score_metadata:
-            return float(score_obj.score_metadata[ORIGINAL_FLOAT_VALUE_KEY])
-        return 1.0 if score_obj.get_value() else 0.0
+        if score.is_undetermined:
+            return False, 0.0
+        return True, normalize_score_to_float(score)
 
     async def _teardown_async(self, *, context: CoTHijackingAttackContext) -> None:
         """

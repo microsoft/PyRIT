@@ -21,11 +21,7 @@ from pyrit.executor.attack import (
     CoTHijackingAttackContext,
     PrependedConversationConfig,
 )
-from pyrit.executor.attack.multi_turn.cot_hijacking import (
-    DEFAULT_PUZZLE_TYPES,
-    SUPPORTED_PUZZLE_TYPES,
-    StreamState,
-)
+from pyrit.executor.attack.multi_turn.cot_hijacking import StreamState
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
@@ -36,13 +32,25 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScoreStatus,
+    SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
-from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score import MessageScorer, Scorer, TrueFalseScorer
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
+
+BUILTIN_PUZZLE_TYPES = [
+    "category_theory",
+    "sudoku",
+    "logic_grid",
+    "skyscrapers",
+    "logic_grid_enhanced",
+    "skyscrapers_memetic",
+]
+PUZZLE_PROMPT_PARAMETERS = ["objective", "puzzle_type", "previous_response", "previous_score"]
 
 
 def _component_identifier(name: str) -> ComponentIdentifier:
@@ -56,6 +64,7 @@ def _mock_target(
 ) -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
+    target.reset_conversation_async = AsyncMock()
     target.set_system_prompt = MagicMock()
     target.get_identifier.return_value = _component_identifier(name)
     target.configuration = MagicMock()
@@ -70,6 +79,7 @@ def _mock_scorer(*, name: str = "MockObjectiveScorer") -> MagicMock:
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_async = AsyncMock()
     scorer.get_identifier.return_value = _component_identifier(name)
+    scorer.prepare_expectation.side_effect = lambda *, expectation: expectation
     return scorer
 
 
@@ -118,6 +128,45 @@ def _score(
         score_metadata=metadata,
         message_piece_id=message_piece_id or str(uuid.uuid4()),
         scorer_class_identifier=_component_identifier("MockObjectiveScorer"),
+    )
+
+
+def _undetermined_score(*, rationale: str = "The scorer could not reach a verdict.") -> Score:
+    return Score(
+        score_type="true_false",
+        score_value=None,
+        status=ScoreStatus.UNDETERMINED,
+        score_category=["objective"],
+        score_value_description="No verdict",
+        score_rationale=rationale,
+        message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=_component_identifier("MockObjectiveScorer"),
+    )
+
+
+def _puzzle_prompts(puzzle_types: list[str] | None = None) -> dict[str, SeedPrompt]:
+    return {
+        puzzle_type: SeedPrompt(
+            value=(
+                "Build a {{ puzzle_type }} puzzle for {{ objective }}. "
+                "Previous response: {{ previous_response }}. Previous score: {{ previous_score }}."
+            ),
+            data_type="text",
+            is_jinja_template=True,
+            parameters=PUZZLE_PROMPT_PARAMETERS,
+            name=f"{puzzle_type} test prompt",
+        )
+        for puzzle_type in (puzzle_types if puzzle_types is not None else ["logic_grid"])
+    }
+
+
+def _adversarial_system_prompt() -> SeedPrompt:
+    return SeedPrompt(
+        value="Generate puzzle prompts for {{ objective }} in at most {{ max_turns }} turns.",
+        data_type="text",
+        is_jinja_template=True,
+        parameters=["objective", "max_turns"],
+        name="CoT Hijacking test system prompt",
     )
 
 
@@ -174,9 +223,13 @@ def _create_attack(
     prepended_conversation_config: PrependedConversationConfig | None = None,
 ) -> CoTHijackingAttack:
     scorer = objective_scorer or _mock_scorer()
+    effective_puzzle_types = ["logic_grid"] if puzzle_types is None else puzzle_types
     return CoTHijackingAttack(
         objective_target=objective_target,
-        attack_adversarial_config=AttackAdversarialConfig(target=adversarial_chat),
+        attack_adversarial_config=AttackAdversarialConfig(
+            target=adversarial_chat,
+            system_prompt=_adversarial_system_prompt(),
+        ),
         attack_scoring_config=AttackScoringConfig(
             objective_scorer=scorer,
             auxiliary_scorers=auxiliary_scorers or [],
@@ -184,7 +237,7 @@ def _create_attack(
         ),
         prompt_normalizer=prompt_normalizer,
         max_iterations=max_iterations,
-        puzzle_types=["logic_grid"] if puzzle_types is None else puzzle_types,
+        puzzle_prompts=_puzzle_prompts(effective_puzzle_types),
         n_streams=n_streams,
         prepended_conversation_config=prepended_conversation_config,
     )
@@ -236,20 +289,24 @@ def test_init_exposes_current_configs(
     assert "next_message" not in {field.name for field in attack.params_type.__dataclass_fields__.values()}
 
 
-def test_init_uses_public_defaults(
+def test_init_defaults_stream_count_to_injected_prompts(
     mock_objective_target: MagicMock,
     mock_adversarial_chat: MagicMock,
     mock_objective_scorer: MagicMock,
 ) -> None:
     attack = CoTHijackingAttack(
         objective_target=mock_objective_target,
-        attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+        attack_adversarial_config=AttackAdversarialConfig(
+            target=mock_adversarial_chat,
+            system_prompt=_adversarial_system_prompt(),
+        ),
         attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        puzzle_prompts=_puzzle_prompts(BUILTIN_PUZZLE_TYPES),
     )
 
     assert attack._max_iterations == 10
-    assert attack._puzzle_types == DEFAULT_PUZZLE_TYPES
-    assert attack._n_streams == len(DEFAULT_PUZZLE_TYPES)
+    assert attack._puzzle_types == BUILTIN_PUZZLE_TYPES
+    assert attack._n_streams == len(BUILTIN_PUZZLE_TYPES)
 
 
 async def test_n_streams_none_defaults_to_puzzle_count_async(
@@ -306,8 +363,8 @@ async def test_setup_cycles_puzzles_across_extra_streams_async(
     ("overrides", "error"),
     [
         ({"max_iterations": 0}, "max_iterations must be a positive integer"),
-        ({"puzzle_types": []}, "puzzle_types must contain at least one"),
-        ({"puzzle_types": ["unknown"]}, "Unknown puzzle_type"),
+        ({"puzzle_types": []}, "puzzle_prompts must contain at least one"),
+        ({"puzzle_types": [""]}, "puzzle_prompts keys must be non-empty"),
         ({"n_streams": 0}, "n_streams must be a positive integer"),
     ],
 )
@@ -325,19 +382,50 @@ def test_init_rejects_invalid_values(
         )
 
 
-def test_init_accepts_every_supported_puzzle(
+def test_init_accepts_custom_puzzle_prompts(
     mock_objective_target: MagicMock,
     mock_adversarial_chat: MagicMock,
 ) -> None:
     attack = _create_attack(
         objective_target=mock_objective_target,
         adversarial_chat=mock_adversarial_chat,
-        puzzle_types=SUPPORTED_PUZZLE_TYPES,
+        puzzle_types=BUILTIN_PUZZLE_TYPES,
         n_streams=None,
     )
 
-    assert attack._puzzle_types == SUPPORTED_PUZZLE_TYPES
-    assert attack._n_streams == len(SUPPORTED_PUZZLE_TYPES)
+    assert attack._puzzle_types == BUILTIN_PUZZLE_TYPES
+    assert attack._n_streams == len(BUILTIN_PUZZLE_TYPES)
+
+
+def test_init_rejects_puzzle_prompt_missing_required_parameters(
+    mock_objective_target: MagicMock,
+    mock_adversarial_chat: MagicMock,
+) -> None:
+    with pytest.raises(ValueError, match="missing required parameters"):
+        CoTHijackingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(
+                target=mock_adversarial_chat,
+                system_prompt=_adversarial_system_prompt(),
+            ),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=_mock_scorer()),
+            puzzle_prompts={
+                "custom": SeedPrompt(value="{{ objective }}", parameters=["objective"], is_jinja_template=True)
+            },
+        )
+
+
+def test_init_requires_configured_adversarial_system_prompt(
+    mock_objective_target: MagicMock,
+    mock_adversarial_chat: MagicMock,
+) -> None:
+    with pytest.raises(ValueError, match="An adversarial system prompt is required"):
+        CoTHijackingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=_mock_scorer()),
+            puzzle_prompts=_puzzle_prompts(),
+        )
 
 
 def test_init_requires_objective_scorer(
@@ -347,8 +435,12 @@ def test_init_requires_objective_scorer(
     with pytest.raises(ValueError, match="An objective scorer is required"):
         CoTHijackingAttack(
             objective_target=mock_objective_target,
-            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            attack_adversarial_config=AttackAdversarialConfig(
+                target=mock_adversarial_chat,
+                system_prompt=_adversarial_system_prompt(),
+            ),
             attack_scoring_config=AttackScoringConfig(),
+            puzzle_prompts=_puzzle_prompts(),
         )
 
 
@@ -546,7 +638,7 @@ def test_format_target_feedback_uses_current_structure() -> None:
     feedback = CoTHijackingAttack._format_target_feedback(
         objective="Test objective",
         target_response="Model output",
-        score=0.75,
+        score=_score(successful=False, raw_value=0.75),
         step_number=12,
     )
 
@@ -557,6 +649,17 @@ def test_format_target_feedback_uses_current_structure() -> None:
         "SCORE: 0.75.\n"
         "STEP NUMBER: 12.\n"
     )
+
+
+def test_format_target_feedback_preserves_undetermined_score() -> None:
+    feedback = CoTHijackingAttack._format_target_feedback(
+        objective="Test objective",
+        target_response="Model output",
+        score=_undetermined_score(),
+        step_number=2,
+    )
+
+    assert "SCORE: undetermined." in feedback
 
 
 async def test_generate_attack_prompt_accepts_canonical_json_and_returns_message_async(
@@ -805,6 +908,9 @@ async def test_score_response_forwards_auxiliary_scorers_async(
 ) -> None:
     auxiliary_scorer = MagicMock(spec=Scorer)
     auxiliary_scorer.get_identifier.return_value = _component_identifier("AuxiliaryScorer")
+    auxiliary_scorer.select_expectation.side_effect = lambda *, expectation: expectation
+    auxiliary_scorer.prepare_expectation.side_effect = lambda *, expectation: expectation
+    auxiliary_scorer.get_condition_types.return_value = set()
     objective_score = _score(successful=True)
     response = _message(
         value="target response",
@@ -819,7 +925,7 @@ async def test_score_response_forwards_auxiliary_scorers_async(
     )
 
     with patch.object(
-        Scorer,
+        MessageScorer,
         "score_response_async",
         new_callable=AsyncMock,
         return_value={
@@ -838,9 +944,8 @@ async def test_score_response_forwards_auxiliary_scorers_async(
     assert score_kwargs["response"] is response
     assert score_kwargs["objective_scorer"] is mock_objective_scorer
     assert score_kwargs["auxiliary_scorers"] == [auxiliary_scorer]
-    assert score_kwargs["role_filter"] == "assistant"
-    assert score_kwargs["objective"] == basic_context.objective
-    assert score_kwargs["skip_on_error_result"] is False
+    assert score_kwargs["expectation"] == basic_context.expectation
+    assert score_kwargs["auxiliary_expectations"] == [basic_context.expectation]
 
 
 async def test_score_response_raises_without_objective_score_async(
@@ -855,7 +960,7 @@ async def test_score_response_raises_without_objective_score_async(
 
     with (
         patch.object(
-            Scorer,
+            MessageScorer,
             "score_response_async",
             new_callable=AsyncMock,
             return_value={"objective_scores": [], "auxiliary_scores": []},
@@ -884,7 +989,7 @@ async def test_score_response_propagates_scorer_failure_async(
 
     with (
         patch.object(
-            Scorer,
+            MessageScorer,
             "score_response_async",
             new_callable=AsyncMock,
             side_effect=RuntimeError("scorer unavailable"),
@@ -905,7 +1010,7 @@ async def test_score_response_propagates_scorer_failure_async(
     ("successful", "expected"),
     [(True, 1.0), (False, 0.0)],
 )
-def test_extract_raw_score_from_true_false(
+def test_get_score_rank_from_true_false(
     successful: bool,
     expected: float,
     mock_objective_target: MagicMock,
@@ -916,10 +1021,10 @@ def test_extract_raw_score_from_true_false(
         adversarial_chat=mock_adversarial_chat,
     )
 
-    assert attack._extract_raw_score(score_obj=_score(successful=successful)) == expected
+    assert attack._get_score_rank(score=_score(successful=successful)) == (True, expected)
 
 
-def test_extract_raw_score_prefers_original_float_metadata(
+def test_get_score_rank_prefers_original_float_metadata(
     mock_objective_target: MagicMock,
     mock_adversarial_chat: MagicMock,
 ) -> None:
@@ -929,7 +1034,20 @@ def test_extract_raw_score_prefers_original_float_metadata(
     )
     score = _score(successful=False, raw_value="0.73")
 
-    assert attack._extract_raw_score(score_obj=score) == 0.73
+    assert attack._get_score_rank(score=score) == (True, 0.73)
+
+
+def test_get_score_rank_places_undetermined_after_determinate(
+    mock_objective_target: MagicMock,
+    mock_adversarial_chat: MagicMock,
+) -> None:
+    attack = _create_attack(
+        objective_target=mock_objective_target,
+        adversarial_chat=mock_adversarial_chat,
+    )
+
+    assert attack._get_score_rank(score=_undetermined_score()) == (False, 0.0)
+    assert attack._get_score_rank(score=_score(successful=False)) > attack._get_score_rank(score=_undetermined_score())
 
 
 async def test_execute_async_returns_current_result_and_conversation_apis_async(
@@ -996,6 +1114,10 @@ async def test_execute_async_returns_current_result_and_conversation_apis_async(
     attack_identifier = result.get_attack_strategy_identifier()
     assert attack_identifier is not None
     assert attack_identifier.class_name == "CoTHijackingAttack"
+    reset_conversation_ids = {
+        call.kwargs["conversation_id"] for call in mock_objective_target.reset_conversation_async.await_args_list
+    }
+    assert reset_conversation_ids == set(target_conversation_ids)
 
 
 async def test_perform_keeps_global_best_across_iterations_async(
@@ -1054,6 +1176,102 @@ async def test_perform_keeps_global_best_across_iterations_async(
         "target-1",
         "target-3",
     }
+
+
+async def test_perform_returns_undetermined_when_all_scores_are_undetermined_async(
+    mock_objective_target: MagicMock,
+    mock_adversarial_chat: MagicMock,
+) -> None:
+    attack = _create_attack(
+        objective_target=mock_objective_target,
+        adversarial_chat=mock_adversarial_chat,
+        max_iterations=1,
+        puzzle_types=["logic_grid", "sudoku"],
+        n_streams=2,
+    )
+    context = _context(stream_count=2)
+    scores = [_undetermined_score(rationale="first unknown"), _undetermined_score(rationale="second unknown")]
+
+    with (
+        patch.object(
+            attack,
+            "_generate_attack_prompt_async",
+            new_callable=AsyncMock,
+            side_effect=[
+                _message(value="first attack", role="user"),
+                _message(value="second attack", role="user"),
+            ],
+        ),
+        patch.object(
+            attack,
+            "_send_prompt_to_target_async",
+            new_callable=AsyncMock,
+            side_effect=[
+                _message(value="first response", role="assistant", conversation_id="target-1"),
+                _message(value="second response", role="assistant", conversation_id="target-2"),
+            ],
+        ),
+        patch.object(
+            attack,
+            "_score_response_async",
+            new_callable=AsyncMock,
+            side_effect=scores,
+        ),
+    ):
+        result = await attack._perform_async(context=context)
+
+    assert result.outcome == AttackOutcome.UNDETERMINED
+    assert result.last_score is scores[0]
+    assert result.outcome_reason == "first unknown"
+
+
+async def test_perform_prefers_determinate_failure_over_undetermined_score_async(
+    mock_objective_target: MagicMock,
+    mock_adversarial_chat: MagicMock,
+) -> None:
+    attack = _create_attack(
+        objective_target=mock_objective_target,
+        adversarial_chat=mock_adversarial_chat,
+        max_iterations=1,
+        puzzle_types=["logic_grid", "sudoku"],
+        n_streams=2,
+    )
+    context = _context(stream_count=2)
+    undetermined_score = _undetermined_score()
+    failure_score = _score(successful=False)
+
+    with (
+        patch.object(
+            attack,
+            "_generate_attack_prompt_async",
+            new_callable=AsyncMock,
+            side_effect=[
+                _message(value="first attack", role="user"),
+                _message(value="second attack", role="user"),
+            ],
+        ),
+        patch.object(
+            attack,
+            "_send_prompt_to_target_async",
+            new_callable=AsyncMock,
+            side_effect=[
+                _message(value="undetermined response", role="assistant", conversation_id="target-1"),
+                _message(value="determinate response", role="assistant", conversation_id="target-2"),
+            ],
+        ),
+        patch.object(
+            attack,
+            "_score_response_async",
+            new_callable=AsyncMock,
+            side_effect=[undetermined_score, failure_score],
+        ),
+    ):
+        result = await attack._perform_async(context=context)
+
+    assert result.outcome == AttackOutcome.FAILURE
+    assert result.last_score is failure_score
+    assert result.last_response is not None
+    assert result.last_response.converted_value == "determinate response"
 
 
 async def test_parallel_failure_cancels_sibling_work_async(
@@ -1135,3 +1353,75 @@ async def test_execute_async_propagates_target_failure_and_runs_teardown_async(
     assert error_result.outcome == AttackOutcome.ERROR
     assert error_result.conversation_id == attempted_id
     assert error_result.includes_conversation(attempted_id)
+    mock_objective_target.reset_conversation_async.assert_awaited_once_with(conversation_id=attempted_id)
+
+
+async def test_execute_async_resets_target_conversation_after_scorer_failure_async(
+    mock_objective_target: MagicMock,
+    mock_adversarial_chat: MagicMock,
+    mock_prompt_normalizer: MagicMock,
+) -> None:
+    attack = _create_attack(
+        objective_target=mock_objective_target,
+        adversarial_chat=mock_adversarial_chat,
+        prompt_normalizer=mock_prompt_normalizer,
+        max_iterations=1,
+    )
+    context = _context()
+
+    async def respond_async(**kwargs: Any) -> Message:
+        return _message(
+            value="target response",
+            role="assistant",
+            conversation_id=kwargs["conversation_id"],
+        )
+
+    mock_prompt_normalizer.send_prompt_async.side_effect = respond_async
+    with (
+        patch.object(
+            attack,
+            "_generate_attack_prompt_async",
+            new_callable=AsyncMock,
+            return_value=_message(value="attack", role="user"),
+        ),
+        patch.object(
+            attack,
+            "_score_response_async",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("scorer unavailable"),
+        ),
+        pytest.raises(RuntimeError, match="scorer unavailable"),
+    ):
+        await attack.execute_with_context_async(context=context)
+
+    attempted_id = next(iter(context.objective_target_conversation_ids))
+    mock_objective_target.reset_conversation_async.assert_awaited_once_with(conversation_id=attempted_id)
+
+
+async def test_execute_async_resets_target_conversation_after_cancellation_async(
+    mock_objective_target: MagicMock,
+    mock_adversarial_chat: MagicMock,
+    mock_prompt_normalizer: MagicMock,
+) -> None:
+    attack = _create_attack(
+        objective_target=mock_objective_target,
+        adversarial_chat=mock_adversarial_chat,
+        prompt_normalizer=mock_prompt_normalizer,
+        max_iterations=1,
+    )
+    context = _context()
+    mock_prompt_normalizer.send_prompt_async.side_effect = asyncio.CancelledError()
+
+    with (
+        patch.object(
+            attack,
+            "_generate_attack_prompt_async",
+            new_callable=AsyncMock,
+            return_value=_message(value="attack", role="user"),
+        ),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await attack.execute_with_context_async(context=context)
+
+    attempted_id = next(iter(context.objective_target_conversation_ids))
+    mock_objective_target.reset_conversation_async.assert_awaited_once_with(conversation_id=attempted_id)

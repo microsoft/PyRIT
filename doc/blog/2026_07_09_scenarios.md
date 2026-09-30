@@ -40,7 +40,7 @@ await scenario.initialize_async(objective_target=target)
 result = await scenario.run_async()
 ```
 
-Watch the [scanner walkthrough](./2026_07_09_scanner_walkthrough.mp4) to see how to select and run a scenario from the command line.
+Watch the [scanner walkthrough](../assets/videos/scanner-walkthrough.mp4) to see how to select and run a scenario from the command line.
 
 `RapidResponse` is a natural jumping-off point. You run it to map *where* your target struggles — and then you pivot to a focused scenario to dig into *why*.
 

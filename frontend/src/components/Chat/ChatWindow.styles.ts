@@ -1,5 +1,7 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { mobileTouchTarget } from '../../styles/touchTargets'
+import { mobileTouchTarget, NARROW_VIEWPORT_QUERY } from '../../styles/touchTargets'
+
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
 export const useChatWindowStyles = makeStyles({
   root: {
@@ -24,7 +26,7 @@ export const useChatWindowStyles = makeStyles({
     flexDirection: 'column',
     flex: 1,
     minWidth: 0,
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
     overflow: 'hidden',
   },
   breadcrumbBar: {
@@ -81,6 +83,22 @@ export const useChatWindowStyles = makeStyles({
     minWidth: 0,
     overflow: 'hidden',
   },
+  sharedToolbar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalM,
+    maxWidth: '100%',
+  },
+  sharedTarget: {
+    maxWidth: '240px',
+    [NARROW_VIEWPORT_QUERY]: {
+      flexBasis: '100%',
+      maxWidth: '100%',
+      justifyContent: 'flex-end',
+    },
+  },
   noTarget: {
     color: tokens.colorNeutralForeground3,
     fontStyle: 'italic',
@@ -92,11 +110,20 @@ export const useChatWindowStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     flexShrink: 0,
   },
+  sharedActions: {
+    flexShrink: 1,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    minWidth: 0,
+  },
   ribbonAction: {
     ...mobileTouchTarget,
   },
   newAttackButton: {
     flexShrink: 0,
+    [NARROW_VIEWPORT_QUERY]: {
+      minWidth: '32px',
+    },
     ...mobileTouchTarget,
   },
   newAttackLabel: {

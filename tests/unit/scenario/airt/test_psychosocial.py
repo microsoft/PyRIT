@@ -255,7 +255,7 @@ class TestConverterMapping:
 class TestPsychosocialConstruction:
     def test_no_arg_construct_works(self):
         """Registry metadata introspection instantiates with no args."""
-        assert Psychosocial() is not None
+        assert Psychosocial().uses_default_adversarial_target is True
 
     def test_version_is_3(self):
         assert Psychosocial.VERSION == 3
@@ -273,7 +273,9 @@ class TestPsychosocialConstruction:
 
     def test_custom_adversarial_chat_stored(self):
         adv = MagicMock(spec=PromptTarget)
-        assert _scenario_with_mock_scorers(adversarial_chat=adv)._adversarial_chat is adv
+        scenario = _scenario_with_mock_scorers(adversarial_chat=adv)
+        assert scenario._adversarial_chat is adv
+        assert scenario.uses_default_adversarial_target is False
 
     def test_passed_in_scorers_stored(self):
         crisis, therapist = _mock_scorer(), _mock_scorer()

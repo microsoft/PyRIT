@@ -64,6 +64,7 @@ const SCENARIO: RegisteredScenario = {
   default_datasets: ['harmbench'],
   baseline_policy: 'enabled',
   include_baseline_by_default: true,
+  uses_default_adversarial_target: true,
   supported_parameters: [],
   default_run_size: {
     estimated_attack_count: 2,
@@ -145,7 +146,9 @@ function renderFlow(): void {
             path="/scanner/:scenarioName"
             element={(
               <ScenarioDetail
-                activeTarget={null}
+                targets={[TARGET]}
+                defaultObjectiveTarget={TARGET}
+                defaultAdversarialTarget={null}
                 labels={{ operator: 'integration-test' }}
                 onNavigate={jest.fn()}
               />
@@ -166,10 +169,6 @@ describe('Scenario catalog-to-run integration', () => {
       pagination: { limit: 200, has_more: false },
     })
     mockGetScenario.mockResolvedValue(SCENARIO)
-    mockListTargets.mockResolvedValue({
-      items: [TARGET],
-      pagination: { limit: 200, has_more: false },
-    })
     mockEstimateRun.mockResolvedValue(ESTIMATE)
     mockStartRun.mockResolvedValue({ scenario_result_id: RUN_ID })
     mockUseScenarioRunProgress.mockReturnValue({
@@ -200,7 +199,7 @@ describe('Scenario catalog-to-run integration', () => {
     expect(within(estimate).getByText('Total atomic attacks').parentElement).toHaveTextContent('2')
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
-    const preview = await screen.findByRole('dialog', { hidden: true })
+    const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     await user.click(within(preview).getByTestId('confirm-launch-scenario-btn'))
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith({
@@ -216,6 +215,7 @@ describe('Scenario catalog-to-run integration', () => {
     expect(screen.getByLabelText('Current route')).toHaveTextContent(
       `/scanner-history/${RUN_ID}`,
     )
-    expect(screen.getByRole('heading', { level: 1, name: SCENARIO_NAME })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: SCENARIO_NAME })).toBeInTheDocument()
+    expect(mockListTargets).not.toHaveBeenCalled()
   })
 })

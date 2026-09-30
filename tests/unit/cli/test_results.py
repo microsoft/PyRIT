@@ -15,7 +15,9 @@ from pyrit.cli._cli_args import (
 )
 from pyrit.cli._results import (
     apply_view_limit_policy,
+    resolve_output_sink,
     resolve_view,
+    warn_if_view_ignored_by_html,
 )
 
 # ---------------------------------------------------------------------------
@@ -49,18 +51,21 @@ def test_resolve_view_passes_through_explicit_value():
 def test_limit_policy_drops_and_warns_for_overview(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.OVERVIEW, limit=5)
     assert effective is None
-    assert "no effect" in capsys.readouterr().out
+    # Advisory notices go to stderr so stdout stays a clean document.
+    assert "no effect" in capsys.readouterr().err
 
 
 def test_limit_policy_keeps_limit_for_attacks(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.ATTACKS, limit=5)
     assert effective == 5
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
 
 
 def test_limit_policy_noop_when_no_limit(capsys):
     assert apply_view_limit_policy(view=ScenarioResultView.OVERVIEW, limit=None) is None
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
 
 
 # ---------------------------------------------------------------------------
@@ -137,16 +142,86 @@ def test_resolve_view_passes_through_conversations():
 def test_limit_policy_defaults_heavy_view_when_unscoped(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.CONVERSATIONS, limit=None)
     assert effective == 5
-    assert "at most 5" in capsys.readouterr().out
+    assert "at most 5" in capsys.readouterr().err
 
 
 def test_limit_policy_heavy_view_respects_explicit_limit(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.FULL, limit=3)
     assert effective == 3
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
 
 
 def test_limit_policy_heavy_view_respects_attack_ids(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.CONVERSATIONS, limit=None, attack_result_ids=["a"])
     assert effective is None
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+
+
+# ---------------------------------------------------------------------------
+# warn_if_view_ignored_by_html
+# ---------------------------------------------------------------------------
+
+
+def test_html_warns_on_explicit_non_full_view(capsys):
+    warn_if_view_ignored_by_html(view=ScenarioResultView.OVERVIEW)
+    assert "--view overview is ignored with --format html" in capsys.readouterr().err
+
+
+def test_html_silent_when_view_omitted(capsys):
+    warn_if_view_ignored_by_html(view=None)
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+
+
+def test_html_silent_for_explicit_full_view(capsys):
+    warn_if_view_ignored_by_html(view=ScenarioResultView.FULL)
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+
+
+# ---------------------------------------------------------------------------
+# resolve_output_sink / --output flag
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_output_sink_none_for_stdout():
+    assert resolve_output_sink(output_path=None, output_format="json") is None
+    assert resolve_output_sink(output_path=None, output_format="pretty") is None
+
+
+def test_resolve_output_sink_json_returns_file_sink(tmp_path):
+    from pyrit.output.sink import FileSink
+
+    sink = resolve_output_sink(output_path=str(tmp_path / "out.json"), output_format="json")
+    assert isinstance(sink, FileSink)
+
+
+def test_resolve_output_sink_rejects_pretty(tmp_path):
+    with pytest.raises(ValueError, match="requires --format json"):
+        resolve_output_sink(output_path=str(tmp_path / "out.txt"), output_format="pretty")
+
+
+def test_resolve_output_sink_rejects_missing_directory(tmp_path):
+    with pytest.raises(ValueError, match="directory does not exist"):
+        resolve_output_sink(output_path=str(tmp_path / "nope" / "out.json"), output_format="json")
+
+
+def test_resolve_output_sink_html_requires_output():
+    with pytest.raises(ValueError, match="requires --output"):
+        resolve_output_sink(output_path=None, output_format="html")
+
+
+def test_resolve_output_sink_html_returns_file_sink(tmp_path):
+    from pyrit.output.sink import FileSink
+
+    sink = resolve_output_sink(output_path=str(tmp_path / "report.html"), output_format="html")
+    assert isinstance(sink, FileSink)
+
+
+def test_output_flag_parses_via_short_and_long(tmp_path):
+    parser = build_scenario_results_parser()
+    assert parser.parse_args(["rid", "-o", "a.json"]).output == "a.json"
+    assert parser.parse_args(["rid", "--output", "b.json"]).output == "b.json"
+    assert parser.parse_args(["rid"]).output is None

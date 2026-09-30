@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pyrit.exceptions import (
-    BadRequestException,
+    AdversarialChatRefusedException,
+    AdversarialChatResponseBlockedException,
     ComponentRole,
     EmptyResponseException,
     InvalidJsonException,
@@ -208,7 +209,8 @@ def _raise_for_adversarial_error(response: Message) -> None:
         response: The adversarial-chat response to inspect.
 
     Raises:
-        BadRequestException: If the response was blocked.
+        AdversarialChatRefusedException: If the adversarial model declined to answer.
+        AdversarialChatResponseBlockedException: If the response was blocked.
         EmptyResponseException: If the response was empty.
         PyritException: If the response carries another error category.
     """
@@ -223,7 +225,19 @@ def _raise_for_adversarial_error(response: Message) -> None:
     response_value = error_piece.converted_value
     if response_error == "blocked":
         status_code, message = _get_error_payload(response_value)
-        raise BadRequestException(status_code=status_code if status_code is not None else 400, message=message)
+        # An SDK-reported refusal and a provider content filter both surface as "blocked",
+        # but only the former is the adversarial model's own decision. Keep them distinct so
+        # callers can attribute the failure correctly.
+        structured_refusal = error_piece.structured_refusal
+        if structured_refusal is not None:
+            raise AdversarialChatRefusedException(
+                status_code=status_code if status_code is not None else 400,
+                message=structured_refusal,
+            )
+        raise AdversarialChatResponseBlockedException(
+            status_code=status_code if status_code is not None else 400,
+            message=message,
+        )
     if response_error == "empty":
         raise EmptyResponseException(message="The adversarial chat returned an empty response.")
 
@@ -431,7 +445,7 @@ class _AdversarialConversationManager:
         cls,
         *,
         config: AttackAdversarialConfig,
-        default_system_prompt_path: str | Path,
+        default_system_prompt_path: str | Path | None,
         system_prompt_required_parameters: list[str],
         system_prompt_error_message: str | None = None,
         resolve_user_messages: bool = False,
@@ -447,7 +461,8 @@ class _AdversarialConversationManager:
 
         Args:
             config: The adversarial configuration supplied to the attack.
-            default_system_prompt_path: Fallback system-prompt YAML path when the config declares none.
+            default_system_prompt_path: Fallback system-prompt YAML path when the config declares
+                none, or None when the caller requires an explicitly configured prompt.
             system_prompt_required_parameters: Parameters the resolved system prompt must support.
             system_prompt_error_message: Optional custom error for system-prompt validation failures.
             resolve_user_messages: When True (template mode, e.g. Red Teaming), coerce
@@ -460,9 +475,10 @@ class _AdversarialConversationManager:
             message templates.
 
         Raises:
-            ValueError: If the system prompt is missing required parameters, a response schema is
-                declared on both the system prompt and the first message, or a configured prompt value
-                is neither a string nor a SeedPrompt.
+            ValueError: If no system prompt or fallback path is configured, the system prompt is
+                missing required parameters, a response schema is declared on both the system prompt
+                and the first message, or a configured prompt value is neither a string nor a
+                SeedPrompt.
         """
         system_prompt = resolve_adversarial_system_prompt(
             config=config,

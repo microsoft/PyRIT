@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import csv
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
-from azure.ai.contentsafety.models import TextCategory
 
+from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, Score, ScoreStatus
 from pyrit.score import (
@@ -16,6 +18,7 @@ from pyrit.score import (
     HarmScorerEvaluator,
     HarmScorerMetrics,
     HumanLabeledDataset,
+    LikertScalePaths,
     MetricsType,
     ObjectiveHumanLabeledEntry,
     ObjectiveScorerEvaluator,
@@ -96,6 +99,47 @@ async def test_evaluate_dataset_async_harm(mock_harm_scorer):
     assert isinstance(metrics, HarmScorerMetrics)
     assert metrics.mean_absolute_error == 0.0
     assert metrics.mae_standard_error == 0.0
+
+
+def test_validate_and_extract_harm_data_scores_only_assistant_message(mock_harm_scorer):
+    conversation_id = "conversation"
+    user_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="Test objective",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+                sequence=0,
+            )
+        ]
+    )
+    assistant_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="Test response",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+                sequence=1,
+            )
+        ]
+    )
+    dataset = HumanLabeledDataset(
+        name="test_dataset",
+        metrics_type=MetricsType.HARM,
+        entries=[HarmHumanLabeledEntry([user_message, assistant_message], [0.5], "hate_speech")],
+        version="1.0",
+        harm_definition="hate_speech.yaml",
+        harm_definition_version="1.0",
+    )
+
+    responses, human_scores, objectives = HarmScorerEvaluator(mock_harm_scorer)._validate_and_extract_data(dataset)
+
+    assert responses == [assistant_message]
+    assert human_scores == [[0.5]]
+    assert objectives is None
+    assert mock_harm_scorer._memory.add_message_to_memory.call_count == 2
 
 
 async def test_evaluate_dataset_async_objective(mock_objective_scorer):
@@ -257,6 +301,52 @@ def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
     assert metrics.krippendorff_alpha_model == 1.0
 
 
+def test_compute_harm_metrics_reports_constant_guess_baseline(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # Gold scores 0, 0.25, 0.5, 1.0: median 0.375, so a constant guess is off by
+    # 0.375, 0.125, 0.125 and 0.625, a mean absolute error of 0.3125.
+    all_human_scores = np.array([[0.0, 0.25, 0.5, 1.0]])
+    all_model_scores = np.array([[0.0, 0.25, 0.5, 1.0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.baseline_mean_absolute_error == pytest.approx(0.3125)
+    assert metrics.mean_absolute_error < metrics.baseline_mean_absolute_error
+
+
+def test_compute_harm_metrics_baseline_guesses_the_median_not_the_mean(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # Skewed gold scores: the median 0 gives an error of 0.25, the mean 0.25 would give 0.375.
+    all_human_scores = np.array([[0.0, 0.0, 0.0, 1.0]])
+    all_model_scores = np.array([[0.0, 0.0, 0.0, 1.0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.baseline_mean_absolute_error == pytest.approx(0.25)
+
+
+def test_compute_harm_metrics_baseline_uses_the_median_of_the_human_raters(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # Three raters: per-response gold is the median, 0.25 and 0.75, whose median is 0.5.
+    all_human_scores = np.array([[0.0, 0.75], [0.25, 0.75], [1.0, 1.0]])
+    all_model_scores = np.array([[0.25, 0.75]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.baseline_mean_absolute_error == pytest.approx(0.25)
+
+
+def test_compute_harm_metrics_constant_scorer_matches_the_baseline(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_human_scores = np.array([[0.0, 0.25, 0.5, 1.0, 0.75]])
+    # A scorer that always answers the median gold score is exactly the baseline.
+    all_model_scores = np.full((1, 5), 0.5)
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.mean_absolute_error == pytest.approx(metrics.baseline_mean_absolute_error)
+
+
 def test_compute_harm_metrics_partial_agreement(mock_harm_scorer):
     evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
     # 2 responses, 3 human scores each, model is off by 0.1 for each (constant bias, zero variance)
@@ -284,6 +374,86 @@ def test_compute_harm_metrics_partial_agreement_with_variance(mock_harm_scorer):
     assert np.isfinite(metrics.t_statistic)
     assert np.isfinite(metrics.p_value)
     assert 0.0 <= metrics.p_value <= 1.0
+
+
+def test_compute_harm_metrics_splits_error_by_rater_agreement(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # 4 responses, 3 raters. Responses 0 and 1 are unanimous (all raters on the same
+    # side of 0.5); responses 2 and 3 are contested (a 2-1 split across 0.5).
+    all_human_scores = np.array(
+        [
+            [0.0, 1.0, 0.25, 0.75],
+            [0.0, 0.75, 0.75, 0.25],
+            [0.25, 1.0, 0.25, 0.75],
+        ]
+    )
+    # One trial. Exact on the unanimous rows, off by 0.5 on the contested rows.
+    # Gold (median): [0.0, 1.0, 0.25, 0.75]
+    all_model_scores = np.array([[0.0, 1.0, 0.75, 0.25]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.contested_threshold == 0.5
+    assert metrics.num_unanimous_responses == 2
+    assert metrics.num_contested_responses == 2
+    assert metrics.num_unanimous_responses + metrics.num_contested_responses == metrics.num_responses
+    assert metrics.mean_absolute_error_unanimous == 0.0
+    assert np.isclose(metrics.mean_absolute_error_contested, 0.5)
+    # The aggregate is the row-weighted average of the two strata, so nothing existing moves.
+    assert np.isclose(metrics.mean_absolute_error, 0.25)
+
+
+def test_compute_harm_metrics_agreement_split_is_none_for_a_single_rater(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # With one rater there is no disagreement to measure, so the split is not reported
+    # rather than reported as trivially unanimous.
+    all_human_scores = np.array([[0.0, 1.0, 0.25]])
+    all_model_scores = np.array([[0.0, 0.75, 0.25]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.num_human_raters == 1
+    assert metrics.contested_threshold is None
+    assert metrics.num_unanimous_responses is None
+    assert metrics.num_contested_responses is None
+    assert metrics.mean_absolute_error_unanimous is None
+    assert metrics.mean_absolute_error_contested is None
+
+
+def test_compute_harm_metrics_agreement_split_with_no_contested_rows(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_human_scores = np.array([[0.1, 0.9], [0.2, 0.8], [0.0, 1.0]])
+    all_model_scores = np.array([[0.1, 0.9]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.num_unanimous_responses == 2
+    assert metrics.num_contested_responses == 0
+    assert np.isclose(metrics.mean_absolute_error_unanimous, 0.0)
+    assert metrics.mean_absolute_error_contested is None
+
+
+def test_harm_metrics_load_from_file_written_before_the_agreement_split(tmp_path):
+    # Metrics files already on disk predate these fields and must keep loading.
+    legacy = {
+        "num_responses": 2,
+        "num_human_raters": 3,
+        "num_scorer_trials": 1,
+        "mean_absolute_error": 0.1,
+        "mae_standard_error": 0.01,
+        "t_statistic": 1.0,
+        "p_value": 0.5,
+        "krippendorff_alpha_combined": 0.9,
+        "krippendorff_alpha_humans": 0.88,
+        "krippendorff_alpha_model": None,
+    }
+    path = tmp_path / "legacy_metrics.json"
+    path.write_text(json.dumps({"metrics": legacy}))
+    metrics = HarmScorerMetrics.from_json_file(path)
+    assert metrics.mean_absolute_error == 0.1
+    assert metrics.contested_threshold is None
+    assert metrics.num_contested_responses is None
+    assert metrics.mean_absolute_error_contested is None
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_eval_hash")
@@ -746,6 +916,7 @@ async def test_run_evaluation_async_combines_dataset_versions_with_duplicates(
     assert metrics.dataset_version == "1.0_1.0_1.0"
     # harm_definition_version is unique (all same, so just "1.0")
     assert metrics.harm_definition_version == "1.0"
+    assert metrics.harm_category == "hate_speech"
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
@@ -813,6 +984,7 @@ async def test_run_evaluation_async_combines_mixed_dataset_versions(
     assert metrics.dataset_version == "1.0_2.0"
     # harm_definition_version is unique (both same)
     assert metrics.harm_definition_version == "1.0"
+    assert metrics.harm_category == "violence"
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
@@ -958,20 +1130,104 @@ class TestSelectEvaluationScore:
     def _score(*, category: list[str] | None) -> Score:
         return Score(score_type="float_scale", score_value="0.5", score_category=category)
 
-    @pytest.mark.parametrize("category", list(AzureContentFilterScorer._CATEGORY_EVAL_FILES))
+    @pytest.mark.parametrize(
+        ("emitted_category", "csv_relative_path", "registered_category"),
+        [
+            *(
+                (cat.value, files[0][0], files[2])
+                for cat, files in AzureContentFilterScorer._CATEGORY_EVAL_FILES.items()
+            ),
+            *(
+                (
+                    preset.load().category,
+                    preset.evaluation_files.human_labeled_datasets_files[0],
+                    preset.evaluation_files.harm_category,
+                )
+                for preset in LikertScalePaths
+                if preset.evaluation_files is not None
+            ),
+        ],
+    )
     @pytest.mark.parametrize("multiple_scores", [False, True])
-    def test_azure_categories_match_registered_evaluation(self, category: TextCategory, multiple_scores: bool) -> None:
-        config = AzureContentFilterScorer._get_eval_files_for_category(category)
-        assert config is not None
-        selected = self._score(category=[category.value])
+    def test_shipped_pairings_match_csv_evaluation(
+        self,
+        emitted_category: str,
+        csv_relative_path: str,
+        registered_category: str,
+        multiple_scores: bool,
+    ) -> None:
+        csv_path = SCORER_EVALS_PATH / csv_relative_path
+        with open(csv_path, encoding="utf-8") as f:
+            reader = csv.DictReader(line for line in f if not line.startswith("#"))
+            csv_categories = {row["harm_category"] for row in reader if "harm_category" in row}
+        assert len(csv_categories) == 1, f"Expected exactly one harm_category in {csv_path}, got {csv_categories}"
+        csv_harm_category = csv_categories.pop()
+
+        assert registered_category == csv_harm_category
+
+        selected = self._score(category=[emitted_category])
         scores = [selected]
         if multiple_scores:
-            scores = [
-                self._score(category=[other.value])
-                for other in AzureContentFilterScorer._CATEGORY_EVAL_FILES
-                if other != category
-            ] + scores
-        assert ScorerEvaluator._select_evaluation_score(scores=scores, harm_category=config.harm_category) is selected
+            scores = [self._score(category=["unrelated_harm_category"]), selected]
+        assert ScorerEvaluator._select_evaluation_score(scores=scores, harm_category=csv_harm_category) is selected
+
+    def test_rejects_hate_score_for_representational_dataset(self):
+        score = self._score(category=["Hate"])
+        with pytest.raises(ValueError, match="requires a score for harm category 'REPRESENTATIONAL'"):
+            ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="REPRESENTATIONAL")
+
+    def test_rejects_bias_score_for_hate_speech_dataset(self):
+        score = self._score(category=["bias"])
+        with pytest.raises(ValueError, match="requires a score for harm category 'hate_speech'"):
+            ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="hate_speech")
+
+    def test_accepts_case_insensitive_unrecognized_category(self):
+        score = self._score(category=["Jailbreak"])
+        assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="jailbreak") is score
+
+    @pytest.mark.parametrize(
+        ("emitted", "labeled"),
+        [
+            ("HateSpeech", "hate_speech"),
+            ("hate-speech", "hate_speech"),
+            ("hate speech", "hate_speech"),
+            ("ProtectedMaterial", "protected_material"),
+            ("protected-material", "protected_material"),
+            ("PromptInjection", "prompt_injection"),
+            ("prompt_injection", "PromptInjection"),
+            ("jailbreak-attempt", "jailbreak_attempt"),
+        ],
+    )
+    @pytest.mark.parametrize("multiple_scores", [False, True])
+    def test_accepts_separator_insensitive_category(self, *, emitted: str, labeled: str, multiple_scores: bool) -> None:
+        score = self._score(category=[emitted])
+        scores = [score]
+        if multiple_scores:
+            scores.insert(0, self._score(category=["unrelated_category"]))
+        assert ScorerEvaluator._select_evaluation_score(scores=scores, harm_category=labeled) is score
+
+    def test_rejects_multiple_separator_equivalent_categories(self) -> None:
+        scores = [
+            self._score(category=["PromptInjection"]),
+            self._score(category=["prompt-injection"]),
+        ]
+        with pytest.raises(ValueError, match="found 2 category matches"):
+            ScorerEvaluator._select_evaluation_score(scores=scores, harm_category="prompt_injection")
+
+    @pytest.mark.parametrize(
+        ("emitted", "labeled"),
+        [
+            ("harm", "self_harm"),
+            ("self", "self_harm"),
+            ("speech", "hate_speech"),
+            ("code", "insecure_code"),
+            ("cyber", "cyberattack"),
+        ],
+    )
+    def test_rejects_unrelated_separator_substrings(self, emitted: str, labeled: str):
+        score = self._score(category=[emitted])
+        with pytest.raises(ValueError, match=f"requires a score for harm category '{labeled}'"):
+            ScorerEvaluator._select_evaluation_score(scores=[score], harm_category=labeled)
 
     def test_returns_none_when_the_scorer_returned_nothing(self):
         assert ScorerEvaluator._select_evaluation_score(scores=[], harm_category="hate_speech") is None

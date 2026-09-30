@@ -819,7 +819,7 @@ async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) 
             print(f"Error: File not found: {script_path}")
             return 1
         try:
-            async with aiofiles.open(script_path) as script_file:
+            async with aiofiles.open(script_path, encoding="utf-8") as script_file:
                 script_content = await script_file.read()
             await client.register_initializer_async(
                 name=script_path.stem,
@@ -843,13 +843,29 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
     from pyrit.cli._cli_args import ScenarioResultView
     from pyrit.cli._results import (
         apply_view_limit_policy,
+        resolve_output_sink,
         resolve_view,
+        warn_if_view_ignored_by_html,
     )
     from pyrit.output import output_scenario_attacks_async
 
     scenario_result_id = parsed_args.scenario_result_id
     view = resolve_view(view=parsed_args.view)
-    limit = apply_view_limit_policy(view=view, limit=parsed_args.limit, attack_result_ids=parsed_args.attack_result_ids)
+    fmt = parsed_args.format
+    # html always renders a complete report and ignores the default heavy-view cap,
+    # so skip the limit policy (and its warning) for it.
+    if fmt == "html":
+        warn_if_view_ignored_by_html(view=parsed_args.view)
+        limit = parsed_args.limit
+    else:
+        limit = apply_view_limit_policy(
+            view=view, limit=parsed_args.limit, attack_result_ids=parsed_args.attack_result_ids
+        )
+    try:
+        sink = resolve_output_sink(output_path=parsed_args.output, output_format=fmt)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
 
     try:
         result = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
@@ -857,27 +873,49 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
         _print_cli_exception(exc=exc)
         return 1
 
-    if view is ScenarioResultView.OVERVIEW:
-        await _output.print_scenario_result_async(result=result)
-        return 0
-
-    if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
-        await output_scenario_attacks_async(
-            result,
-            attack_result_ids=parsed_args.attack_result_ids,
-            limit=limit,
-        )
-        if view is ScenarioResultView.ATTACKS:
-            return 0
-
     try:
-        await _output.print_conversations_async(
-            result=result,
-            client=client,
-            scenario_result_id=scenario_result_id,
-            attack_result_ids=parsed_args.attack_result_ids,
-            limit=limit,
-        )
+        if fmt == "html":
+            # html is always the full report regardless of --view; a file report should be
+            # complete, so honor only an explicit --limit (no default heavy-view cap).
+            await _output.print_full_async(
+                result=result,
+                client=client,
+                scenario_result_id=scenario_result_id,
+                format="html",
+                sink=sink,
+                attack_result_ids=parsed_args.attack_result_ids,
+                limit=parsed_args.limit,
+            )
+        elif view is ScenarioResultView.OVERVIEW:
+            await _output.print_scenario_result_async(result=result, format=fmt, sink=sink)
+        elif view is ScenarioResultView.ATTACKS:
+            await output_scenario_attacks_async(
+                result,
+                attack_result_ids=parsed_args.attack_result_ids,
+                limit=limit,
+                format=fmt,
+                sink=sink,
+            )
+        elif view is ScenarioResultView.FULL:
+            await _output.print_full_async(
+                result=result,
+                client=client,
+                scenario_result_id=scenario_result_id,
+                format=fmt,
+                sink=sink,
+                attack_result_ids=parsed_args.attack_result_ids,
+                limit=limit,
+            )
+        else:
+            await _output.print_conversations_async(
+                result=result,
+                client=client,
+                scenario_result_id=scenario_result_id,
+                format=fmt,
+                sink=sink,
+                attack_result_ids=parsed_args.attack_result_ids,
+                limit=limit,
+            )
     except Exception as exc:
         _print_cli_exception(exc=exc)
         return 1

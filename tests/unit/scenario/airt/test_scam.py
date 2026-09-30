@@ -197,6 +197,7 @@ class TestScamInitialization:
 
             assert isinstance(scenario._adversarial_chat, OpenAIChatTarget)
             assert scenario._adversarial_chat._temperature == 1.2
+            assert scenario.uses_default_adversarial_target is True
 
     def test_init_with_adversarial_chat(
         self, *, mock_objective_scorer: TrueFalseCompositeScorer, mock_memory_seed_groups: list[AttackSeedGroup]
@@ -216,6 +217,7 @@ class TestScamInitialization:
             )
             assert scenario._adversarial_chat == adversarial_chat
             assert scenario._adversarial_config.target == adversarial_chat
+            assert scenario.uses_default_adversarial_target is False
 
     async def test_init_raises_exception_when_no_datasets_available_async(
         self, mock_objective_target, mock_objective_scorer

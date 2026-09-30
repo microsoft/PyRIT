@@ -131,7 +131,7 @@ class ConverterInitializer(PyRITInitializer):
             registry_name="add_image_text",
             converter_type="AddImageTextConverter",
             constructor_args={
-                "img_to_add": str(DATASETS_PATH / "seed_datasets" / "local" / "examples" / "blank_canvas.png")
+                "img_to_add": DATASETS_PATH / "seed_datasets" / "local" / "examples" / "blank_canvas.png"
             },
         ),
         ConverterConfig(
@@ -167,7 +167,7 @@ class ConverterInitializer(PyRITInitializer):
                     converter_registry=converter_registry,
                     config=config,
                 )
-                converter_registry.instances.register(converter, name=config.registry_name)
+                converter_registry.instances.register(converter, name=config.registry_name, replace=True)
                 logger.info("Registered converter: %s", config.registry_name)
             except (FileNotFoundError, KeyError, TypeError, ValueError) as ex:
                 logger.warning("Skipping converter '%s': %s", config.registry_name, ex)

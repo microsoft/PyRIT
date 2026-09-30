@@ -13,18 +13,20 @@ from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
 from pyrit.converter import (
     CharNoiseConverter,
     CharSwapConverter,
+    CodeAttackConverter,
     RandomCapitalLettersConverter,
     WordProportionSelectionStrategy,
 )
 from pyrit.executor.attack import (
     AttackConverterConfig,
+    CoTHijackingAttack,
     CrescendoAttack,
     PAIRAttack,
     PromptSendingAttack,
     RedTeamingAttack,
     SkeletonKeyAttack,
 )
-from pyrit.models import SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
@@ -42,6 +44,54 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_class=PAIRAttack,
             description="Runs the PAIR algorithm, using an adversarial model to iteratively rewrite jailbreak prompts.",
             technique_tags=["multi_turn"],
+        ),
+        AttackTechniqueFactory(
+            name="cot_hijacking",
+            attack_class=CoTHijackingAttack,
+            description=(
+                "Embeds an objective in parallel reasoning puzzles and iteratively refines the strongest prompt."
+            ),
+            technique_tags=["multi_turn"],
+            attack_kwargs={
+                "puzzle_prompts": {
+                    "category_theory": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH
+                        / "cot_hijacking"
+                        / "puzzle_generation_category_theory.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                    "sudoku": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH / "cot_hijacking" / "puzzle_generation_sudoku.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                    "logic_grid": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH / "cot_hijacking" / "puzzle_generation_logic_grid.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                    "skyscrapers": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH
+                        / "cot_hijacking"
+                        / "puzzle_generation_skyscrapers.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                    "logic_grid_enhanced": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH
+                        / "cot_hijacking"
+                        / "puzzle_generation_logic_grid_enhanced.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                    "skyscrapers_memetic": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH
+                        / "cot_hijacking"
+                        / "puzzle_generation_skyscrapers_memetic.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                },
+            },
+            adversarial_system_prompt=SeedPrompt.from_yaml_with_required_parameters(
+                template_path=EXECUTOR_SEED_PROMPT_PATH / "cot_hijacking" / "adversarial_system_prompt.yaml",
+                required_parameters=["objective", "max_turns"],
+            ),
         ),
         AttackTechniqueFactory(
             name="skeleton_key",
@@ -81,12 +131,46 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             ),
         ),
         AttackTechniqueFactory(
+            name="goat",
+            attack_class=RedTeamingAttack,
+            description=(
+                "Generative Offensive Agent Tester (GOAT): an attacker that reasons through "
+                "observation, thought, and strategy selection each turn before replying, "
+                "drawing on a fixed strategy taxonomy (refusal suppression, persona "
+                "modification, hypothetical framing, and more). See "
+                "https://arxiv.org/abs/2410.01606."
+            ),
+            technique_tags=["multi_turn"],
+            attack_kwargs={"max_turns": 5},
+            adversarial_system_prompt=SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat.yaml"),
+            adversarial_seed_prompt=SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat_initial_prompt.yaml"),
+            adversarial_prompt_template=SeedPrompt.from_yaml_file(
+                EXECUTOR_RED_TEAM_PATH / "goat_follow_up_prompt.yaml"
+            ),
+        ),
+        AttackTechniqueFactory(
             name="split_payload",
             attack_class=CrescendoAttack,
             description="Splits the objective across an escalating conversation to conceal the complete request.",
             technique_tags=["multi_turn"],
             adversarial_system_prompt=SeedPrompt.from_yaml_file(
                 EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "split_payload.yaml"
+            ),
+        ),
+        AttackTechniqueFactory(
+            name="code_attack_framed",
+            attack_class=PromptSendingAttack,
+            description="Encodes the objective as code and adds optional code-completion system framing.",
+            technique_tags=["single_turn", "light"],
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(
+                        converters=[CodeAttackConverter(template=CodeAttackConverter.Template.PYTHON_STACK_VERBOSE)]
+                    )
+                ),
+            },
+            seed_technique=AttackTechniqueSeedGroup.from_system_prompt(
+                SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "code_attack.yaml").value
             ),
         ),
     ]

@@ -510,15 +510,12 @@ class _OpenAIRealtimeStreamingSession:
         """
         Replace the server's just-committed user audio with converted PCM.
 
-        Inserts ``converted_pcm`` as a new user item then best-effort deletes the
-        original item identified by ``committed_event``. Insert precedes delete so
-        the converted audio is already in place if delete fails or races.
+        Inserts ``converted_pcm`` as a new user item, then deletes the original item
+        identified by ``committed_event``. A deletion failure propagates so response
+        generation cannot continue with both the raw and converted audio in context.
         """
         await self._insert_user_audio_async(converted_pcm)
-        try:
-            await self._delete_conversation_item_async(committed_event.item_id)
-        except Exception as e:
-            logger.warning(f"conversation.item.delete failed for {committed_event.item_id}: {e}")
+        await self._delete_conversation_item_async(committed_event.item_id)
 
     async def _request_response_async(self) -> asyncio.Future[RealtimeTargetResult]:
         """

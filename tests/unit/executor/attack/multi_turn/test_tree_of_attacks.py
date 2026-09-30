@@ -41,6 +41,7 @@ from pyrit.models import (
     MessagePiece,
     Score,
     ScoreStatus,
+    ScoringExpectation,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
@@ -161,6 +162,7 @@ class MockNodeFactory:
                 is_undetermined=False,
                 score_metadata=None,
                 scored_expectation=None,
+                observation_ids=[],
             )
         else:
             node.objective_score = None
@@ -1196,6 +1198,7 @@ class TestBlockedScoringDefaults:
                 objective_target=builder.objective_target,
             ),
             record_objective_conversation=lambda *, conversation_id: None,
+            expectation=ScoringExpectation(objective="test objective"),
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1263,6 +1266,7 @@ class TestBlockedScoringDefaults:
                 objective_target=builder.objective_target,
             ),
             record_objective_conversation=lambda *, conversation_id: None,
+            expectation=ScoringExpectation(objective="test objective"),
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1691,6 +1695,7 @@ class TestTreeOfAttacksNode:
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "modality_router": modality_router,
             "record_objective_conversation": lambda *, conversation_id: None,
+            "expectation": ScoringExpectation(objective="test objective"),
             "memory_labels": {"test": "label"},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
@@ -2773,6 +2778,7 @@ class TestTreeOfAttacksConversationTracking:
         )
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_tap_init_raises_when_objective_scorer_is_none():
     """Test that TAP __init__ raises ValueError when AttackScoringConfig has objective_scorer=None."""
     scoring_config = AttackScoringConfig(objective_scorer=None)
@@ -2782,6 +2788,7 @@ def test_tap_init_raises_when_objective_scorer_is_none():
             attack_adversarial_config=MagicMock(
                 target=MagicMock(spec=PromptTarget),
                 system_prompt=None,
+                system_prompt_prefix=None,
             ),
             attack_scoring_config=scoring_config,
         )
@@ -2883,6 +2890,7 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
                 get_value=MagicMock(return_value=0.0),
                 score_metadata=None,
                 scored_expectation=None,
+                observation_ids=[],
             )
         elif b.score is not None:
             node.objective_score = MagicMock(
@@ -2890,6 +2898,7 @@ def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _
                 get_value=MagicMock(return_value=b.score),
                 score_metadata=None,
                 scored_expectation=None,
+                observation_ids=[],
             )
 
     node = MagicMock()
@@ -3195,6 +3204,7 @@ class TestModalityRouterIntegration:
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "modality_router": modality_router,
             "record_objective_conversation": lambda *, conversation_id: None,
+            "expectation": ScoringExpectation(objective="test objective"),
             "memory_labels": {},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
@@ -3441,8 +3451,42 @@ class TestModalityRouterIntegration:
         assert sent.get_value() == "feedback text"
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestTAPAdversarialIdentity:
     """Tests for adversarial config in the TAP attack identity and inline system prompt."""
+
+    def test_identifier_includes_behavioral_search_configuration(self) -> None:
+        attack = (
+            AttackBuilder()
+            .with_default_mocks()
+            .with_tree_params(
+                tree_width=2,
+                tree_depth=3,
+                branching_factor=2,
+                on_topic_checking_enabled=False,
+                desired_response_prefix="Expected prefix",
+                batch_size=2,
+            )
+            .build()
+        )
+
+        expected_params = {
+            "tree_width": 2,
+            "tree_depth": 3,
+            "branching_factor": 2,
+            "on_topic_checking_enabled": False,
+            "desired_response_prefix": "Expected prefix",
+        }
+        identifier = attack.get_identifier()
+        assert {name: identifier.params[name] for name in expected_params} == expected_params
+
+    def test_identifier_changes_with_search_shape_but_not_batch_size(self) -> None:
+        default = AttackBuilder().with_default_mocks().build()
+        narrower = AttackBuilder().with_default_mocks().with_tree_params(tree_width=2).build()
+        smaller_batch = AttackBuilder().with_default_mocks().with_tree_params(batch_size=2).build()
+
+        assert default.get_identifier() != narrower.get_identifier()
+        assert default.get_identifier() == smaller_batch.get_identifier()
 
     def test_get_attack_adversarial_config_includes_target_and_system_seed_only(self):
         builder = AttackBuilder().with_default_mocks()

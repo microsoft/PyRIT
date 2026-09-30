@@ -219,6 +219,18 @@ async def test_send_prompt_async_allows_configured_internal_destination(mock_req
 
 
 @patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_without_callback_stores_decoded_text(mock_request, patch_central_database):
+    target = HTTPTarget(http_request="POST /api HTTP/1.1\nHost: example.com\n\n{PROMPT}")
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="prompt")])
+    body = "Sure \u2014 here\u2019s the answer:\nStep 1: caf\u00e9"
+    mock_request.return_value = httpx.Response(200, content=body.encode("utf-8"))
+
+    response = await target.send_prompt_async(message=message)
+
+    assert response[0].get_value() == body
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
 async def test_send_prompt_async_follows_redirects_when_enabled(mock_request, patch_central_database):
     target = HTTPTarget(
         http_request="POST /api HTTP/1.1\nHost: example.com\n\n",
@@ -334,8 +346,7 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
         )
     ]
 
-    mock_response = MagicMock()
-    mock_response.content = b"<html><body>Match: 1234</body></html>"
+    mock_response = httpx.Response(200, content=b"<html><body>Match: 1234</body></html>")
     mock_request.return_value = mock_response
 
     response = await mock_http_target.send_prompt_async(message=message)
@@ -470,6 +481,7 @@ async def test_http_target_with_injected_client(patch_central_database):
     await custom_client.aclose()
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_http_target_init_basic():
     http_request = "POST / HTTP/1.1\nHost: example.com\n\n"
     target = HTTPTarget(http_request=http_request)
@@ -481,6 +493,7 @@ def test_http_target_init_basic():
     assert target._client is None
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_http_target_init_with_all_args():
     http_request = "POST / HTTP/1.1\nHost: example.com\n\n"
 
@@ -506,6 +519,7 @@ def test_http_target_init_with_all_args():
     assert target._client is None
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_http_target_init_with_client_and_kwargs_raises():
     http_request = "POST / HTTP/1.1\nHost: example.com\n\n"
     client = MagicMock(spec=httpx.AsyncClient)
@@ -518,6 +532,7 @@ def test_http_target_init_with_client_and_kwargs_raises():
     assert "Cannot provide both a pre-configured client and additional httpx client kwargs." in str(excinfo.value)
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_http_target_init_with_client_only():
     http_request = "POST / HTTP/1.1\nHost: example.com\n\n"
     client = MagicMock(spec=httpx.AsyncClient)

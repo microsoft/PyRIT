@@ -160,3 +160,26 @@ class TestWordLevelConverterSeparator:
         )
         result = await converter.convert_async(prompt="alpha,beta,gamma")
         assert result.output_text == "ALPHA,beta,GAMMA"
+
+
+@pytest.mark.parametrize("prompt", ["", "hello world"])
+@pytest.mark.parametrize("reject", [False, True])
+async def test_convert_async_calls_subclass_validation_async(*, prompt: str, reject: bool) -> None:
+    validated_prompts: list[str] = []
+
+    class ValidatingWordLevelConverter(SimpleWordLevelConverter):
+        def validate_input(self, prompt: str) -> None:
+            validated_prompts.append(prompt)
+            if reject:
+                raise ValueError("Rejected by subclass validation")
+
+    converter = ValidatingWordLevelConverter(
+        word_selection_strategy=WordIndexSelectionStrategy(indices=[10] if reject else [0])
+    )
+    if reject:
+        with pytest.raises(ValueError, match="Rejected by subclass validation"):
+            await converter.convert_async(prompt=prompt)
+    else:
+        result = await converter.convert_async(prompt=prompt)
+        assert result.output_text == ("" if not prompt else "HELLO world")
+    assert validated_prompts == [prompt]

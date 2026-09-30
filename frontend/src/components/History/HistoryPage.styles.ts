@@ -1,12 +1,14 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
+
 export const useHistoryPageStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',
     height: '100%',
     overflow: 'hidden',
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
   },
   header: {
     display: 'flex',

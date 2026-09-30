@@ -112,7 +112,7 @@ async function routeResponsiveTargetData(
   page: Page,
   targets: FlatTarget[]
 ): Promise<void> {
-  await page.route(/\/api\/targets\/catalog(?:\?.*)?$/, async (route) => {
+  await page.route(/\/api\/targets\/types(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -153,11 +153,11 @@ async function expectWithin(
   );
 }
 
-/** Navigate to the targets view. */
+/** Navigate to the target registry. */
 async function goToTargets(page: Page) {
   await page.goto("/");
-  await page.getByTitle("Targets").click();
-  await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
+  await page.getByTitle("Registry").click();
+  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
 }
 
 async function selectTargetType(
@@ -177,7 +177,17 @@ async function selectTargetType(
 // Tests
 // ---------------------------------------------------------------------------
 
-test.describe("Target Configuration Page", () => {
+test.beforeEach(async ({ page }) => {
+  await page.route(/\/api\/auth\/config$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ auth_enabled: false }),
+    });
+  });
+});
+
+test.describe("Target Registry Page", () => {
   test("should show loading state then target list", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       // Small delay to see spinner
@@ -188,8 +198,8 @@ test.describe("Target Configuration Page", () => {
     await goToTargets(page);
 
     // Table should appear with both targets
-    await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText("dall-e-3")).toBeVisible();
+    await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("dall-e-3", { exact: true })).toBeVisible();
     await expect(page.locator("table").getByText("OpenAIChatTarget")).toBeVisible();
     await expect(page.locator("table").getByText("OpenAIImageTarget")).toBeVisible();
   });
@@ -215,21 +225,21 @@ test.describe("Target Configuration Page", () => {
     await expect(page.getByText(/error/i)).toBeVisible({ timeout: 10000 });
   });
 
-  test("should set a target active", async ({ page }) => {
+  test("should set a default objective target", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
 
     await goToTargets(page);
-    await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
 
-    // Both rows should have a "Set Active" button initially
-    const setActiveBtns = page.getByRole("button", { name: /set active/i });
-    await expect(setActiveBtns.first()).toBeVisible();
-    await setActiveBtns.first().click();
+    const defaults = page.getByRole("region", { name: "Target defaults" });
+    const objectiveDefault = defaults.getByRole("combobox", { name: "Default objective target", exact: true });
+    await expect(objectiveDefault).toBeVisible();
+    await objectiveDefault.selectOption("target-chat-1");
 
-    // After clicking, the first target should show "Active" badge
-    await expect(page.locator("table").getByText("Active", { exact: true }).first()).toBeVisible();
+    await expect(page.getByTestId("target-row-target-chat-1").getByText("Objective", { exact: true })).toBeVisible();
+    await expect(objectiveDefault).toHaveValue("target-chat-1");
   });
 
   test("should open create target dialog", async ({ page }) => {
@@ -259,15 +269,15 @@ test.describe("Target Configuration Page", () => {
 
     await goToTargets(page);
     // First load shows one target
-    await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText("dall-e-3")).not.toBeVisible();
+    await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("dall-e-3", { exact: true })).not.toBeVisible();
 
     // Flip the flag and click refresh
     showExtra = true;
     await page.getByRole("button", { name: /refresh/i }).click();
 
     // Second target should now appear
-    await expect(page.getByText("dall-e-3")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("dall-e-3", { exact: true })).toBeVisible({ timeout: 10000 });
   });
 });
 
@@ -276,7 +286,7 @@ test.describe("Create Target Dialog", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.route(/\/api\/targets\/catalog(?:\?.*)?$/, async (route) => {
+    await page.route(/\/api\/targets\/types(?:\?.*)?$/, async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -384,7 +394,7 @@ test.describe("Create Target Dialog", () => {
 
     // Dialog should close and target should appear in the list
     await expect(page.getByText("Create New Target")).not.toBeVisible({ timeout: 5_000 });
-    await expect(page.getByText("gpt-4o-test")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("gpt-4o-test", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
   });
 
@@ -422,7 +432,7 @@ test.describe("Create Target Dialog", () => {
   });
 });
 
-test.describe("Responsive Target Configuration", () => {
+test.describe("Responsive Target Registry", () => {
   for (const viewport of RESPONSIVE_VIEWPORTS) {
     test(`should contain configuration actions at ${viewport.name} width`, async ({
       page,
@@ -433,7 +443,7 @@ test.describe("Responsive Target Configuration", () => {
       });
       await routeResponsiveTargetData(page, LONG_NAME_TARGETS);
       await goToTargets(page);
-      await expect(page.getByText("gpt-4o-responsive").first()).toBeVisible();
+      await expect(page.getByText("gpt-4o-responsive", { exact: true }).first()).toBeVisible();
 
       const config = page.getByTestId("target-config");
       const newTargetButton = page.getByRole("button", { name: /new target/i });
@@ -461,7 +471,7 @@ test.describe("Responsive Target Configuration", () => {
       });
       await routeResponsiveTargetData(page, LONG_NAME_TARGETS);
       await goToTargets(page);
-      await expect(page.getByText("gpt-4o-responsive").first()).toBeVisible();
+      await expect(page.getByText("gpt-4o-responsive", { exact: true }).first()).toBeVisible();
 
       await page.getByRole("button", { name: /new target/i }).click();
       const dialog = page.getByRole("dialog");
@@ -518,22 +528,22 @@ test.describe("Responsive Target Configuration", () => {
 });
 
 test.describe("Target Config ↔ Chat Navigation", () => {
-  test("should display active target info in chat after setting it", async ({ page }) => {
+  test("should preselect the objective default in a new chat", async ({ page }) => {
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
 
     await goToTargets(page);
-    await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
 
-    // Set first target active
-    await page.getByRole("button", { name: /set active/i }).first().click();
+    // Set the first target as the objective default.
+    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
 
     // Navigate back to chat
     await page.getByTitle("Chat").click();
     await expect(page.getByTestId("new-attack-btn")).toBeVisible();
 
-    // Chat should show the active target type. Scope to the badge to
+    // Chat should show the selected target type. Scope to the badge to
     // avoid matching the (hidden) tooltip copy of the same text.
     const badge = page.getByTestId("target-badge");
     await expect(badge).toBeVisible();
@@ -546,15 +556,15 @@ test.describe("Target Config ↔ Chat Navigation", () => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
 
-    // Start in chat — no-target-banner should be visible
+    // Start in chat with the composer disabled until a target is selected.
     await page.goto("/");
     await page.getByTitle("Chat").click();
-    await expect(page.getByTestId("no-target-banner")).toBeVisible();
+    await expect(page.getByRole("textbox")).toBeDisabled();
 
     // Go to targets, set a target
-    await page.getByTitle("Targets").click();
-    await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
-    await page.getByRole("button", { name: /set active/i }).first().click();
+    await page.getByTitle("Registry").click();
+    await expect(page.getByText("gpt-4o", { exact: true })).toBeVisible({ timeout: 10000 });
+    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
 
     // Return to chat — send should be enabled when there's text
     await page.getByTitle("Chat").click();

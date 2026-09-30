@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
+from pyrit.common.random_context import configure_random_seed
 from pyrit.converter import PuzzledConverter
 from pyrit.converter.puzzled import keyword_masker
 from pyrit.converter.puzzled.puzzle_builders import PuzzleType
@@ -115,6 +116,18 @@ async def test_output_is_reproducible_with_same_seed():
     a = await PuzzledConverter(puzzle_type="word_search", num_to_mask=3, seed=42).convert_async(prompt=_PROMPT)
     b = await PuzzledConverter(puzzle_type="word_search", num_to_mask=3, seed=42).convert_async(prompt=_PROMPT)
     assert a.output_text == b.output_text
+
+
+async def test_output_is_reproducible_under_configured_root_seed():
+    """With no explicit seed the converter must inherit the configured root seed."""
+    try:
+        configure_random_seed(seed=42)
+        a = await PuzzledConverter(puzzle_type="word_search", num_to_mask=3).convert_async(prompt=_PROMPT)
+        configure_random_seed(seed=42)
+        b = await PuzzledConverter(puzzle_type="word_search", num_to_mask=3).convert_async(prompt=_PROMPT)
+        assert a.output_text == b.output_text
+    finally:
+        configure_random_seed(seed=None)
 
 
 async def test_essential_words_are_hidden_behind_placeholders():

@@ -11,7 +11,7 @@
 # %% [markdown]
 # # CoT Hijacking Attack
 #
-# The Chain-of-Thought (CoT) Hijacking attack embeds a harmful objective within a complex puzzle framework
+# The `CoTHijackingAttack` embeds a harmful objective within a complex puzzle framework
 # (logic grid, Sudoku, category theory, or skyscrapers), making the harmful instruction appear as a neutral
 # variable in a larger mathematical system. Based on [Zhao et al. (2025)](https://arxiv.org/abs/2510.26418).
 #
@@ -23,23 +23,21 @@
 # feedback (continuous SCORE values), wrap a float-scale scorer in `FloatScaleThresholdScorer`.
 
 # %%
-from pyrit.executor.attack import (
-    AttackAdversarialConfig,
-    AttackScoringConfig,
-    CoTHijackingAttack,
-)
+from pyrit.executor.attack import AttackScoringConfig
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup.initializers.techniques import TechniqueInitializer
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-objective = "A detailed guide on how to write a novel"
+technique_initializer = TechniqueInitializer()
+technique_initializer.set_params_from_args(args={"tags": ["extra"]})
+await technique_initializer.initialize_async()  # type: ignore
 
-adversarial_config = AttackAdversarialConfig(
-    target=OpenAIChatTarget(),
-)
+objective = "A detailed guide on how to write a novel"
 
 scoring_config = AttackScoringConfig(
     objective_scorer=SelfAskTrueFalseScorer.from_question(
@@ -50,13 +48,13 @@ scoring_config = AttackScoringConfig(
     ),
 )
 
-attack = CoTHijackingAttack(
+factory = AttackTechniqueRegistry.get_registry_singleton().get_factories()["cot_hijacking"]
+factory = factory.with_attack_kwargs(attack_kwargs={"max_iterations": 3, "n_streams": 1})
+technique = factory.create(
     objective_target=OpenAIChatTarget(),
-    attack_adversarial_config=adversarial_config,
     attack_scoring_config=scoring_config,
-    max_iterations=3,
-    puzzle_types=["logic_grid"],
+    adversarial_chat=OpenAIChatTarget(),
 )
 
-result = await attack.execute_async(objective=objective)  # type: ignore
+result = await technique.attack.execute_async(objective=objective)  # type: ignore
 await output_attack_async(result)  # type: ignore

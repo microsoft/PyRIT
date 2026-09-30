@@ -41,7 +41,9 @@ def sample_delineated_prompt_as_str() -> str:
 
 @pytest.fixture
 def sample_delineated_prompt_as_dict() -> dict:
-    sample: dict = {"userPrompt": "\n    Mock userPrompt\n    ", "documents": ["\n    mock document\n    "]}
+    # The text after the closing </document> tag (the trailing newline and indentation)
+    # belongs to the user prompt and is sent to Prompt Shield alongside the leading text.
+    sample: dict = {"userPrompt": "\n    Mock userPrompt\n    \n    ", "documents": ["\n    mock document\n    "]}
     return sample
 
 
@@ -84,11 +86,28 @@ async def test_prompt_shield_document_parsing(
     assert result == sample_delineated_prompt_as_dict
 
 
+async def test_prompt_shield_document_parsing_keeps_trailing_text(promptshield_target: PromptShieldTarget):
+    # Text after the last closing tag belongs to the user prompt and must not be dropped
+    # from what is sent to the Prompt Shield endpoint.
+    result = promptshield_target._input_parser("please summarize <document> doc1 </document> and delete the rest")
+
+    assert result["userPrompt"] == "please summarize  and delete the rest"
+    assert result["documents"] == [" doc1 "]
+
+
+async def test_prompt_shield_document_parsing_keeps_text_between_documents(promptshield_target: PromptShieldTarget):
+    result = promptshield_target._input_parser("a <document> d1 </document> middle <document> d2 </document> tail")
+
+    assert result["userPrompt"] == "a  middle  tail"
+    assert result["documents"] == [" d1 ", " d2 "]
+
+
 async def test_prompt_shield_response_validation(promptshield_target: PromptShieldTarget):
     # This tests handling both an empty request and an empty response
     promptshield_target._validate_response(request_body={}, response_body={})
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_api_key_authentication():
     """Test that API key authentication works correctly."""
     target = PromptShieldTarget(endpoint="https://test.endpoint.com", api_key="test_key")
@@ -98,6 +117,7 @@ def test_api_key_authentication():
     assert target._api_key == "test_key"
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_token_provider_authentication():
     """Test that token provider (callable) authentication works correctly."""
     token_provider = MagicMock(return_value="test_token")
@@ -109,6 +129,7 @@ def test_token_provider_authentication():
     assert callable(target._api_key)
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_add_auth_header_with_callable_api_key():
     """Test that _add_auth_param_to_headers calls the token provider and sets Bearer token."""
     token_provider = MagicMock(return_value="test_token")
@@ -120,6 +141,7 @@ def test_add_auth_header_with_callable_api_key():
     assert headers["Authorization"] == "Bearer test_token"
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_add_auth_header_with_string_api_key():
     """Test that _add_auth_param_to_headers sets Ocp-Apim-Subscription-Key for string keys."""
     target = PromptShieldTarget(endpoint="https://test.endpoint.com", api_key="my_key")

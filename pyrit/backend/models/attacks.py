@@ -23,6 +23,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    PromptResponseError,
     Score,
 )
 from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
@@ -299,11 +300,29 @@ class AttackSummary(AttackResult):
 # ============================================================================
 
 
+class TargetResponseStatus(BaseModel):
+    """Error status and turn identifiers for the latest real target response."""
+
+    response_error: PromptResponseError = Field(
+        ...,
+        description="Error category recorded for the latest target response, or 'none' if no piece reports an error",
+    )
+    request_turn_number: int = Field(..., description="Turn number of the user request sent to the target")
+    response_turn_number: int = Field(..., description="Turn number of the target's assistant response")
+
+
 class ConversationMessagesResponse(BaseModel):
     """Response containing all messages for a conversation."""
 
     conversation_id: str = Field(..., description="Conversation identifier")
     messages: list[MessageView] = Field(default_factory=list, description="All messages in order")
+    target_response_status: TargetResponseStatus | None = Field(
+        default=None,
+        description=(
+            "Error status of the latest real assistant response and its associated user request. "
+            "None when the conversation does not end with a target response."
+        ),
+    )
 
 
 # ============================================================================
@@ -340,9 +359,18 @@ class ConverterOptionsResponse(BaseModel):
 class MessagePieceRequest(BaseModel):
     """A piece of content for a message."""
 
-    data_type: str = Field(default="text", description="Data type: 'text', 'image', 'audio', etc.")
+    data_type: PromptDataType = Field(default="text", description="Original value's prompt data type.")
     original_value: str = Field(..., description="Original value (text or base64 for media)")
     converted_value: str | None = Field(None, description="Converted value. If provided, bypasses converters.")
+    converted_value_data_type: PromptDataType | None = Field(
+        None,
+        description="Final converted value's data type. Defaults to data_type; requires converted_value.",
+    )
+    applied_converter_ids: list[str] | None = Field(
+        None,
+        description="Registry IDs of converters already applied, in execution order, including duplicates. "
+        "Requires converted_value. Use an empty list for manual edits.",
+    )
     mime_type: str | None = Field(None, description="MIME type for media content")
     prompt_metadata: dict[str, Any] | None = Field(
         None,
@@ -353,6 +381,23 @@ class MessagePieceRequest(BaseModel):
         description="ID of the source piece when prepending from an existing conversation. "
         "Preserves lineage so the new piece traces back to the original.",
     )
+
+    @model_validator(mode="after")
+    def _validate_converted_value_data_type(self) -> "MessagePieceRequest":
+        """
+        Validate that an explicit converted type accompanies a converted value.
+
+        Returns:
+            The validated request piece.
+
+        Raises:
+            ValueError: If a converted type is supplied without a converted value.
+        """
+        if self.converted_value_data_type is not None and self.converted_value is None:
+            raise ValueError("converted_value_data_type requires converted_value")
+        if self.applied_converter_ids is not None and self.converted_value is None:
+            raise ValueError("applied_converter_ids requires converted_value")
+        return self
 
 
 class PrependedMessageRequest(BaseModel):
@@ -628,8 +673,9 @@ class AddMessageResponse(BaseModel):
     Response after adding a message.
 
     Returns the attack metadata and all messages. If send=True was used, the new
-    assistant response will be in the messages list. Check response_error
-    on the assistant's message pieces if the target returned an error.
+    assistant response will be in the messages list. Check messages.target_response_status
+    for its error category and associated user turn. HTTP success does not imply
+    error-free target processing.
     """
 
     attack: AttackSummary = Field(..., description="Updated attack metadata")

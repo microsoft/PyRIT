@@ -9,7 +9,15 @@ import pytest
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
-from pyrit.setup.initializers.targets import TARGET_CONFIGS, generate_rr_name, get_behavioral_key
+from pyrit.setup.initializers.targets import TARGET_CONFIGS, _auto_group_enabled, generate_rr_name, get_behavioral_key
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(False, False), (True, True), ("false", False), ("YES", True), (["no"], False), (["true"], True)],
+)
+def test_auto_group_enabled_accepts_direct_and_yaml_values(value, expected):
+    assert _auto_group_enabled(value) is expected
 
 
 class TestTargetInitializerBasic:
@@ -696,6 +704,21 @@ class TestTargetInitializerAdversarialRoundRobin:
             member_name, _ = self.SLOTS[index]
             assert registry.instances.get(member_name) is round_robin.inner_targets[index]
 
+    async def test_repeated_initialization_replaces_primary_alias(self) -> None:
+        """Repeated initialization refreshes the canonical and primary targets."""
+        from pyrit.prompt_target import RoundRobinTarget
+
+        self._set_slots(0, 1)
+        initializer = TargetInitializer()
+
+        await initializer.initialize_async()
+        await initializer.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        round_robin = registry.instances.get("adversarial_chat")
+        assert isinstance(round_robin, RoundRobinTarget)
+        assert registry.instances.get("adversarial_chat_primary") is round_robin.inner_targets[0]
+
     async def test_noncontiguous_slots_publish_round_robin_without_inferred_duplicate(self) -> None:
         """Secondary slots compose directly without producing a generic inferred group."""
         from pyrit.prompt_target import RoundRobinTarget
@@ -991,6 +1014,7 @@ class TestTargetInitializerAutoGroup:
         assert len(rr._targets) == 3
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestGetBehavioralKey:
     """Tests for _get_behavioral_key helper function."""
 

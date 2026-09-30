@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, fireEvent, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { makeTarget } from "@/test-utils/targetFixtures";
-import type { TargetCatalogResponse } from "@/types";
+import type { TargetTypeListResponse } from "@/types";
 import CreateTargetDialog from "./CreateTargetDialog";
 import { parseWeight, MAX_WEIGHT } from "./weightValidation";
 import { targetsApi } from "@/services/api";
@@ -10,14 +10,14 @@ import { targetsApi } from "@/services/api";
 jest.mock("@/services/api", () => ({
   targetsApi: {
     createTarget: jest.fn(),
-    listTargetCatalog: jest.fn(),
+    listTargetTypes: jest.fn(),
     listTargets: jest.fn(),
   },
 }));
 
 const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
 
-const TARGET_CATALOG: TargetCatalogResponse = {
+const TARGET_TYPES: TargetTypeListResponse = {
   items: [
     {
       target_type: "AzureMLChatTarget",
@@ -149,8 +149,8 @@ async function selectTargetType(value: string): Promise<void> {
   });
 }
 
-// The catalog fetch mock (see beforeEach) resolves on mount, and its
-// setCatalogEntries/setCatalogStatus updates land on the next microtask
+// The target type fetch mock (see beforeEach) resolves on mount, and its
+// setTargetTypeEntries/setTypeMetadataStatus updates land on the next microtask
 // tick. Tests that follow up with an `await` (selectTargetType,
 // openTargetTypePicker, userEvent, ...) give React a chance to settle that
 // update inside their own act()-wrapped waiting. Tests that only make
@@ -158,7 +158,7 @@ async function selectTargetType(value: string): Promise<void> {
 // after the test body returns and React reports it as outside act(...).
 // Call this right after `render` in those synchronous tests to flush it
 // deterministically.
-async function flushCatalogFetch(): Promise<void> {
+async function flushTargetTypesFetch(): Promise<void> {
   await act(async () => {});
 }
 
@@ -240,7 +240,7 @@ describe("CreateTargetDialog", () => {
   beforeEach(() => {
     dialogAccessibilityObserver = watchDialogAccessibility();
     jest.clearAllMocks();
-    mockedTargetsApi.listTargetCatalog.mockResolvedValue(TARGET_CATALOG);
+    mockedTargetsApi.listTargetTypes.mockResolvedValue(TARGET_TYPES);
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: [],
       pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
@@ -257,14 +257,14 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
-    await flushCatalogFetch();
+    await flushTargetTypesFetch();
 
     expect(screen.getByText("Create New Target")).toBeInTheDocument();
     expect(screen.getByText("Create Target")).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
   });
 
-  it("should show friendly names, catalog descriptions, implementation identifiers, and auth for all target types", async () => {
+  it("should show friendly names, registry descriptions, implementation identifiers, and auth for all target types", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
@@ -275,7 +275,7 @@ describe("CreateTargetDialog", () => {
 
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(8);
-    for (const entry of TARGET_CATALOG.items) {
+    for (const entry of TARGET_TYPES.items) {
       const option = screen.getByRole("option", {
         name: new RegExp(`Implementation: ${entry.target_type}`),
       });
@@ -332,9 +332,9 @@ describe("CreateTargetDialog", () => {
     expect(picker).not.toHaveTextContent("Select a target type");
   });
 
-  it("should expose fallback target choices while catalog details are loading", async () => {
-    mockedTargetsApi.listTargetCatalog.mockReturnValue(
-      new Promise<TargetCatalogResponse>(() => {}),
+  it("should expose fallback target choices while type metadata is loading", async () => {
+    mockedTargetsApi.listTargetTypes.mockReturnValue(
+      new Promise<TargetTypeListResponse>(() => {}),
     );
 
     render(
@@ -348,11 +348,11 @@ describe("CreateTargetDialog", () => {
     expect(screen.getAllByRole("option")).toHaveLength(8);
   });
 
-  it("should preserve a fallback selection when catalog details arrive", async () => {
-    let resolveCatalog: ((catalog: TargetCatalogResponse) => void) | null = null;
-    mockedTargetsApi.listTargetCatalog.mockReturnValue(
-      new Promise<TargetCatalogResponse>((resolve) => {
-        resolveCatalog = resolve;
+  it("should preserve a fallback selection when type metadata arrives", async () => {
+    let resolveTargetTypes: ((targetTypes: TargetTypeListResponse) => void) | null = null;
+    mockedTargetsApi.listTargetTypes.mockReturnValue(
+      new Promise<TargetTypeListResponse>((resolve) => {
+        resolveTargetTypes = resolve;
       }),
     );
 
@@ -365,11 +365,11 @@ describe("CreateTargetDialog", () => {
     await selectTargetType("OpenAIChatTarget");
     expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent("OpenAI chat");
 
-    if (resolveCatalog === null) {
-      throw new Error("Catalog resolver was not initialized");
+    if (resolveTargetTypes === null) {
+      throw new Error("Target type resolver was not initialized");
     }
     await act(async () => {
-      resolveCatalog(TARGET_CATALOG);
+      resolveTargetTypes(TARGET_TYPES);
     });
 
     await waitFor(() => {
@@ -378,8 +378,8 @@ describe("CreateTargetDialog", () => {
     expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent("OpenAI chat");
   });
 
-  it("should keep all target types selectable and explain when catalog details fail to load", async () => {
-    mockedTargetsApi.listTargetCatalog.mockRejectedValueOnce(new Error("catalog unavailable"));
+  it("should keep all target types selectable and explain when type metadata fails to load", async () => {
+    mockedTargetsApi.listTargetTypes.mockRejectedValueOnce(new Error("registry unavailable"));
 
     render(
       <TestWrapper>
@@ -411,7 +411,7 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
-    await flushCatalogFetch();
+    await flushTargetTypesFetch();
 
     const createButton = screen.getByText("Create Target");
     expect(createButton.closest("button")).toBeDisabled();
@@ -660,7 +660,7 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
-    await flushCatalogFetch();
+    await flushTargetTypesFetch();
 
     expect(screen.getByText("target", { selector: "code" })).toBeInTheDocument();
     expect(
@@ -677,7 +677,7 @@ describe("CreateTargetDialog", () => {
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
-    await flushCatalogFetch();
+    await flushTargetTypesFetch();
 
     const link = screen.getByRole("link", { name: ".pyrit_conf_example" });
     expect(link).toBeInTheDocument();

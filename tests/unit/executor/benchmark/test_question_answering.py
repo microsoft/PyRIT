@@ -1,15 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.executor.benchmark.question_answering import (
     QuestionAnsweringBenchmark,
     QuestionAnsweringBenchmarkContext,
 )
 from pyrit.models import (
+    AnswerMatches,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -19,6 +23,7 @@ from pyrit.models import (
     QuestionChoice,
 )
 from pyrit.prompt_target import PromptTarget
+from pyrit.score import QuestionAnswerScorer, SelfAskQuestionAnswerScorer, SubStringScorer, TrueFalseInverterScorer
 
 # Fixtures at the top of the file
 
@@ -110,7 +115,10 @@ class TestQuestionAnsweringBenchmark:
         self, mock_prompt_target: MagicMock, sample_benchmark_context: QuestionAnsweringBenchmarkContext
     ) -> None:
         """Test context validation with valid entry."""
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
 
         # Should not raise any exception
         benchmark._validate_context(context=sample_benchmark_context)
@@ -119,7 +127,10 @@ class TestQuestionAnsweringBenchmark:
         self, mock_prompt_target: MagicMock, empty_question_entry: QuestionAnsweringEntry
     ) -> None:
         """Test context validation with empty question."""
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
         context = QuestionAnsweringBenchmarkContext(question_answering_entry=empty_question_entry)
 
         with pytest.raises(ValueError, match="Question text cannot be empty"):
@@ -129,7 +140,10 @@ class TestQuestionAnsweringBenchmark:
         self, mock_prompt_target: MagicMock, invalid_question_entry: QuestionAnsweringEntry
     ) -> None:
         """Test context validation with invalid correct answer index."""
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
         context = QuestionAnsweringBenchmarkContext(question_answering_entry=invalid_question_entry)
 
         with pytest.raises(ValueError, match="choice index=5"):
@@ -139,7 +153,10 @@ class TestQuestionAnsweringBenchmark:
         self, mock_prompt_target: MagicMock, sample_benchmark_context: QuestionAnsweringBenchmarkContext
     ) -> None:
         """Test that setup_async generates objective and question prompt correctly."""
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
 
         await benchmark._setup_async(context=sample_benchmark_context)
 
@@ -155,19 +172,25 @@ class TestQuestionAnsweringBenchmark:
         assert "Option 0: London" in sample_benchmark_context.generated_question_prompt
         assert "Option 1: Paris" in sample_benchmark_context.generated_question_prompt
 
-        # Check that message was created with metadata
+        # Ground truth belongs to the expectation, never the target's metadata.
         assert sample_benchmark_context.generated_message is not None
         message_piece = sample_benchmark_context.generated_message.get_piece()
         assert message_piece.original_value == sample_benchmark_context.generated_question_prompt
-        assert message_piece.prompt_metadata is not None
-        assert message_piece.prompt_metadata["correct_answer_index"] == "1"
-        assert message_piece.prompt_metadata["correct_answer"] == "Paris"
+        assert not message_piece.prompt_metadata
+        assert sample_benchmark_context.generated_expectation is not None
+        assert sample_benchmark_context.generated_expectation.conditions == (
+            AnswerMatches(correct_answer="Paris", correct_answer_label="1"),
+        )
+        assert sample_benchmark_context.generated_expectation.objective == sample_benchmark_context.generated_objective
 
     async def test_format_question_prompt(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
         """Test question prompt formatting."""
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
 
         formatted_prompt = benchmark._format_question_prompt(sample_question_entry)
 
@@ -182,7 +205,10 @@ class TestQuestionAnsweringBenchmark:
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
         """Test options formatting."""
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
 
         options_text = benchmark._format_options(sample_question_entry)
 
@@ -198,19 +224,20 @@ class TestQuestionAnsweringBenchmark:
     async def test_create_message(
         self, mock_prompt_target: MagicMock, sample_question_entry: QuestionAnsweringEntry
     ) -> None:
-        """Test message creation with metadata."""
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        """Test message creation without answer metadata."""
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
         question_prompt = "Test question prompt"
 
-        message = benchmark._create_message(entry=sample_question_entry, question_prompt=question_prompt)
+        message = benchmark._create_message(question_prompt=question_prompt)
 
         assert isinstance(message, Message)
         message_piece = message.get_piece()
         assert message_piece.original_value == question_prompt
         assert message_piece.api_role == "user"
-        assert message_piece.prompt_metadata is not None
-        assert message_piece.prompt_metadata["correct_answer_index"] == "1"
-        assert message_piece.prompt_metadata["correct_answer"] == "Paris"
+        assert not message_piece.prompt_metadata
 
     async def test_perform_async_calls_prompt_sending_attack(
         self,
@@ -220,11 +247,14 @@ class TestQuestionAnsweringBenchmark:
     ) -> None:
         """Test that perform_async calls the underlying PromptSendingAttack."""
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
-            mock_attack_instance = AsyncMock()
+            scoring_config = AttackScoringConfig(objective_scorer=QuestionAnswerScorer())
+            mock_attack_instance = AsyncMock(spec=PromptSendingAttack)
             mock_attack_instance.execute_async.return_value = sample_attack_result
             mock_attack_class.return_value = mock_attack_instance
 
-            benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+            benchmark = QuestionAnsweringBenchmark(
+                objective_target=mock_prompt_target, attack_scoring_config=scoring_config
+            )
 
             # Setup context first
             await benchmark._setup_async(context=sample_benchmark_context)
@@ -237,6 +267,7 @@ class TestQuestionAnsweringBenchmark:
             call_kwargs = mock_attack_instance.execute_async.call_args.kwargs
 
             assert call_kwargs["objective"] == sample_benchmark_context.generated_objective
+            assert call_kwargs["expectation"] is sample_benchmark_context.generated_expectation
             # Check that next_message was passed (from generated_message)
             assert "next_message" in call_kwargs
             assert call_kwargs["prepended_conversation"] == sample_benchmark_context.prepended_conversation
@@ -249,7 +280,10 @@ class TestQuestionAnsweringBenchmark:
         self, mock_prompt_target: MagicMock, sample_benchmark_context: QuestionAnsweringBenchmarkContext
     ) -> None:
         """Test that teardown_async completes without errors."""
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
 
         # Should complete without raising any exceptions
         await benchmark._teardown_async(context=sample_benchmark_context)
@@ -266,7 +300,9 @@ class TestQuestionAnsweringBenchmarkCustomFormatting:
         custom_objective_format = "Custom objective: {question} -> {answer}"
 
         benchmark = QuestionAnsweringBenchmark(
-            objective_target=mock_prompt_target, objective_format_string=custom_objective_format
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+            objective_format_string=custom_objective_format,
         )
 
         context = QuestionAnsweringBenchmarkContext(question_answering_entry=sample_question_entry)
@@ -283,7 +319,9 @@ class TestQuestionAnsweringBenchmarkCustomFormatting:
         custom_question_format = "Please answer: {question}\nChoices: {options}"
 
         benchmark = QuestionAnsweringBenchmark(
-            objective_target=mock_prompt_target, question_asking_format_string=custom_question_format
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+            question_asking_format_string=custom_question_format,
         )
 
         context = QuestionAnsweringBenchmarkContext(question_answering_entry=sample_question_entry)
@@ -300,7 +338,9 @@ class TestQuestionAnsweringBenchmarkCustomFormatting:
         custom_options_format = "[{index}] - {choice}"
 
         benchmark = QuestionAnsweringBenchmark(
-            objective_target=mock_prompt_target, options_format_string=custom_options_format
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+            options_format_string=custom_options_format,
         )
 
         context = QuestionAnsweringBenchmarkContext(question_answering_entry=sample_question_entry)
@@ -324,11 +364,14 @@ class TestQuestionAnsweringBenchmarkExecuteAsync:
     ) -> None:
         """Test execute_async with only required parameters."""
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
-            mock_attack_instance = AsyncMock()
+            mock_attack_instance = AsyncMock(spec=PromptSendingAttack)
             mock_attack_instance.execute_async.return_value = sample_attack_result
             mock_attack_class.return_value = mock_attack_instance
 
-            benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+            benchmark = QuestionAnsweringBenchmark(
+                objective_target=mock_prompt_target,
+                attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+            )
 
             result = await benchmark.execute_async(question_answering_entry=sample_question_entry)
 
@@ -346,11 +389,14 @@ class TestQuestionAnsweringBenchmarkExecuteAsync:
         memory_labels: dict[str, str] = {"test": "label"}
 
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
-            mock_attack_instance = AsyncMock()
+            mock_attack_instance = AsyncMock(spec=PromptSendingAttack)
             mock_attack_instance.execute_async.return_value = sample_attack_result
             mock_attack_class.return_value = mock_attack_instance
 
-            benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+            benchmark = QuestionAnsweringBenchmark(
+                objective_target=mock_prompt_target,
+                attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+            )
 
             result = await benchmark.execute_async(
                 question_answering_entry=sample_question_entry,
@@ -367,7 +413,10 @@ class TestQuestionAnsweringBenchmarkExecuteAsync:
 
     async def test_execute_async_validates_parameters(self, mock_prompt_target: MagicMock) -> None:
         """Test that execute_async validates required parameters."""
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
 
         # Should raise error when question_answering_entry is missing
         with pytest.raises(ValueError):
@@ -397,7 +446,10 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
             question_answering_entry=sample_question_entry, prepended_conversation=prepended_conversation
         )
 
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
 
         # Validate and setup context
         benchmark._validate_context(context=context)
@@ -416,7 +468,10 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
             question_answering_entry=sample_question_entry, memory_labels=memory_labels
         )
 
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
 
         # Validate and setup context
         benchmark._validate_context(context=context)
@@ -434,6 +489,7 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
         assert context.generated_objective == ""
         assert context.generated_question_prompt == ""
         assert context.generated_message is None
+        assert context.generated_expectation is None
 
     async def test_full_workflow_integration(
         self,
@@ -443,11 +499,14 @@ class TestQuestionAnsweringBenchmarkContextIntegration:
     ) -> None:
         """Test the full workflow integration from setup to teardown."""
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
-            mock_attack_instance = AsyncMock()
+            mock_attack_instance = AsyncMock(spec=PromptSendingAttack)
             mock_attack_instance.execute_async.return_value = sample_attack_result
             mock_attack_class.return_value = mock_attack_instance
 
-            benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+            benchmark = QuestionAnsweringBenchmark(
+                objective_target=mock_prompt_target,
+                attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+            )
             context = QuestionAnsweringBenchmarkContext(question_answering_entry=sample_question_entry)
 
             # Full workflow
@@ -474,7 +533,10 @@ class TestQuestionAnsweringBenchmarkErrorHandling:
         entry = QuestionAnsweringEntry(question="What is 2+2?", answer_type="int", correct_answer=4, choices=[])
 
         context = QuestionAnsweringBenchmarkContext(question_answering_entry=entry)
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
 
         with pytest.raises(ValueError, match="Question must have at least one choice"):
             benchmark._validate_context(context=context)
@@ -489,7 +551,10 @@ class TestQuestionAnsweringBenchmarkErrorHandling:
         )
 
         context = QuestionAnsweringBenchmarkContext(question_answering_entry=entry)
-        benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+        benchmark = QuestionAnsweringBenchmark(
+            objective_target=mock_prompt_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+        )
 
         # Should validate successfully
         benchmark._validate_context(context=context)
@@ -503,11 +568,14 @@ class TestQuestionAnsweringBenchmarkErrorHandling:
     ) -> None:
         """Test handling of attack execution failure."""
         with patch("pyrit.executor.benchmark.question_answering.PromptSendingAttack") as mock_attack_class:
-            mock_attack_instance = AsyncMock()
+            mock_attack_instance = AsyncMock(spec=PromptSendingAttack)
             mock_attack_instance.execute_async.side_effect = Exception("Attack failed")
             mock_attack_class.return_value = mock_attack_instance
 
-            benchmark = QuestionAnsweringBenchmark(objective_target=mock_prompt_target)
+            benchmark = QuestionAnsweringBenchmark(
+                objective_target=mock_prompt_target,
+                attack_scoring_config=AttackScoringConfig(objective_scorer=QuestionAnswerScorer()),
+            )
             context = QuestionAnsweringBenchmarkContext(question_answering_entry=sample_question_entry)
 
             await benchmark._setup_async(context=context)
@@ -515,3 +583,79 @@ class TestQuestionAnsweringBenchmarkErrorHandling:
             # Should propagate the exception
             with pytest.raises(Exception, match="Attack failed"):
                 await benchmark._perform_async(context=context)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scorer_kind", ["deterministic", "llm", "wrapped"])
+async def test_benchmark_typed_expectation_end_to_end_async(
+    sample_question_entry: QuestionAnsweringEntry, scorer_kind: str
+) -> None:
+    target = MockPromptTarget()
+    judge = MockPromptTarget()
+    scorer = (
+        QuestionAnswerScorer() if scorer_kind == "deterministic" else SelfAskQuestionAnswerScorer(chat_target=judge)
+    )
+    if scorer_kind == "wrapped":
+        scorer = TrueFalseInverterScorer(scorer=QuestionAnswerScorer())
+    benchmark = QuestionAnsweringBenchmark(
+        objective_target=target,
+        attack_scoring_config=AttackScoringConfig(objective_scorer=scorer),
+        question_asking_format_string="{question}",
+    )
+    response = Message.from_prompt(prompt="Paris", role="assistant")
+    verdict = Message.from_prompt(
+        prompt='{"score_value":"true","description":"correct","rationale":"Paris matches","metadata":""}',
+        role="assistant",
+    )
+    with (
+        patch.object(target, "send_prompt_async", new_callable=AsyncMock, return_value=[response]) as send,
+        patch.object(judge, "send_prompt_async", new_callable=AsyncMock, return_value=[verdict]),
+    ):
+        result = await benchmark.execute_async(question_answering_entry=sample_question_entry)
+
+    assert result.outcome == (AttackOutcome.FAILURE if scorer_kind == "wrapped" else AttackOutcome.SUCCESS)
+    assert result.automated_score is not None
+    assert result.automated_score.scored_expectation is not None
+    assert result.automated_score.scored_expectation.conditions == (
+        AnswerMatches(correct_answer="Paris", correct_answer_label="1"),
+    )
+    sent = send.call_args.kwargs["message"]
+    assert sent.get_value() == sample_question_entry.question
+    assert not sent.get_piece().prompt_metadata
+    assert "Paris" not in sent.get_value()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("config_kind", ["omitted", "none", "empty", "auxiliary_only", "refusal_only"])
+def test_benchmark_requires_objective_scorer(config_kind: str) -> None:
+    target = MockPromptTarget()
+    kwargs: dict[str, Any] = {}
+    if config_kind != "omitted":
+        configs = {
+            "none": None,
+            "empty": AttackScoringConfig(),
+            "auxiliary_only": AttackScoringConfig(auxiliary_scorers=[QuestionAnswerScorer()]),
+            "refusal_only": AttackScoringConfig(refusal_scorer=SubStringScorer(substring="cannot")),
+        }
+        kwargs["attack_scoring_config"] = configs[config_kind]
+    error = TypeError if config_kind == "omitted" else ValueError
+    message = "attack_scoring_config" if config_kind == "omitted" else "requires an objective scorer"
+    with pytest.raises(error, match=message):
+        QuestionAnsweringBenchmark(objective_target=target, **kwargs)
+    assert target.prompt_sent == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("answer_auxiliary", [False, True])
+def test_benchmark_requires_answer_condition_in_objective_scorer(answer_auxiliary: bool) -> None:
+    target = MockPromptTarget()
+    scorer = SubStringScorer(substring="Paris")
+    with pytest.raises(ValueError, match="objective scorer that consumes AnswerMatches"):
+        QuestionAnsweringBenchmark(
+            objective_target=target,
+            attack_scoring_config=AttackScoringConfig(
+                objective_scorer=scorer,
+                auxiliary_scorers=[QuestionAnswerScorer()] if answer_auxiliary else [],
+            ),
+        )
+    assert target.prompt_sent == []

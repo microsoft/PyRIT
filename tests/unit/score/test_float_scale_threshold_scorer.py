@@ -8,7 +8,7 @@ import pytest
 from unit.mocks import store_message
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, ContentScorable, Message, MessagePiece, Score
 from pyrit.score import FloatScaleThresholdScorer, MessageScorable
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -85,6 +85,30 @@ async def test_float_scale_threshold_scorer_keeps_scale_rationale_when_present()
         binary_score = (await threshold_scorer.score_text_async(text="mock example"))[0]
 
         assert "Rationale for scale score: A mock rationale" in binary_score.score_rationale
+
+
+def test_threshold_preserves_observations_from_all_scores():
+    scorer = create_mock_float_scorer(0.8)
+    threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+    observation_ids = [uuid.uuid4(), uuid.uuid4()]
+    scores = [
+        Score(
+            score_value=value,
+            score_type="float_scale",
+            scorable=ContentScorable(value="evidence"),
+            observation_ids=[observation_id],
+        )
+        for value, observation_id in zip(("0.2", "0.8"), observation_ids, strict=True)
+    ]
+
+    result = threshold_scorer._apply_threshold(
+        scores=scores,
+        expectation=None,
+        scorable=ContentScorable(value="evidence"),
+        message_piece_id=None,
+    )
+    assert result[0].observation_ids == observation_ids
+    assert result[0].observation_ids == observation_ids
 
 
 @pytest.mark.parametrize("threshold", [0.3, 0.5, 0.7])
@@ -381,3 +405,49 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     persisted_scores = memory.get_scores(score_type="true_false")
     assert len(persisted_scores) == 1
     assert memory.get_scores(score_type="float_scale") == []
+
+
+@pytest.mark.parametrize("threshold", [float("nan"), float("inf"), float("-inf"), 0.0, -0.5, 1.5])
+def test_init_rejects_non_finite_or_outside_unit_range_threshold(patch_central_database, threshold):
+    """A threshold that is not a finite value in (0, 1] cannot express a verdict.
+
+    NaN is the dangerous one: it passes an unchained ``<= 0 or > 1`` guard because both
+    comparisons are False, and every ``value >= nan`` comparison is False as well, so each
+    scored response is persisted as a COMPLETE refusal that was never actually judged.
+    """
+    scorer = create_mock_float_scorer(0.9)
+    with pytest.raises(ValueError, match="The threshold must be between 0 and 1"):
+        FloatScaleThresholdScorer(scorer=scorer, threshold=threshold)
+
+
+@pytest.mark.parametrize("threshold", [0.0001, 1.0])
+def test_init_accepts_threshold_within_unit_range(patch_central_database, threshold):
+    scorer = create_mock_float_scorer(0.9)
+    threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=threshold)
+    assert threshold_scorer.threshold == threshold
+
+
+def test_with_scorer_block_policy_reaches_wrapped_scorer(patch_central_database):
+    """The threshold wrapper has no policy of its own, so it must delegate to its leaf."""
+    from pyrit.score import PlagiarismScorer
+
+    inner = PlagiarismScorer(reference_text="unused")
+    inner.raise_if_scorer_blocks = True
+    scorer = FloatScaleThresholdScorer(scorer=inner, threshold=0.5)
+
+    scoped = scorer.with_scorer_block_policy(raise_if_scorer_blocks=False)
+
+    assert scoped is not scorer
+    assert scoped._scorer.raise_if_scorer_blocks is False
+    assert inner.raise_if_scorer_blocks is True
+
+
+def test_with_scorer_block_policy_returns_self_when_already_compliant(patch_central_database):
+    """Returning self keeps shared instances from being copied for no reason."""
+    from pyrit.score import PlagiarismScorer
+
+    inner = PlagiarismScorer(reference_text="unused")
+    inner.raise_if_scorer_blocks = True
+    scorer = FloatScaleThresholdScorer(scorer=inner, threshold=0.5)
+
+    assert scorer.with_scorer_block_policy(raise_if_scorer_blocks=True) is scorer

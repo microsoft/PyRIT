@@ -9,6 +9,7 @@ from pyrit.output.helpers import (
     output_attack_async,
     output_conversation_async,
     output_scenario_async,
+    output_scenario_attacks_async,
     output_score_async,
     output_scorer_async,
 )
@@ -221,3 +222,68 @@ async def test_output_score_async_pretty_default(mock_cls):
 async def test_output_score_async_unsupported_format():
     with pytest.raises(ValueError, match="Unsupported format"):
         await output_score_async([AsyncMock()], format="markdown")
+
+
+# --- json-branch tests (each routes to the Json* memory printer) ---
+
+
+@patch("pyrit.output.helpers.JsonScenarioResultMemoryPrinter")
+async def test_output_scenario_async_json(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+
+    await output_scenario_async(MagicMock(), format="json")
+
+    mock_cls.assert_called_once()
+    assert isinstance(mock_cls.call_args[1]["sink"], StdoutSink)
+    mock_printer.write_async.assert_awaited_once()
+
+
+@patch("pyrit.output.helpers.JsonScenarioResultMemoryPrinter")
+async def test_output_scenario_attacks_async_json(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+
+    await output_scenario_attacks_async(MagicMock(), format="json")
+
+    mock_cls.assert_called_once()
+    assert isinstance(mock_cls.call_args[1]["sink"], StdoutSink)
+    mock_printer.write_async.assert_awaited_once()
+
+
+@patch("pyrit.output.scorer.json.JsonScorerMemoryPrinter")
+async def test_output_scorer_async_json(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+
+    await output_scorer_async(scorer_identifier=MagicMock(), format="json")
+
+    mock_cls.assert_called_once()
+    mock_printer.write_async.assert_awaited_once()
+
+
+@patch("pyrit.output.helpers.JsonConversationMemoryPrinter")
+async def test_output_conversation_async_json(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+
+    await output_conversation_async([MagicMock()], format="json")
+
+    mock_cls.assert_called_once()
+    mock_printer.write_async.assert_awaited_once()
+
+
+@patch("pyrit.output.score.json.JsonScorePrinter")
+async def test_output_score_async_json(mock_cls):
+    mock_printer = MagicMock()
+    mock_printer.write_async = AsyncMock()
+    mock_cls.return_value = mock_printer
+
+    await output_score_async([MagicMock()], format="json")
+
+    mock_cls.assert_called_once()
+    mock_printer.write_async.assert_awaited_once()

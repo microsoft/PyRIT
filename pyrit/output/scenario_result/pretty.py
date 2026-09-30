@@ -5,7 +5,8 @@ import textwrap
 
 from colorama import Fore, Style
 
-from pyrit.models import AttackOutcome, AttackResult, ScenarioResult
+from pyrit.models import AttackOutcome, ScenarioResult
+from pyrit.output._derivation import attack_score_display, group_success_rate, resolve_target_info, select_attacks
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase, ScenarioView
 from pyrit.output.scorer.base import ScorerPrinterBase
@@ -177,14 +178,10 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
 
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}🎯 Target Information", Style.BRIGHT))
-        target_id = result.objective_target_identifier
-        target_type = target_id.class_name if target_id else "Unknown"
-        target_model = (
-            (target_id.params.get("underlying_model_name") or target_id.params.get("model_name") or "Unknown")
-            if target_id
-            else "Unknown"
-        )
-        target_endpoint = target_id.params.get("endpoint", "Unknown") if target_id else "Unknown"
+        target = resolve_target_info(result.objective_target_identifier)
+        target_type = target.type or "Unknown"
+        target_model = target.model or "Unknown"
+        target_endpoint = target.endpoint or "Unknown"
 
         lines.append(self._format_colored(f"{self._indent * 2}• Target Type: {target_type}", Fore.CYAN))
         lines.append(self._format_colored(f"{self._indent * 2}• Target Model: {target_model}", Fore.CYAN))
@@ -218,15 +215,10 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         lines.append(self._render_section_header("Per-Group Breakdown"))
         display_groups = result.get_display_groups()
 
-        group_summaries: list[tuple[str, int, int]] = []
-        for group_name, group_results in display_groups.items():
-            total_group = len(group_results)
-            if total_group == 0:
-                group_rate = 0
-            else:
-                successful = sum(1 for r in group_results if r.outcome == AttackOutcome.SUCCESS)
-                group_rate = int((successful / total_group) * 100)
-            group_summaries.append((group_name, total_group, group_rate))
+        group_summaries: list[tuple[str, int, int]] = [
+            (group_name, len(group_results), group_success_rate(group_results))
+            for group_name, group_results in display_groups.items()
+        ]
 
         if self._sort_groups_by_success_rate:
             # Stable sort so groups with equal rates retain their original relative order.
@@ -269,13 +261,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         Returns:
             str: The rendered attacks table.
         """
-        id_filter = set(attack_result_ids) if attack_result_ids else None
-        selected = [
-            (atomic_attack_name, attack)
-            for atomic_attack_name, attacks in result.attack_results.items()
-            for attack in attacks
-            if id_filter is None or attack.attack_result_id in id_filter
-        ]
+        selected = select_attacks(result, attack_result_ids=attack_result_ids)
         total = len(selected)
         if limit is not None:
             selected = selected[:limit]
@@ -291,7 +277,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
             lines.append(
                 self._format_colored(
                     f"{self._indent}{index}. [{attack.outcome.value.upper()}] "
-                    f"turns={attack.executed_turns}  score={self._attack_score(attack)}",
+                    f"turns={attack.executed_turns}  score={attack_score_display(attack, none_value='—')}",
                     Style.BRIGHT,
                     color,
                 )
@@ -305,22 +291,6 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}{footer}", Fore.GREEN))
         return "".join(lines)
-
-    @staticmethod
-    def _attack_score(attack: AttackResult) -> str:
-        """
-        Return the attack's last score value (or status when undetermined).
-
-        Args:
-            attack: The attack result to read the score from.
-
-        Returns:
-            str: The score value, its status, or a dash when there is no score.
-        """
-        score = attack.last_score
-        if score is None:
-            return "—"
-        return score.score_value if score.score_value is not None else score.status.value
 
 
 class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):

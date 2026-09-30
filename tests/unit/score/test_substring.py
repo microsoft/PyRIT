@@ -11,7 +11,7 @@ from pyrit.analytics import ApproximateTextMatching, ExactTextMatching
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import MatchesObjective, MessagePiece, ScoringExpectation
-from pyrit.score import ContentScorable, MessageScorable, SubStringScorer
+from pyrit.score import ContentScorable, MessageScorable, Scorer, SubStringScorer
 
 
 @pytest.fixture
@@ -50,11 +50,12 @@ async def test_substring_scorer_score(sub_string: str, patch_central_database):
 async def test_substring_scorer_does_not_match_objective(patch_central_database):
     scorer = SubStringScorer(substring="needle")
 
-    assert scorer.matched_conditions() == frozenset()
-    assert scorer.required_conditions() == frozenset()
-    with pytest.raises(ValueError, match="does not match the condition"):
-        await scorer.score_async(
+    assert scorer.condition_type is None
+    assert scorer.get_condition_types() == frozenset()
+    with pytest.raises(ValueError, match="does not support"):
+        await Scorer.score_with_scorers_async(
             scorable=ContentScorable(value="needle"),
+            scorers=[scorer],
             expectation=ScoringExpectation(
                 objective="find the configured substring",
                 conditions=(MatchesObjective(),),

@@ -3,14 +3,18 @@
 
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common.random_context import random_execution
 from pyrit.common.utils import warn_if_set
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
+from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
+from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackContext,
@@ -24,13 +28,20 @@ from pyrit.models import (
     ConversationType,
     Message,
     Score,
+    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import MessageScorer
 from pyrit.score.score_utils import score_is_true
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PromptSendingAttackParameters(AttackParameters):
+    """Parameters for prompt sending, including simulated-conversation preparation state."""
+
+    preparation_failure: AttackPreparationFailure | None = None
 
 
 class PromptSendingAttack(SingleTurnAttackStrategy):
@@ -61,7 +72,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         max_attempts_on_failure: int = 0,
-        params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
+        params_type: type[AttackParamsT] = PromptSendingAttackParameters,  # type: ignore[ty:invalid-parameter-default]
         prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
@@ -73,9 +84,10 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             max_attempts_on_failure (int): Maximum number of attempts to retry on failure.
+                Converter randomness is scoped per attempt and is reproducible with a configured root seed.
             params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
-                Defaults to AttackParameters. Use AttackParameters.excluding() to create
-                a params type that rejects certain fields.
+                Defaults to PromptSendingAttackParameters. Use AttackParameters.excluding()
+                to create a params type that rejects certain fields.
             prepended_conversation_config (PrependedConversationConfiguration | None):
                 Configuration for how to process prepended conversations. Controls converter
                 application by role and request formatting for targets without editable history.
@@ -179,6 +191,21 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         self._logger.info(f"Starting {self.__class__.__name__} with objective: {context.objective}")
         self._logger.info(f"Max attempts: {self._max_attempts_on_failure}")
 
+        preparation_failure = getattr(context.params, "preparation_failure", None)
+        if preparation_failure is not None:
+            # Preparation never produced an attacker turn, so nothing was sent to the objective
+            # target. Record it as UNDETERMINED with the typed signal attached so downstream
+            # consumers can tell "not measured" apart from "measured and failed".
+            return self._create_attack_result(
+                context=context,
+                response=None,
+                score=None,
+                outcome=AttackOutcome.UNDETERMINED,
+                outcome_reason=preparation_failure.reason,
+                executed_turns=0,
+                metadata=preparation_failure.to_metadata(),
+            )
+
         # Execute with retries
         response = None
         score = None
@@ -200,14 +227,20 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             # Prepare a fresh message for each attempt to avoid duplicate ID errors in database
             message = self._get_message(context)
 
-            # Send the prompt
-            response = await self._send_prompt_to_objective_target_async(message=message, context=context)
+            with random_execution(
+                namespace=f"{type(self).__module__}.{type(self).__qualname__}",
+                owner=self,
+                operation_key=f"attempt:{attempt}",
+            ):
+                response = await self._send_prompt_to_objective_target_async(message=message, context=context)
             if not response:
                 self._logger.warning(f"No response received on attempt {attempt + 1} (likely filtered)")
                 continue  # Retry if no response (filtered or error)
 
             # Score the response including auxiliary and objective scoring
-            score = await self._evaluate_response_async(response=response, objective=context.objective)
+            score = await self._evaluate_response_async(
+                response=response, objective=context.objective, expectation=context.expectation
+            )
 
             # If there is no objective, we have a response but can't determine success
             if not self._objective_scorer:
@@ -230,6 +263,32 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Determine the outcome
         outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
 
+        return self._create_attack_result(
+            context=context,
+            response=response,
+            score=score,
+            outcome=outcome,
+            outcome_reason=outcome_reason,
+            executed_turns=1,
+        )
+
+    def _create_attack_result(
+        self,
+        *,
+        context: SingleTurnAttackContext[Any],
+        response: Message | None,
+        score: Score | None,
+        outcome: AttackOutcome,
+        outcome_reason: str | None,
+        executed_turns: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> AttackResult:
+        """
+        Create a prompt-sending result from the current context.
+
+        Returns:
+            AttackResult: The completed attack result.
+        """
         return AttackResult(
             conversation_id=context.conversation_id,
             objective=context.objective,
@@ -239,8 +298,9 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             related_conversations=context.related_conversations,
             outcome=outcome,
             outcome_reason=outcome_reason,
-            executed_turns=1,
+            executed_turns=executed_turns,
             labels=context.memory_labels,
+            metadata=metadata or {},
         )
 
     def _determine_attack_outcome(
@@ -341,6 +401,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         *,
         response: Message,
         objective: str,
+        expectation: ScoringExpectation,
     ) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
@@ -351,6 +412,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         Args:
             response (Message): The response from the model.
             objective (str): The natural-language description of the attack's objective.
+            expectation (ScoringExpectation): The effective scoring question.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if
@@ -358,16 +420,15 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 but are still executed and stored.
         """
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._objective_scorer.get_identifier() if self._objective_scorer else None,
             objective=objective,
         ):
-            scoring_results = await MessageScorer.score_response_async(
+            scoring_results = await score_attack_response_async(
                 response=response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                objective=objective,
+                expectation=expectation,
             )
 
         if not self._objective_scorer:

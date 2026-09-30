@@ -174,6 +174,28 @@ def test_run_schema_migrations_applies_head_revision():
             engine.dispose()
 
 
+@pytest.mark.parametrize("starting_revision", ["9b2d4f6a8c0e", "fcecd0617e61"])
+def test_seed_conditions_and_follow_up_template_migrations_merge(starting_revision: str) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, starting_revision)
+
+        run_schema_migrations(engine=engine)
+        check_schema_migrations(engine=engine)
+
+        with engine.connect() as connection:
+            version = connection.execute(text("SELECT version_num FROM pyrit_memory_alembic_version")).scalar_one()
+            assert version == _get_alembic_head_revision(config=config)
+            assert "conditions" in {column["name"] for column in inspect(connection).get_columns("SeedPromptEntries")}
+            assert "adversarial_prompt_template" in {
+                column["name"] for column in inspect(connection).get_columns("AttackIdentifiers")
+            }
+    finally:
+        engine.dispose()
+
+
 def test_scenario_progress_migration_adds_composite_index():
     """The migration head contains the parent/timestamp/id keyset index."""
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -230,6 +252,32 @@ def test_attack_result_score_migration_backfills_automated_score() -> None:
             assert {"automated_score_id", "human_score_id"} <= columns
             assert str(row.automated_score_id) == score_id
             assert row.human_score_id is None
+        finally:
+            engine.dispose()
+
+
+def test_preparation_conversation_migration_upgrades_and_downgrades() -> None:
+    """The preparation conversation column follows the migration lifecycle."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "preparation-conversations.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "2f8c4d6a9b1e")
+                assert "preparation_conversation_ids" not in {
+                    column["name"] for column in inspect(connection).get_columns("AttackResultEntries")
+                }
+
+                command.upgrade(config, "head")
+                assert "preparation_conversation_ids" in {
+                    column["name"] for column in inspect(connection).get_columns("AttackResultEntries")
+                }
+
+                command.downgrade(config, "2f8c4d6a9b1e")
+                assert "preparation_conversation_ids" not in {
+                    column["name"] for column in inspect(connection).get_columns("AttackResultEntries")
+                }
         finally:
             engine.dispose()
 

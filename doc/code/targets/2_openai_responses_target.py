@@ -46,6 +46,76 @@ result = await attack.execute_async(objective="Tell me a joke")  # type: ignore
 await output_attack_async(result)
 
 # %% [markdown]
+# ## Discovering and Executing MCP Tools
+#
+# `MCPToolProvider` can load a VS Code-style `mcp.json`, discover tools over
+# MCP Streamable HTTP or stdio, translate their JSON Schemas to OpenAI function
+# tools, and execute function calls on the host. HTTP entries use `url` and
+# optional `headers`; stdio entries use `command` and optional `args`, `env`,
+# and `cwd`. For example, a stdio entry can be configured as:
+#
+# ```json
+# {
+#   "servers": {
+#     "notes": {
+#       "type": "stdio",
+#       "command": "uv",
+#       "args": [
+#         "run",
+#         "python",
+#         "doc/code/targets/supporting_assets/notes_mcp_server.py",
+#         "--transport",
+#         "stdio"
+#       ]
+#     }
+#   }
+# }
+# ```
+#
+# Start the standalone notes server in a separate terminal:
+#
+# ```bash
+# uv run python doc/code/targets/supporting_assets/notes_mcp_server.py --port 8000
+# ```
+#
+# The HTTP example configuration points to `http://127.0.0.1:8000/mcp/notes`.
+# To use stdio instead, load
+# `doc/code/targets/supporting_assets/notes_mcp_stdio_config.json`;
+# the provider will start and stop the same notes server automatically.
+
+# %%
+import os
+
+from pyrit.auth import get_azure_openai_auth
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import output_attack_async
+from pyrit.prompt_target import MCPToolProvider, OpenAIResponseTarget
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+
+mcp_tools = MCPToolProvider.from_config_file(
+    config_path="doc/code/targets/supporting_assets/notes_mcp_config.json",
+    server_name="notes",
+)
+
+endpoint = os.environ["OPENAI_RESPONSES_ENDPOINT"]
+target = OpenAIResponseTarget(
+    endpoint=endpoint,
+    api_key=get_azure_openai_auth(endpoint),
+    tool_providers=[mcp_tools],
+)
+attack = PromptSendingAttack(objective_target=target)
+
+result = await attack.execute_async(  # type: ignore
+    objective="Read the welcome note using the available notes tool and tell me its text."
+)
+await output_attack_async(result)
+
+# The persisted conversation contains the user request, function call,
+# function-call output, and final assistant response.
+
+# %% [markdown]
 # ## Reasoning Configuration
 #
 # Reasoning models (e.g., o1, o3, o4-mini, GPT-5) support a `reasoning` parameter that controls how much internal reasoning the model performs before responding. You can configure this with two parameters:
@@ -143,16 +213,19 @@ print(json.dumps(response_json, indent=2))
 jsonschema.validate(instance=response_json, schema=person_schema)
 
 # %% [markdown]
-# ## Tool Use with Custom Functions
+# ## Tool Use with Python Functions
 #
 # In this example, we demonstrate how the OpenAI `Responses API` can be used to invoke a **custom-defined Python function** during a conversation. This is part of OpenAI’s support for "function calling", where the model decides to call a registered function, and the application executes it and passes the result back into the conversation loop.
 #
-# We define a simple tool called `get_current_weather`, which simulates weather information retrieval. A corresponding OpenAI tool schema describes the function name, parameters, and expected input format.
+# We define a simple tool called `get_current_weather`, which simulates weather
+# information retrieval. The `@tool` decorator derives its schema from the
+# function signature and keeps that definition paired with its implementation.
 #
-# The function is registered in the `custom_functions` argument of `OpenAIResponseTarget`. The `extra_body_parameters` include:
-#
-# - `tools`: the full OpenAI tool schema for `get_current_weather`.
-# - `tool_choice: "auto"`: instructs the model to decide when to call the function.
+# Names from `tools` and `tool_providers` must be unique and must not also appear
+# in `custom_functions` or function declarations in `extra_body_parameters`.
+# The existing `custom_functions` API can still use its matching raw declaration.
+# Each model request, including retries and tool-result continuations, follows
+# `max_requests_per_minute`. A model-request retry does not repeat completed tools.
 #
 # The user prompt explicitly asks the model to use the `get_current_weather` function. Once the model responds with a `function_call`, PyRIT executes the function, wraps the output, and the conversation continues until a final answer is produced.
 #
@@ -163,48 +236,39 @@ import os
 
 from pyrit.auth import get_azure_openai_auth
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target import OpenAIResponseTarget
+from pyrit.prompt_target import OpenAIResponseTarget, tool
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 
-async def get_current_weather(args):
+@tool
+async def get_current_weather(location: str, unit: str) -> dict[str, object]:  # pyrit-async-suffix-exempt
+    """
+    Get the current weather in a location.
+
+    Args:
+        location: The city and state.
+        unit: The temperature unit, such as celsius or fahrenheit.
+
+    Returns:
+        The current weather.
+    """
     return {
         "weather": "Sunny",
         "temp_c": 22,
-        "location": args["location"],
-        "unit": args["unit"],
+        "location": location,
+        "unit": unit,
     }
 
-
-# Responses API function tool schema (flat, no nested "function" key)
-function_tool = {
-    "type": "function",
-    "name": "get_current_weather",
-    "description": "Get the current weather in a given location",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "location": {"type": "string", "description": "City and state"},
-            "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
-        },
-        "required": ["location", "unit"],
-        "additionalProperties": False,
-    },
-    "strict": True,
-}
 
 endpoint = os.environ["OPENAI_RESPONSES_ENDPOINT"]
 # Let the model auto-select tools
 target = OpenAIResponseTarget(
     endpoint=endpoint,
     api_key=get_azure_openai_auth(endpoint),
-    custom_functions={"get_current_weather": get_current_weather},
-    extra_body_parameters={
-        "tools": [function_tool],
-        "tool_choice": "auto",
-    },
+    tools=[get_current_weather],
+    extra_body_parameters={"tool_choice": "auto"},
     httpx_client_kwargs={"timeout": 60.0},
 )
 

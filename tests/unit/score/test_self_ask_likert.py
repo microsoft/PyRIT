@@ -80,8 +80,8 @@ def test_likert_harm_scorer_does_not_match_objective(likert_scale: LikertScale):
         likert_scale=likert_scale,
     )
 
-    assert scorer.matched_conditions() == frozenset()
-    assert scorer.required_conditions() == frozenset()
+    assert scorer.condition_type is None
+    assert scorer.get_condition_types() == frozenset()
 
 
 async def test_likert_scorer_sets_system_prompt_and_scores(
@@ -324,18 +324,14 @@ def test_likert_factory_applies_evaluation_metadata(patch_central_database):
 
 
 @pytest.mark.parametrize(
-    ("preset", "expected_category"),
-    [
-        (LikertScalePaths.FAIRNESS_BIAS_SCALE, "REPRESENTATIONAL"),
-        (LikertScalePaths.SEXUAL_SCALE, "SEXUAL_CONTENT"),
-    ],
+    "preset",
+    [preset for preset in LikertScalePaths if preset.evaluation_files is not None],
 )
-def test_likert_presets_use_canonical_harm_categories(preset, expected_category):
+def test_likert_presets_use_canonical_harm_categories(preset: LikertScalePaths) -> None:
     scale = preset.load()
-
-    assert scale.category == expected_category
     assert scale.evaluation_files is not None
-    assert scale.evaluation_files.harm_category == expected_category
+    assert scale.evaluation_files == preset.evaluation_files
+    assert scale.category == scale.evaluation_files.harm_category
 
 
 @pytest.mark.parametrize(

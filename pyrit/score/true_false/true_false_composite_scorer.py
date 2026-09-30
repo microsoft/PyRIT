@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import copy
 import logging
 from typing import TYPE_CHECKING, cast
 
@@ -12,14 +13,15 @@ if TYPE_CHECKING:
 
 from pyrit.models import (
     ComponentIdentifier,
-    Condition,
     Scorable,
     ScorableUnion,
     Score,
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
+from pyrit.score.observation.execution import _merge_observation_ids
+from pyrit.score.scorer import Scorer
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,9 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
 
     Children are true/false scorers of any evidence kind, so a scorer over a message can be
     composed with one over evidence that is not a message at all.
+
+    Built-in AND, OR, and MAJORITY aggregators opt into order-independent evaluation
+    identity. Duplicates remain significant; custom aggregators and execution stay ordered.
     """
 
     def __init__(
@@ -76,7 +81,16 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
+        order_independent = any(
+            self._score_aggregator is aggregator
+            for aggregator in (
+                TrueFalseScoreAggregator.AND,
+                TrueFalseScoreAggregator.OR,
+                TrueFalseScoreAggregator.MAJORITY,
+            )
+        )
         return self._create_identifier(
+            params={"sub_scorers_order_independent": True} if order_independent else None,
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             sub_scorers=[s.get_identifier() for s in self._scorers],
         )
@@ -89,29 +103,30 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 return target
         return None
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
         """
-        Report the union of what the constituent scorers match.
+        Apply the policy to every constituent scorer.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply to LLM-backed leaves.
 
         Returns:
-            frozenset[type[Condition]]: The condition types this composite routes.
+            Scorer: ``self`` when no constituent changed, otherwise a copy wrapping the
+            updated constituents.
         """
-        conditions: set[type[Condition]] = set()
-        for scorer in self._scorers:
-            conditions.update(scorer.matched_conditions())
-        return frozenset(conditions)
+        scoped_scorers = [
+            cast("TrueFalseScorer", s.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks))
+            for s in self._scorers
+        ]
+        if all(new is old for new, old in zip(scoped_scorers, self._scorers, strict=True)):
+            return self
+        scoped = copy.copy(self)
+        scoped._scorers = scoped_scorers
+        return scoped
 
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report the union of conditions required by the constituent scorers.
-
-        Returns:
-            frozenset[type[Condition]]: The required condition types.
-        """
-        conditions: set[type[Condition]] = set()
-        for scorer in self._scorers:
-            conditions.update(scorer.required_conditions())
-        return frozenset(conditions)
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the scorers whose verdicts are combined."""
+        return tuple(self._scorers)
 
     async def _score_scorable_async(
         self,
@@ -120,7 +135,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         expectation: ScoringExpectation | None,
     ) -> list[Score]:
         """
-        Score a scorable by forwarding it, unchanged, to every constituent scorer.
+        Score a scorable with each child's supported conditions.
 
         Each child acquires the named evidence itself, so a child that needs a wider or
         different view of it is free to derive one.
@@ -134,7 +149,12 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 containing one completed or undetermined aggregate score.
         """
         score_list_results = await asyncio.gather(
-            *(scorer._score_nested_async(scorable=scorable, expectation=expectation) for scorer in self._scorers)
+            *(
+                scorer._score_nested_async(
+                    scorable=scorable, expectation=scorer._select_expectation(expectation=expectation)
+                )
+                for scorer in self._scorers
+            )
         )
         applicable_results = [scores for scores in score_list_results if scores]
         skipped_count = len(score_list_results) - len(applicable_results)
@@ -199,5 +219,6 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             scorer_class_identifier=self.get_identifier(),
             message_piece_id=message_piece_id,
             scorable=scorable,
+            observation_ids=_merge_observation_ids(scores=score_list),
             objective=expectation.objective if expectation else None,
         )

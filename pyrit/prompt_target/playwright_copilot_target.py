@@ -353,7 +353,7 @@ class PlaywrightCopilotTarget(PromptTarget):
                 text_lower = test_content.strip().lower()
                 # Content is ready if it's not empty and not a placeholder
                 content_ready = text_lower != "" and text_lower not in placeholder_texts
-            elif isinstance(test_content, list):
+            else:
                 content_ready = len(test_content) > 0
 
             if content_ready:

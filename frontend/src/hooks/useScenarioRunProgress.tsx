@@ -134,10 +134,10 @@ export function useScenarioRunProgress(scenarioResultId: string): UseScenarioRun
 
   const applyRunSummary = useCallback((run: ScenarioRunSummary): void => {
     dispatch({ type: 'apply-run-summary', run })
-    if (isTerminalRunState(run.status)) {
-      pollingStoppedRef.current = false
-      setRetryEpoch((epoch) => epoch + 1)
-    }
+    // Catch up after cancellation or resume, retaining the cursor and finished results.
+    pollingStoppedRef.current = true
+    abortControllerRef.current?.abort()
+    setRetryEpoch((epoch: number) => epoch + 1)
   }, [])
 
   return { state, retry, applyRunSummary }

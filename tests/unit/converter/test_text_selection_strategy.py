@@ -348,11 +348,9 @@ class TestWordIndexSelectionStrategy:
         with pytest.raises(ValueError, match="Invalid word indices"):
             strategy.select_words(words=words)
 
-    def test_select_words_negative_index_raises_error(self):
-        strategy = WordIndexSelectionStrategy(indices=[-1])
-        words = ["The", "quick", "brown"]
-        with pytest.raises(ValueError, match="Invalid word indices"):
-            strategy.select_words(words=words)
+    def test_init_negative_index_raises_error(self) -> None:
+        with pytest.raises(ValueError, match="indices must be non-negative"):
+            WordIndexSelectionStrategy(indices=[-1])
 
     def test_select_range_converts_words_to_chars(self):
         strategy = WordIndexSelectionStrategy(indices=[1, 2])

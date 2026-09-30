@@ -3,7 +3,7 @@
 
 import abc
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Literal, final
 
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -15,8 +15,10 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    RequestTraceContext,
     TargetIdentifier,
 )
+from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
@@ -25,10 +27,11 @@ from pyrit.prompt_target.common.target_capabilities import (
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
+from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, target_trace_context
 
 logger = logging.getLogger(__name__)
 
-# Authentication modes a target can expose to the create-target catalog / API.
+# Authentication modes a target can expose to target type discovery and creation APIs.
 # ``api_key`` passes a key (from params or the target's env var); ``identity``
 # omits the key so the target authenticates itself via an ambient Azure identity
 # (e.g. minting a Microsoft Entra ID token for its own endpoint, or falling back
@@ -62,6 +65,8 @@ class PromptTarget(Identifiable):
     # Per-instance overrides are also possible via the ``custom_configuration``
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
+    _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
+    _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
 
     # Declarative auth facts consumed by the create-target service and catalog.
     # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
@@ -102,6 +107,7 @@ class PromptTarget(Identifiable):
         model_name: str = "",
         underlying_model: str | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        trace_config: TargetTraceConfig | None = None,
     ) -> None:
         """
         Initialize the PromptTarget.
@@ -119,6 +125,7 @@ class PromptTarget(Identifiable):
                 for this target instance. Useful for targets whose capabilities depend on deployment
                 configuration (e.g., Playwright, HTTP). If None, uses the class-level
                 ``_DEFAULT_CONFIGURATION``. Defaults to None.
+            trace_config: Request tracing configuration. Defaults to the target's tracing policy.
         """
         self._memory = CentralMemory.get_memory_instance()
         self._verbose = verbose
@@ -126,14 +133,46 @@ class PromptTarget(Identifiable):
         self._endpoint = endpoint
         self._model_name = model_name
         self._underlying_model = underlying_model
+        self._trace_config = trace_config or TargetTraceConfig(enabled=self._DEFAULT_TRACE_ENABLED)
         self._configuration = (
             custom_configuration
             if custom_configuration is not None
             else type(self).get_default_configuration(self._underlying_model)
         )
+        if custom_configuration is None and underlying_model is None and self._SUPPORTS_TOOL_CALL_HISTORY:
+            known = get_known_capabilities(model_name)
+            if known is not None:
+                self.apply_capabilities(
+                    capabilities=self.capabilities.model_copy(
+                        update={
+                            "input_modalities": self.capabilities.input_modalities
+                            | frozenset(
+                                combo
+                                for combo in known.input_modalities
+                                if combo & {"function_call", "function_call_output"}
+                            )
+                        }
+                    )
+                )
 
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
+
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """
+        Check stored tool history without sending, normalizing, or retrieving media.
+
+        Empty histories and histories ending with an unanswered call are permitted.
+        Targets extend this check with provider-specific payload constraints.
+        Callers check capability requirements separately before replaying a draft.
+
+        Args:
+            messages: Complete ordered history, including calls for any results.
+
+        Raises:
+            ValueError: Tool content, roles, or call/result links are invalid.
+        """
+        validate_tool_conversation(messages)
 
     @final
     async def send_prompt_async(
@@ -168,6 +207,9 @@ class PromptTarget(Identifiable):
         Raises:
             ValueError: If the message or normalized conversation are empty.
         """
+        for piece in message.message_pieces:
+            piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
         conversation_id = message.get_piece().conversation_id or ""
         if send_context and send_context.conversation_id != conversation_id:
@@ -185,9 +227,19 @@ class PromptTarget(Identifiable):
             if not normalized_conversation:
                 raise ValueError("Normalization pipeline returned an empty conversation. Cannot send an empty request.")
             self._validate_request(normalized_conversation=normalized_conversation)
-            if send_context:
-                send_context.mark_target_invoked()
-            response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+            with target_trace_context(
+                config=self._trace_config, request=message, normalized_request=normalized_conversation[-1]
+            ):
+                if send_context:
+                    send_context.mark_target_invoked()
+                response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+            for response_message in response:
+                for piece in response_message.message_pieces:
+                    piece.prompt_metadata = {
+                        key: value
+                        for key, value in piece.prompt_metadata.items()
+                        if key not in (RequestTraceContext.METADATA_KEY, RequestTraceContext.REQUEST_METADATA_KEY)
+                    }
             send_succeeded = True
             return response
         finally:
@@ -232,6 +284,18 @@ class PromptTarget(Identifiable):
         custom_configuration_message = (
             "If your target does support this, set the custom_configuration parameter accordingly."
         )
+        supported_types_flat = {t for combo in self.capabilities.input_modalities for t in combo}
+        for turn in normalized_conversation:
+            for piece in turn.message_pieces:
+                piece_type = piece.converted_value_data_type
+                if (
+                    piece_type in {"function_call", "function_call_output", "tool_call"}
+                    and piece_type not in supported_types_flat
+                ):
+                    raise ValueError(
+                        f"This target does not support tool-history modality '{piece_type}'. "
+                        f"{custom_configuration_message}"
+                    )
         if not self.configuration.includes(capability=CapabilityName.MULTI_MESSAGE_PIECES) and n_pieces != 1:
             raise ValueError(
                 f"This target only supports a single message piece. Received: {n_pieces} pieces. "
@@ -240,7 +304,6 @@ class PromptTarget(Identifiable):
 
         for piece in message.message_pieces:
             piece_type = piece.converted_value_data_type
-            supported_types_flat = {t for combo in self.capabilities.input_modalities for t in combo}
             if piece_type not in supported_types_flat:
                 supported_types = ", ".join(sorted(supported_types_flat))
                 raise ValueError(
@@ -490,7 +553,18 @@ class PromptTarget(Identifiable):
         if underlying_model:
             known = get_known_capabilities(underlying_model)
             if known is not None:
-                return TargetConfiguration(capabilities=known)
+                return TargetConfiguration(
+                    capabilities=known.model_copy(
+                        update={
+                            "input_modalities": frozenset(
+                                combo
+                                for combo in known.input_modalities
+                                if cls._SUPPORTS_TOOL_CALL_HISTORY
+                                or not combo & {"function_call", "function_call_output"}
+                            )
+                        }
+                    )
+                )
             logger.info(
                 "No known capabilities for model '%s'. Falling back to %s._DEFAULT_CONFIGURATION.",
                 underlying_model,

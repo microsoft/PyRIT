@@ -16,6 +16,20 @@ from pyrit.memory import DataTypeSerializer
 from pyrit.models import SeedPrompt
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("prompt", [None, 123, {"prompt": "hello"}])
+def test_prepare_content_rejects_non_text_without_template(prompt):
+    with pytest.raises(ValueError, match="Prompt must be a string"):
+        PDFConverter()._prepare_content(prompt)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("prompt", [{"prompt": "hello"}, "{'prompt': 'hello'}"])
+def test_prepare_content_accepts_raw_and_serialized_template_data(prompt):
+    template = SeedPrompt(value="Input: {{ prompt }}", data_type="text", parameters=["prompt"])
+    assert PDFConverter(prompt_template=template)._prepare_content(prompt) == "Input: hello"
+
+
 @pytest.fixture
 def pdf_converter_no_template():
     """A PDFConverter with no template path provided."""
@@ -178,6 +192,7 @@ def mock_pdf_path(tmp_path):
     return pdf_path
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_injection_into_mock_pdf(mock_pdf_path):
     """Test injecting text into a generic mock PDF."""
     # Define injection items
@@ -213,6 +228,7 @@ async def test_injection_into_mock_pdf(mock_pdf_path):
     modified_pdf_path.unlink()  # Clean up after the test
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_multiple_injections_into_mock_pdf(mock_pdf_path):
     """Test injecting text into multiple pages of a generic mock PDF."""
     # Define multiple injection items
@@ -360,6 +376,7 @@ async def test_empty_injection_items(mock_pdf_path):
         await converter.convert_async(prompt="")
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_injection_items_non_existent_page_number(mock_pdf_path):
     """
     Test the PDFConverter's handling of injection items with a non-existent page number.
@@ -394,6 +411,7 @@ async def test_injection_items_non_existent_page_number(mock_pdf_path):
     modified_pdf_path.unlink()
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_non_standard_font_usage():
     """
     Test the ability to use a non-standard font (Times) in PDF generation.
@@ -422,6 +440,7 @@ async def test_non_standard_font_usage():
     output_path.unlink()
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_injection_on_last_page(mock_pdf_path):
     """
     Test injecting text on the last page of a multi-page PDF

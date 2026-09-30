@@ -5,7 +5,9 @@ import textwrap
 
 from colorama import Fore
 
+from pyrit.common.text_helper import escape_control_characters
 from pyrit.models import Score
+from pyrit.output._derivation import resolve_scorer_name
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.base import PrinterBase
 from pyrit.output.sink import Sink
@@ -50,8 +52,8 @@ class PrettyScorePrinter(_PrettyPrinterMixin, PrinterBase):
         """
         lines: list[str] = []
         indent = self._indent * indent_level
-        scorer_name = (score.scorer_class_identifier.class_name if score.scorer_class_identifier else None) or "Unknown"
-        lines.append(f"{indent}Scorer: {scorer_name}\n")
+        scorer_name = resolve_scorer_name(score, none_value="Unknown")
+        lines.append(self._format_colored(f"{indent}Scorer: {scorer_name}"))
         lines.append(self._format_colored(f"{indent}• Category: {score.score_category or 'N/A'}", Fore.LIGHTMAGENTA_EX))
         lines.append(self._format_colored(f"{indent}• Type: {score.score_type}", Fore.CYAN))
 
@@ -66,7 +68,7 @@ class PrettyScorePrinter(_PrettyPrinterMixin, PrinterBase):
         lines.append(self._format_colored(f"{indent}• Value: {value_str}", score_color))
 
         if score.score_rationale:
-            lines.append(f"{indent}• Rationale:\n")
+            lines.append(self._format_colored(f"{indent}• Rationale:"))
             rationale_wrapper = textwrap.TextWrapper(
                 width=self._width - len(indent) - 2,
                 initial_indent=indent + "  ",
@@ -74,7 +76,8 @@ class PrettyScorePrinter(_PrettyPrinterMixin, PrinterBase):
                 break_long_words=False,
                 break_on_hyphens=False,
             )
-            rationale_lines = score.score_rationale.split("\n")
+            # Escape before wrapping so escaped sequences count toward the width and none are dropped.
+            rationale_lines = escape_control_characters(score.score_rationale.replace("\r\n", "\n")).split("\n")
             for line in rationale_lines:
                 if line.strip():
                     wrapped_lines = rationale_wrapper.wrap(line)

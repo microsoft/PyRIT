@@ -15,7 +15,13 @@ from pyrit.converter import Converter
 from pyrit.models import ConverterIdentifier
 
 
-def converter_object_to_instance(converter_id: str, converter_obj: Converter) -> ConverterInstance:
+def converter_object_to_instance(
+    *,
+    converter_id: str,
+    converter_obj: Converter,
+    is_llm_based: bool,
+    description: str | None,
+) -> ConverterInstance:
     """
     Build a ConverterInstance DTO from a registry converter object.
 
@@ -24,8 +30,10 @@ def converter_object_to_instance(converter_id: str, converter_obj: Converter) ->
     on the wire.
 
     Args:
-        converter_id: The unique converter instance identifier.
-        converter_obj: The domain Converter object from the registry.
+        converter_id (str): The unique converter instance identifier.
+        converter_obj (Converter): The domain Converter object from the registry.
+        is_llm_based (bool): Whether the converter class requires an LLM target.
+        description (str | None): The converter class description.
 
     Returns:
         ConverterInstance DTO wrapping the converter's identifier.
@@ -33,4 +41,6 @@ def converter_object_to_instance(converter_id: str, converter_obj: Converter) ->
     return ConverterInstance(
         converter_id=converter_id,
         identifier=ConverterIdentifier.from_component_identifier(converter_obj.get_identifier()),
+        is_llm_based=is_llm_based,
+        description=description,
     )

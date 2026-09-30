@@ -15,19 +15,21 @@ import {
   HistoryRegular,
   PersonFeedbackRegular,
   ScriptRegular,
+  TargetRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
-  TargetRegular,
 } from '@fluentui/react-icons'
-import { useTheme } from '../../hooks/useTheme'
-import type { ThemeMode } from '../../hooks/useTheme'
+import { useTheme } from '@/hooks/useTheme'
+import { isThemeMode, THEME_PRESETS } from '@/themes/themePresets'
+import type { ThemePreset } from '@/types'
+
 import { useNavigationStyles } from './Navigation.styles'
 
 export type ViewName =
   | 'home'
   | 'chat'
   | 'history'
-  | 'targets'
+  | 'registry'
   | 'configuration'
   | 'scenarios'
 
@@ -39,13 +41,6 @@ interface NavigationProps {
 }
 
 const THEME_MENU_NAME = 'theme'
-
-const THEME_LABELS: Record<ThemeMode, string> = {
-  system: 'System',
-  light: 'Light',
-  dark: 'Dark',
-}
-
 
 export default function Navigation({
   currentView,
@@ -62,13 +57,13 @@ export default function Navigation({
     data: MenuCheckedValueChangeData,
   ) => {
     const next = data.checkedItems[0]
-    if (next === 'system' || next === 'light' || next === 'dark') {
+    if (isThemeMode(next)) {
       setMode(next)
     }
   }
 
   const triggerIcon = resolved === 'dark' ? <WeatherMoonRegular /> : <WeatherSunnyRegular />
-  const triggerLabel = `Theme: ${THEME_LABELS[mode]}`
+  const triggerLabel = `Theme: ${mode === 'system' ? 'System' : THEME_PRESETS[mode].label}`
 
   return (
     <div className={styles.root} data-tour="sidebar-nav">
@@ -110,7 +105,7 @@ export default function Navigation({
           className={styles.navButton}
           data-active={currentView === 'scenarios'}
           appearance="subtle"
-          icon={<ScriptRegular />}
+          icon={<TargetRegular />}
           title="Scanner"
           aria-label="Scanner"
           aria-current={currentView === 'scenarios' ? 'page' : undefined}
@@ -119,13 +114,13 @@ export default function Navigation({
 
         <Button
           className={styles.navButton}
-          data-active={currentView === 'targets'}
+          data-active={currentView === 'registry'}
           appearance="subtle"
-          icon={<TargetRegular />}
-          title="Targets"
-          aria-label="Targets"
-          aria-current={currentView === 'targets' ? 'page' : undefined}
-          onClick={() => onNavigate('targets')}
+          icon={<ScriptRegular />}
+          title="Registry"
+          aria-label="Registry"
+          aria-current={currentView === 'registry' ? 'page' : undefined}
+          onClick={() => onNavigate('registry')}
         />
 
         {canManageConfiguration && (
@@ -157,6 +152,7 @@ export default function Navigation({
       <Menu
         checkedValues={{ [THEME_MENU_NAME]: [mode] }}
         onCheckedValueChange={handleThemeChange}
+        positioning={{ autoSize: 'height', overflowBoundary: 'window' }}
       >
         <MenuTrigger disableButtonEnhancement>
           <Button
@@ -167,17 +163,28 @@ export default function Navigation({
             aria-label={triggerLabel}
           />
         </MenuTrigger>
-        <MenuPopover>
+        <MenuPopover className={styles.themeMenu}>
           <MenuList>
-            <MenuItemRadio name={THEME_MENU_NAME} value="system">
-              {THEME_LABELS.system}
+            <MenuItemRadio className={styles.themeMenuItem} name={THEME_MENU_NAME} value="system">
+              System
             </MenuItemRadio>
-            <MenuItemRadio name={THEME_MENU_NAME} value="light">
-              {THEME_LABELS.light}
-            </MenuItemRadio>
-            <MenuItemRadio name={THEME_MENU_NAME} value="dark">
-              {THEME_LABELS.dark}
-            </MenuItemRadio>
+            {Object.entries(THEME_PRESETS).map(([id, preset]: [string, ThemePreset]) => (
+              <MenuItemRadio key={id} className={styles.themeMenuItem} name={THEME_MENU_NAME} value={id}>
+                <span className={styles.themeOption}>
+                  <span>{preset.label}</span>
+                  <span
+                    aria-hidden="true"
+                    className={styles.themePreview}
+                    style={{
+                      backgroundColor: preset.theme.colorNeutralBackground2,
+                      backgroundImage: preset.background
+                        ? `url("${preset.background.imageUrl}")`
+                        : undefined,
+                    }}
+                  />
+                </span>
+              </MenuItemRadio>
+            ))}
           </MenuList>
         </MenuPopover>
       </Menu>

@@ -15,11 +15,12 @@
 # Every attack shares the same `execute_async` contract, so the inputs below work the same way no
 # matter which executor you use.
 #
-# `execute_async` accepts four standard arguments:
+# `execute_async` accepts these standard arguments:
 #
 # | Argument | Purpose |
 # |---|---|
-# | `objective` | What you are trying to get the **objective target** (the system under test) to do. Drives scoring and multi-turn adversarial prompts. |
+# | `objective` | What you are trying to get the **objective target** to do. Drives attack prompts and supplies the default scoring context. |
+# | `expectation` | A per-execution `ScoringExpectation` for outcome scoring. Its objective may differ from the attack objective. |
 # | `memory_labels` | A `dict[str, str]` tagged onto every prompt/response, so you can filter this run later in memory. |
 # | `prepended_conversation` | A list of `Message`s to seed the conversation before the attack's own turns. This is also where the objective target's **system prompt** goes — `Message.from_system_prompt(...)` builds one (see below). |
 # | `next_message` | The exact next message to send, instead of letting the attack derive it from the objective. Useful for multimodal or pre-built seeds. |
@@ -27,7 +28,35 @@
 # Construction-time configuration objects — **adversarial**, **scoring**, and **converter** — are
 # covered at the end and link out to their dedicated pages.
 #
-# The examples here use `TextTarget`, which just records what would be sent — so they run instantly
+# ## Scoring expectations
+#
+# `AttackScoringConfig` selects scorers and feedback policy, not execution criteria. For an attack
+# configured with an outcome scorer:
+#
+# ```python
+# from pyrit.models import ScoringExpectation
+#
+# await attack.execute_async(
+#     objective="Identify who wrote Pride and Prejudice",
+#     expectation=ScoringExpectation(objective="The answer identifies Jane Austen"),
+# )
+# ```
+#
+# A missing scoring objective defaults to the attack objective; supplied conditions stay unchanged.
+# Objective and auxiliary scorers receive the full expectation. Refusal, on-topic, and simulated
+# preparation checks keep their own criteria. Seeds are the intended main authoring source;
+# the execution parameter is transport. New expectation-bearing seed types are not implemented yet.
+#
+# `executor.execute_attack_from_seed_groups_async(attack=attack, seed_groups=groups, expectation=shared)`
+# broadcasts one expectation. Use `field_overrides=[{"expectation": first}, {"expectation": second}]`
+# for row-specific criteria; the list must match the seed-group count. A row override replaces the
+# whole expectation, and `None` uses that execution's objective fallback.
+#
+# **Behavior change:** `RedTeamingAttack` and `ChunkedRequestAttack` now run configured auxiliary
+# scorers that were previously skipped. This can add scoring requests and cost; leave the auxiliary
+# list empty to avoid them. Auxiliary results do not change the attack's success decision.
+#
+# The executable examples below use `TextTarget`, which just records what would be sent — so they run instantly
 # and need no credentials.
 
 # %%
@@ -52,6 +81,8 @@ attack = PromptSendingAttack(objective_target=target)
 #
 # `memory_labels` tag every prompt and response this run produces. They don't change what is sent;
 # they make the run easy to find and group later in memory (e.g. by operation or operator).
+# `AtomicAttack.run_async(memory_labels=...)` merges labels with its constructor labels.
+# Call-time values replace only shared keys; stored defaults stay unchanged.
 
 # %%
 result = await attack.execute_async(  # type: ignore
@@ -170,7 +201,10 @@ await output_attack_async(result)
 # - **`AttackScoringConfig`** — the objective scorer plus any auxiliary
 #   [scorers](../scoring/0_scoring.ipynb).
 # - **`AttackAdversarialConfig`** — the adversarial target (a model PyRIT controls) that multi-turn
-#   attacks use to generate each next prompt (see [Multi-Turn Attacks](2_multi_turn.ipynb)).
+#   attacks use to generate each next prompt (see [Multi-Turn Attacks](2_multi_turn.ipynb)). Its
+#   `system_prompt` fully replaces the default adversarial system prompt; set `system_prompt_prefix`
+#   instead to prepend extra instructions ahead of whichever one (default or custom) would otherwise
+#   be used.
 #
 # Converter and scoring configs apply to single- and multi-turn attacks alike; the adversarial config
 # only applies to attacks that drive a conversation. Below builds a converter config — it's just a

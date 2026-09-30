@@ -313,16 +313,11 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
 
         if source_type == "public_url":
             examples = self._fetch_from_public_url(source=source, file_type=file_type)
-        elif source_type == "file":
+        else:
             examples = self._fetch_from_file(source=source, file_type=file_type)
 
         if cache:
             self._write_cache(cache_file=cache_file, examples=examples, file_type=file_type)
-        else:
-            with tempfile.NamedTemporaryFile(
-                delete=False, mode="w", suffix=f".{file_type}", encoding="utf-8"
-            ) as temp_file:
-                self.FILE_TYPE_HANDLERS[file_type]["write"](temp_file, examples)
 
         return examples
 

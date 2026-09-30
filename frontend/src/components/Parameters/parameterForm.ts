@@ -8,7 +8,7 @@ import type { Parameter } from '@/types'
  */
 
 /** The control rendered for a parameter, derived from its declared metadata. */
-export type ParameterControlKind = 'boolean' | 'select' | 'multiselect' | 'list' | 'number' | 'text'
+export type ParameterControlKind = 'structured' | 'boolean' | 'select' | 'multiselect' | 'list' | 'number' | 'text'
 
 /**
  * Form state value for a single parameter.
@@ -16,12 +16,29 @@ export type ParameterControlKind = 'boolean' | 'select' | 'multiselect' | 'list'
  * A boolean parameter's value is one of `''` (unset — distinct from a
  * chosen `false`), `'true'`, or `'false'`. Everything else is a raw string
  * (scalar / unconstrained list, comma-joined) or a string array
- * (multiselect selections).
+ * (multiselect selections, or an explicit list including an empty list), or a
+ * recursively nested structured variant.
  */
-export type ParameterFormValue = string | string[]
+export interface StructuredParameterFormValue {
+  type: string
+  values: Record<string, ParameterFormValue>
+}
+
+export type ParameterFormValue = string | string[] | StructuredParameterFormValue
 
 /** Sentinel form value meaning "the user has not chosen true or false yet". */
 export const UNSET_BOOLEAN_VALUE = ''
+
+export function isStructuredParameterFormValue(value: unknown): value is StructuredParameterFormValue {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const candidate = value as { type?: unknown; values?: unknown }
+  return typeof candidate.type === 'string'
+    && Boolean(candidate.values)
+    && typeof candidate.values === 'object'
+    && !Array.isArray(candidate.values)
+}
 
 export interface InitialFormValueOptions {
   /** Populate absent values from the parameter declaration. Defaults to true. */
@@ -29,6 +46,9 @@ export interface InitialFormValueOptions {
 }
 
 export function getParameterControlKind(param: Parameter): ParameterControlKind {
+  if (param.variants) {
+    return 'structured'
+  }
   if (param.type_name === 'bool') {
     return 'boolean'
   }
@@ -94,6 +114,22 @@ export function getInitialFormValues(
         ? param.default
         : undefined
     switch (getParameterControlKind(param)) {
+      case 'structured': {
+        const structured = source && typeof source === 'object' && !Array.isArray(source)
+          ? source as { type?: unknown; parameters?: unknown }
+          : null
+        const type = typeof structured?.type === 'string' && param.variants?.[structured.type]
+          ? structured.type
+          : ''
+        const parameters = structured?.parameters && typeof structured.parameters === 'object'
+          ? structured.parameters as Record<string, unknown>
+          : null
+        values[param.name] = {
+          type,
+          values: type ? getInitialFormValues(param.variants?.[type] ?? [], parameters) : {},
+        }
+        break
+      }
       case 'boolean':
         values[param.name] = initialBooleanValue(source)
         break
@@ -166,6 +202,25 @@ export function buildParametersFromForm(
     const value = values[param.name]
     const kind = getParameterControlKind(param)
 
+    if (kind === 'structured') {
+      if (!value || !isStructuredParameterFormValue(value) || !value.type) {
+        if (param.required) {
+          return { ok: false, error: `${param.name} is required.` }
+        }
+        continue
+      }
+      const nested = param.variants?.[value.type]
+      if (!nested) {
+        return { ok: false, error: `${param.name}: "${value.type}" is not an allowed type.` }
+      }
+      const result = buildParametersFromForm(nested, value.values)
+      if (!result.ok) {
+        return result
+      }
+      parameters[param.name] = { type: value.type, parameters: result.parameters ?? {} }
+      continue
+    }
+
     if (kind === 'boolean') {
       if (value !== 'true' && value !== 'false') {
         if (param.required) {
@@ -204,8 +259,8 @@ export function buildParametersFromForm(
     const raw = typeof value === 'string' ? value.trim() : ''
 
     if (kind === 'list') {
-      const entries = parseListValue(raw)
-      if (entries.length === 0) {
+      const entries = Array.isArray(value) ? value : parseListValue(raw)
+      if (entries.length === 0 && !Array.isArray(value)) {
         if (param.required) {
           return { ok: false, error: `${param.name} is required.` }
         }

@@ -396,7 +396,7 @@ class PyRITShell(cmd.Cmd):
                 print(f"Error: File not found: {script_path}")
                 return
             try:
-                content = script_path.read_text()
+                content = script_path.read_text(encoding="utf-8")
                 self._run_async(
                     self._api_client.register_initializer_async(name=script_path.stem, script_content=content)
                 )
@@ -642,6 +642,7 @@ class PyRITShell(cmd.Cmd):
         Usage:
             scenario-results <scenario_result_id>
                 [--view overview|attacks|conversations|full]
+                [--format pretty|json|html] [--output PATH]
                 [--attack-result-ids <id> ...] [--limit N]
 
         Views:
@@ -649,9 +650,10 @@ class PyRITShell(cmd.Cmd):
                            rates (the default).
             attacks        One row per attack result (id, objective, outcome,
                            turns, score).
-            conversations  The main-conversation transcript for each attack
-                           (messages plus their scores and full rationale).
-            full           The attacks table followed by the transcripts.
+            conversations  Per-attack summary (outcome, turns, score, objective)
+                           plus the message transcript for each attack.
+            full           The scenario overview followed by every attack's
+                           conversation.
 
         For conversations/full, when neither --attack-result-ids nor --limit is
         given, at most 5 attacks are shown to avoid dumping a whole run.
@@ -662,10 +664,12 @@ class PyRITShell(cmd.Cmd):
         import shlex
 
         from pyrit.cli._cli_args import ScenarioResultView, build_scenario_results_parser
-        from pyrit.cli._output import print_conversations_async, print_scenario_result_async
+        from pyrit.cli._output import print_conversations_async, print_full_async, print_scenario_result_async
         from pyrit.cli._results import (
             apply_view_limit_policy,
+            resolve_output_sink,
             resolve_view,
+            warn_if_view_ignored_by_html,
         )
         from pyrit.output import output_scenario_attacks_async
 
@@ -677,7 +681,8 @@ class PyRITShell(cmd.Cmd):
         if not tokens:
             print(
                 "Usage: scenario-results <scenario_result_id> "
-                "[--view overview|attacks|conversations|full] [--attack-result-ids <id> ...] [--limit N]"
+                "[--view overview|attacks|conversations|full] [--format pretty|json|html] [--output PATH] "
+                "[--attack-result-ids <id> ...] [--limit N]"
             )
             print("Use 'scenario-history' to see available run IDs.")
             return
@@ -689,7 +694,18 @@ class PyRITShell(cmd.Cmd):
             return
 
         view = resolve_view(view=parsed.view)
-        limit = apply_view_limit_policy(view=view, limit=parsed.limit, attack_result_ids=parsed.attack_result_ids)
+        # html always renders a complete report and ignores the default heavy-view cap,
+        # so skip the limit policy (and its warning) for it.
+        if parsed.format == "html":
+            warn_if_view_ignored_by_html(view=parsed.view)
+            limit = parsed.limit
+        else:
+            limit = apply_view_limit_policy(view=view, limit=parsed.limit, attack_result_ids=parsed.attack_result_ids)
+        try:
+            sink = resolve_output_sink(output_path=parsed.output, output_format=parsed.format)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return
 
         try:
             result = self._run_async(
@@ -699,31 +715,56 @@ class PyRITShell(cmd.Cmd):
             _print_shell_exception(exc=exc)
             return
 
-        if view is ScenarioResultView.OVERVIEW:
-            self._run_async(print_scenario_result_async(result=result))
-            return
-
-        if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
-            self._run_async(
-                output_scenario_attacks_async(
-                    result,
-                    attack_result_ids=parsed.attack_result_ids,
-                    limit=limit,
-                )
-            )
-            if view is ScenarioResultView.ATTACKS:
-                return
-
         try:
-            self._run_async(
-                print_conversations_async(
-                    result=result,
-                    client=self._api_client,
-                    scenario_result_id=parsed.scenario_result_id,
-                    attack_result_ids=parsed.attack_result_ids,
-                    limit=limit,
+            if parsed.format == "html":
+                # html is always the full report regardless of --view; honor only an explicit --limit.
+                self._run_async(
+                    print_full_async(
+                        result=result,
+                        client=self._api_client,
+                        scenario_result_id=parsed.scenario_result_id,
+                        format="html",
+                        sink=sink,
+                        attack_result_ids=parsed.attack_result_ids,
+                        limit=parsed.limit,
+                    )
                 )
-            )
+            elif view is ScenarioResultView.OVERVIEW:
+                self._run_async(print_scenario_result_async(result=result, format=parsed.format, sink=sink))
+            elif view is ScenarioResultView.ATTACKS:
+                self._run_async(
+                    output_scenario_attacks_async(
+                        result,
+                        attack_result_ids=parsed.attack_result_ids,
+                        limit=limit,
+                        format=parsed.format,
+                        sink=sink,
+                    )
+                )
+            elif view is ScenarioResultView.FULL:
+                self._run_async(
+                    print_full_async(
+                        result=result,
+                        client=self._api_client,
+                        scenario_result_id=parsed.scenario_result_id,
+                        format=parsed.format,
+                        sink=sink,
+                        attack_result_ids=parsed.attack_result_ids,
+                        limit=limit,
+                    )
+                )
+            else:
+                self._run_async(
+                    print_conversations_async(
+                        result=result,
+                        client=self._api_client,
+                        scenario_result_id=parsed.scenario_result_id,
+                        format=parsed.format,
+                        sink=sink,
+                        attack_result_ids=parsed.attack_result_ids,
+                        limit=limit,
+                    )
+                )
         except Exception as exc:
             _print_shell_exception(exc=exc)
             return

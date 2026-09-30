@@ -61,6 +61,25 @@ async def test_initialize_registers_variation_with_declared_target() -> None:
     assert converter._converter_target is adversarial_chat
 
 
+@pytest.mark.usefixtures("patch_central_database")
+async def test_initialize_replaces_converter_with_current_target() -> None:
+    converter_registry = ConverterRegistry.get_registry_singleton()
+    target_registry = TargetRegistry.get_registry_singleton()
+    first_target = MockPromptTarget()
+    target_registry.instances.register(first_target, name="adversarial_chat")
+
+    with patch.object(ConverterInitializer, "CONFIGS", _get_configs("variation")):
+        await ConverterInitializer().initialize_async()
+        target_registry.instances.register(MockPromptTarget(), name="adversarial_chat", replace=True)
+        current_target = target_registry.instances.get("adversarial_chat")
+        await ConverterInitializer().initialize_async()
+
+    converter = converter_registry.instances.get("variation")
+    assert isinstance(converter, VariationConverter)
+    assert converter._converter_target is current_target
+    assert converter._converter_target is not first_target
+
+
 async def test_initialize_skips_converter_without_declared_target() -> None:
     registry = ConverterRegistry.get_registry_singleton()
 

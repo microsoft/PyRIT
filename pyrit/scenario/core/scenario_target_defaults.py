@@ -2,12 +2,64 @@
 # Licensed under the MIT license.
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
+_adversarial_target_override: ContextVar[PromptTarget | None] = ContextVar("adversarial_target_override", default=None)
+
+
+@contextmanager
+def override_default_adversarial_target(target: PromptTarget | None) -> Iterator[None]:
+    """
+    Override the adversarial fallback for this execution scope.
+
+    Wrap scenario construction, initialization, and execution in this scope to
+    cover both eager and lazy resolution. Explicit scenario/factory targets win;
+    existing scenarios are not rewritten. Nested scopes restore their parent and
+    separate asyncio tasks remain isolated. Scorer defaults are unchanged.
+
+    Args:
+        target (PromptTarget | None): The multi-turn target to use before registry and OpenAI fallbacks.
+            None leaves the current scope unchanged, including any outer override.
+
+    Yields:
+        None: While the scoped default is active.
+
+    Raises:
+        ValueError: If a non-None target is not a PromptTarget or does not support multi-turn.
+    """
+    if target is None:
+        yield
+        return
+    validate_default_adversarial_target(target)
+    token = _adversarial_target_override.set(target)
+    try:
+        yield
+    finally:
+        _adversarial_target_override.reset(token)
+
+
+def validate_default_adversarial_target(target: PromptTarget) -> None:
+    """
+    Validate a selected adversarial default without changing the current scope.
+
+    Args:
+        target (PromptTarget): The selected target, which must support multi-turn.
+            None is not a selection and must be handled by the caller.
+
+    Raises:
+        ValueError: If target is not a PromptTarget or does not support multi-turn.
+    """
+    if not isinstance(target, PromptTarget):
+        raise ValueError(f"Default adversarial target must be a PromptTarget, but got {type(target).__name__}.")
+    if not target.capabilities.includes(capability=CapabilityName.MULTI_TURN):
+        raise ValueError("Default adversarial target must support multi_turn.")
 
 
 def get_default_scorer_target() -> PromptTarget:
@@ -31,7 +83,8 @@ def get_default_adversarial_target() -> PromptTarget:
     """
     Resolve the default adversarial chat target.
 
-    First checks the ``TargetRegistry`` for an ``"adversarial_chat"`` entry
+    First checks ``override_default_adversarial_target`` for a scoped default,
+    then the ``TargetRegistry`` for an ``"adversarial_chat"`` entry
     (populated by ``TargetInitializer`` from ``ADVERSARIAL_CHAT_*`` env vars).
     Falls back to a default fallback target with temperature=1.2
 
@@ -41,6 +94,9 @@ def get_default_adversarial_target() -> PromptTarget:
     Raises:
         ValueError: If the registered target does not support multi-turn.
     """
+    scoped_target = _adversarial_target_override.get()
+    if scoped_target is not None:
+        return scoped_target
     return _get_default_chat_target(
         preferred_target_key="adversarial_chat",
         required_capabilities={CapabilityName.MULTI_TURN},

@@ -317,17 +317,33 @@ class AtomicAttack:
             return_partial_on_failure (bool): If True, returns partial results even when
                 some objectives don't complete execution. If False, raises an exception on
                 any execution failure. Defaults to True.
-            **attack_params: Additional parameters to pass to the attack strategy.
+            **attack_params: Execution inputs overriding constructor-supplied defaults for this call.
+                Memory labels merge with existing labels; call-time values win on shared keys.
 
         Returns:
             AttackExecutorResult[AttackResult]: Result containing completed attack results and
                 incomplete objectives (those that didn't finish execution).
 
         Raises:
-            ValueError: If the attack execution fails completely and return_partial_on_failure=False.
+            ValueError: If inputs replace owned executor arguments, or execution fails completely
+                and return_partial_on_failure=False.
         """
         if executor is None:
             executor = AttackExecutor(max_concurrency=1)
+
+        execution_params = {**self._attack_execute_params, **attack_params}
+        memory_labels = {**self._memory_labels, **(execution_params.pop("memory_labels", None) or {})}
+        reserved = execution_params.keys() & {
+            "attack",
+            "seed_groups",
+            "adversarial_chat",
+            "objective_scorer",
+            "return_partial_on_failure",
+            "attribution",
+            "attributions",
+        }
+        if reserved:
+            raise ValueError(f"AtomicAttack owns these executor arguments: {sorted(reserved)}")
 
         logger.info(
             f"Starting atomic attack execution with {len(self._seed_groups)} seed groups "
@@ -366,10 +382,10 @@ class AtomicAttack:
                 seed_groups=execution_seed_groups,
                 adversarial_chat=self._adversarial_chat,
                 objective_scorer=self._objective_scorer,
-                memory_labels=self._memory_labels,
+                memory_labels=memory_labels,
                 return_partial_on_failure=return_partial_on_failure,
                 attributions=attributions,
-                **self._attack_execute_params,
+                **execution_params,
             )
             completed_results: list[AttackResult] = []
             for result in untyped_results.completed_results:

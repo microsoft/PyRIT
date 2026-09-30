@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import pathlib
 import re
+from pathlib import Path
 
 import yaml
 
@@ -27,7 +27,7 @@ class ColloquialWordswapConverter(Converter):
         *,
         deterministic: bool = False,
         custom_substitutions: dict[str, list[str]] | None = None,
-        wordswap_path: str | None = None,
+        wordswap_path: Path | None = None,
     ) -> None:
         """
         Initialize the converter with optional deterministic mode and substitutions source.
@@ -37,7 +37,7 @@ class ColloquialWordswapConverter(Converter):
                 If False, randomly choose a substitution for each wordswap. Defaults to False.
             custom_substitutions (dict[str, list[str]] | None): A dictionary of custom substitutions
                 to override the defaults. Defaults to None.
-            wordswap_path (str | None): Path to a YAML file containing word substitutions.
+            wordswap_path (Path | None): Path to a YAML file containing word substitutions.
                 Can be a filename within the built-in colloquial_wordswaps directory (e.g., "filipino.yaml")
                 or an absolute path to a custom YAML file. Defaults to None (uses singaporean.yaml).
 
@@ -49,7 +49,7 @@ class ColloquialWordswapConverter(Converter):
         if custom_substitutions is not None and wordswap_path is not None:
             raise ValueError("Provide either custom_substitutions or wordswap_path, not both.")
 
-        self._wordswap_path = wordswap_path
+        self._wordswap_path = str(wordswap_path) if wordswap_path is not None else None
 
         if custom_substitutions is not None and len(custom_substitutions) > 0:
             self._colloquial_substitutions = custom_substitutions
@@ -57,7 +57,7 @@ class ColloquialWordswapConverter(Converter):
             wordswap_directory = CONVERTER_SEED_PROMPT_PATH / "colloquial_wordswaps"
 
             if wordswap_path is not None:
-                file_path = pathlib.Path(wordswap_path)
+                file_path = Path(wordswap_path)
                 if not file_path.is_absolute():
                     file_path = wordswap_directory / wordswap_path
             else:

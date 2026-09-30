@@ -428,7 +428,7 @@ class Jailbreak(Scenario):
         else:
             effective_parameters["num_jailbreaks"] = template_count
         return ScenarioRunSizeEstimate(
-            estimated_attack_count=estimated_attack_count,
+            total_attack_count=estimated_attack_count,
             minimum_attack_count=minimum_planned_count if estimated_attack_count is None else None,
             maximum_attack_count=planned_count if estimated_attack_count is None else None,
             components=components,

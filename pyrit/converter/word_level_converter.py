@@ -59,6 +59,7 @@ class WordLevelConverter(Converter):
         return self._create_identifier(
             params={
                 "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
+                "word_selection_strategy_params": self._word_selection_strategy.get_identifier_params(),
                 "word_split_separator": self._word_split_separator,
             }
         )
@@ -77,6 +78,11 @@ class WordLevelConverter(Converter):
 
     def validate_input(self, prompt: str) -> None:
         """Validate the input before processing (can be overridden by subclasses)."""
+
+    # Deprecation helper: remove in 1.4.0 with BinaryConverter's override.
+    def _validate_before_conversion(self, prompt: str) -> None:
+        """Delegate automatic validation to the existing subclass hook."""
+        self.validate_input(prompt=prompt)
 
     def join_words(self, words: list[str]) -> str:
         """
@@ -117,7 +123,8 @@ class WordLevelConverter(Converter):
         if input_type != "text":
             raise ValueError(f"Input type {input_type} not supported")
 
-        self.validate_input(prompt=prompt)
+        # Deprecation helper: restore self.validate_input(prompt=prompt) in 1.4.0.
+        self._validate_before_conversion(prompt=prompt)
 
         words = prompt.split() if self._word_split_separator is None else prompt.split(self._word_split_separator)
 

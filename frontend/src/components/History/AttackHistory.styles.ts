@@ -6,13 +6,15 @@ import {
   mobileTouchTargetHeight,
 } from '../../styles/touchTargets'
 
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
+
 export const useAttackHistoryStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',
     height: '100%',
     overflow: 'hidden',
-    backgroundColor: tokens.colorNeutralBackground2,
+    backgroundColor: WORKSPACE_CANVAS_BACKGROUND,
   },
   header: {
     padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalXXL}`,
@@ -74,6 +76,7 @@ export const useAttackHistoryStyles = makeStyles({
   table: {
     minWidth: '100%',
     tableLayout: 'auto' as const,
+    backgroundColor: tokens.colorNeutralBackground2,
   },
   colStatus: { minWidth: '100px', whiteSpace: 'nowrap' as const },
   colAttackType: { minWidth: '110px', whiteSpace: 'nowrap' as const },

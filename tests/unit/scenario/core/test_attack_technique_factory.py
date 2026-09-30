@@ -3,19 +3,30 @@
 
 """Tests for the AttackTechniqueFactory class."""
 
-import typing
+import warnings
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.converter import Base64Converter, QRCodeConverter, ROT13Converter, TranslationConverter
-from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_config import (
+    DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
+    AttackConverterConfig,
+    AttackScoringConfig,
+)
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
+
+if TYPE_CHECKING:
+    # The regression tests bind these names only after constructing each factory.
+    DeferredNarrowConfig = AttackScoringConfig
+    DeferredWarnConfig = AttackScoringConfig
+    DeferredSkipConfig = AttackScoringConfig
 
 
 def _make_seed_technique() -> AttackTechniqueSeedGroup:
@@ -58,6 +69,19 @@ class _StubAttack:
 
 class TestFactoryInit:
     """Tests for AttackTechniqueFactory construction and validation."""
+
+    def test_plain_prompt_sending_does_not_use_default_adversarial_target(self) -> None:
+        factory = AttackTechniqueFactory(name="plain", attack_class=PromptSendingAttack)
+        assert factory.uses_default_adversarial_target is False
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("explicit_target", [False, True])
+    def test_simulated_conversation_adversarial_default_usage(self, explicit_target: bool) -> None:
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_journalist_interview",
+            adversarial_chat=MagicMock(spec=PromptTarget) if explicit_target else None,
+        )
+        assert factory.uses_default_adversarial_target is not explicit_target
 
     def test_init_defaults(self):
         factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
@@ -230,12 +254,43 @@ class TestFactoryInit:
         assert not default_factory.supports_additional_request_converters
         assert composable_factory.supports_additional_request_converters
 
+    def test_with_attack_kwargs_preserves_factory_and_merges_values(self) -> None:
+        seed_technique = _make_seed_technique()
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            description="Configured stub.",
+            technique_tags=["multi_turn"],
+            attack_kwargs={"max_turns": 7},
+            seed_technique=seed_technique,
+            uses_adversarial=True,
+            supports_additional_request_converters=True,
+            scorer_override_policy=ScorerOverridePolicy.RAISE,
+        )
+
+        specialized = factory.with_attack_kwargs(attack_kwargs={"max_turns": 2})
+
+        assert specialized is not factory
+        assert specialized.name == factory.name
+        assert specialized.attack_class is factory.attack_class
+        assert specialized.description == factory.description
+        assert specialized.technique_tags == factory.technique_tags
+        assert specialized.seed_technique is factory.seed_technique
+        assert specialized.uses_adversarial == factory.uses_adversarial
+        assert specialized.supports_additional_request_converters == factory.supports_additional_request_converters
+        target = MagicMock(spec=PromptTarget)
+        scoring = MagicMock(spec=AttackScoringConfig)
+        original_technique = factory.create(objective_target=target, attack_scoring_config=scoring)
+        specialized_technique = specialized.create(objective_target=target, attack_scoring_config=scoring)
+        assert original_technique.attack.max_turns == 7
+        assert specialized_technique.attack.max_turns == 2
+
 
 class TestFactoryCreate:
     """Tests for AttackTechniqueFactory.create()."""
 
     def _scoring(self) -> AttackScoringConfig:
-        return MagicMock(spec=AttackScoringConfig)
+        return cast("AttackScoringConfig", MagicMock(spec=AttackScoringConfig))
 
     def test_create_produces_attack_technique(self):
         factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
@@ -365,6 +420,39 @@ class TestFactoryCreate:
         assert not technique.attack.adversarial_was_passed
         assert not technique.attack.converter_was_passed
 
+    @pytest.mark.parametrize("extra_request_converters", [None, []])
+    def test_create_preserves_explicit_baked_none_converter_config(self, extra_request_converters):
+        """An explicitly baked None remains distinct from an omitted converter config."""
+        unset = object()
+
+        class _RequiredNullableConverterAttack:
+            def __init__(
+                self,
+                *,
+                objective_target,
+                attack_scoring_config,
+                attack_converter_config=unset,
+            ):
+                self.objective_target = objective_target
+                self.attack_converter_config = attack_converter_config
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_RequiredNullableConverterAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_RequiredNullableConverterAttack,
+            attack_kwargs={"attack_converter_config": None},
+        )
+
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            extra_request_converters=extra_request_converters,
+        )
+
+        assert technique.attack.attack_converter_config is None
+
     def test_create_appends_extra_request_converters_without_baked(self):
         """``extra_request_converters`` become the request converters when none are baked."""
         factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
@@ -425,6 +513,125 @@ class TestFactoryCreate:
         )
 
         assert isinstance(technique, AttackTechnique)
+
+    def test_create_with_deferred_forward_ref_scoring_config_policy_raise(self):
+        """Forward-referenced scoring config defined after factory init resolves and raises on incompatible type."""
+        import sys
+
+        class _DeferredAttack:
+            def __init__(
+                self,
+                *,
+                objective_target: PromptTarget,
+                attack_scoring_config: "DeferredNarrowConfig | None" = None,
+            ):
+                self.objective_target = objective_target
+                self.attack_scoring_config = attack_scoring_config
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_DeferredAttack", class_module=__name__)
+
+        factory = AttackTechniqueFactory(
+            name="deferred_test",
+            attack_class=_DeferredAttack,
+            scorer_override_policy=ScorerOverridePolicy.RAISE,
+            uses_adversarial=False,
+        )
+
+        class _DeferredNarrowConfig(AttackScoringConfig):
+            pass
+
+        mod_dict = sys.modules[_DeferredAttack.__module__].__dict__
+        mod_dict["DeferredNarrowConfig"] = _DeferredNarrowConfig
+
+        try:
+            target = MagicMock(spec=PromptTarget)
+            # Incompatible base config should raise ValueError
+            with pytest.raises(ValueError, match="incompatible"):
+                factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+
+            # Compatible config should succeed
+            narrow_config = _DeferredNarrowConfig()
+            technique = factory.create(objective_target=target, attack_scoring_config=narrow_config)
+            assert technique.attack.attack_scoring_config is narrow_config
+        finally:
+            mod_dict.pop("DeferredNarrowConfig", None)
+
+    def test_create_with_deferred_forward_ref_scoring_config_policy_warn(self, caplog):
+        """Forward-referenced scoring config with WARN policy logs and omits incompatible config."""
+        import sys
+
+        class _DeferredWarnAttack:
+            def __init__(
+                self,
+                *,
+                objective_target: PromptTarget,
+                attack_scoring_config: "DeferredWarnConfig | None" = None,
+            ):
+                self.objective_target = objective_target
+                self.attack_scoring_config = attack_scoring_config
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_DeferredWarnAttack", class_module=__name__)
+
+        factory = AttackTechniqueFactory(
+            name="deferred_warn_test",
+            attack_class=_DeferredWarnAttack,
+            scorer_override_policy=ScorerOverridePolicy.WARN,
+            uses_adversarial=False,
+        )
+
+        class _DeferredWarnConfig(AttackScoringConfig):
+            pass
+
+        mod_dict = sys.modules[_DeferredWarnAttack.__module__].__dict__
+        mod_dict["DeferredWarnConfig"] = _DeferredWarnConfig
+
+        try:
+            target = MagicMock(spec=PromptTarget)
+            technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+            assert technique.attack.attack_scoring_config is None
+            assert "incompatible" in caplog.text
+        finally:
+            mod_dict.pop("DeferredWarnConfig", None)
+
+    def test_create_with_deferred_forward_ref_scoring_config_policy_skip(self, caplog):
+        """Forward-referenced scoring config with SKIP policy silently omits incompatible config."""
+        import sys
+
+        class _DeferredSkipAttack:
+            def __init__(
+                self,
+                *,
+                objective_target: PromptTarget,
+                attack_scoring_config: "DeferredSkipConfig | None" = None,
+            ):
+                self.objective_target = objective_target
+                self.attack_scoring_config = attack_scoring_config
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_DeferredSkipAttack", class_module=__name__)
+
+        factory = AttackTechniqueFactory(
+            name="deferred_skip_test",
+            attack_class=_DeferredSkipAttack,
+            scorer_override_policy=ScorerOverridePolicy.SKIP,
+            uses_adversarial=False,
+        )
+
+        class _DeferredSkipConfig(AttackScoringConfig):
+            pass
+
+        mod_dict = sys.modules[_DeferredSkipAttack.__module__].__dict__
+        mod_dict["DeferredSkipConfig"] = _DeferredSkipConfig
+
+        try:
+            target = MagicMock(spec=PromptTarget)
+            technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+            assert technique.attack.attack_scoring_config is None
+            assert "incompatible" not in caplog.text
+        finally:
+            mod_dict.pop("DeferredSkipConfig", None)
 
 
 class TestFactoryIdentifier:
@@ -553,162 +760,6 @@ class TestFactoryIdentifier:
         factory2 = AttackTechniqueFactory(name="test", attack_class=_StubAttack, seed_technique=seed2)
 
         assert factory1.get_identifier().hash != factory2.get_identifier().hash
-
-
-class TestScorerPolicy:
-    """Tests for scorer override policy logic (_should_apply_scoring_config, _apply_scorer_policy)."""
-
-    def test_should_apply_returns_true_when_type_compatible(self):
-        """Config passes through when the attack accepts base AttackScoringConfig."""
-        factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
-        config = MagicMock(spec=AttackScoringConfig)
-
-        result = factory._should_apply_scoring_config(
-            attack_scoring_config=config,
-            accepted_params=factory._get_accepted_params(),
-        )
-
-        assert result is True
-
-    def test_should_apply_returns_false_when_param_not_accepted(self):
-        """If the attack class doesn't accept attack_scoring_config, return False."""
-
-        class _NoScoringAttack:
-            def __init__(self, *, objective_target):
-                pass
-
-            def get_identifier(self):
-                return ComponentIdentifier(class_name="_NoScoringAttack", class_module="test")
-
-        factory = AttackTechniqueFactory(
-            name="test",
-            attack_class=_NoScoringAttack,
-            scorer_override_policy=ScorerOverridePolicy.SKIP,
-        )
-        config = MagicMock(spec=AttackScoringConfig)
-
-        result = factory._should_apply_scoring_config(
-            attack_scoring_config=config,
-            accepted_params=factory._get_accepted_params(),
-        )
-
-        assert result is False
-
-    def test_should_apply_returns_false_when_type_incompatible_warn(self, caplog):
-        """When annotation is narrowed and config doesn't match, WARN returns False and logs."""
-
-        class _NarrowedScoringConfig(AttackScoringConfig):
-            pass
-
-        class _NarrowedAttack:
-            def __init__(self, *, objective_target, attack_scoring_config: _NarrowedScoringConfig | None = None):
-                pass
-
-            def get_identifier(self):
-                return ComponentIdentifier(class_name="_NarrowedAttack", class_module="test")
-
-        factory = AttackTechniqueFactory(
-            name="test",
-            attack_class=_NarrowedAttack,
-            scorer_override_policy=ScorerOverridePolicy.WARN,
-        )
-        config = MagicMock(spec=AttackScoringConfig)
-
-        result = factory._should_apply_scoring_config(
-            attack_scoring_config=config,
-            accepted_params=factory._get_accepted_params(),
-        )
-
-        assert result is False
-        assert "incompatible" in caplog.text
-
-    def test_should_apply_raises_when_type_incompatible_raise_policy(self):
-        """When annotation is narrowed and policy is RAISE, ValueError is raised."""
-
-        class _NarrowedScoringConfig(AttackScoringConfig):
-            pass
-
-        class _NarrowedAttack:
-            def __init__(self, *, objective_target, attack_scoring_config: _NarrowedScoringConfig | None = None):
-                pass
-
-            def get_identifier(self):
-                return ComponentIdentifier(class_name="_NarrowedAttack", class_module="test")
-
-        factory = AttackTechniqueFactory(
-            name="test",
-            attack_class=_NarrowedAttack,
-            scorer_override_policy=ScorerOverridePolicy.RAISE,
-        )
-        config = MagicMock(spec=AttackScoringConfig)
-
-        with pytest.raises(ValueError, match="incompatible"):
-            factory._should_apply_scoring_config(
-                attack_scoring_config=config,
-                accepted_params=factory._get_accepted_params(),
-            )
-
-    def test_should_apply_accepts_subclass_of_narrowed_type(self):
-        """A subclass of the narrowed annotation type should pass through."""
-
-        class _NarrowedScoringConfig(AttackScoringConfig):
-            pass
-
-        class _NarrowedAttack:
-            def __init__(self, *, objective_target, attack_scoring_config: _NarrowedScoringConfig | None = None):
-                pass
-
-            def get_identifier(self):
-                return ComponentIdentifier(class_name="_NarrowedAttack", class_module="test")
-
-        factory = AttackTechniqueFactory(
-            name="test",
-            attack_class=_NarrowedAttack,
-            scorer_override_policy=ScorerOverridePolicy.RAISE,
-        )
-        config = MagicMock(spec=_NarrowedScoringConfig)
-
-        result = factory._should_apply_scoring_config(
-            attack_scoring_config=config,
-            accepted_params=factory._get_accepted_params(),
-        )
-
-        assert result is True
-
-    def test_apply_scorer_policy_skip_is_silent(self, caplog):
-        """SKIP policy should not log or raise."""
-        factory = AttackTechniqueFactory(
-            name="test",
-            attack_class=_StubAttack,
-            scorer_override_policy=ScorerOverridePolicy.SKIP,
-        )
-
-        factory._apply_scorer_policy("some incompatibility message")
-
-        assert "some incompatibility message" not in caplog.text
-
-    def test_apply_scorer_policy_warn_logs(self, caplog):
-        """WARN policy should log a warning."""
-        factory = AttackTechniqueFactory(
-            name="test",
-            attack_class=_StubAttack,
-            scorer_override_policy=ScorerOverridePolicy.WARN,
-        )
-
-        factory._apply_scorer_policy("scorer mismatch detail")
-
-        assert "scorer mismatch detail" in caplog.text
-
-    def test_apply_scorer_policy_raise_raises(self):
-        """RAISE policy should raise ValueError with the message."""
-        factory = AttackTechniqueFactory(
-            name="test",
-            attack_class=_StubAttack,
-            scorer_override_policy=ScorerOverridePolicy.RAISE,
-        )
-
-        with pytest.raises(ValueError, match="error detail"):
-            factory._apply_scorer_policy("error detail")
 
 
 class TestCustomAdversarialPrompt:
@@ -919,6 +970,251 @@ class TestCustomAdversarialPrompt:
                 adversarial_system_prompt="create-time {{ objective }}",
             )
 
+    def test_custom_prompt_template_implies_uses_adversarial(self):
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=_StubAttack,
+            adversarial_prompt_template="custom {{ feedback_text }}",
+        )
+        assert factory.uses_adversarial is True
+
+    def test_prompt_template_with_uses_adversarial_false_raises(self):
+        with pytest.raises(ValueError, match="uses_adversarial=False"):
+            AttackTechniqueFactory(
+                name="durian",
+                attack_class=_StubAttack,
+                adversarial_prompt_template="custom {{ feedback_text }}",
+                uses_adversarial=False,
+            )
+
+    def test_baked_prompt_template_attaches_to_adversarial_config(self):
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="sys {{ objective }}",
+            adversarial_prompt_template="turn {{ feedback_text }}",
+        )
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+        )
+        config = technique.attack.attack_adversarial_config
+        assert config.adversarial_prompt_template == "turn {{ feedback_text }}"
+
+    def test_create_time_prompt_template_attaches_when_none_baked(self):
+        """A create-time adversarial_prompt_template is used when the factory baked no custom
+        adversarial prompt at all (baking even just a system prompt locks out every create-time
+        prompt override, per test_create_custom_prompt_conflicts_with_baked_raises)."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+        )
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+            adversarial_prompt_template="create-time {{ feedback_text }}",
+        )
+        config = technique.attack.attack_adversarial_config
+        assert config.adversarial_prompt_template == "create-time {{ feedback_text }}"
+
+    def test_baked_prompt_template_takes_precedence_over_create_time(self):
+        """Like system_prompt/seed_prompt, a baked prompt_template wins over a create-time one
+        when both happen to be supplied (create() otherwise raises on that conflict; this covers
+        the internal precedence in _build_adversarial_config directly)."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="sys {{ objective }}",
+            adversarial_prompt_template="baked {{ feedback_text }}",
+        )
+        config = factory._build_adversarial_config(
+            create_time_target=MagicMock(spec=PromptTarget),
+            create_time_prompt_template="ignored {{ feedback_text }}",
+        )
+        assert config.adversarial_prompt_template == "baked {{ feedback_text }}"
+
+    def test_baked_empty_string_prompt_template_still_takes_precedence(self):
+        """Precedence must use an explicit None check, not truthiness: a deliberately-baked
+        empty-string template (suppressing the default per-turn text) must still win over a
+        create-time value, the same as any other baked template."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="sys {{ objective }}",
+            adversarial_prompt_template="",
+        )
+        config = factory._build_adversarial_config(
+            create_time_target=MagicMock(spec=PromptTarget),
+            create_time_prompt_template="ignored {{ feedback_text }}",
+        )
+        assert config.adversarial_prompt_template == ""
+
+    def test_create_prompt_template_conflicts_with_baked_raises(self):
+        """create() must not supply adversarial_prompt_template when the factory baked one."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_prompt_template="baked {{ feedback_text }}",
+        )
+        with pytest.raises(ValueError, match="custom adversarial prompt is already baked"):
+            factory.create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=self._scoring(),
+                adversarial_prompt_template="create-time {{ feedback_text }}",
+            )
+
+    def test_default_adversarial_prompt_template_is_unset_when_not_wired(self):
+        """When no adversarial_prompt_template is wired anywhere, the built config leaves it at
+        AttackAdversarialConfig's own default rather than forcing a value."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_system_prompt="sys {{ objective }}",
+        )
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+        )
+        config = technique.attack.attack_adversarial_config
+        assert config.adversarial_prompt_template == DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE
+
+    def test_identifier_distinguishes_custom_prompt_template(self):
+        f1 = AttackTechniqueFactory(
+            name="durian", attack_class=self._AdversarialAttack, adversarial_prompt_template="a {{ feedback_text }}"
+        )
+        f2 = AttackTechniqueFactory(
+            name="durian", attack_class=self._AdversarialAttack, adversarial_prompt_template="b {{ feedback_text }}"
+        )
+        assert f1.get_identifier().hash != f2.get_identifier().hash
+
+
+class TestWithAdversarialSystemPromptPrefix:
+    """Tests for ``with_adversarial_system_prompt_prefix``, the explicit prefix-layering API."""
+
+    class _AdversarialAttack:
+        def __init__(self, *, objective_target=None, attack_scoring_config=None, attack_adversarial_config=None):
+            self.attack_adversarial_config = attack_adversarial_config
+
+        def get_identifier(self):
+            return ComponentIdentifier(class_name="_AdversarialAttack", class_module="test")
+
+    @staticmethod
+    def _scoring():
+        return MagicMock(spec=AttackScoringConfig)
+
+    @pytest.mark.parametrize("prompt_template", [None, "", "turn {{ feedback_text }}"])
+    def test_reaches_attack_config(self, *, prompt_template: str | None) -> None:
+        prefix = "Static guidance"
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_prompt_template=prompt_template,
+        )
+
+        technique = factory.with_adversarial_system_prompt_prefix(prefix).create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+        )
+
+        config = technique.attack.attack_adversarial_config
+        assert config.system_prompt_prefix == prefix
+        assert config.adversarial_prompt_template == (
+            DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE if prompt_template is None else prompt_template
+        )
+
+    def test_does_not_mutate_original_factory(self):
+        """Deriving a prefixed factory must not change what the original factory creates."""
+        prefix = "Static guidance"
+        factory = AttackTechniqueFactory(name="durian", attack_class=self._AdversarialAttack)
+
+        factory.with_adversarial_system_prompt_prefix(prefix)
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=self._scoring(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+        )
+
+        assert technique.attack.attack_adversarial_config.system_prompt_prefix is None
+
+    def test_returns_modified_simulated_seed_without_mutating_factory(self):
+        prefix = "Static guidance"
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_simulated",
+            attack_class=_StubAttack,
+        )
+
+        new_factory = factory.with_adversarial_system_prompt_prefix(prefix)
+        technique = new_factory.create(
+            objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=self._scoring()
+        )
+
+        assert new_factory is not factory
+        assert factory.seed_technique is not None
+        assert new_factory.seed_technique is not None
+        assert technique.seed_technique is not None
+        original_seed = factory.seed_technique.seeds[0]
+        modified_seed = new_factory.seed_technique.seeds[0]
+        copied_seed = technique.seed_technique.seeds[0]
+        original_value = original_seed.adversarial_chat_system_prompt.value
+        assert modified_seed.adversarial_chat_system_prompt.value == f"{prefix}\n\n{original_value}"
+        assert copied_seed.adversarial_chat_system_prompt.value == f"{prefix}\n\n{original_value}"
+        assert modified_seed.id != original_seed.id
+        assert factory.get_identifier().hash != new_factory.get_identifier().hash
+
+    def test_changes_factory_identity_on_attack_config_path(self):
+        """A prefix changes the technique, so the derived factory must not share the original's hash."""
+        factory = AttackTechniqueFactory(name="durian", attack_class=self._AdversarialAttack)
+
+        new_factory = factory.with_adversarial_system_prompt_prefix("Static guidance")
+
+        assert factory.get_identifier().hash != new_factory.get_identifier().hash
+
+    @pytest.mark.parametrize("prompt_template", [None, "turn {{ feedback_text }}"])
+    def test_distinct_prefixes_produce_distinct_identities(self, *, prompt_template: str | None) -> None:
+        """Two factories differing only by prefix text must not collide."""
+        factory = AttackTechniqueFactory(
+            name="durian",
+            attack_class=self._AdversarialAttack,
+            adversarial_prompt_template=prompt_template,
+        )
+
+        first = factory.with_adversarial_system_prompt_prefix("Guidance A")
+        second = factory.with_adversarial_system_prompt_prefix("Guidance B")
+
+        assert first.get_identifier().hash != second.get_identifier().hash
+
+    def test_layers_new_prefix_ahead_of_existing_on_attack_config_path(self):
+        """Repeated calls must layer rather than discard the earlier prefix."""
+        factory = AttackTechniqueFactory(name="durian", attack_class=self._AdversarialAttack)
+
+        technique = (
+            factory.with_adversarial_system_prompt_prefix("Never break character.")
+            .with_adversarial_system_prompt_prefix("Shared benchmark guidance.")
+            .create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=self._scoring(),
+                adversarial_chat=MagicMock(spec=PromptTarget),
+            )
+        )
+
+        assert technique.attack.attack_adversarial_config.system_prompt_prefix == (
+            "Shared benchmark guidance.\n\nNever break character."
+        )
+
+    def test_rejects_unsupported_adversarial_factory(self):
+        factory = AttackTechniqueFactory(
+            name="unsupported",
+            attack_class=_StubAttack,
+            uses_adversarial=True,
+        )
+
+        with pytest.raises(ValueError, match="cannot accept an adversarial system prompt prefix"):
+            factory.with_adversarial_system_prompt_prefix("Static guidance")
+
 
 class TestResolveAdversarialChat:
     class _AdversarialAttack:
@@ -957,7 +1253,7 @@ class TestResolveAdversarialChat:
 
         factory = AttackTechniqueFactory.with_simulated_conversation(
             name="role_play_movie_script",
-            adversarial_chat_system_prompt_path=(
+            adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(
                 EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "role_play" / "role_play_movie_script.yaml"
             ),
             num_turns=2,
@@ -971,66 +1267,61 @@ class TestResolveAdversarialChat:
         mock_default.assert_called_once()
 
 
-class TestUnwrapOptional:
-    """Tests for AttackTechniqueFactory._unwrap_optional static method."""
+@pytest.mark.usefixtures("patch_central_database")
+class TestWithSimulatedConversationPromptSources:
+    """Tests for the canonical prompt inputs on ``with_simulated_conversation``."""
 
-    def test_unwrap_union_with_none(self):
-        """X | None should unwrap to X."""
-        result = AttackTechniqueFactory._unwrap_optional(AttackScoringConfig | None)
-        assert result is AttackScoringConfig
+    def test_defaults_resolve_to_prompts_without_warning(self):
+        """The name-derived adversarial prompt and the default next message load silently."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            factory = AttackTechniqueFactory.with_simulated_conversation(name="crescendo_simulated")
 
-    def test_unwrap_plain_type(self):
-        """A bare type (no Optional wrapping) returns itself."""
-        result = AttackTechniqueFactory._unwrap_optional(AttackScoringConfig)
-        assert result is AttackScoringConfig
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.adversarial_chat_system_prompt.name == "crescendo_simulated"
+        assert sim.simulated_target_system_prompt.name == "simulated_target_compliant"
+        assert sim.next_message_system_prompt is not None
+        assert sim.next_message_system_prompt.name == "direct_next_message_generator"
 
-    def test_unwrap_multi_union_returns_none(self):
-        """Union of more than one non-None type returns None (ambiguous)."""
-        result = AttackTechniqueFactory._unwrap_optional(int | str | None)
-        assert result is None
-
-    def test_unwrap_none_type_alone(self):
-        """NoneType alone is a plain type — returns itself."""
-        result = AttackTechniqueFactory._unwrap_optional(type(None))
-        assert result is type(None)
-
-    def test_unwrap_non_type_annotation_returns_none(self):
-        """A non-type annotation (e.g., string forward ref) returns None."""
-        result = AttackTechniqueFactory._unwrap_optional("SomeForwardRef")
-        assert result is None
-
-    def test_unwrap_typing_optional_with_none(self):
-        """typing.Optional[X] (legacy typing.Union syntax) should unwrap to X."""
-        # Intentionally uses the legacy typing.Optional/Union construct (rather than `X | None`)
-        # to exercise _unwrap_optional's typing.Union-origin branch specifically.
-        result = AttackTechniqueFactory._unwrap_optional(typing.Optional[AttackScoringConfig])  # noqa: UP045
-        assert result is AttackScoringConfig
-
-    def test_unwrap_typing_union_multi_returns_none(self):
-        """typing.Union of more than one non-None type returns None (ambiguous)."""
-        # Intentionally uses typing.Union (rather than `X | Y`) to exercise _unwrap_optional's
-        # typing.Union-origin branch specifically.
-        result = AttackTechniqueFactory._unwrap_optional(typing.Union[int, str, None])  # noqa: UP007
-        assert result is None
-
-
-class TestGetScoringConfigType:
-    """Tests for AttackTechniqueFactory._get_scoring_config_type."""
-
-    def test_returns_none_when_annotation_is_not_attack_scoring_config_subclass(self):
-        """A resolved, narrowed annotation that isn't an AttackScoringConfig subclass yields None."""
-
-        class _WrongAnnotationAttack:
-            def __init__(self, *, objective_target, attack_scoring_config: int | None = None):
-                pass
-
-            def get_identifier(self):
-                return ComponentIdentifier(class_name="_WrongAnnotationAttack", class_module="test")
-
-        factory = AttackTechniqueFactory(
-            name="test",
-            attack_class=_WrongAnnotationAttack,
-            scorer_override_policy=ScorerOverridePolicy.SKIP,
+    def test_canonical_prompt_is_used(self):
+        """An explicit prompt is carried straight through to the seed."""
+        prompt = SeedPrompt(value="custom adversarial", parameters=["objective"])
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_simulated",
+            adversarial_chat_system_prompt=prompt,
         )
 
-        assert factory._get_scoring_config_type() is None
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.adversarial_chat_system_prompt.value == "custom adversarial"
+
+    def test_deprecated_path_input_warns(self, tmp_path):
+        """An explicit path input still works and warns."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: from path\ndata_type: text")
+
+        with pytest.warns(DeprecationWarning, match="adversarial_chat_system_prompt_path"):
+            factory = AttackTechniqueFactory.with_simulated_conversation(
+                name="crescendo_simulated",
+                adversarial_chat_system_prompt_path=adv_path,
+            )
+
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.adversarial_chat_system_prompt.value == "from path"
+
+    def test_final_user_message_disables_next_message_prompt(self):
+        """A fixed final message replaces the generated next message."""
+        factory = AttackTechniqueFactory.with_simulated_conversation(
+            name="crescendo_simulated",
+            final_user_message="yes.",
+            num_turns=1,
+        )
+
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.next_message_system_prompt is None
+        prompts = list(factory.seed_technique.prompts)
+        assert prompts[0].value == "yes."
+        assert prompts[0].sequence == sim.sequence_range.stop

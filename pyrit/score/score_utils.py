@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 
+from pyrit.common.utils import is_numeric_value
 from pyrit.models import Score, UndeterminedScoreError
 
 # Key used by FloatScaleThresholdScorer to store the original float value
@@ -76,11 +77,13 @@ def format_score_for_rationale(score: Score) -> str:
         score: The Score object to format.
 
     Returns:
-        Formatted string with scorer class, value, and rationale.
+        Formatted string with scorer class, value, categories (if any), and rationale.
     """
     class_type = score.scorer_class_identifier.class_name or "Unknown" if score.scorer_class_identifier else "Unknown"
     value = score.score_value if score.score_value is not None else "undetermined"
-    return f"   - {class_type} {value}: {score.score_rationale or ''}"
+    categories = [category for category in score.score_category or [] if category]
+    category_label = f" (Category: {', '.join(categories)})" if categories else ""
+    return f"   - {class_type} {value}{category_label}: {score.score_rationale or ''}"
 
 
 def normalize_score_to_float(score: Score | None) -> float:
@@ -119,6 +122,4 @@ def normalize_score_to_float(score: Score | None) -> float:
         return 0.0
     if isinstance(score_value, bool):
         return 1.0 if score_value else 0.0
-    if isinstance(score_value, (int, float)):
-        return float(score_value)
-    return 0.0
+    return float(score_value) if is_numeric_value(score_value) else 0.0

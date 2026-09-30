@@ -16,7 +16,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
 )
 from pyrit.memory import CentralMemory
-from pyrit.models import ConversationType, Message, MessagePiece
+from pyrit.models import ConversationType, Message, MessagePiece, ScoringExpectation
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -492,6 +492,7 @@ class TestTAPNodeDuplicateSystemMessages:
                 objective_target=target,
             ),
             record_objective_conversation=lambda *, conversation_id: None,
+            expectation=ScoringExpectation(objective="Test objective"),
         )
 
     def test_single_turn_target_duplicates_logical_history_without_seed_boundary(self):
@@ -879,6 +880,7 @@ class TestTAPBranchingPreservesSystemPrompts:
                 objective_target=target,
             ),
             record_objective_conversation=lambda *, conversation_id: None,
+            expectation=ScoringExpectation(objective="Test objective"),
         )
 
     def test_branching_single_turn_target_preserves_system_across_depths(self):

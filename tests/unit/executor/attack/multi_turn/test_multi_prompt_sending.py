@@ -5,10 +5,12 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
+    AttackExecutor,
     AttackScoringConfig,
     ConversationSession,
     ConversationState,
@@ -24,10 +26,14 @@ from pyrit.message_normalizer import HistorySquashNormalizer, MessageStringNorma
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     ComponentIdentifier,
     Message,
     MessagePiece,
     Score,
+    ScoringExpectation,
+    SeedObjective,
+    SeedPrompt,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import (
@@ -401,7 +407,11 @@ class TestResponseEvaluation:
         with patch("pyrit.score.MessageScorer.score_response_async") as mock_score:
             mock_score.return_value = {"objective_scores": [success_score]}
 
-            result = await attack._evaluate_response_async(response=sample_response, objective="test objective")
+            result = await attack._evaluate_response_async(
+                response=sample_response,
+                objective="test objective",
+                expectation=ScoringExpectation(objective="test objective"),
+            )
 
             assert result == success_score
             mock_score.assert_called_once()
@@ -409,7 +419,11 @@ class TestResponseEvaluation:
     async def test_evaluate_response_without_objective_scorer_returns_none(self, mock_target, sample_response):
         attack = MultiPromptSendingAttack(objective_target=mock_target)
 
-        result = await attack._evaluate_response_async(response=sample_response, objective="test objective")
+        result = await attack._evaluate_response_async(
+            response=sample_response,
+            objective="test objective",
+            expectation=ScoringExpectation(objective="test objective"),
+        )
 
         assert result is None
 
@@ -426,7 +440,11 @@ class TestResponseEvaluation:
         with patch("pyrit.score.MessageScorer.score_response_async") as mock_score:
             mock_score.return_value = {"objective_scores": [success_score]}
 
-            result = await attack._evaluate_response_async(response=sample_response, objective="test objective")
+            result = await attack._evaluate_response_async(
+                response=sample_response,
+                objective="test objective",
+                expectation=ScoringExpectation(objective="test objective"),
+            )
 
             # Verify the call included auxiliary scorers
             call_args = mock_score.call_args[1]
@@ -505,7 +523,9 @@ class TestAttackExecution:
         with patch.object(attack, "_evaluate_response_async", return_value=success_score) as mock_evaluate:
             result = await attack._perform_async(context=basic_context)
 
-            mock_evaluate.assert_called_once_with(response=sample_response, objective=basic_context.objective)
+            mock_evaluate.assert_called_once_with(
+                response=sample_response, objective=basic_context.objective, expectation=basic_context.expectation
+            )
             assert result.last_score == success_score
 
 
@@ -733,3 +753,54 @@ class TestEdgeCasesAndErrorHandling:
         # Should complete without error
         await attack._teardown_async(context=basic_context)
         # No assertions needed - we just want to ensure it runs without exceptions
+
+
+class TestUserMessageReuse:
+    """Caller-provided user_messages must be reusable across executions."""
+
+    async def test_execute_async_twice_with_same_user_messages(self, sqlite_instance):
+        target = MockPromptTarget()
+        attack = MultiPromptSendingAttack(objective_target=target)
+        user_messages = [
+            Message.from_prompt(prompt="turn one", role="user"),
+            Message.from_prompt(prompt="turn two", role="user"),
+        ]
+        original_ids = [piece.id for message in user_messages for piece in message.message_pieces]
+
+        first = await attack.execute_async(objective="objective one", user_messages=user_messages)
+        second = await attack.execute_async(objective="objective two", user_messages=user_messages)
+
+        assert first.conversation_id != second.conversation_id
+        for result in (first, second):
+            conversation = sqlite_instance.get_conversation_messages(conversation_id=result.conversation_id)
+            assert [message.get_value() for message in conversation] == ["turn one", "default", "turn two", "default"]
+        # The caller's messages are left untouched.
+        assert [piece.id for message in user_messages for piece in message.message_pieces] == original_ids
+
+    async def test_executor_broadcasts_user_messages_to_all_objectives(self, sqlite_instance):
+        attack = MultiPromptSendingAttack(objective_target=MockPromptTarget())
+        user_messages = [Message.from_prompt(prompt="shared turn", role="user")]
+
+        result = await AttackExecutor(max_concurrency=2).execute_attack_async(
+            attack=attack,
+            objectives=["objective one", "objective two"],
+            user_messages=user_messages,
+            return_partial_on_failure=True,
+        )
+
+        assert result.incomplete_objectives == []
+        assert len(result.completed_results) == 2
+
+
+class TestFromSeedGroup:
+    async def test_from_seed_group_keeps_targeted_harm_categories(self):
+        seed_group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective", harm_categories=["violence"]),
+                SeedPrompt(value="turn one", data_type="text", role="user", sequence=0),
+            ]
+        )
+
+        params = await MultiPromptSendingAttackParameters.from_seed_group_async(seed_group=seed_group)
+
+        assert params.targeted_harm_categories == ["violence"]

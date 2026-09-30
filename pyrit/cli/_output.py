@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         ScenarioRunSummary,
         TargetInstance,
     )
+    from pyrit.output.sink import OutputFormat, Sink
 
 try:
     import termcolor
@@ -393,17 +394,23 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def print_scenario_result_async(*, result: ScenarioResult) -> None:
+async def print_scenario_result_async(
+    *,
+    result: ScenarioResult,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
     """
-    Print scenario overview using the output module.
+    Print the scenario overview — the CLI's entry to the framework ``output_scenario_async`` helper.
 
     Args:
         result: Deserialized ``ScenarioResult`` from the REST API.
+        format: Output format — "pretty" or "json". Defaults to "pretty".
+        sink: Output sink. Defaults to None (the helper's default destination).
     """
-    from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
+    from pyrit.output.helpers import output_scenario_async
 
-    printer = PrettyScenarioResultMemoryPrinter()
-    await printer.write_async(result)
+    await output_scenario_async(result, format=format, sink=sink)
 
 
 # Outcome -> color, mirroring the pretty printer's inverted palette (a
@@ -416,16 +423,81 @@ _OUTCOME_COLORS = {
 }
 
 
+async def _write_json_document_async(document: str, *, sink: Sink | None = None) -> None:
+    """
+    Write an assembled JSON document to *sink* (stdout by default).
+
+    Routes through a sink (not ``print``) for its encoding-safe fallback, since the JSON
+    is emitted with ``ensure_ascii=False`` and may contain non-ASCII text.
+
+    Args:
+        document (str): The serialized JSON document.
+        sink (Sink | None): Destination sink. Defaults to StdoutSink.
+    """
+    from pyrit.output.sink import StdoutSink
+
+    await (sink or StdoutSink()).write_async(document)
+
+
+async def _collect_conversation_entries_async(
+    *,
+    result: ScenarioResult,
+    client: PyRITApiClient,
+    attack_result_ids: list[str] | None,
+    limit: int | None,
+) -> list[tuple[str, Any, list[dict[str, Any]]]]:
+    """
+    Fetch and JSON-build each selected attack's conversation.
+
+    Shared by the ``conversations`` and ``full`` JSON documents so both fetch and
+    structure transcripts identically. The CLI owns this per-attack REST loop;
+    ``pyrit.output`` owns the resulting document shape.
+
+    Args:
+        result (ScenarioResult): The scenario result whose attacks to inspect.
+        client (PyRITApiClient): Client used to fetch each conversation's messages.
+        attack_result_ids (list[str] | None): Restrict to these attack ids.
+        limit (int | None): Maximum number of attacks to fetch.
+
+    Returns:
+        list[tuple[str, Any, list[dict[str, Any]]]]: ``(name, attack, structured_messages)`` triples.
+    """
+    from pyrit.cli._results import _objective_scorer_key
+    from pyrit.cli._sources import RestApiConversationSource
+    from pyrit.output._derivation import select_attacks
+    from pyrit.output.conversation.json import JsonConversationPrinter
+
+    selected = select_attacks(result, attack_result_ids=attack_result_ids)
+    if limit is not None:
+        selected = selected[:limit]
+    objective_hash, objective_class = _objective_scorer_key(result=result)
+
+    entries: list[tuple[str, Any, list[dict[str, Any]]]] = []
+    for atomic_attack_name, attack_result in selected:
+        source = RestApiConversationSource(
+            client=client,
+            attack_result_id=attack_result.attack_result_id,
+            objective_hash=objective_hash,
+            objective_class=objective_class,
+        )
+        messages = await source.get_messages_async(conversation_id=attack_result.conversation_id)
+        structured = await JsonConversationPrinter(source=source).build_async(messages, include_scores=True)
+        entries.append((atomic_attack_name, attack_result, structured))
+    return entries
+
+
 async def print_conversations_async(
     *,
     result: ScenarioResult,
     client: PyRITApiClient,
     scenario_result_id: str,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
     attack_result_ids: list[str] | None = None,
     limit: int | None = None,
 ) -> None:
     """
-    Print each attack's main-conversation transcript, rendered by the framework.
+    Print each attack's summary and main-conversation transcript, rendered by the framework.
 
     Reuses ``pyrit.output``'s conversation printer via a REST-backed source, so the
     CLI transcript matches the framework's own conversation output. The per-attack
@@ -435,14 +507,28 @@ async def print_conversations_async(
         result (ScenarioResult): The scenario result whose attacks to inspect.
         client (PyRITApiClient): Client used to fetch each conversation's messages.
         scenario_result_id (str): The run id, echoed in the header.
+        format (OutputFormat): Output format — "pretty" (streamed per-attack) or "json"
+            (one combined document). Defaults to "pretty".
+        sink (Sink | None): Destination for the json document. Defaults to stdout. Ignored for pretty.
         attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
         limit (int | None): Maximum number of attacks to fetch and render. Defaults to None.
     """
-    from pyrit.cli._results import _objective_scorer_key, _select_attacks
+    if format == "json":
+        from pyrit.output.scenario_result.json import build_scenario_conversations_document
+
+        entries = await _collect_conversation_entries_async(
+            result=result, client=client, attack_result_ids=attack_result_ids, limit=limit
+        )
+        document = build_scenario_conversations_document(result=result, entries=entries)
+        await _write_json_document_async(document, sink=sink)
+        return
+
+    from pyrit.cli._results import _objective_scorer_key
     from pyrit.cli._sources import RestApiConversationSource
+    from pyrit.output._derivation import attack_score_display, select_attacks
     from pyrit.output.conversation.pretty import PrettyConversationPrinter
 
-    selected = _select_attacks(result=result, attack_result_ids=attack_result_ids)
+    selected = select_attacks(result, attack_result_ids=attack_result_ids)
     total = len(selected)
     if limit is not None:
         selected = selected[:limit]
@@ -455,7 +541,8 @@ async def print_conversations_async(
     _header(f"Conversations — scenario {scenario_result_id}")
     for index, (atomic_attack_name, attack_result) in enumerate(selected, start=1):
         _cprint(
-            f"  {index}. [{attack_result.outcome.value.upper()}] {atomic_attack_name}",
+            f"  {index}. [{attack_result.outcome.value.upper()}] {atomic_attack_name}  "
+            f"turns={attack_result.executed_turns}  score={attack_score_display(attack_result, none_value='-')}",
             color=_OUTCOME_COLORS.get(attack_result.outcome.value),
             bold=True,
         )
@@ -476,6 +563,66 @@ async def print_conversations_async(
         print(f"\nShowing {shown} of {total} attacks (use --limit or --attack-result-ids to change).")
     else:
         print(f"\nTotal attacks: {total}")
+
+
+async def print_full_async(
+    *,
+    result: ScenarioResult,
+    client: PyRITApiClient,
+    scenario_result_id: str,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+    attack_result_ids: list[str] | None = None,
+    limit: int | None = None,
+) -> None:
+    """
+    Print the ``full`` view: the scenario overview plus every attack's conversation.
+
+    ``full`` is the complete report — the aggregate scorecard the transcripts lack,
+    combined with the transcripts. Pretty streams the overview then the transcripts;
+    JSON emits one ``{overview, conversations}`` document.
+
+    Args:
+        result (ScenarioResult): The scenario result to render.
+        client (PyRITApiClient): Client used to fetch each conversation's messages.
+        scenario_result_id (str): The run id, echoed in the transcript header.
+        format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
+        sink (Sink | None): Destination for the json document. Defaults to stdout. Ignored for pretty.
+        attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
+        limit (int | None): Maximum number of attacks to fetch and render. Defaults to None.
+    """
+    if format == "json":
+        from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter, build_scenario_full_document
+
+        entries = await _collect_conversation_entries_async(
+            result=result, client=client, attack_result_ids=attack_result_ids, limit=limit
+        )
+        overview = JsonScenarioResultMemoryPrinter().build(result, view="overview")
+        document = build_scenario_full_document(result=result, overview=overview, entries=entries)
+        await _write_json_document_async(document, sink=sink)
+        return
+
+    if format == "html":
+        from pyrit.output.scenario_result.html import HtmlScenarioReportPrinter
+        from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter, build_scenario_full_payload
+
+        entries = await _collect_conversation_entries_async(
+            result=result, client=client, attack_result_ids=attack_result_ids, limit=limit
+        )
+        overview = JsonScenarioResultMemoryPrinter().build(result, view="overview")
+        payload = build_scenario_full_payload(result=result, overview=overview, entries=entries)
+        await HtmlScenarioReportPrinter(sink=sink).write_async(payload)
+        return
+
+    await print_scenario_result_async(result=result, format="pretty")
+    await print_conversations_async(
+        result=result,
+        client=client,
+        scenario_result_id=scenario_result_id,
+        format="pretty",
+        attack_result_ids=attack_result_ids,
+        limit=limit,
+    )
 
 
 # ---------------------------------------------------------------------------

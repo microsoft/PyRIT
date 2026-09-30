@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Button, Field, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
 import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
 
 import { configurationApi } from '@/services/api'
+import { useRuntime } from '@/hooks/useRuntime'
 import { toApiError } from '@/services/errors'
 import type { EnvironmentFileContent } from '@/types'
 import EditorWorkspace from '@/components/EditorWorkspace'
@@ -16,8 +17,17 @@ interface StatusMessage {
   text: string
 }
 
-export default function EnvironmentFiles() {
+interface EnvironmentFilesProps {
+  onUnsavedChangesChange: (hasUnsavedChanges: boolean) => void
+  onRequestDiscardChanges: (discardChanges: () => void) => void
+}
+
+export default function EnvironmentFiles({
+  onUnsavedChangesChange,
+  onRequestDiscardChanges,
+}: EnvironmentFilesProps) {
   const styles = useConfigurationStyles()
+  const { generation } = useRuntime()
   const [files, setFiles] = useState<EnvironmentFileContent[]>([])
   const [savedContents, setSavedContents] = useState<Record<string, string>>({})
   const [loadedIds, setLoadedIds] = useState<Set<string>>(() => new Set())
@@ -27,16 +37,23 @@ export default function EnvironmentFiles() {
   const [saving, setSaving] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
+  const loadedSnapshot = useRef<{ generation: string; reloadCount: number } | null>(null)
+  const hasUnsavedChanges = files.some((file) =>
+    loadedIds.has(file.id) && file.content !== savedContents[file.id],
+  )
 
   useEffect(() => {
+    const manualReload = reloadCount !== (loadedSnapshot.current?.reloadCount ?? 0)
+    if ((hasUnsavedChanges && !manualReload) || saving) return
+    if (loadedSnapshot.current?.generation === generation && loadedSnapshot.current.reloadCount === reloadCount) return
     let cancelled = false
 
     const loadFilesAsync = async (): Promise<void> => {
-      setLoading(true)
       setStatusMessage(null)
       try {
         const response = await configurationApi.listEnvironmentFiles()
         if (!cancelled) {
+          loadedSnapshot.current = { generation, reloadCount }
           setFiles(response.items)
           setSavedContents({})
           setLoadedIds(new Set())
@@ -61,7 +78,7 @@ export default function EnvironmentFiles() {
     return () => {
       cancelled = true
     }
-  }, [reloadCount])
+  }, [reloadCount, generation, hasUnsavedChanges, saving])
 
   useEffect(() => {
     if (!selectedId || loadedIds.has(selectedId)) return
@@ -96,9 +113,26 @@ export default function EnvironmentFiles() {
 
   const selectedFile = files.find((file) => file.id === selectedId) ?? null
   const selectedFileIsLoaded = selectedFile ? loadedIds.has(selectedFile.id) : false
-  const hasUnsavedChanges = selectedFile && selectedFileIsLoaded
+  const selectedFileHasUnsavedChanges = selectedFile && selectedFileIsLoaded
     ? selectedFile.content !== savedContents[selectedFile.id]
     : false
+
+  useEffect(() => {
+    onUnsavedChangesChange(hasUnsavedChanges)
+  }, [hasUnsavedChanges, onUnsavedChangesChange])
+
+  const handleReload = (): void => {
+    const reload = (): void => {
+      setLoading(true)
+      setReloadCount((count: number) => count + 1)
+    }
+
+    if (hasUnsavedChanges) {
+      onRequestDiscardChanges(reload)
+      return
+    }
+    reload()
+  }
 
   const handleContentChange = (content: string): void => {
     if (!selectedId) return
@@ -122,7 +156,7 @@ export default function EnvironmentFiles() {
       setSavedContents((currentContents) => ({ ...currentContents, [updated.id]: updated.content }))
       setStatusMessage({
         intent: 'success',
-        text: `${updated.name} saved. Restart PyRIT to apply these changes.`,
+        text: `${updated.name} saved. Reinitialize PyRIT to apply these changes.`,
       })
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
@@ -169,15 +203,15 @@ export default function EnvironmentFiles() {
               className={styles.action}
               icon={<ArrowSyncRegular />}
               disabled={saving || loadingContent}
-              onClick={() => setReloadCount((count) => count + 1)}
+              onClick={handleReload}
             >
-              Reload
+              Reload file
             </Button>
             <Button
               appearance="primary"
               className={styles.action}
               icon={<SaveRegular />}
-              disabled={saving || loadingContent || selectedFile?.read_only || !hasUnsavedChanges}
+              disabled={saving || loadingContent || selectedFile?.read_only || !selectedFileHasUnsavedChanges}
               onClick={() => void handleSave()}
             >
               {saving ? 'Saving...' : 'Save'}
@@ -195,7 +229,7 @@ export default function EnvironmentFiles() {
             <Field
               className={styles.editorField}
               label={selectedFile.path}
-              hint={hasUnsavedChanges ? 'Unsaved changes' : 'No unsaved changes'}
+              hint={selectedFileHasUnsavedChanges ? 'Unsaved changes' : 'No unsaved changes'}
             >
               <DotenvEditor
                 value={selectedFile.content}
