@@ -67,9 +67,9 @@ class _EstimateTechnique(ScenarioTechnique):
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(compatibility_headers: dict[str, str]) -> TestClient:
     """Create a test client for the FastAPI app."""
-    return TestClient(app)
+    return TestClient(app, headers=compatibility_headers)
 
 
 @pytest.fixture(autouse=True)

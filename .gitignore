@@ -205,3 +205,4 @@ doc/_autosummary/
 
 # Impeccable skill local cache
 .impeccable/
+/pyrit/_compatibility.json

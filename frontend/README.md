@@ -57,6 +57,20 @@ npm run preview
 
 ### Backend CLI
 
+The browser starts only after an authenticated `/api/version` handshake confirms
+that its embedded compatibility identity matches the backend. Use frontend, CLI,
+and backend artifacts from the same package version **and full source commit**.
+`dev.py` stamps before starting the backend; Vite uses the same source stamp.
+After changing commits, restart both servers. When starting the backend manually,
+first run `python -m build_scripts.stamp_compatibility --development` at the repository root.
+Dirty local edits warn without changing the identity; they are not publishable.
+If the backend changes incompatibly during a session, requests stop and the mounted
+UI state stays retained until you explicitly reload; failed mutations are not replayed.
+
+Wheel/sdist builds prepare matching bundled assets automatically. A standalone
+`npm run build` is a local build, not approval to publish dirty sources. See the
+[release gate](../doc/contributing/10_release_process.md#coordinated-api-release-gate).
+
 The backend uses `pyrit_backend` CLI which supports initializers:
 
 ```bash
