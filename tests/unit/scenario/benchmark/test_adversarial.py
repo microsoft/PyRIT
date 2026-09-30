@@ -61,6 +61,7 @@ from pyrit.models import (
     ObjectiveTargetEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
+    ScenarioRunSizeEstimateStatus,
     ScenarioRunState,
     Score,
     ScorerEvaluationIdentifier,
@@ -73,7 +74,7 @@ from pyrit.models import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy
+from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, CompoundDatasetAttackConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.scenarios.benchmark.adversarial import (
@@ -83,6 +84,7 @@ from pyrit.scenario.scenarios.benchmark.adversarial import (
 )
 from pyrit.score import MessageScorable, TrueFalseCompositeScorer, TrueFalseInverterScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
+from tests.unit.mocks import MockPromptTarget
 
 # ---------------------------------------------------------------------------
 # Module-level constants derived from the canonical factory catalog
@@ -182,6 +184,53 @@ async def _build_atomic_attacks(bench: AdversarialBenchmark) -> list:
     )
     context = bench._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
     return await bench._build_atomic_attacks_async(context=context)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("outer_limit", [3, None])
+@pytest.mark.parametrize("child_limit", [1, None])
+async def test_compound_estimate_uses_initialization_cap_async(
+    *, outer_limit: int | None, child_limit: int | None
+) -> None:
+    seeds_by_dataset = {
+        name: [SeedObjective(value=f"{name} objective {index}") for index in range(3)] for name in ["first", "second"]
+    }
+
+    def get_seeds(*, dataset_name: str, **_: object) -> list[SeedObjective]:
+        return seeds_by_dataset[dataset_name]
+
+    config = CompoundDatasetAttackConfiguration.per_dataset(
+        dataset_names=list(seeds_by_dataset), max_dataset_size=child_limit
+    )
+    config.max_dataset_size = outer_limit
+    scorer = MagicMock(spec=TrueFalseScorer)
+    scorer.get_identifier.return_value = ComponentIdentifier(class_name="MockScorer", class_module="test")
+    TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="estimate_adversarial")
+    bench = AdversarialBenchmark(objective_scorer=scorer, use_cached=False)
+    bench.set_params_from_args(
+        args={
+            "objective_target": MockPromptTarget(),
+            "adversarial_targets": ["estimate_adversarial"],
+            "scenario_techniques": [bench._technique_class("red_teaming")],
+            "dataset_config": config,
+        }
+    )
+    with patch.object(bench._memory, "get_seeds", side_effect=AssertionError("Preview must not read datasets")):
+        estimate = await bench.get_run_size_estimate_async()
+    if outer_limit is None:
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+        with patch.object(bench._memory, "get_seeds", side_effect=get_seeds):
+            estimate = await bench.get_run_size_estimate_async(read_dataset_counts=True)
+
+    expected_count = outer_limit if outer_limit is not None else 6
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+    assert estimate.configured_dataset_size == outer_limit
+    assert estimate.estimated_attack_count == expected_count
+    with patch.object(bench._memory, "get_seeds", side_effect=get_seeds):
+        await bench.initialize_async()
+    plan = bench._build_run_plan()
+    assert len(plan.seed_groups) == expected_count
+    assert sum(len(group.seed_group_ids) for group in plan.atomic_groups) == expected_count
 
 
 # ---------------------------------------------------------------------------

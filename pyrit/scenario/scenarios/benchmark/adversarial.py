@@ -367,6 +367,15 @@ class AdversarialBenchmark(Scenario):
         runtime_use_cached = self.params.get("use_cached")
         return self._constructor_use_cached if runtime_use_cached is None else bool(runtime_use_cached)
 
+    def _get_run_size_budget(self) -> int | None:
+        """
+        Use the outer cap, matching benchmark sampling which bypasses child limits.
+
+        Returns:
+            int | None: Global dataset cap, or None for an unlimited population.
+        """
+        return self._dataset_config.max_dataset_size
+
     async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate the target-by-technique matrix from the selected population size.
@@ -395,7 +404,6 @@ class AdversarialBenchmark(Scenario):
         if not target_names:
             return ScenarioRunSizeEstimate(
                 status=ScenarioRunSizeEstimateStatus.Conditional,
-                minimum_attack_count=per_target_maximum,
                 condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
                 components=per_target_components,
                 datasets=datasets,

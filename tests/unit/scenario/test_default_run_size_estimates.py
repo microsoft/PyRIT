@@ -320,10 +320,10 @@ def jailbreak() -> Jailbreak:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_jailbreak_default_keeps_target_capability_range_async(jailbreak: Jailbreak) -> None:
+async def test_jailbreak_default_keeps_target_capability_upper_bound_async(jailbreak: Jailbreak) -> None:
     estimate = await jailbreak.get_default_run_size_estimate_async()
     assert estimate.estimated_attack_count is None
-    assert estimate.minimum_attack_count == 12
+    assert estimate.minimum_attack_count is None
     assert estimate.maximum_attack_count == 20
     assert [component.count for component in estimate.components] == [4, 8, 8]
     assert estimate.effective_parameters["num_jailbreaks"] == 2
@@ -539,8 +539,9 @@ async def test_benchmark_without_targets_reports_per_target_budget_async() -> No
         scenario = AdversarialBenchmark(objective_scorer=_scorer())
     estimate = await scenario.get_default_run_size_estimate_async()
     assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
-    assert estimate.minimum_attack_count == 16
+    assert estimate.minimum_attack_count is None
     assert estimate.maximum_attack_count is None
+    assert [component.count for component in estimate.components] == [8, 8]
     assert "per adversarial target" in estimate.note
 
 

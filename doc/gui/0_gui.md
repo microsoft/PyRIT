@@ -294,6 +294,10 @@ size based on configured dataset limits. These finite estimates do not query dat
 The estimate includes scenario-specific templates, attempts, technique expansion,
 and enabled baselines. The dataset column shows configured limits, not the actual
 number of available objectives.
+Configured limits do not guarantee a minimum attack count. Conditional estimates
+keep their target or cache caveats without treating a configured maximum as a minimum.
+`AdversarialBenchmark` estimates use the outer dataset cap, matching its global
+sampling rather than the child caps in a compound configuration.
 
 For generated prompts, estimates use the limit that the scenario applies:
 `PackageHallucination` uses its per-language prompt cap, and
