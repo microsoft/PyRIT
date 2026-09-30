@@ -13,7 +13,9 @@
 #
 # This guide covers the key parameters for configuring scenarios programmatically: datasets,
 # techniques, baseline execution, and custom scorers. All examples use `RedTeamAgent` but the
-# patterns apply to any scenario.
+# patterns apply to any scenario. The last section,
+# [Reporting Every Conversation](#reporting-every-conversation), shows how to print each attack's
+# conversation and save a full HTML report.
 #
 # > **Two selection axes**: *Techniques* select attack techniques (*how* attacks run — e.g., prompt
 # > sending, role play, TAP). *Datasets* select objectives (*what* is tested — e.g., harm categories,
@@ -187,25 +189,27 @@ await output_scenario_async(custom_result)
 # ## Reporting Every Conversation
 #
 # `output_scenario_async` summarizes a run. To see what happened in each attack, use
-# `output_scenario_conversations_async` for one JSON document with every attack's conversation, or
-# `output_scenario_full_async` for the overview plus the conversations as JSON or a standalone HTML
-# report. Both read the conversations from memory and show only the objective score on each response,
-# like `pyrit_scan scenario-results --view conversations` and `--view full`. They include every attack
-# unless you pass `attack_result_ids` or `limit`, and HTML needs a sink such as `FileSink`. The example
-# writes both reports to a temporary folder; point `FileSink` at your own path to keep them.
+# `output_scenario_conversations_async`. It reads each attack's conversation from memory and prints
+# one JSON document that shows only the objective score on each response, like
+# `pyrit_scan scenario-results --view conversations`. It includes every attack unless you pass
+# `attack_result_ids` or `limit`; here `limit=1` prints just the first one.
 
 # %%
-import json
+from pyrit.output import output_scenario_conversations_async
+
+await output_scenario_conversations_async(custom_result, limit=1)
+
+# %% [markdown]
+# `output_scenario_full_async` adds the run overview, like `--view full`, and writes the report as
+# JSON or a standalone HTML page. HTML needs a sink such as `FileSink`. This example writes the report
+# to a temporary folder; point `FileSink` at your own path to keep it.
+
+# %%
 import tempfile
 
-from pyrit.output import FileSink, output_scenario_conversations_async, output_scenario_full_async
+from pyrit.output import FileSink, output_scenario_full_async
 
 with tempfile.TemporaryDirectory() as report_dir:
-    conversations_path = Path(report_dir) / "conversations.json"
-    await output_scenario_conversations_async(custom_result, sink=FileSink(path=conversations_path))
-    conversations = json.loads(conversations_path.read_text(encoding="utf-8"))["conversations"]
-    print(f"{len(conversations)} conversations from: {[conversation['technique'] for conversation in conversations]}")
-
     report_path = Path(report_dir) / "report.html"
     await output_scenario_full_async(custom_result, format="html", sink=FileSink(path=report_path))
     print(f"Wrote {report_path.name}")
