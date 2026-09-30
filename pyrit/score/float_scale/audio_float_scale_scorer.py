@@ -69,4 +69,13 @@ class AudioFloatScaleScorer(MessageFloatScaleScorer):
         Returns:
             List of scores from evaluating the transcribed audio.
         """
-        return await self._audio_helper._score_audio_async(message_piece=message_piece, expectation=expectation)
+        scores = await self._audio_helper._score_audio_async(message_piece=message_piece, expectation=expectation)
+        results = []
+        for score in scores:
+            parent = self._create_wrapper_score(score)
+            parent.scorable = None
+            parent.message_piece_id = message_piece.id
+            rationale = score.score_rationale or ""
+            parent.score_rationale = f"{rationale}\nAudio transcript scored: {rationale}"
+            results.append(parent)
+        return results

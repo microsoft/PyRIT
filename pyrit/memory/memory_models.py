@@ -300,7 +300,13 @@ class PromptMemoryEntry(Base):
 
     scores: Mapped[list["ScoreEntry"]] = relationship(
         "ScoreEntry",
-        primaryjoin="ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id",
+        primaryjoin="and_(ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id, "
+        "ScoreEntry.is_intermediate == False)",
+        viewonly=True,
+        foreign_keys="ScoreEntry.prompt_request_response_id",
+    )
+    all_scores: Mapped[list["ScoreEntry"]] = relationship(
+        "ScoreEntry",
         back_populates="prompt_request_piece",
         foreign_keys="ScoreEntry.prompt_request_response_id",
     )
@@ -1241,6 +1247,8 @@ class ScoreEntry(Base):
 
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
     score_value = mapped_column(String, nullable=True)
+    # Marks nested scorer results, not the public call's returned results.
+    is_intermediate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     score_value_description = mapped_column(String, nullable=True)
     # "complete" or "undetermined"; an undetermined score carries no score_value.
     status = mapped_column(String(16), nullable=False, default=ScoreStatus.COMPLETE.value)
@@ -1267,7 +1275,7 @@ class ScoreEntry(Base):
     # Version of PyRIT used when this score was created
     # Nullable for backwards compatibility with existing databases
     pyrit_version = mapped_column(String, nullable=True)
-    prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="scores")
+    prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="all_scores")
     observation_links: Mapped[list["ScoreObservationEntry"]] = relationship(
         "ScoreObservationEntry",
         back_populates="score",
@@ -1276,15 +1284,17 @@ class ScoreEntry(Base):
         lazy="selectin",
     )
 
-    def __init__(self, *, entry: Score) -> None:
+    def __init__(self, *, entry: Score, is_intermediate: bool = False) -> None:
         """
         Initialize a ScoreEntry from a Score object.
 
         Args:
             entry (Score): The score object to convert into a database entry.
+            is_intermediate (bool): Whether this result came from a nested scoring call.
         """
         entry = Score.model_validate(entry.model_dump(exclude={"objective"}))
         self.id = entry.id
+        self.is_intermediate = is_intermediate
         self.score_value = entry.score_value
         self.score_value_description = entry.score_value_description
         self.status = entry.status.value
@@ -1355,6 +1365,7 @@ class ScoreEntry(Base):
         """
         return {
             "id": str(self.id),
+            "is_intermediate": self.is_intermediate,
             "score_value": self.score_value,
             "score_value_description": self.score_value_description,
             "status": self.status,

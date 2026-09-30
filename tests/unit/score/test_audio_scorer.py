@@ -126,8 +126,8 @@ class TestAudioTrueFalseScorer:
             patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
             patch.object(
                 scorer._audio_helper.text_scorer,
-                "_score_nested_async",
-                wraps=scorer._audio_helper.text_scorer._score_nested_async,
+                "_score_nested_message_async",
+                wraps=scorer._audio_helper.text_scorer._score_nested_message_async,
             ) as child,
             _scoring_expectation_context(unrelated),
         ):
@@ -249,7 +249,7 @@ class TestAudioFloatScaleScorer:
         with (
             patch.object(text_scorer, "CONDITION_TYPE", AnswerMatches),
             patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
-            patch.object(text_scorer, "_score_nested_async", return_value=child_scores) as child,
+            patch.object(text_scorer, "_score_nested_message_async", return_value=child_scores) as child,
             _scoring_expectation_context(ScoringExpectation(objective="unrelated")),
         ):
             [score] = await scorer._score_async(audio_message_piece.to_message(), expectation=expectation)
