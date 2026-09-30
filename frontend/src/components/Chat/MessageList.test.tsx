@@ -1599,6 +1599,20 @@ describe("MessageList", () => {
     expect(screen.getByText("S")).toBeInTheDocument();
   });
 
+  it("should label synthetic tool results separately", () => {
+    render(
+      <TestWrapper>
+        <MessageList messages={[{
+          role: "simulated_tool",
+          content: "Injected tool result",
+          timestamp: new Date().toISOString(),
+        }]} />
+      </TestWrapper>
+    );
+    expect(screen.getByText("Injected tool result")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Simulated Tool" })).toBeInTheDocument();
+  });
+
   it("should show 'Copy to input' and 'Download' buttons on assistant media attachments", () => {
     const messagesWithMedia: Message[] = [
       {
