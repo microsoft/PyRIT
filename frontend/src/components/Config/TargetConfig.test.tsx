@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { makeTarget } from "@/test-utils/targetFixtures";
@@ -258,65 +258,84 @@ describe("TargetConfig", () => {
     expect(onTargetsLoaded).toHaveBeenCalledTimes(2);
   });
 
-  it("should clear the table filters when the runtime generation changes", async () => {
+  it("should keep table filters, expanded rows, and defaults across a runtime reload", async () => {
     const user = userEvent.setup();
+    const imageCapabilities = {
+      supports_multi_turn: true,
+      supports_json_schema: false,
+      supports_json_output: false,
+      supports_system_prompt: true,
+      supported_input_modalities: ["text", "image_path"],
+      supported_output_modalities: ["text"],
+    };
+    const roundRobin = makeTarget({
+      target_registry_name: "rr_image",
+      target_type: "RoundRobinTarget",
+      capabilities: imageCapabilities,
+      target_specific_params: { weights: [1, 1] },
+      inner_targets: [
+        { target_registry_name: "inner_a", target_type: "OpenAIChatTarget" },
+        { target_registry_name: "inner_b", target_type: "OpenAIChatTarget" },
+      ],
+    });
+    const textTarget = makeTarget({
+      target_registry_name: "text_only",
+      target_type: "OpenAIChatTarget",
+      capabilities: { ...imageCapabilities, supported_input_modalities: ["text"] },
+    });
     mockedTargetsApi.listTargets.mockResolvedValue({
-      items: sampleTargets,
+      items: [roundRobin, textTarget],
       pagination: { limit: 200, has_more: false },
     });
+    const onTargetsLoaded = jest.fn();
     const { rerender } = render(
       <TestWrapper>
-        <TargetConfig {...defaultProps} defaultObjectiveTarget={sampleTargets[0]} />
+        <TargetConfig {...defaultProps} defaultObjectiveTarget={roundRobin} onTargetsLoaded={onTargetsLoaded} />
       </TestWrapper>
     );
-    await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Filter by type:" }),
-      "OpenAIImageTarget"
-    );
-    expect(screen.queryByRole("row", { name: /openai_chat_gpt4/ })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("combobox", { name: "Filter by input:" }));
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Image" }));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Expand inner targets" }));
+    const scrollRegion = screen.getByTestId("target-table-scroll-region");
 
     mockRuntimeGeneration = "generation-2";
     rerender(
       <TestWrapper>
-        <TargetConfig {...defaultProps} defaultObjectiveTarget={sampleTargets[0]} />
+        <TargetConfig {...defaultProps} defaultObjectiveTarget={roundRobin} onTargetsLoaded={onTargetsLoaded} />
       </TestWrapper>
     );
-
     await waitFor(() => {
-      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
+      expect(onTargetsLoaded).toHaveBeenCalledTimes(2);
     });
-    expect(await screen.findByRole("row", { name: /openai_chat_gpt4/ })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Filter by type:" })).toHaveValue("");
-    expect(screen.getByRole("combobox", { name: "Default objective target" })).toHaveValue(
-      sampleTargets[0].target_registry_name
-    );
+
+    expect(screen.getByTestId("target-table-scroll-region")).toBe(scrollRegion);
+    expect(screen.getByRole("combobox", { name: "Filter by input:" })).toHaveValue("Inputs: Image");
+    expect(screen.queryByRole("row", { name: /text_only/ })).not.toBeInTheDocument();
+    expect(screen.getByText("#1 inner_a")).toBeInTheDocument();
+    const defaults = within(screen.getByRole("region", { name: "Target defaults" }));
+    expect(defaults.getByRole("combobox", { name: "Default objective target" })).toHaveValue("rr_image");
   });
 
   it("should drop a filter chosen while a runtime reload is still loading", async () => {
     const user = userEvent.setup();
+    const textCapabilities = {
+      supports_multi_turn: true,
+      supports_json_schema: false,
+      supports_json_output: false,
+      supports_system_prompt: true,
+      supported_input_modalities: ["text"],
+      supported_output_modalities: ["text"],
+    };
     const imageTarget = makeTarget({
       target_registry_name: "image_chat",
       target_type: "OpenAIChatTarget",
-      capabilities: {
-        supports_multi_turn: true,
-        supports_json_schema: false,
-        supports_json_output: false,
-        supports_system_prompt: true,
-        supported_input_modalities: ["text", "image_path"],
-        supported_output_modalities: ["text"],
-      },
+      capabilities: { ...textCapabilities, supported_input_modalities: ["text", "image_path"] },
     });
     const textTarget = makeTarget({
       target_registry_name: "text_chat",
       target_type: "OpenAIChatTarget",
-      capabilities: {
-        supports_multi_turn: true,
-        supports_json_schema: false,
-        supports_json_output: false,
-        supports_system_prompt: true,
-        supported_input_modalities: ["text"],
-        supported_output_modalities: ["text"],
-      },
+      capabilities: textCapabilities,
     });
     mockedTargetsApi.listTargets.mockResolvedValueOnce({
       items: [imageTarget, textTarget],
@@ -344,7 +363,9 @@ describe("TargetConfig", () => {
     await waitFor(() => {
       expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
     });
-    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by input:" }), "image_path");
+    await user.click(screen.getByRole("combobox", { name: "Filter by input:" }));
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Image" }));
+    await user.keyboard("{Escape}");
     expect(screen.queryByRole("row", { name: /text_chat/ })).not.toBeInTheDocument();
 
     await act(async () => {
