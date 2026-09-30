@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import copy
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -59,6 +60,26 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             PromptTarget | None: The chat target from the wrapped scorer.
         """
         return self._scorer.get_chat_target()
+
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+        """
+        Apply the policy to the wrapped scorer.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply to LLM-backed leaves.
+
+        Returns:
+            Scorer: ``self`` when the wrapped scorer is unchanged, otherwise a copy wrapping
+            the updated scorer.
+        """
+        scoped_inner = cast(
+            "TrueFalseScorer", self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
+        )
+        if scoped_inner is self._scorer:
+            return self
+        scoped = copy.copy(self)
+        scoped._scorer = scoped_inner
+        return scoped
 
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the scorer whose verdict is inverted."""

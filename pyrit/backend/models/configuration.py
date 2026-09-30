@@ -12,6 +12,10 @@ class ConfigurationFileContent(BaseModel):
     content: str = Field(..., description="Raw YAML configuration file contents")
     source: str = Field(..., description="Configuration file path or credential-free blob URI")
     version: str = Field(..., description="Opaque version token for optimistic concurrency")
+    live_reinitialization_enabled: bool = Field(
+        False,
+        description="Whether the saved configuration explicitly enables live runtime replacement",
+    )
 
 
 class UpdateConfigurationFileRequest(BaseModel):
@@ -45,3 +49,9 @@ class UpdateEnvironmentFileRequest(BaseModel):
 
     content: str = Field(..., description="Raw dotenv file contents")
     version: str = Field(..., description="Version token returned by the latest content read")
+
+
+class ReinitializeRequest(BaseModel):
+    """Apply saved sources to an idle single-process runtime."""
+
+    version: str

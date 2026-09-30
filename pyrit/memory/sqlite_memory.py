@@ -171,7 +171,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         )
 
         # Create SQL condition using SQLAlchemy's text() with bindparams
-        condition = text(json_conditions).bindparams(**{key: str(value) for key, value in prompt_metadata.items()})
+        # Note: We do NOT convert values to string here, to allow integer comparison in JSON
+        condition = text(json_conditions).bindparams(**dict(prompt_metadata.items()))
         return [condition]
 
     def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> Any:
