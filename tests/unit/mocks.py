@@ -5,7 +5,7 @@ import os
 import shutil
 import tempfile
 import uuid
-from collections.abc import Generator, MutableSequence, Sequence
+from collections.abc import Generator, Iterable, MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -19,7 +19,26 @@ from pyrit.models import (
     ScenarioResult,
     flatten_to_message_pieces,
 )
+from pyrit.models.literals import PromptDataType
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
+
+# Modality combination shapes accepted by the helpers below. A target advertises *combinations*
+# of data types it accepts in one request (e.g. ``{{"text"}, {"text", "image_path"}}``), so every
+# helper takes an iterable of iterables and canonicalises it.
+ModalityCombos = Iterable[Iterable[str]]
+
+
+def modality_combos(*combos: Iterable[str]) -> frozenset[frozenset[PromptDataType]]:
+    """
+    Canonicalise modality combinations into the ``frozenset[frozenset]`` shape targets use.
+
+    Args:
+        *combos: Each argument is one accepted combination, e.g. ``{"text", "image_path"}``.
+
+    Returns:
+        The canonical frozenset-of-frozensets form.
+    """
+    return frozenset(frozenset(combo) for combo in combos)  # type: ignore[arg-type]
 
 
 def make_scenario_identifier(
@@ -137,20 +156,41 @@ def get_mock_attack_identifier(name: str = "MockAttack", module: str = "tests.un
     )
 
 
-def get_mock_target(name: str = "MockTarget") -> MagicMock:
+def get_mock_target(
+    name: str = "MockTarget",
+    *,
+    input_modalities: ModalityCombos | None = None,
+    output_modalities: ModalityCombos | None = None,
+) -> MagicMock:
     """
     Returns a MagicMock target whose ``get_identifier()`` returns a real
     ``ComponentIdentifier``. Use this wherever a ``MagicMock(spec=PromptTarget)``
     is needed as an ``objective_target``.
 
+    By default ``target.configuration`` is left as a MagicMock child. When either modality
+    argument is supplied, ``target.configuration`` becomes a real ``TargetConfiguration`` so
+    ``configuration.capabilities.input_modalities`` / ``output_modalities`` are real frozensets
+    that capability-aware code (modality routing, scenario validation) can reason about. An
+    omitted side falls back to the ``TargetCapabilities`` default (text-only). Invalid data
+    types are rejected by ``TargetCapabilities`` and propagate as ``pydantic.ValidationError``.
+
     Args:
         name: The class name for the mock target. Defaults to "MockTarget".
+        input_modalities: Accepted input combinations, e.g. ``[{"text"}, {"text", "image_path"}]``.
+        output_modalities: Produced output combinations, e.g. ``[{"text"}, {"audio_path"}]``.
 
     Returns:
         A MagicMock configured to return a real ComponentIdentifier.
     """
     target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier(name)
+    if input_modalities is not None or output_modalities is not None:
+        capability_kwargs: dict[str, frozenset[frozenset[PromptDataType]]] = {}
+        if input_modalities is not None:
+            capability_kwargs["input_modalities"] = modality_combos(*input_modalities)
+        if output_modalities is not None:
+            capability_kwargs["output_modalities"] = modality_combos(*output_modalities)
+        target.configuration = TargetConfiguration(capabilities=TargetCapabilities(**capability_kwargs))
     return target
 
 

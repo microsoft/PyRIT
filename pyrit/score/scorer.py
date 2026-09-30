@@ -22,6 +22,7 @@ from pyrit.models import (
     Message,
     MessageScorable,
     Observation,
+    PromptDataType,
     Scorable,
     ScorableUnion,
     Score,
@@ -219,6 +220,21 @@ class Scorer(Identifiable, abc.ABC):
                 self._validator = validator
         if chat_target is not None:
             type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
+
+    @property
+    def supported_data_types(self) -> frozenset[PromptDataType] | None:
+        """The declared readable types, or None when compatibility cannot be determined."""
+        return None
+
+    @property
+    def skips_unsupported_data_types(self) -> bool:
+        """Whether wholly unsupported evidence safely yields no score."""
+        return False
+
+    @property
+    def allows_unsupported_pieces(self) -> bool:
+        """Whether unsupported pieces can accompany readable evidence."""
+        return False
 
     @property
     @final

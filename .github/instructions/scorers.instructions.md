@@ -8,6 +8,24 @@ Scorers evaluate model responses against an objective and live under `pyrit/scor
 
 **Does not own** (see [framework.md](../../doc/code/framework.md)): acting on its own result. A scorer evaluates a response and returns a score; branching on that score is the attack's job and aggregating scores across runs is analytics'. It may call a target to evaluate, but must not send the attack's objective prompt or manage the conversation. Flag such bleed in review.
 
+## Composite modality declarations
+
+`TrueFalseCompositeScorer` aggregates only applicable child scores; a child returning `[]`
+does not vote `False`. Both AND and OR composites declare the union of child modalities only
+when every child declares its types **and** can skip wholly unsupported evidence. Otherwise
+they declare `None` (`UNKNOWN`), not an unverified intersection or union. The composite uses
+`_get_child_scorers()` for the same tree traversal as upstream condition routing; modality
+inference must not alter the evidence or selected expectation each child receives.
+One-to-one wrappers (`TrueFalseInverterScorer` and `FloatScaleThresholdScorer`) delegate
+their child's modality declaration and skip behavior.
+
+For mixed responses, `allows_unsupported_pieces` separately reports whether readable
+pieces can be scored alongside unsupported ones. `raise_on_no_valid_pieces=True` still
+allows a mixed response when `enforce_all_pieces_valid=False`, but it prevents a wholly
+unreadable response from yielding `[]`. Keep that case distinct from
+`skips_unsupported_data_types`, which is required before a composite may assume a child
+will be non-applicable rather than raise.
+
 ## Constructor contract
 
 `Scorer` subclasses MUST use the keyword-only constructor shape:

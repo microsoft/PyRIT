@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 from pyrit.models import (
     ComponentIdentifier,
+    PromptDataType,
     Scorable,
     ScorableUnion,
     Score,
@@ -73,6 +74,27 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 raise ValueError("All scorers must be true_false scorers.")
 
         self._scorers = scorers
+
+    @property
+    def supported_data_types(self) -> frozenset[PromptDataType] | None:
+        """The union of readable child types when every child can skip inapplicable evidence."""
+        supported: set[PromptDataType] = set()
+        for child in self._get_child_scorers():
+            declared = child.supported_data_types
+            if declared is None or not child.skips_unsupported_data_types:
+                return None
+            supported.update(declared)
+        return frozenset(supported)
+
+    @property
+    def skips_unsupported_data_types(self) -> bool:
+        """Whether all children can return no score for wholly unsupported evidence."""
+        return all(child.skips_unsupported_data_types for child in self._get_child_scorers())
+
+    @property
+    def allows_unsupported_pieces(self) -> bool:
+        """Whether all children permit unsupported pieces alongside readable ones."""
+        return all(child.allows_unsupported_pieces for child in self._get_child_scorers())
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

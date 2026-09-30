@@ -21,8 +21,10 @@ from pyrit.score import (
     MessageTrueFalseScorer,
     ScorerPromptValidator,
     TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
     TrueFalseScoreAggregator,
 )
+from pyrit.score.true_false.manual_scorer import ManualScorer
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -222,6 +224,97 @@ async def test_composite_scorer_ignores_non_applicable_child(mock_request, true_
 
     assert len(scores) == 1
     assert scores[0].get_value() is True
+
+
+@pytest.mark.parametrize("aggregator", [TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND])
+async def test_composite_disjoint_modalities_match_runtime_applicability(
+    mock_request, true_scorer, false_scorer, aggregator
+):
+    true_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
+    false_scorer._validator = ScorerPromptValidator(supported_data_types=["image_path"])
+    scorer = TrueFalseCompositeScorer(aggregator=aggregator, scorers=[true_scorer, false_scorer])
+
+    assert scorer.supported_data_types == frozenset({"text", "image_path"})
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    assert len(scores) == 1
+    assert scores[0].get_value() is True
+    assert "This is a false score" not in scores[0].score_rationale
+
+
+@pytest.mark.parametrize("strict_option", ["enforce_all_pieces_valid", "raise_on_no_valid_pieces"])
+async def test_composite_strict_child_keeps_modality_unknown_and_raises(
+    mock_request, true_scorer, false_scorer, strict_option
+):
+    true_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
+    false_scorer._validator = ScorerPromptValidator(supported_data_types=["image_path"], **{strict_option: True})
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[true_scorer, false_scorer])
+
+    assert scorer.supported_data_types is None
+    assert scorer.skips_unsupported_data_types is False
+    with pytest.raises(RuntimeError):
+        await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+
+
+async def test_nested_composite_modality_follows_skippable_children(mock_request, true_scorer, false_scorer):
+    true_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
+    false_scorer._validator = ScorerPromptValidator(supported_data_types=["image_path"])
+    inner = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[true_scorer, TrueFalseInverterScorer(scorer=false_scorer)],
+    )
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[inner])
+
+    assert scorer.supported_data_types == frozenset({"text", "image_path"})
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    assert len(scores) == 1
+    assert scores[0].get_value() is True
+
+
+async def test_nested_strict_child_keeps_composite_modality_unknown(mock_request, true_scorer, false_scorer):
+    true_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
+    false_scorer._validator = ScorerPromptValidator(supported_data_types=["image_path"], raise_on_no_valid_pieces=True)
+    inner = TrueFalseInverterScorer(scorer=false_scorer)
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[true_scorer, inner])
+
+    assert scorer.supported_data_types is None
+    assert scorer.skips_unsupported_data_types is False
+    with pytest.raises(RuntimeError, match="There are no valid pieces to score"):
+        await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+
+
+async def test_composite_no_matching_modality_returns_no_score(mock_request, true_scorer, false_scorer):
+    true_scorer._validator = ScorerPromptValidator(supported_data_types=["image_path"])
+    false_scorer._validator = ScorerPromptValidator(supported_data_types=["audio_path"])
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[true_scorer, false_scorer])
+
+    assert scorer.supported_data_types == frozenset({"image_path", "audio_path"})
+    assert await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request))) == []
+
+
+def test_composite_with_non_message_child_has_unknown_modalities(patch_central_database, true_scorer):
+    true_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
+    manual = ManualScorer(value=True, rationale="manual", user_identifier="reviewer")
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[true_scorer, manual])
+    assert scorer.supported_data_types is None
+    assert scorer.skips_unsupported_data_types is False
+
+
+async def test_composite_union_preserves_condition_routing(mock_request):
+    objective_scorer = MockScorer(score_value=True, score_rationale="objective", is_objective_required=True)
+    objective_scorer._validator = ScorerPromptValidator(supported_data_types=["text"], is_objective_required=True)
+    image_scorer = MockScorer(score_value=False, score_rationale="image")
+    image_scorer._validator = ScorerPromptValidator(supported_data_types=["image_path"])
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[objective_scorer, image_scorer])
+    expectation = ScoringExpectation(objective="test objective", conditions=(MatchesObjective(),))
+
+    assert scorer.supported_data_types == frozenset({"text", "image_path"})
+    scores = await scorer.score_async(
+        scorable=MessageScorable.from_message(store_message(mock_request)), expectation=expectation
+    )
+    assert len(scores) == 1
+    assert scores[0].get_value() is True
+    assert objective_scorer.received_expectations == [expectation]
+    assert image_scorer.received_expectations == [expectation.model_copy(update={"conditions": ()})]
 
 
 async def test_composite_routes_supported_conditions_to_each_leaf(mock_request):

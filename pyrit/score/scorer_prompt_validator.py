@@ -56,6 +56,8 @@ class ScorerPromptValidator:
                 Set to True to raise an exception instead.
             is_objective_required (bool): Whether an objective must be provided for scoring. Defaults to False.
         """
+        self._has_declared_data_types = bool(supported_data_types)
+        self._supported_data_types: Sequence[PromptDataType]
         if supported_data_types:
             self._supported_data_types = supported_data_types
         else:
@@ -74,6 +76,32 @@ class ScorerPromptValidator:
         self._raise_on_no_valid_pieces = raise_on_no_valid_pieces
 
         self._is_objective_required = is_objective_required
+
+    @property
+    def supported_data_types(self) -> Sequence[PromptDataType]:
+        """
+        The data types this validator accepts at score time.
+
+        When the scorer declared none, this is every ``PromptDataType`` — the permissive runtime
+        default. Consult ``has_declared_data_types`` to tell that apart from a scorer that
+        deliberately declared every type.
+        """
+        return self._supported_data_types
+
+    @property
+    def has_declared_data_types(self) -> bool:
+        """Whether the scorer declared its data types rather than falling back to the default."""
+        return self._has_declared_data_types
+
+    @property
+    def skips_unsupported_data_types(self) -> bool:
+        """Whether unsupported pieces can be ignored instead of raising an error."""
+        return not self._enforce_all_pieces_valid and not self._raise_on_no_valid_pieces
+
+    @property
+    def allows_unsupported_pieces(self) -> bool:
+        """Whether a readable response can also contain unsupported pieces."""
+        return not self._enforce_all_pieces_valid
 
     @property
     def is_objective_required(self) -> bool:
