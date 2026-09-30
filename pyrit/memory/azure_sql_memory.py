@@ -134,6 +134,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             self._initialize_schema()
 
         super().__init__()
+        self._initialized = not _defer_initialization
 
     def _initialize_schema(self) -> None:
         prod_connection_string = default_values.get_non_required_value(

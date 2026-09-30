@@ -20,6 +20,15 @@ Use the `_async` memory methods in async code. The synchronous methods remain
 available during deprecation. In-memory SQLite serializes transactions across
 threads and event loops to prevent shared-cache table locks.
 
+Repeated initialization reuses the existing memory without running schema setup
+again. Setup raises an error if `CentralMemory` and the requested backend singleton
+disagree, or if setup tries to change an existing SQLite instance between in-memory
+and persistent modes.
+
+Do not overlap synchronous and async sessions on the same event-loop thread.
+In-memory SQLite raises an error instead of blocking that loop. Use async methods
+for concurrent work on an event loop.
+
 Before an event loop stops, call `await memory.dispose_loop_resources_async()`
 on that loop. After all memory work stops, call `await memory.dispose_engine_async()`
 to close the remaining resources.

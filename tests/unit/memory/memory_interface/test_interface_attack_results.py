@@ -1435,6 +1435,9 @@ async def test_unique_attack_attribution_uses_dedicated_columns(sqlite_instance:
             attack_results=[
                 create_attack_result("conv_1", 1, operator="bob", operation="nightly", labels={"team": "red"}),
                 create_attack_result("conv_2", 2, operator="alice", operation="nightly", labels={"team": "blue"}),
+                create_attack_result("conv_3", 3),
+                create_attack_result("conv_4", 4, operator="alice"),
+                create_attack_result("conv_5", 5, operation="nightly"),
             ]
         )
     )

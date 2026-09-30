@@ -1055,7 +1055,7 @@ async def test_build_input_for_multi_modal_async_preserves_mixed_payload_contrac
 
 
 @pytest.mark.parametrize("data_type", ["function_call", "tool_call", "function_call_output"])
-async def test_build_input_for_multi_modal_async_preserves_malformed_artifact_error(
+async def test_build_input_for_multi_modal_async_validates_malformed_artifact_async(
     target: OpenAIResponseTarget, data_type: PromptDataType
 ):
     piece = MessagePiece(
@@ -1064,19 +1064,18 @@ async def test_build_input_for_multi_modal_async_preserves_malformed_artifact_er
         original_value_data_type=data_type,
     )
 
-    with pytest.raises(json.JSONDecodeError, match="Expecting property name enclosed in double quotes"):
+    with pytest.raises(ValueError, match="Invalid JSON"):
         await target._build_input_for_multi_modal_async([Message(message_pieces=[piece])])
 
 
 @pytest.mark.parametrize(
     ("data_type", "payload", "missing_field"),
     [
-        ("function_call", {"call_id": "call-1", "name": "lookup", "arguments": "{}"}, "type"),
         ("tool_call", {"call_id": "call-1"}, "type"),
         ("function_call_output", {"type": "function_call_output", "output": "done"}, "call_id"),
     ],
 )
-async def test_build_input_for_multi_modal_async_preserves_missing_artifact_field_error(
+async def test_build_input_for_multi_modal_async_validates_missing_artifact_field_async(
     target: OpenAIResponseTarget,
     data_type: PromptDataType,
     payload: dict[str, Any],
@@ -1088,10 +1087,8 @@ async def test_build_input_for_multi_modal_async_preserves_missing_artifact_fiel
         original_value_data_type=data_type,
     )
 
-    with pytest.raises(KeyError) as exc_info:
+    with pytest.raises(ValueError, match=missing_field):
         await target._build_input_for_multi_modal_async([Message(message_pieces=[piece])])
-
-    assert exc_info.value.args == (missing_field,)
 
 
 async def test_build_input_for_multi_modal_async_preserves_empty_conversation_error(target: OpenAIResponseTarget):

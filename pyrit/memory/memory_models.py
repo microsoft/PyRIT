@@ -272,9 +272,7 @@ class PromptMemoryEntry(Base):
         {"extend_existing": True},
     )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    role: Mapped[Literal["system", "user", "assistant", "simulated_assistant", "tool", "developer"]] = mapped_column(
-        String, nullable=False
-    )
+    role: Mapped[ChatMessageRole] = mapped_column(String, nullable=False)
     # Bounded so SQL Server accepts it as an index key. 128 rather than 36 because
     # conversation_id is a free-form caller-supplied string, not necessarily a UUID.
     conversation_id = mapped_column(String(128), nullable=False)

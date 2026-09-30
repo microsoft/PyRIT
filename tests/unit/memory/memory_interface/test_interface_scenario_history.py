@@ -726,3 +726,32 @@ async def test_unique_scenario_labels_are_grouped_for_filter_options(sqlite_inst
         "operation": ["nightly"],
         "operator": ["alice", "bob"],
     }
+
+
+@pytest.mark.parametrize(
+    ("raw_labels", "expected"),
+    [
+        ({"env": "prod", "count": 42, "nullable": None, "nested": {"key": "value"}}, {"env": ["prod"]}),
+        ("not-a-dict", {}),
+        (None, {}),
+    ],
+)
+async def test_unique_scenario_labels_ignore_malformed_values(
+    *, sqlite_instance: MemoryInterface, raw_labels: object, expected: dict[str, list[str]]
+) -> None:
+    scenario = _make_scenario(
+        result_id=uuid.UUID(int=30),
+        timestamp=datetime(2026, 8, 7, tzinfo=UTC),
+        name="Legacy",
+        state=ScenarioRunState.COMPLETED,
+        labels={"env": "prod"},
+    )
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(
+            text('UPDATE "ScenarioResultEntries" SET labels = :labels'),
+            {"labels": json.dumps(raw_labels)},
+        )
+        await session.commit()
+
+    assert await sqlite_instance.get_unique_scenario_labels_async() == expected

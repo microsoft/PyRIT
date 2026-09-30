@@ -5,6 +5,7 @@ import ast
 import asyncio
 import inspect
 import threading
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -92,6 +93,52 @@ async def test_async_memory_uses_async_driver(sqlite_instance: SQLiteMemory) -> 
         )
         messages = await sqlite_instance.get_conversation_messages_async(conversation_id="async")
     assert messages[0].message_pieces[0].original_value == "hello"
+
+
+async def test_failed_first_initialization_can_retry() -> None:
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    memory.__init__(db_path=":memory:", _defer_initialization=True)
+    try:
+        with (
+            patch.object(memory, "_run_schema_migration", side_effect=RuntimeError("schema check failed")),
+            pytest.raises(RuntimeError, match="schema check failed"),
+        ):
+            await memory.initialize_async()
+        assert not memory._initialized
+        await memory.initialize_async()
+        piece = MessagePiece(role="user", original_value="after retry", conversation_id="retry")
+        await memory.add_message_to_memory_async(request=piece.to_message())
+        assert [row.id for row in await memory.get_message_pieces_async()] == [piece.id]
+    finally:
+        await memory.dispose_engine_async()
+
+
+async def test_concurrent_initialization_is_rejected_without_disposing_first_attempt() -> None:
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    memory.__init__(db_path=":memory:", _defer_initialization=True)
+    started, release = threading.Event(), threading.Event()
+
+    def initialize_schema() -> None:
+        started.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError("Initialization was not released")
+
+    try:
+        with (
+            patch.object(memory, "_initialize_schema", side_effect=initialize_schema),
+            patch.object(memory, "dispose_engine_async", new_callable=AsyncMock) as dispose,
+        ):
+            task = asyncio.create_task(memory.initialize_async())
+            try:
+                assert await asyncio.to_thread(started.wait, 5)
+                with pytest.raises(RuntimeError, match="already in progress"):
+                    await memory.initialize_async()
+                dispose.assert_not_awaited()
+            finally:
+                release.set()
+                await task
+    finally:
+        await memory.dispose_engine_async()
 
 
 async def test_async_memory_shares_legacy_database(sqlite_instance: SQLiteMemory) -> None:
@@ -320,6 +367,44 @@ async def test_sync_disposal_rejects_active_async_resources(sqlite_instance: SQL
     dispose.assert_not_called()
 
 
+async def test_sync_read_rejects_same_loop_async_overlap(sqlite_instance: SQLiteMemory) -> None:
+    started, release = threading.Event(), threading.Event()
+
+    def delayed_read() -> int:
+        started.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError("Database read was not released")
+        return 1
+
+    async with await sqlite_instance.get_session_async() as session:
+        connection = await session.connection()
+        await connection.run_sync(
+            lambda sync_connection: sync_connection.connection.run_async(
+                lambda driver: driver.create_function("delayed_read", 0, delayed_read)
+            )
+        )
+        read = asyncio.create_task(session.execute(text("SELECT delayed_read()")))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            with pytest.warns(DeprecationWarning), pytest.raises(RuntimeError, match="cannot overlap"):
+                sqlite_instance.get_message_pieces()
+            await asyncio.sleep(0)
+            assert not read.done()
+        finally:
+            release.set()
+            await read
+    assert await sqlite_instance.get_message_pieces_async() == []
+    with pytest.warns(DeprecationWarning):
+        assert sqlite_instance.get_message_pieces() == []
+
+
+async def test_async_session_rejects_same_thread_sync_overlap(sqlite_instance: SQLiteMemory) -> None:
+    with sqlite_instance._get_sync_session():
+        with pytest.raises(RuntimeError, match="Close the synchronous memory session"):
+            await sqlite_instance.get_message_pieces_async()
+    assert await sqlite_instance.get_message_pieces_async() == []
+
+
 @pytest.mark.parametrize("reader", ["async", "sync"])
 async def test_in_memory_transactions_are_serialized_across_loops(sqlite_instance: SQLiteMemory, reader: str) -> None:
     started = threading.Event()
@@ -431,6 +516,54 @@ async def test_legacy_subclass_override_runs_off_loop() -> None:
         assert await memory.get_unique_attack_class_names_async() == ["custom"]
     assert len(called_from) == 1
     assert called_from[0] != threading.get_ident()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_inherited_read_dispatches_nested_legacy_override(sqlite_instance: SQLiteMemory, use_async: bool) -> None:
+    threads = []
+    piece = MessagePiece(role="user", original_value="from override", conversation_id="custom", sequence=0)
+
+    class LegacyMemory(SQLiteMemory):
+        def get_message_pieces(self, **kwargs: object) -> Sequence[MessagePiece]:
+            threads.append(threading.get_ident())
+            assert kwargs["conversation_id"] == "custom"
+            return [piece]
+
+    memory = LegacyMemory.__new__(LegacyMemory)
+    memory.__dict__.update(sqlite_instance.__dict__)
+    with pytest.warns(DeprecationWarning):
+        messages = (
+            await memory.get_conversation_messages_async(conversation_id="custom")
+            if use_async
+            else memory.get_conversation_messages(conversation_id="custom")
+        )
+    assert [message.get_piece().id for message in messages] == [piece.id]
+    assert len(threads) == 1
+    assert (threads[0] != threading.get_ident()) == use_async
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_inherited_write_dispatches_nested_legacy_override_with_super(
+    sqlite_instance: SQLiteMemory, use_async: bool
+) -> None:
+    threads = []
+
+    class LegacyMemory(SQLiteMemory):
+        def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+            threads.append(threading.get_ident())
+            super().add_message_pieces_to_memory(message_pieces=message_pieces)
+
+    memory = LegacyMemory.__new__(LegacyMemory)
+    memory.__dict__.update(sqlite_instance.__dict__)
+    piece = MessagePiece(role="user", original_value="persisted through override", conversation_id="legacy-write")
+    with pytest.warns(DeprecationWarning):
+        if use_async:
+            await memory.add_message_to_memory_async(request=piece.to_message())
+        else:
+            memory.add_message_to_memory(request=piece.to_message())
+    assert len(threads) == 1
+    assert (threads[0] != threading.get_ident()) == use_async
+    assert [row.id for row in await sqlite_instance.get_message_pieces_async()] == [piece.id]
 
 
 async def test_legacy_session_override_is_not_bypassed(sqlite_instance: SQLiteMemory) -> None:

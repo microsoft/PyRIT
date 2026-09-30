@@ -106,11 +106,13 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         self._connection_lock = threading.RLock() if self.db_path == ":memory:" else None
         self._transaction_lock = threading.Lock() if self.db_path == ":memory:" else None
         self._sync_session_depth = 0
+        self._sync_session_thread: int | None = None
 
         self.engine = self._create_engine(has_echo=verbose)
         self.SessionFactory = sessionmaker(bind=self.engine, class_=MemorySession)
         if not _defer_initialization:
             self._initialize_schema()
+            self._initialized = True
 
     def _initialize_schema(self) -> None:
         if self.engine is None:
@@ -133,9 +135,15 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         Returns:
             AsyncSession: A session that releases exclusive access when closed.
+
+        Raises:
+            NotImplementedError: If a custom sync session hook has not been migrated.
+            RuntimeError: If this thread already holds a synchronous session.
         """
         if self._uses_legacy_session_override():
             raise NotImplementedError("Override get_session_async when customizing the legacy get_session hook.")
+        if self._sync_session_thread == threading.get_ident():
+            raise RuntimeError("Close the synchronous memory session before opening an async session on this thread.")
         connection_lock = self._transaction_lock
         if connection_lock is None:
             return await super().get_session_async()
@@ -371,17 +379,31 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         Returns:
             Session: A SQLAlchemy session bound to the engine.
+
+        Raises:
+            RuntimeError: If acquiring a session would block an event loop.
         """
         session = self.SessionFactory()
         connection_lock = self._connection_lock
         if connection_lock is None:
             return session
 
-        connection_lock.acquire()
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            on_event_loop = False
+        else:
+            on_event_loop = True
+
+        if not connection_lock.acquire(blocking=not on_event_loop):
+            raise RuntimeError("A synchronous memory session cannot wait on an event loop. Use the async API.")
         if self._sync_session_depth == 0:
             assert self._transaction_lock is not None
-            self._transaction_lock.acquire()
+            if not self._transaction_lock.acquire(blocking=not on_event_loop):
+                connection_lock.release()
+                raise RuntimeError("A synchronous memory session cannot overlap an async session. Use the async API.")
         self._sync_session_depth += 1
+        self._sync_session_thread = threading.get_ident()
         close_session = session.close
         released = False
         owner_thread = threading.get_ident()
@@ -398,6 +420,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             released = True
             self._sync_session_depth -= 1
             if self._sync_session_depth == 0:
+                self._sync_session_thread = None
                 assert self._transaction_lock is not None
                 self._transaction_lock.release()
             try:

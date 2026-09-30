@@ -33,7 +33,7 @@ unknown: the type of error is unknown
 """
 PromptResponseError = Literal["blocked", "none", "processing", "empty", "unknown"]
 
-ChatMessageRole = Literal["system", "user", "assistant", "simulated_assistant", "tool", "developer"]
+ChatMessageRole = Literal["system", "user", "assistant", "simulated_assistant", "tool", "simulated_tool", "developer"]
 
 SeedType = Literal["prompt", "objective", "simulated_conversation"]
 

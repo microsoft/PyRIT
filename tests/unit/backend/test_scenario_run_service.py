@@ -1514,23 +1514,31 @@ class TestScenarioRunServiceStartRun:
     async def test_start_run_serializes_after_abandoned_prepare(self, mock_all_registries) -> None:
         """A cancelled start must leave its worker isolated until initialization finishes."""
         service = ScenarioRunService()
+        started = threading.Event()
+        release = threading.Event()
         finished = threading.Event()
 
-        def _slow_prepare(*, request: Any) -> Any:
-            time.sleep(0.5)
+        def _blocking_prepare(*, request: Any) -> Any:
+            started.set()
+            release.wait()
             finished.set()
             return _svc_mod._PreparedRun(scenario=mock_all_registries["scenario_instance"])
 
-        with patch.object(service, "_prepare_run_blocking", _slow_prepare):
+        with patch.object(service, "_prepare_run_blocking", _blocking_prepare):
             task = asyncio.create_task(service.start_run_async(request=_make_request()))
-            await asyncio.sleep(0.1)
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
+            try:
+                assert await asyncio.to_thread(started.wait, 5)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=5)
 
-            assert not finished.is_set()
+                assert not finished.is_set()
+            finally:
+                task.cancel()
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
+                await service.shutdown_async()
 
-            await asyncio.sleep(1.0)
             assert finished.is_set()
 
     async def test_start_run_propagates_prepare_failure(self, mock_all_registries) -> None:

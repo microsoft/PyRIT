@@ -2689,11 +2689,14 @@ class TestAttackServiceAdditionalCoverage:
         mock_memory.add_conversation_to_memory_async.assert_not_called()
         mock_memory.add_message_pieces_to_memory_async.assert_not_called()
 
-    async def test_duplicate_conversation_remaps_assistant_to_simulated(self, attack_service, mock_memory):
-        """Should remap assistant pieces to simulated_assistant when flag is set."""
+    @pytest.mark.parametrize(("role", "expected"), [("assistant", "simulated_assistant"), ("tool", "simulated_tool")])
+    async def test_duplicate_conversation_remaps_assistant_to_simulated(
+        self, attack_service, mock_memory, role, expected
+    ):
+        """Copied response pieces retain synthetic provenance."""
         source = make_mock_piece(conversation_id="attack-1", role="assistant", sequence=0)
         mock_memory.get_conversation_messages_async.return_value = [source]
-        dup_piece = make_mock_piece(conversation_id="branch-1", role="assistant", sequence=0)
+        dup_piece = MessagePiece(conversation_id="branch-1", role=role, sequence=0, original_value="copied")
         mock_memory.duplicate_messages_async.return_value = ("branch-1", [dup_piece])
 
         (
@@ -2702,7 +2705,8 @@ class TestAttackServiceAdditionalCoverage:
             )
         )
 
-        assert dup_piece.role == "simulated_assistant"
+        assert dup_piece.role == expected
+        assert dup_piece.prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY]
 
     async def test_store_prepended_messages_noop_when_empty(self, attack_service, mock_memory):
         """Empty prepended list should be a no-op: no conversation row and no piece writes."""

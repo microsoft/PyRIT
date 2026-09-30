@@ -46,7 +46,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import MessageScorer, TrueFalseScorer
@@ -636,6 +636,62 @@ class TestContextValidation:
 @pytest.mark.usefixtures("patch_central_database")
 class TestSetupPhase:
     """Tests for the setup phase of the attack."""
+
+    async def test_prepended_tool_exchange_is_context_on_next_adversarial_send(
+        self, *, mock_objective_scorer: MagicMock, basic_context: MultiTurnAttackContext
+    ) -> None:
+        kwargs = {"model_name": "gpt-4", "endpoint": "https://example.invalid", "api_key": "not-a-key"}
+        objective = OpenAIResponseTarget(**kwargs)
+        adversarial = OpenAIResponseTarget(**kwargs)
+        attack = RedTeamingAttack(
+            objective_target=objective,
+            attack_adversarial_config=AttackAdversarialConfig(target=adversarial),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        )
+        basic_context.prepended_conversation = [
+            Message.from_prompt(prompt="Look up the value.", role="user"),
+            MessagePiece(
+                role="assistant",
+                original_value='{"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{}"}',
+                original_value_data_type="function_call",
+            ).to_message(),
+            MessagePiece(
+                role="tool",
+                original_value='{"type":"function_call_output","call_id":"call-1","output":"stored result"}',
+                original_value_data_type="function_call_output",
+            ).to_message(),
+            Message.from_prompt(prompt="The lookup is complete.", role="assistant"),
+        ]
+        await attack._setup_async(context=basic_context)
+        with (
+            patch.object(
+                adversarial,
+                "_handle_openai_request_async",
+                new_callable=AsyncMock,
+                return_value=_adversarial_reply_message(),
+            ) as send,
+            patch.object(adversarial._client.responses, "create", new_callable=AsyncMock) as create,
+        ):
+            await adversarial.send_prompt_async(
+                message=MessagePiece(
+                    role="user",
+                    original_value="Continue.",
+                    conversation_id=basic_context.session.adversarial_chat_conversation_id,
+                ).to_message()
+            )
+            await send.call_args.kwargs["api_call"]()
+        inputs = create.call_args.kwargs["input"]
+        assert all(item.get("type") not in {"function_call", "function_call_output", "tool_call"} for item in inputs)
+        context = [item for item in inputs if "Objective target" in str(item)]
+        assert len(context) == 2
+        assert all(item["role"] == "user" for item in context)
+        assert "stored result" in str(context)
+        source = CentralMemory.get_memory_instance().get_conversation_messages(
+            conversation_id=basic_context.session.conversation_id
+        )
+        assert {"function_call", "function_call_output"} <= {
+            piece.converted_value_data_type for message in source for piece in message.message_pieces
+        }
 
     async def test_setup_initializes_conversation_session(
         self,

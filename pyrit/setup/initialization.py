@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.common.random_context import configure_random_seed
+from pyrit.common.singleton import Singleton
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.setup.environment_loading import (
     load_environment_async,
@@ -205,21 +206,32 @@ async def initialize_pyrit_async(
     # (like prompt targets) that require central memory to be initialized
     memory: MemoryInterface
 
+    if memory_db_type not in get_args(MemoryDatabaseType):
+        raise ValueError(
+            f"Memory database type '{memory_db_type}' is not a supported type {get_args(MemoryDatabaseType)}"
+        )
+    memory_class = AzureSQLMemory if memory_db_type == AZURE_SQL else SQLiteMemory
+    previous_memory = CentralMemory._memory_instance
+    cached_memory = Singleton._instances.get(memory_class)
+    if previous_memory is not None and previous_memory is not cached_memory:
+        raise ValueError("CentralMemory and the requested memory singleton disagree. Restart with one memory instance.")
+    if isinstance(cached_memory, SQLiteMemory) and (cached_memory.db_path == ":memory:") != (
+        memory_db_type == IN_MEMORY
+    ):
+        raise ValueError(
+            "Cannot switch between in-memory and persistent SQLite. Restart with the requested memory type."
+        )
+
     if memory_db_type == IN_MEMORY:
         logger.info("Using in-memory SQLite database.")
         memory = SQLiteMemory(db_path=":memory:", silent=silent, _defer_initialization=True, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
     elif memory_db_type == SQLITE:
         logger.info("Using persistent SQLite database.")
         memory = SQLiteMemory(silent=silent, _defer_initialization=True, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
-    elif memory_db_type == AZURE_SQL:
+    else:
         logger.info("Using AzureSQL database.")
         memory = AzureSQLMemory(silent=silent, _defer_initialization=True, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
-    else:
-        raise ValueError(
-            f"Memory database type '{memory_db_type}' is not a supported type {get_args(MemoryDatabaseType)}"
-        )
 
-    previous_memory = CentralMemory._memory_instance
     await memory.initialize_async()
     CentralMemory.set_memory_instance(memory)
 
@@ -264,7 +276,7 @@ async def initialize_pyrit_async(
                 raise_on_initializer_error=raise_on_initializer_error,
             )
     except BaseException:
-        if memory is not previous_memory:
+        if cached_memory is None:
             try:
                 await memory.dispose_engine_async()
             finally:

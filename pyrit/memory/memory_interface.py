@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import uuid
 import weakref
 from collections.abc import Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
@@ -16,7 +17,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
 
 from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select, update
@@ -387,6 +388,8 @@ class MemoryInterface(abc.ABC):
         self.memory_embedding = embedding_model
         self._operation_session: ContextVar[Session | None] = ContextVar("memory_operation_session", default=None)
         self._async_engines: dict[asyncio.AbstractEventLoop, AsyncEngine] = {}
+        self._initialized = False
+        self._initialization_lock = threading.Lock()
         self._init_storage_io()
 
         # Ensure cleanup at process exit
@@ -476,6 +479,7 @@ class MemoryInterface(abc.ABC):
         if (
             type(self)._create_async_engine is MemoryInterface._create_async_engine  # type: ignore[ty:redundant-condition-strict]
             or self._uses_legacy_session_override()
+            or self._uses_legacy_memory_override()
         ):
             print_deprecation_message(
                 old_item=f"{type(self).__name__} synchronous backend",
@@ -495,12 +499,52 @@ class MemoryInterface(abc.ABC):
             return await session.run_sync(execute)
 
     async def initialize_async(self) -> None:
-        """Initialize the schema without blocking the caller's event loop."""
+        """
+        Initialize the schema once without blocking the caller's event loop.
+
+        Raises:
+            RuntimeError: If initialization is already in progress.
+        """
+        if not self._initialization_lock.acquire(blocking=False):
+            raise RuntimeError("Memory initialization is already in progress.")
         try:
+            if self._initialized:
+                return
             await run_legacy_sync_async(self._initialize_schema)
+            self._initialized = True
         except BaseException:
             await self.dispose_engine_async()
             raise
+        finally:
+            self._initialization_lock.release()
+
+    def _uses_legacy_memory_override(self) -> bool:
+        return any(
+            not name.startswith("_")
+            and callable(method)
+            and hasattr(MemoryInterface, name + "_async")
+            and getattr(type(self), name) is not method
+            and getattr(type(self), name + "_async") is getattr(MemoryInterface, name + "_async")
+            for name, method in vars(MemoryInterface).items()
+        )
+
+    def _dispatch_memory_operation(
+        self,
+        name: str,
+        operation: Callable[OperationArgs, OperationResult],
+        *args: OperationArgs.args,
+        **kwargs: OperationArgs.kwargs,
+    ) -> OperationResult:
+        """
+        Call a nested public sync override, or the shared implementation.
+
+        Returns:
+            OperationResult: The operation result.
+        """
+        if self._operation_session.get() is None and getattr(type(self), name) is not getattr(MemoryInterface, name):
+            override = cast("Callable[OperationArgs, OperationResult]", getattr(self, name))
+            return override(*args, **kwargs)
+        return operation(*args, **kwargs)
 
     def _initialize_schema(self) -> None:
         """Apply the schema policy; legacy backends initialize in their constructor."""
@@ -2644,7 +2688,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             Sequence[Score]: A list of scores extracted from the message pieces.
         """
-        message_pieces = self._execute_get_message_pieces(
+        message_pieces = self._dispatch_memory_operation(
+            "get_message_pieces",
+            self._execute_get_message_pieces,
             role=role,
             conversation_id=conversation_id,
             prompt_ids=prompt_ids,
@@ -2706,7 +2752,9 @@ class MemoryInterface(abc.ABC):
         """
         if not conversation_id:
             raise ValueError("get_conversation_messages requires a non-empty conversation_id")
-        message_pieces = self._execute_get_message_pieces(conversation_id=conversation_id)
+        message_pieces = self._dispatch_memory_operation(
+            "get_message_pieces", self._execute_get_message_pieces, conversation_id=conversation_id
+        )
         return group_conversation_message_pieces_by_sequence(message_pieces=message_pieces)
 
     def _get_conversation(self, *, conversation_id: str) -> Conversation | None:
@@ -2769,7 +2817,11 @@ class MemoryInterface(abc.ABC):
         if response.sequence < 1:
             raise ValueError("The provided request does not have a preceding request (sequence < 1).")
 
-        conversation = self._execute_get_conversation_messages(conversation_id=response.conversation_id)
+        conversation = self._dispatch_memory_operation(
+            "get_conversation_messages",
+            self._execute_get_conversation_messages,
+            conversation_id=response.conversation_id,
+        )
         return conversation[response.sequence - 1]
 
     def _build_message_piece_identifier_conditions(
@@ -2958,15 +3010,23 @@ class MemoryInterface(abc.ABC):
         Returns:
             The uuid for the new conversation.
         """
-        messages = self._execute_get_conversation_messages(conversation_id=conversation_id)
+        messages = self._dispatch_memory_operation(
+            "get_conversation_messages", self._execute_get_conversation_messages, conversation_id=conversation_id
+        )
         source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
-        new_conversation_id, all_pieces = self._execute_duplicate_messages(messages=messages)
+        new_conversation_id, all_pieces = self._dispatch_memory_operation(
+            "duplicate_messages", self._execute_duplicate_messages, messages=messages
+        )
         if all_pieces:
-            self._execute_add_conversation_to_memory(
-                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target)
+            self._dispatch_memory_operation(
+                "add_conversation_to_memory",
+                self._execute_add_conversation_to_memory,
+                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target),
             )
-            self._execute_add_message_pieces_to_memory(message_pieces=all_pieces)
+            self._dispatch_memory_operation(
+                "add_message_pieces_to_memory", self._execute_add_message_pieces_to_memory, message_pieces=all_pieces
+            )
         return new_conversation_id
 
     def _execute_duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
@@ -2982,7 +3042,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             The uuid for the new conversation.
         """
-        messages = self._execute_get_conversation_messages(conversation_id=conversation_id)
+        messages = self._dispatch_memory_operation(
+            "get_conversation_messages", self._execute_get_conversation_messages, conversation_id=conversation_id
+        )
 
         # remove the final turn from the conversation
         if len(messages) == 0:
@@ -3000,12 +3062,18 @@ class MemoryInterface(abc.ABC):
 
         source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
-        new_conversation_id, all_pieces = self._execute_duplicate_messages(messages=messages_to_duplicate)
+        new_conversation_id, all_pieces = self._dispatch_memory_operation(
+            "duplicate_messages", self._execute_duplicate_messages, messages=messages_to_duplicate
+        )
         if all_pieces:
-            self._execute_add_conversation_to_memory(
-                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target)
+            self._dispatch_memory_operation(
+                "add_conversation_to_memory",
+                self._execute_add_conversation_to_memory,
+                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target),
             )
-            self._execute_add_message_pieces_to_memory(message_pieces=all_pieces)
+            self._dispatch_memory_operation(
+                "add_message_pieces_to_memory", self._execute_add_message_pieces_to_memory, message_pieces=all_pieces
+            )
 
         return new_conversation_id
 
@@ -3040,7 +3108,11 @@ class MemoryInterface(abc.ABC):
         if not any(not piece.not_in_memory for piece in request.message_pieces):
             return False
         self._update_sequence(message_pieces=request.message_pieces)
-        self._execute_add_message_pieces_to_memory(message_pieces=request.message_pieces)
+        self._dispatch_memory_operation(
+            "add_message_pieces_to_memory",
+            self._execute_add_message_pieces_to_memory,
+            message_pieces=request.message_pieces,
+        )
         return True
 
     def _update_sequence(self, *, message_pieces: Sequence[MessagePiece]) -> None:
@@ -3050,7 +3122,9 @@ class MemoryInterface(abc.ABC):
         Args:
             message_pieces (Sequence[MessagePiece]): The list of message pieces to update.
         """
-        prev_conversations = self._execute_get_message_pieces(conversation_id=message_pieces[0].conversation_id)
+        prev_conversations = self._dispatch_memory_operation(
+            "get_message_pieces", self._execute_get_message_pieces, conversation_id=message_pieces[0].conversation_id
+        )
 
         sequence = 0
 
@@ -3161,8 +3235,11 @@ class MemoryInterface(abc.ABC):
         Returns:
             bool: True if the update was successful, False otherwise.
         """
-        return self._execute_update_prompt_entries_by_conversation_id(
-            conversation_id=conversation_id, update_fields={"prompt_metadata": prompt_metadata}
+        return self._dispatch_memory_operation(
+            "update_prompt_entries_by_conversation_id",
+            self._execute_update_prompt_entries_by_conversation_id,
+            conversation_id=conversation_id,
+            update_fields={"prompt_metadata": prompt_metadata},
         )
 
     def _run_schema_migration(self, *, silent: bool = False) -> None:
@@ -3247,8 +3324,11 @@ class MemoryInterface(abc.ABC):
         """
         Dispose the engine and clean up resources.
         """
-        if self.engine:
-            self.engine.dispose()
+        try:
+            if self.engine:
+                self.engine.dispose()
+        finally:
+            self._initialized = False
             previous_raise = logging.raiseExceptions
             logging.raiseExceptions = False
             try:
@@ -3934,7 +4014,9 @@ class MemoryInterface(abc.ABC):
             chunk_size = self._MAX_BIND_VARS - (1 if dataset_name is not None else 0)
             for index in range(0, len(hashes), chunk_size):
                 chunk = hashes[index : index + chunk_size]
-                for existing in self._execute_get_seeds(value_sha256=chunk, dataset_name=dataset_name):
+                for existing in self._dispatch_memory_operation(
+                    "get_seeds", self._execute_get_seeds, value_sha256=chunk, dataset_name=dataset_name
+                ):
                     if not existing.value_sha256:
                         continue
                     conditions_key = self._seed_conditions_key(existing)
@@ -4277,7 +4359,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             Sequence[SeedGroup]: A list of `SeedGroup` objects that match the filtering criteria.
         """
-        seeds = self._execute_get_seeds(
+        seeds = self._dispatch_memory_operation(
+            "get_seeds",
+            self._execute_get_seeds,
             value=value,
             value_sha256=value_sha256,
             dataset_name=dataset_name,
@@ -4299,7 +4383,9 @@ class MemoryInterface(abc.ABC):
         if seeds:
             related_prompt_group_ids = {seed.prompt_group_id for seed in seeds if seed.prompt_group_id}
             if related_prompt_group_ids:
-                seeds = self._execute_get_seeds(prompt_group_ids=list(related_prompt_group_ids))
+                seeds = self._dispatch_memory_operation(
+                    "get_seeds", self._execute_get_seeds, prompt_group_ids=list(related_prompt_group_ids)
+                )
 
         # Deduplicate seeds to ensure we don't have duplicate prompts in the groups
         if seeds:
@@ -5060,7 +5146,8 @@ class MemoryInterface(abc.ABC):
         for (labels,) in are_rows:
             if not isinstance(labels, dict):
                 continue
-            for key, value in labels.items():
+            # Persisted JSON can contain legacy values outside the ORM's declared type.
+            for key, value in cast("Mapping[str, object]", labels).items():
                 if key in {"operator", "operation"}:
                     continue
                 if isinstance(value, str):
@@ -5079,6 +5166,7 @@ class MemoryInterface(abc.ABC):
                 .filter(AttackResultEntry.operator.isnot(None))
                 .distinct()
                 .all()
+                if value is not None
             ]
             operations = [
                 value
@@ -5086,6 +5174,7 @@ class MemoryInterface(abc.ABC):
                 .filter(AttackResultEntry.operation.isnot(None))
                 .distinct()
                 .all()
+                if value is not None
             ]
         return {"operators": sorted(operators), "operations": sorted(operations)}
 
@@ -5141,7 +5230,9 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
-        self._execute_update_scenario_run_state_and_metadata_fields(
+        self._dispatch_memory_operation(
+            "update_scenario_run_state_and_metadata_fields",
+            self._execute_update_scenario_run_state_and_metadata_fields,
             scenario_result_id=scenario_result_id,
             scenario_run_state=scenario_run_state,
             error_message=error_message,
@@ -5376,7 +5467,9 @@ class MemoryInterface(abc.ABC):
             cursor=cursor,
             limit=limit,
         )
-        aggregates = self._execute_get_scenario_history_aggregates(
+        aggregates = self._dispatch_memory_operation(
+            "get_scenario_history_aggregates",
+            self._execute_get_scenario_history_aggregates,
             scenario_result_ids=[record.scenario_result_id for record in records],
             plan_scenario_ids=[
                 record.scenario_result_id for record in records if record.plan_atomic_groups is not None
@@ -5660,7 +5753,7 @@ class MemoryInterface(abc.ABC):
         for (labels,) in rows:
             if not isinstance(labels, dict):
                 continue
-            for key, value in labels.items():
+            for key, value in cast("Mapping[str, object]", labels).items():
                 if isinstance(value, str):
                     label_values.setdefault(key, set()).add(value)
         return {key: sorted(values) for key, values in sorted(label_values.items())}
