@@ -600,7 +600,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
                           />
                           <DisplayGroupMetric
                             label="Attack success"
-                            value={formatSuccess(group.succeeded, group.completed, group.success_percentage)}
+                            value={formatSuccess(group.succeeded, group.decided, group.success_percentage)}
                           />
                           <DisplayGroupMetric label="Errors" value={String(group.errors)} />
                           <DisplayGroupMetric label="Retries" value={String(group.retries)} />
@@ -659,7 +659,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
                       label="Attack success"
                       value={formatSuccess(
                         technique.succeeded,
-                        technique.completed,
+                        technique.decided,
                         technique.success_percentage,
                       )}
                     />
@@ -714,7 +714,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
                           </Button>
                         </TableCell>
                         <TableCell className={styles.objectiveSuccessColumn}>
-                          {formatSuccess(seed.succeeded, seed.completed, seed.success_percentage)}
+                          {formatSuccess(seed.succeeded, seed.decided, seed.success_percentage)}
                         </TableCell>
                       </TableRow>
                     )
@@ -930,8 +930,8 @@ function formatConfiguration(value: Record<string, unknown>): string {
     .join(', ')
 }
 
-function formatSuccess(succeeded: number, evaluated: number, percent: number | null): string {
-  return percent === null ? `${succeeded}/${evaluated} —` : `${succeeded}/${evaluated} (${percent}%)`
+function formatSuccess(succeeded: number, decided: number, percent: number | null): string {
+  return percent === null ? 'Unmeasured' : `${succeeded}/${decided} (${percent}%)`
 }
 
 function formatCompletion(completed: number, planned: number | null): string {

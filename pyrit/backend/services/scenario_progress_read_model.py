@@ -445,6 +445,7 @@ class ScenarioProgressReadModel:
         def aggregate(*, units: Sequence[ResultUnitIdentity], planned: int | None) -> ScenarioProgressCounts:
             completed = 0
             succeeded = 0
+            failed = 0
             errors = 0
             retries = 0
             for unit in units:
@@ -452,16 +453,19 @@ class ScenarioProgressReadModel:
                 if attempts:
                     completed += 1
                     succeeded += int(attempts[-1].outcome == AttackOutcome.SUCCESS)
+                    failed += int(attempts[-1].outcome == AttackOutcome.FAILURE)
                     errors += sum(int(attempt.outcome == AttackOutcome.ERROR) for attempt in attempts)
                     retries += ScenarioProgressReadModel.total_retry_pressure(
                         attempts_per_unit=[len(attempts)],
                         persisted_retries=[attempt.total_retries for attempt in attempts],
                     )
+            decided = succeeded + failed
             return ScenarioProgressCounts(
                 completed=completed,
                 planned=planned,
                 succeeded=succeeded,
-                success_percentage=int((succeeded / completed) * 100) if completed else None,
+                decided=decided,
+                success_percentage=int((succeeded / decided) * 100) if decided else None,
                 errors=errors,
                 retries=retries,
             )

@@ -46,6 +46,7 @@ from pyrit.models import (
     ScenarioAttackResultDelta,
     ScenarioProgressResult,
     ScenarioProgressScore,
+    ScenarioProgressSummary,
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
@@ -4160,6 +4161,64 @@ def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None
     assert summary.objective_scorer.metrics is not None
     assert summary.objective_scorer.metrics.accuracy == 0.95
     assert summary.objective_scorer.metrics.f1_score == 0.94
+
+
+def _build_summary_for_outcomes(outcomes: list[AttackOutcome]) -> ScenarioProgressSummary:
+    seed_group_ids = [f"seed-{index}" for index in range(len(outcomes))]
+    plan = ScenarioRunPlan(
+        scenario_registry_name="test.scenario",
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id="group",
+                atomic_attack_name="attack",
+                display_group="Display group",
+                technique_eval_hash="eval",
+                seed_group_ids=seed_group_ids,
+            )
+        ],
+        seed_groups=[
+            ScenarioRunPlanSeedGroup(id=seed_group_id, objective_sha256=f"sha-{seed_group_id}", objective=seed_group_id)
+            for seed_group_id in seed_group_ids
+        ],
+    )
+    results = [
+        ScenarioProgressResult(
+            attack_result_id=str(uuid.uuid4()),
+            conversation_id=f"conversation-{seed_group_id}",
+            atomic_group_id="group",
+            atomic_attack_name="attack",
+            seed_group_id=seed_group_id,
+            outcome=outcome,
+            execution_time_ms=10,
+            timestamp=datetime(2025, 1, 1, 0, index, tzinfo=UTC),
+        )
+        for index, (seed_group_id, outcome) in enumerate(zip(seed_group_ids, outcomes, strict=True))
+    ]
+    return ScenarioProgressReadModel._build_progress_summary(
+        plan=plan,
+        plan_complete=True,
+        results=results,
+        active_group_ids=[],
+        terminal=True,
+        objective_scorer_identifier=None,
+        technique_details_by_group={},
+    )
+
+
+def test_progress_summary_excludes_undetermined_from_success_rate() -> None:
+    summary = _build_summary_for_outcomes([AttackOutcome.UNDETERMINED])
+
+    assert summary.overall.completed == 1
+    assert summary.overall.decided == 0
+    assert summary.overall.success_percentage is None
+
+
+def test_progress_summary_success_rate_uses_decided_denominator() -> None:
+    summary = _build_summary_for_outcomes([AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.UNDETERMINED])
+
+    assert summary.overall.completed == 3
+    assert summary.overall.decided == 2
+    assert summary.overall.success_percentage == 50
 
 
 def test_decode_progress_cursor_rejects_cross_run_cursor() -> None:

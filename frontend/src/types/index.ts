@@ -1064,6 +1064,7 @@ export interface ScenarioProgressCounts {
   completed: number
   planned: number | null
   succeeded: number
+  decided: number
   success_percentage: number | null
   errors: number
   retries: number

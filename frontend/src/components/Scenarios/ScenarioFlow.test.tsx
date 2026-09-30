@@ -116,6 +116,7 @@ const RUN_STATE: ScenarioRunProgressState = {
       completed: 0,
       planned: 0,
       succeeded: 0,
+      decided: 0,
       success_percentage: null,
       errors: 0,
       retries: 0,

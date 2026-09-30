@@ -156,6 +156,7 @@ const SUMMARY: ScenarioProgressSummary = {
     completed: 1,
     planned: 1,
     succeeded: 1,
+    decided: 1,
     success_percentage: 100,
     errors: 0,
     retries: 1,
@@ -202,6 +203,7 @@ const SUMMARY: ScenarioProgressSummary = {
     completed: 1,
     planned: 1,
     succeeded: 1,
+    decided: 1,
     success_percentage: 100,
     errors: 0,
     retries: 1,
@@ -212,6 +214,7 @@ const SUMMARY: ScenarioProgressSummary = {
     completed: 1,
     planned: 1,
     succeeded: 1,
+    decided: 1,
     success_percentage: 100,
     errors: 0,
     retries: 1,
@@ -225,6 +228,7 @@ const SUMMARY: ScenarioProgressSummary = {
     completed: 1,
     planned: 1,
     succeeded: 1,
+    decided: 1,
     success_percentage: 100,
     errors: 0,
     retries: 1,
@@ -267,6 +271,7 @@ function makeGroupedState(groupCount: number, attemptsPerGroup = 1): ScenarioRun
     completed: attemptsPerGroup,
     planned: attemptsPerGroup,
     succeeded: attemptsPerGroup,
+    decided: attemptsPerGroup,
   }
   const atomicGroups = Array.from({ length: groupCount }, (_: unknown, index: number) => ({
     ...PLAN.atomic_groups[0],
@@ -1207,6 +1212,22 @@ describe('ScenarioRunPage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Close', hidden: true }))
 
     await waitFor(() => expect(detailsRow).toHaveFocus())
+  })
+
+  it('shows attack success as unmeasured when no result was decided', () => {
+    const undecidedCounts = { completed: 1, planned: 1, succeeded: 0, decided: 0, success_percentage: null }
+    mockHookState(makeState({
+      summary: {
+        ...SUMMARY,
+        seed_groups: [{ ...SUMMARY.seed_groups[0], ...undecidedCounts }],
+      },
+    }))
+
+    renderPage()
+
+    const objectives = screen.getByRole('table', { name: 'Objectives' })
+    expect(within(objectives).getByText('Unmeasured')).toBeInTheDocument()
+    expect(within(objectives).queryByText('0/1 (0%)')).not.toBeInTheDocument()
   })
 
   it('shows descriptive technique details without result metrics', async () => {

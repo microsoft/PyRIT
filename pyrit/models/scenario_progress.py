@@ -162,6 +162,8 @@ class ScenarioProgressCounts(BaseModel):
     completed: int = Field(..., ge=0)
     planned: int | None = Field(default=None, ge=0)
     succeeded: int = Field(..., ge=0)
+    #: Units whose latest attempt was SUCCESS or FAILURE; the success-rate denominator.
+    decided: int = Field(default=0, ge=0)
     success_percentage: int | None = Field(default=None, ge=0, le=100)
     errors: int = Field(..., ge=0)
     retries: int = Field(..., ge=0)

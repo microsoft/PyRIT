@@ -24,6 +24,7 @@ const SUMMARY = {
     completed: 1,
     planned: 3,
     succeeded: 1,
+    decided: 1,
     success_percentage: 100,
     errors: 0,
     retries: 0,

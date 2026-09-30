@@ -153,7 +153,7 @@ describe('Shared new run labels', () => {
           labels: SAVED_LABELS,
         },
         summary: {
-          overall: { completed: 0, planned: 0, succeeded: 0, success_percentage: 0, errors: 0, retries: 0 },
+          overall: { completed: 0, planned: 0, succeeded: 0, decided: 0, success_percentage: 0, errors: 0, retries: 0 },
           techniques: [], seed_groups: [], atomic_groups: [],
         },
       },
