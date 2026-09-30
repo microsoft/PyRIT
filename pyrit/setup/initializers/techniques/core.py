@@ -20,7 +20,7 @@ from pyrit.common.path import (
     EXECUTOR_SEED_PROMPT_PATH,
     EXECUTOR_SIMULATED_TARGET_PATH,
 )
-from pyrit.converter import CodeAttackConverter, FlipConverter, LetterBijectionConverter, TaskFramingConverter
+from pyrit.converter import CodeAttackConverter, FlipConverter, LetterBijectionConverter, PromptTemplateConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     ManyShotJailbreakAttack,
@@ -235,7 +235,10 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
                     request_converters=ConverterConfiguration.from_converters(
-                        converters=[FlipConverter(), TaskFramingConverter(strip_characters="'")]
+                        converters=[
+                            FlipConverter(),
+                            PromptTemplateConverter(template="TASK is '{{ prompt }}'", strip_characters="'"),
+                        ]
                     )
                 ),
                 "prepended_conversation_config": PrependedConversationConfig(apply_converters_to_roles=["user"]),

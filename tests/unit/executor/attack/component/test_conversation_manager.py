@@ -39,7 +39,7 @@ from pyrit.executor.attack.component.prepended_history_send_context import (
 from pyrit.executor.attack.core import AttackContext
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.message_normalizer import ConversationContextNormalizer, HistorySquashNormalizer
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType, Score
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, PromptDataType, Score
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 
@@ -373,6 +373,36 @@ class TestGetAdversarialChatMessages:
         )
 
         assert result == []
+
+    @pytest.mark.parametrize(
+        ("role", "data_type"),
+        [
+            ("assistant", "function_call"),
+            ("simulated_assistant", "function_call"),
+            ("assistant", "tool_call"),
+            ("tool", "function_call_output"),
+            ("simulated_tool", "function_call_output"),
+            ("tool", "text"),
+            ("simulated_tool", "text"),
+        ],
+    )
+    def test_tool_exchange_becomes_context_without_changing_source(
+        self, *, role: ChatMessageRole, data_type: PromptDataType
+    ) -> None:
+        piece = MessagePiece(
+            role=role,
+            original_value="unconverted value",
+            converted_value='{"converted":"payload"}',
+            original_value_data_type=data_type,
+        )
+        original = piece.model_dump()
+        result = get_adversarial_chat_messages([piece.to_message()], adversarial_chat_conversation_id="adversarial")
+        context = result[0].get_piece()
+        assert context.role == "user"
+        assert context.original_value_data_type == context.converted_value_data_type == "text"
+        assert context.converted_value == f"Objective target {role} ({data_type}): {piece.converted_value}"
+        assert context.id != piece.id
+        assert piece.model_dump() == original
 
 
 class TestBuildConversationContextStringAsync:
@@ -1752,7 +1782,12 @@ class TestEdgeCasesAndErrorHandling:
         stored = manager.get_conversation(conversation_id)
         assert len(stored) == 1
         processed_piece = stored[0].message_pieces[0]
-        assert processed_piece.prompt_metadata == {"key": "value", "count": 1}
+        assert processed_piece.prompt_metadata == {
+            "key": "value",
+            "count": 1,
+            MessagePiece.PREPENDED_HISTORY_METADATA_KEY: True,
+        }
+        assert sample_user_piece.prompt_metadata == {"key": "value", "count": 1}
 
     async def test_preserves_original_and_converted_values(
         self,
