@@ -111,7 +111,9 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
             else:
                 lines.append("\n")
                 lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
-                role_label = "ASSISTANT (SIMULATED)" if message.is_simulated else message.api_role.upper()
+                role_label = message.api_role.upper()
+                if message.is_simulated:
+                    role_label += " (SIMULATED)"
                 lines.append(self._format_colored(f"🔸 {role_label}", Style.BRIGHT, Fore.YELLOW))
                 lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
 

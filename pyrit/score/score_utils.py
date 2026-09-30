@@ -77,11 +77,13 @@ def format_score_for_rationale(score: Score) -> str:
         score: The Score object to format.
 
     Returns:
-        Formatted string with scorer class, value, and rationale.
+        Formatted string with scorer class, value, categories (if any), and rationale.
     """
     class_type = score.scorer_class_identifier.class_name or "Unknown" if score.scorer_class_identifier else "Unknown"
     value = score.score_value if score.score_value is not None else "undetermined"
-    return f"   - {class_type} {value}: {score.score_rationale or ''}"
+    categories = [category for category in score.score_category or [] if category]
+    category_label = f" (Category: {', '.join(categories)})" if categories else ""
+    return f"   - {class_type} {value}{category_label}: {score.score_rationale or ''}"
 
 
 def normalize_score_to_float(score: Score | None) -> float:

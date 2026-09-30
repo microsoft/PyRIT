@@ -104,6 +104,10 @@ Each target class defines defaults; instances can override individual capabiliti
 
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
 
+Tool-call history uses the existing `function_call` and `function_call_output` input
+modalities. These describe acceptance of prior calls and results, not tool execution.
+See [Target Capabilities](./6_1_target_capabilities.ipynb) for examples.
+
 ### How consumers use capabilities
 
 Components that need a particular capability declare it as a `TargetRequirements` and validate at construction time:

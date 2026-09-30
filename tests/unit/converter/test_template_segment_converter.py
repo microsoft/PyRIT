@@ -138,6 +138,31 @@ async def test_template_segment_converter_convert_short_prompt():
     assert len(result.output_text.split("\n")) == 5
 
 
+async def test_template_segment_converter_convert_two_word_prompt_three_parameters():
+    """A prompt with more than one word but fewer words than parameters must not raise.
+
+    Interior split points live between words, so at most len(words) - 1 exist. Sampling
+    min(len(words), number_parameters - 1) points raised "Sample larger than population"
+    for any prompt whose word count fell in [2, parameter_count).
+    """
+    template = SeedPrompt(value="{{ part1 }}|{{ part2 }}|{{ part3 }}", parameters=["part1", "part2", "part3"])
+    converter = TemplateSegmentConverter(prompt_template=template)
+
+    result = await converter.convert_async(prompt="Hi there", input_type="text")
+
+    assert result.output_type == "text"
+    segments = result.output_text.split("|")
+    assert len(segments) == 3
+    # The words are distributed across the segments in order; the leftover segment stays empty.
+    assert " ".join(segment for segment in segments if segment) == "Hi there"
+
+    # Every word count below the parameter count converts without raising.
+    for word_count in (1, 2):
+        prompt = " ".join(f"w{i}" for i in range(word_count))
+        short_result = await converter.convert_async(prompt=prompt, input_type="text")
+        assert short_result.output_type == "text"
+
+
 async def test_template_segment_converter_invalid_input_type():
     """Test conversion with invalid input type."""
     converter = TemplateSegmentConverter()

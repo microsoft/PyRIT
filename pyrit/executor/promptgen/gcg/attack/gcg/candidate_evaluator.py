@@ -13,6 +13,7 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     ModelWorkerOperation,
     PromptManager,
 )
+from pyrit.executor.promptgen.gcg.default_implementations import CrossEntropyLoss
 from pyrit.executor.promptgen.gcg.extension_protocols import LossFunction
 
 
@@ -46,6 +47,7 @@ class GCGCandidateEvaluator:
         prompts: list[PromptManager],
         loss_function: LossFunction,
         main_device: torch.device,
+        use_prefix_cache: bool = False,
     ) -> None:
         """
         Initialize the candidate evaluator.
@@ -55,6 +57,8 @@ class GCGCandidateEvaluator:
             prompts: List of prompt managers associated with each worker.
             loss_function: Loss function protocol used to compute candidate losses.
             main_device: PyTorch device on which aggregate losses are stored and accumulated.
+            use_prefix_cache: Whether built-in loss evaluation may reuse the
+                invariant prefix KV cache.
 
         Raises:
             ValueError: If workers list is empty, or if worker and prompt manager counts mismatch,
@@ -73,6 +77,8 @@ class GCGCandidateEvaluator:
         self._prompts = prompts
         self._loss_function = loss_function
         self._main_device = main_device
+        self._compute_loss_in_worker = type(loss_function) is CrossEntropyLoss
+        self._use_prefix_cache = use_prefix_cache
 
     def evaluate_candidates(
         self,
@@ -86,11 +92,10 @@ class GCGCandidateEvaluator:
 
         For each candidate group:
           - Iterates through prompts sequentially.
-          - Dispatches ModelWorkerOperation.LOGITS with return_ids=True to all workers in parallel.
-          - Collects (logits, token_ids) from worker result queues.
-          - Computes loss using loss_function for target and control slices.
+          - Computes the built-in cross-entropy loss inside each model worker so full logits stay local.
+          - Preserves full-logits dispatch and parent-side computation for custom loss implementations.
           - Accumulates losses on main_device.
-          - Releases intermediate logits and token_ids immediately to bound VRAM.
+          - Releases intermediate tensors after each prompt to bound VRAM.
 
         Args:
             control_candidates_by_group: List of candidate string lists per gradient shape group.
@@ -121,20 +126,36 @@ class GCGCandidateEvaluator:
                 prompt_indices = progress if progress is not None else range(num_prompts)
 
                 for i in prompt_indices:
-                    for k, worker in enumerate(self._workers):
-                        worker(self._prompts[k][i], ModelWorkerOperation.LOGITS, cand, return_ids=True)
+                    if self._compute_loss_in_worker:
+                        for k, worker in enumerate(self._workers):
+                            worker(
+                                self._prompts[k][i],
+                                ModelWorkerOperation.LOSS,
+                                cand,
+                                self._loss_function,
+                                use_prefix_cache=self._use_prefix_cache,
+                            )
 
-                    logits, ids = zip(*[worker.results.get() for worker in self._workers], strict=True)
-                    loss[j * batch_size : (j + 1) * batch_size] += sum(
-                        self._loss_function.compute_loss(
-                            logits=logit,
-                            token_ids=token_ids,
-                            target_slice=self._prompts[k][i]._target_slice,
-                            control_slice=self._prompts[k][i]._control_slice,
-                        ).to(self._main_device)
-                        for k, (logit, token_ids) in enumerate(zip(logits, ids, strict=True))
-                    )
-                    del logits, ids
+                        worker_losses = [worker.results.get() for worker in self._workers]
+                        loss[j * batch_size : (j + 1) * batch_size] += sum(
+                            worker_loss.to(self._main_device) for worker_loss in worker_losses
+                        )
+                        del worker_losses
+                    else:
+                        for k, worker in enumerate(self._workers):
+                            worker(self._prompts[k][i], ModelWorkerOperation.LOGITS, cand, return_ids=True)
+
+                        logits, ids = zip(*[worker.results.get() for worker in self._workers], strict=True)
+                        loss[j * batch_size : (j + 1) * batch_size] += sum(
+                            self._loss_function.compute_loss(
+                                logits=logit,
+                                token_ids=token_ids,
+                                target_slice=self._prompts[k][i]._target_slice,
+                                control_slice=self._prompts[k][i]._control_slice,
+                            ).to(self._main_device)
+                            for k, (logit, token_ids) in enumerate(zip(logits, ids, strict=True))
+                        )
+                        del logits, ids
 
                     if progress is not None:
                         progress.set_description(

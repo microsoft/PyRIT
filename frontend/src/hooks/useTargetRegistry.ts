@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { useRuntime } from '@/hooks/useRuntime'
 import { toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetInstance } from '@/types'
 
 export function useTargetRegistry() {
+  const { generation, ready } = useRuntime()
   const [targets, setTargets] = useState<TargetInstance[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -12,6 +14,7 @@ export function useTargetRegistry() {
   const pendingUpdates = useRef<Map<string, TargetInstance> | null>(null)
 
   useEffect(() => {
+    if (!ready) return
     let cancelled = false
     const updates = new Map<string, TargetInstance>()
     pendingUpdates.current = updates
@@ -30,7 +33,7 @@ export function useTargetRegistry() {
       setLoading(false)
     })
     return () => { cancelled = true }
-  }, [revision])
+  }, [generation, ready, revision])
 
   const refresh = useCallback((): void => {
     setLoading(true)

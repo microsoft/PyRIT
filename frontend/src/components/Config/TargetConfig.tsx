@@ -7,6 +7,7 @@ import {
   Spinner,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import { useRuntime } from '@/hooks/useRuntime'
 import { toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetInstance } from '@/types'
@@ -29,6 +30,7 @@ export default function TargetConfig({
   onSetDefaultAdversarialTarget,
   onTargetsLoaded,
 }: TargetConfigProps) {
+  const { generation, ready } = useRuntime()
   const styles = useTargetConfigStyles()
   const [targets, setTargets] = useState<TargetInstance[]>([])
   const [loading, setLoading] = useState(true)
@@ -42,6 +44,7 @@ export default function TargetConfig({
   // returns 502 while the backend is still starting, so a single failed
   // request on initial page load would show a confusing error to the user.
   useEffect(() => {
+    if (!ready) return
     const maxRetries = 3
     let cancelled = false
 
@@ -69,7 +72,7 @@ export default function TargetConfig({
     return () => {
       cancelled = true
     }
-  }, [refetchCount, onTargetsLoaded])
+  }, [refetchCount, generation, ready, onTargetsLoaded])
 
   const fetchTargets = useCallback(() => {
     setLoading(true)
