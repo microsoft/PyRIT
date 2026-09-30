@@ -3455,6 +3455,39 @@ class TestModalityRouterIntegration:
 class TestTAPAdversarialIdentity:
     """Tests for adversarial config in the TAP attack identity and inline system prompt."""
 
+    def test_identifier_includes_behavioral_search_configuration(self) -> None:
+        attack = (
+            AttackBuilder()
+            .with_default_mocks()
+            .with_tree_params(
+                tree_width=2,
+                tree_depth=3,
+                branching_factor=2,
+                on_topic_checking_enabled=False,
+                desired_response_prefix="Expected prefix",
+                batch_size=2,
+            )
+            .build()
+        )
+
+        expected_params = {
+            "tree_width": 2,
+            "tree_depth": 3,
+            "branching_factor": 2,
+            "on_topic_checking_enabled": False,
+            "desired_response_prefix": "Expected prefix",
+        }
+        identifier = attack.get_identifier()
+        assert {name: identifier.params[name] for name in expected_params} == expected_params
+
+    def test_identifier_changes_with_search_shape_but_not_batch_size(self) -> None:
+        default = AttackBuilder().with_default_mocks().build()
+        narrower = AttackBuilder().with_default_mocks().with_tree_params(tree_width=2).build()
+        smaller_batch = AttackBuilder().with_default_mocks().with_tree_params(batch_size=2).build()
+
+        assert default.get_identifier() != narrower.get_identifier()
+        assert default.get_identifier() == smaller_batch.get_identifier()
+
     def test_get_attack_adversarial_config_includes_target_and_system_seed_only(self):
         builder = AttackBuilder().with_default_mocks()
         attack = builder.build()

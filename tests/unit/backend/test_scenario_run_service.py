@@ -55,7 +55,7 @@ from pyrit.models import (
     SeedObjective,
     config_hash,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
@@ -65,7 +65,7 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
-from unit.mocks import MockPromptTarget, make_scenario_result
+from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -102,6 +102,33 @@ def clear_service_cache():
     _svc_mod._service_instance = None
     yield
     _svc_mod._service_instance = None
+
+
+async def test_has_active_work_covers_scheduler_owned_work(patch_central_database: MagicMock) -> None:
+    service = ScenarioRunService()
+    assert not service.has_active_work()
+
+    service._active_scenario_result_id = "active"
+    assert service.has_active_work()
+    service._active_scenario_result_id = None
+
+    service._queued_runs.append(MagicMock())
+    assert service.has_active_work()
+    service._queued_runs.clear()
+
+    preparation: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+    service._preparations.add(preparation)
+    assert service.has_active_work()
+    service._preparations.clear()
+
+    handoff = asyncio.create_task(asyncio.sleep(0))
+    service._handoff_retry_tasks.add(handoff)
+    assert service.has_active_work()
+    service._handoff_retry_tasks.clear()
+    await handoff
+
+    assert not service.has_active_work()
+    await service.close_async()
 
 
 def _make_request(
@@ -1559,17 +1586,17 @@ class TestScenarioRunServiceStartRun:
 
 
 class TestScenarioRunServiceGetRun:
-    """Tests for ScenarioRunService.get_run."""
+    "Tests for ScenarioRunService.get_run_async."
 
     async def test_get_run_returns_none_for_unknown_id(self, mock_memory) -> None:
-        """Test that get_run returns None for non-existent run."""
+        "Test that get_run_async returns None for non-existent run."
         mock_memory.get_scenario_results_async = AsyncMock(return_value=[])
         service = ScenarioRunService()
         result = await service.get_run_async(scenario_result_id="nonexistent-id")
         assert result is None
 
     async def test_get_run_returns_existing_run(self, mock_memory) -> None:
-        """Test that get_run returns a run from the database."""
+        "Test that get_run_async returns a run from the database."
         db_result = _make_db_scenario_result(result_id="sr-123", run_state=ScenarioRunState.IN_PROGRESS)
         mock_memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
 
@@ -1669,6 +1696,40 @@ class TestScenarioRunServiceGetRun:
         assert fetched.techniques_used == (["Attack"] if expected_planned_total else ["legacy attack"])
         assert ("using legacy run detail fields" in caplog.text) is expected_warning
 
+    async def test_get_run_detail_techniques_used_prefers_technique_name_over_display_group(self, mock_memory) -> None:
+        """A goal-based display_group must not stand in for the technique identity."""
+        plan = ScenarioRunPlan(
+            scenario_registry_name="garak.prompt_inject",
+            atomic_groups=[
+                ScenarioRunPlanAtomicGroup(
+                    id="group-1",
+                    atomic_attack_name="ignore_print__goal_0",
+                    display_group="AUDIT_SAFE_MARKER",
+                    technique_name="ignore_print",
+                    technique_eval_hash="eval",
+                    seed_group_ids=["seed-1"],
+                )
+            ],
+            seed_groups=[
+                ScenarioRunPlanSeedGroup(
+                    id="seed-1",
+                    objective_sha256=to_sha256("objective"),
+                    objective="objective",
+                )
+            ],
+        ).model_dump(mode="json")
+        db_result = make_scenario_result(
+            scenario_name="garak.prompt_inject",
+            attack_results={},
+            metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan},
+        )
+        mock_memory.get_scenario_results_async.return_value = [db_result]
+
+        fetched = await ScenarioRunService().get_run_async(scenario_result_id=str(db_result.id))
+
+        assert fetched is not None
+        assert fetched.techniques_used == ["ignore_print"]
+
     @pytest.mark.parametrize("run_state", list(ScenarioRunState))
     async def test_get_run_only_falls_back_to_persisted_error_for_failed_state(
         self, *, mock_memory: MagicMock, run_state: ScenarioRunState
@@ -1709,10 +1770,10 @@ class TestScenarioRunServiceGetRun:
 
 
 class TestScenarioRunServiceListRuns:
-    """Tests for ScenarioRunService.list_runs."""
+    "Tests for ScenarioRunService.list_runs_async."
 
     async def test_list_runs_empty(self, mock_memory) -> None:
-        """Test that list_runs returns empty list when DB has no results."""
+        "Test that list_runs_async returns empty list when DB has no results."
         mock_memory.get_scenario_run_history_page_async = AsyncMock(return_value=([], {}, False))
         service = ScenarioRunService()
         result = await service.list_runs_async()
@@ -1721,7 +1782,7 @@ class TestScenarioRunServiceListRuns:
         mock_memory.get_scenario_results_async.assert_not_called()
 
     async def test_list_runs_returns_all_runs(self, mock_memory) -> None:
-        """Test that list_runs returns all runs from the database."""
+        "Test that list_runs_async returns all runs from the database."
         records = [
             _make_history_record(result_id="sr-1", run_state=ScenarioRunState.COMPLETED),
             _make_history_record(result_id="sr-2", run_state=ScenarioRunState.IN_PROGRESS),
@@ -1735,7 +1796,7 @@ class TestScenarioRunServiceListRuns:
         mock_memory.get_scenario_results_async.assert_not_called()
 
     async def test_list_runs_passes_custom_limit(self, mock_memory) -> None:
-        """Test that list_runs passes a custom limit to the memory query."""
+        "Test that list_runs_async passes a custom limit to the memory query."
         mock_memory.get_scenario_run_history_page_async = AsyncMock(return_value=([], {}, False))
         service = ScenarioRunService()
         (await service.list_runs_async(limit=10))
@@ -1946,6 +2007,74 @@ class TestScenarioRunServiceListRuns:
         assert summary.successful_attacks == 2
         mock_memory.get_scenario_history_aggregates_async.assert_not_called()
 
+    async def test_list_runs_techniques_used_prefers_technique_name_over_display_group(self, mock_memory) -> None:
+        """A goal-based display_group must not stand in for the technique identity."""
+        record = _make_history_record(result_id="sr-goal-display-group", run_state=ScenarioRunState.COMPLETED)
+        group = ScenarioRunPlanAtomicGroup(
+            id="group-1",
+            atomic_attack_name="ignore_print__goal_0",
+            display_group="AUDIT_SAFE_MARKER",
+            technique_name="ignore_print",
+            technique_eval_hash="eval",
+            seed_group_ids=["seed-1"],
+        ).model_dump(mode="json")
+        record = replace(
+            record,
+            plan_atomic_groups=[group],
+            plan_seed_id_map=[{"id": "seed-1", "objective_sha256": "hash-1"}],
+        )
+        mock_memory.get_scenario_run_history_page_async.return_value = ([record], {}, False)
+
+        summary = (await ScenarioRunService().list_runs_async()).items[0]
+
+        assert summary.techniques_used == ["ignore_print"]
+
+    @pytest.mark.parametrize(
+        ("scenario_registry_name", "atomic_attack_name", "technique_name", "known_names", "expected_name"),
+        [
+            (None, "ignore_print__goal_0", None, ["ignore_print"], "AUDIT_SAFE_MARKER"),
+            ("removed.scenario", "ignore_print__goal_0", None, [], "AUDIT_SAFE_MARKER"),
+            ("garak.prompt_inject", "custom_attack", None, ["ignore_print"], "AUDIT_SAFE_MARKER"),
+            ("garak.prompt_inject", "ignore_print__goal_0", "saved_technique", ["ignore_print"], "saved_technique"),
+        ],
+        ids=["no-registry-name", "removed-scenario", "unknown-technique", "persisted-technique"],
+    )
+    async def test_list_runs_preserves_technique_fallbacks(
+        self,
+        *,
+        mock_memory: MagicMock,
+        scenario_registry_name: str | None,
+        atomic_attack_name: str,
+        technique_name: str | None,
+        known_names: list[str],
+        expected_name: str,
+    ) -> None:
+        record = _make_history_record(result_id="sr-technique-fallback", run_state=ScenarioRunState.COMPLETED)
+        group = ScenarioRunPlanAtomicGroup(
+            id="group-1",
+            atomic_attack_name=atomic_attack_name,
+            display_group="AUDIT_SAFE_MARKER",
+            technique_name=technique_name,
+            technique_eval_hash="eval",
+            seed_group_ids=["seed-1"],
+        ).model_dump(mode="json", exclude_none=True)
+        record = replace(
+            record,
+            scenario_registry_name=scenario_registry_name,
+            plan_atomic_groups=[group],
+            plan_seed_id_map=[{"id": "seed-1", "objective_sha256": "hash-1"}],
+        )
+        mock_memory.get_scenario_run_history_page_async.return_value = ([record], {}, False)
+        service = ScenarioRunService()
+        summaries = {name: ScenarioTechniqueSummary(name=name) for name in known_names}
+
+        with patch.object(service, "_get_scenario_technique_summaries", return_value=summaries) as lookup:
+            summary = (await service.list_runs_async()).items[0]
+
+        assert summary.techniques_used == [expected_name]
+        if scenario_registry_name is None or technique_name is not None:
+            lookup.assert_not_called()
+
     async def test_history_falls_back_for_duplicate_objective_hashes_within_one_group(self, mock_memory) -> None:
         record = _make_history_record(result_id="sr-ambiguous-objective", run_state=ScenarioRunState.COMPLETED)
         group = ScenarioRunPlanAtomicGroup(
@@ -2020,6 +2149,69 @@ class TestScenarioRunServiceListRuns:
         result = await ScenarioRunService().list_runs_async()
 
         assert result.items[0].total_attacks is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("omit_technique_name", [True, False], ids=["omitted", "null"])
+async def test_legacy_plan_techniques_agree_across_projections(
+    *, sqlite_instance: SQLiteMemory, omit_technique_name: bool
+) -> None:
+    techniques = ["ignore_print", "ignore_print_upper"]
+    goals = ["AUDIT_SAFE_MARKER", "SECOND_SAFE_MARKER"]
+    plan = ScenarioRunPlan(
+        scenario_registry_name="garak.prompt_inject",
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id=f"{technique}-{index}",
+                atomic_attack_name=f"{technique}__goal_{index}",
+                display_group=goal,
+                technique_eval_hash=f"eval-{technique}-{index}",
+                seed_group_ids=[f"seed-{index}"],
+            )
+            for technique in techniques
+            for index, goal in enumerate(goals)
+        ],
+        seed_groups=[
+            ScenarioRunPlanSeedGroup(id=f"seed-{index}", objective_sha256=to_sha256(goal), objective=goal)
+            for index, goal in enumerate(goals)
+        ],
+    )
+    raw_plan = plan.model_dump(mode="json", exclude_none=omit_technique_name)
+    scenario_result = make_scenario_result(
+        scenario_name="garak.prompt_inject",
+        techniques=techniques,
+        objective_target_identifier=get_mock_target_identifier(),
+        attack_results={},
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: raw_plan},
+    )
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
+    run_id = str(scenario_result.id)
+    service = ScenarioRunService()
+    summaries = {
+        name: ScenarioTechniqueSummary(name=name, description=f"{name} description", tags=["default"])
+        for name in techniques
+    }
+
+    with patch.object(service, "_get_scenario_technique_summaries", return_value=summaries):
+        history = (await service.list_runs_async()).items[0]
+        detail = await service.get_run_async(scenario_result_id=run_id)
+        progress = await service.get_run_progress_from_storage_async(
+            scenario_result_id=run_id, since=None, limit=25, active_group_ids=[]
+        )
+
+    assert detail is not None
+    assert progress is not None
+    assert history.techniques_used == detail.techniques_used == progress.run.techniques_used == techniques
+    assert history.total_attacks == detail.total_attacks == progress.summary.overall.planned == 4
+    assert [group.display_group for group in progress.summary.display_groups] == goals
+    assert progress.plan is not None
+    assert [group.technique_name for group in progress.plan.atomic_groups] == [
+        technique for technique in techniques for _ in goals
+    ]
+    assert all(group.description and group.tags == ["default"] for group in progress.plan.atomic_groups)
+    stored = (await sqlite_instance.get_scenario_results_async(scenario_result_ids=[run_id]))[0]
+    assert stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY] == raw_plan
 
 
 class TestScenarioRunServiceCancelRun:
@@ -2513,7 +2705,7 @@ class TestScenarioRunServiceExecution:
         assert fetched is not None
 
     async def test_execute_run_fails_with_error(self, mock_all_registries) -> None:
-        """Test that a run_async failure stores error and surfaces it via get_run."""
+        "Test that a run_async failure stores error and surfaces it via get_run_async."
         service = ScenarioRunService()
         mock_instance = mock_all_registries["scenario_instance"]
         execution_started = asyncio.Event()
@@ -3412,6 +3604,42 @@ async def test_get_progress_exposes_persisted_started_at(mock_memory) -> None:
 
     assert progress is not None
     assert progress.run.started_at == started_at
+
+
+async def test_get_progress_techniques_used_prefers_technique_name_over_display_group(mock_memory) -> None:
+    """A goal-based display_group must not stand in for the technique identity."""
+    header = make_scenario_result(
+        scenario_name="garak.prompt_inject",
+        attack_results={},
+        metadata={
+            SCENARIO_RUN_PLAN_METADATA_KEY: ScenarioRunPlan(
+                scenario_registry_name="garak.prompt_inject",
+                atomic_groups=[
+                    ScenarioRunPlanAtomicGroup(
+                        id="group-1",
+                        atomic_attack_name="ignore_print__goal_0",
+                        display_group="AUDIT_SAFE_MARKER",
+                        technique_name="ignore_print",
+                        technique_eval_hash="eval",
+                        seed_group_ids=[],
+                    )
+                ],
+                seed_groups=[],
+            ).model_dump(mode="json"),
+        },
+    )
+    mock_memory.get_scenario_result_header_async.return_value = header
+    mock_memory.get_scenario_attack_result_deltas_async.return_value = ([], False)
+
+    progress = await ScenarioRunService().get_run_progress_from_storage_async(
+        scenario_result_id=str(header.id),
+        since=None,
+        limit=25,
+        active_group_ids=[],
+    )
+
+    assert progress is not None
+    assert progress.run.techniques_used == ["ignore_print"]
 
 
 @pytest.mark.parametrize("started_at", ["not-a-timestamp", "2026-08-08T12:30:00"])

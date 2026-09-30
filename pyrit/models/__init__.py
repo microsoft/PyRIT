@@ -228,8 +228,10 @@ if TYPE_CHECKING:
         register_common_json_schema,
         unregister_common_json_schema,
     )
+    from pyrit.models.target.request_trace_context import RequestTraceContext
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "RequestTraceContext": "pyrit.models.target.request_trace_context",
     "AttackAnalyticsCell": "pyrit.models.analytics",
     "AttackAnalyticsConverterDirection": "pyrit.models.analytics",
     "AttackAnalyticsDimension": "pyrit.models.analytics",

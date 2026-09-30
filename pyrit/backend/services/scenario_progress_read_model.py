@@ -179,8 +179,6 @@ class ScenarioProgressReadModel:
         self._memory = memory
         self._cache: OrderedDict[str, _ProgressCacheEntry] = OrderedDict()
         self._cache_lock = Lock()
-        self._async_cache: OrderedDict[str, _ProgressCacheEntry] = OrderedDict()
-        self._async_cache_lock = asyncio.Lock()
 
     def get_snapshot(
         self,
@@ -195,6 +193,14 @@ class ScenarioProgressReadModel:
         """
         Refresh and return the mapped progress state for one run.
 
+        Args:
+            scenario_result_id (str): Persisted scenario run ID.
+            plan (ScenarioRunPlan | None): Saved run plan, if available.
+            plan_complete (bool): Whether the plan includes all work.
+            active_group_ids (Sequence[str]): Groups that are running.
+            terminal (bool): Whether the run has stopped.
+            objective_scorer_identifier (ComponentIdentifier | None): Objective scorer identity.
+
         Returns:
             ScenarioProgressSnapshot: Deltas, mapped results, summary, and effective plan.
         """
@@ -203,61 +209,18 @@ class ScenarioProgressReadModel:
             new_item="ScenarioProgressReadModel.get_snapshot_async",
             removed_in="1.4.0",
         )
-        plan_signature = plan.model_dump_json() if plan is not None else None
         with self._cache_lock:
-            entry = self._cache.get(scenario_result_id)
-            if entry is not None and entry.plan_signature == plan_signature:
-                has_unenriched_identifier = any(
-                    delta.atomic_attack_identifier is not None and not delta.atomic_attack_identifier.seed_identifiers
-                    for delta in entry.deltas
-                )
-                was_terminal = entry.summary_state is not None and entry.summary_state.terminal
-                if has_unenriched_identifier and (not terminal or not was_terminal):
-                    entry = None
-            if entry is None or entry.plan_signature != plan_signature:
-                entry = _ProgressCacheEntry(plan_signature=plan_signature)
-                self._cache[scenario_result_id] = entry
-            self._cache.move_to_end(scenario_result_id)
-            while len(self._cache) > self._CACHE_MAX_RUNS:
-                self._cache.popitem(last=False)
-
-            first_new_index = len(entry.deltas)
+            entry = self._get_cache_entry(scenario_result_id=scenario_result_id, plan=plan, terminal=terminal)
+            first_new_index = len(entry.results)
             self._hydrate_new_deltas(scenario_result_id=scenario_result_id, entry=entry)
-
-            summary_plan = plan or self._synthesize_legacy_plan(deltas=entry.deltas)
-            if len(entry.results) < len(entry.deltas):
-                plan_lookup = ScenarioPlanLookup.from_plan(plan=summary_plan)
-                entry.results.extend(
-                    self._map_progress_delta(delta=delta, plan_lookup=plan_lookup)
-                    for delta in entry.deltas[len(entry.results) :]
-                )
-
-            summary_state = _ProgressSummaryState(
-                active_group_ids=tuple(active_group_ids),
-                terminal=terminal,
+            return self._build_snapshot(
+                entry=entry,
+                first_new_index=first_new_index,
+                plan=plan,
                 plan_complete=plan_complete,
-            )
-            if entry.summary is None or first_new_index < len(entry.deltas) or entry.summary_state != summary_state:
-                technique_details_by_group = self._build_technique_details_by_group(
-                    deltas=entry.deltas,
-                    results=entry.results,
-                )
-                entry.summary = self._build_progress_summary(
-                    plan=summary_plan,
-                    plan_complete=plan_complete,
-                    results=entry.results,
-                    active_group_ids=active_group_ids,
-                    terminal=terminal,
-                    objective_scorer_identifier=objective_scorer_identifier,
-                    technique_details_by_group=technique_details_by_group,
-                )
-                entry.summary_state = summary_state
-
-            return ScenarioProgressSnapshot(
-                deltas=tuple(entry.deltas),
-                results=tuple(entry.results),
-                summary=entry.summary,
-                plan=summary_plan,
+                active_group_ids=active_group_ids,
+                terminal=terminal,
+                objective_scorer_identifier=objective_scorer_identifier,
             )
 
     @legacy_sync_override(lambda: ScenarioProgressReadModel.get_snapshot)
@@ -274,65 +237,103 @@ class ScenarioProgressReadModel:
         """
         Refresh and return the mapped progress state for one run.
 
+        Args:
+            scenario_result_id (str): Persisted scenario run ID.
+            plan (ScenarioRunPlan | None): Saved run plan, if available.
+            plan_complete (bool): Whether the plan includes all work.
+            active_group_ids (Sequence[str]): Groups that are running.
+            terminal (bool): Whether the run has stopped.
+            objective_scorer_identifier (ComponentIdentifier | None): Objective scorer identity.
+
         Returns:
             ScenarioProgressSnapshot: Deltas, mapped results, summary, and effective plan.
         """
-        plan_signature = plan.model_dump_json() if plan is not None else None
-        async with self._async_cache_lock:
-            entry = self._async_cache.get(scenario_result_id)
-            if entry is not None and entry.plan_signature == plan_signature:
-                has_unenriched_identifier = any(
-                    delta.atomic_attack_identifier is not None and not delta.atomic_attack_identifier.seed_identifiers
-                    for delta in entry.deltas
-                )
-                was_terminal = entry.summary_state is not None and entry.summary_state.terminal
-                if has_unenriched_identifier and (not terminal or not was_terminal):
-                    entry = None
-            if entry is None or entry.plan_signature != plan_signature:
-                entry = _ProgressCacheEntry(plan_signature=plan_signature)
-                self._async_cache[scenario_result_id] = entry
-            self._async_cache.move_to_end(scenario_result_id)
-            while len(self._async_cache) > self._CACHE_MAX_RUNS:
-                self._async_cache.popitem(last=False)
-
+        while not self._cache_lock.acquire(blocking=False):
+            await asyncio.sleep(0.01)
+        try:
+            entry = self._get_cache_entry(scenario_result_id=scenario_result_id, plan=plan, terminal=terminal)
             first_new_index = len(entry.results)
             await self._hydrate_new_deltas_async(scenario_result_id=scenario_result_id, entry=entry)
-
-            summary_plan = plan or self._synthesize_legacy_plan(deltas=entry.deltas)
-            if len(entry.results) < len(entry.deltas):
-                plan_lookup = ScenarioPlanLookup.from_plan(plan=summary_plan)
-                entry.results.extend(
-                    self._map_progress_delta(delta=delta, plan_lookup=plan_lookup)
-                    for delta in entry.deltas[len(entry.results) :]
-                )
-
-            summary_state = _ProgressSummaryState(
-                active_group_ids=tuple(active_group_ids),
-                terminal=terminal,
+            return self._build_snapshot(
+                entry=entry,
+                first_new_index=first_new_index,
+                plan=plan,
                 plan_complete=plan_complete,
+                active_group_ids=active_group_ids,
+                terminal=terminal,
+                objective_scorer_identifier=objective_scorer_identifier,
             )
-            if entry.summary is None or first_new_index < len(entry.deltas) or entry.summary_state != summary_state:
-                technique_details_by_group = self._build_technique_details_by_group(
-                    deltas=entry.deltas,
-                    results=entry.results,
-                )
-                entry.summary = self._build_progress_summary(
-                    plan=summary_plan,
-                    plan_complete=plan_complete,
-                    results=entry.results,
-                    active_group_ids=active_group_ids,
-                    terminal=terminal,
-                    objective_scorer_identifier=objective_scorer_identifier,
-                    technique_details_by_group=technique_details_by_group,
-                )
-                entry.summary_state = summary_state
+        finally:
+            self._cache_lock.release()
 
-            return ScenarioProgressSnapshot(
-                deltas=tuple(entry.deltas),
-                results=tuple(entry.results),
-                summary=entry.summary,
-                plan=summary_plan,
+    def _get_cache_entry(
+        self, *, scenario_result_id: str, plan: ScenarioRunPlan | None, terminal: bool
+    ) -> _ProgressCacheEntry:
+        plan_signature = plan.model_dump_json() if plan is not None else None
+        entry = self._cache.get(scenario_result_id)
+        if entry is not None and entry.plan_signature == plan_signature:
+            has_unenriched_identifier = any(
+                delta.atomic_attack_identifier is not None and not delta.atomic_attack_identifier.seed_identifiers
+                for delta in entry.deltas
             )
+            was_terminal = entry.summary_state is not None and entry.summary_state.terminal
+            if has_unenriched_identifier and (not terminal or not was_terminal):
+                entry = None
+        if entry is None or entry.plan_signature != plan_signature:
+            entry = _ProgressCacheEntry(plan_signature=plan_signature)
+            self._cache[scenario_result_id] = entry
+        self._cache.move_to_end(scenario_result_id)
+        while len(self._cache) > self._CACHE_MAX_RUNS:
+            self._cache.popitem(last=False)
+
+        return entry
+
+    def _build_snapshot(
+        self,
+        *,
+        entry: _ProgressCacheEntry,
+        first_new_index: int,
+        plan: ScenarioRunPlan | None,
+        plan_complete: bool,
+        active_group_ids: Sequence[str],
+        terminal: bool,
+        objective_scorer_identifier: ComponentIdentifier | None,
+    ) -> ScenarioProgressSnapshot:
+        summary_plan = plan or self._synthesize_legacy_plan(deltas=entry.deltas)
+        if len(entry.results) < len(entry.deltas):
+            plan_lookup = ScenarioPlanLookup.from_plan(plan=summary_plan)
+            entry.results.extend(
+                self._map_progress_delta(delta=delta, plan_lookup=plan_lookup)
+                for delta in entry.deltas[len(entry.results) :]
+            )
+
+        summary_state = _ProgressSummaryState(
+            active_group_ids=tuple(active_group_ids),
+            terminal=terminal,
+            plan_complete=plan_complete,
+        )
+        if entry.summary is None or first_new_index < len(entry.deltas) or entry.summary_state != summary_state:
+            technique_details_by_group = self._build_technique_details_by_group(
+                deltas=entry.deltas,
+                results=entry.results,
+            )
+            entry.summary = self._build_progress_summary(
+                plan=summary_plan,
+                plan_complete=plan_complete,
+                results=entry.results,
+                active_group_ids=active_group_ids,
+                terminal=terminal,
+                objective_scorer_identifier=objective_scorer_identifier,
+                technique_details_by_group=technique_details_by_group,
+            )
+            entry.summary_state = summary_state
+
+        return ScenarioProgressSnapshot(
+            deltas=tuple(entry.deltas),
+            results=tuple(entry.results),
+            summary=entry.summary,
+            plan=summary_plan,
+        )
 
     def _hydrate_new_deltas(self, *, scenario_result_id: str, entry: _ProgressCacheEntry) -> None:
         """Hydrate every persisted delta after the cached keyset cursor."""
@@ -354,7 +355,6 @@ class ScenarioProgressReadModel:
             if not page:
                 raise RuntimeError("Scenario progress storage returned an empty page with has_more=True.")
 
-    @legacy_sync_override(lambda: ScenarioProgressReadModel._hydrate_new_deltas)
     async def _hydrate_new_deltas_async(self, *, scenario_result_id: str, entry: _ProgressCacheEntry) -> None:
         """Hydrate every persisted delta after the cached keyset cursor."""
         while True:

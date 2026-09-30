@@ -169,7 +169,11 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         async def connect_async() -> aioodbc.Connection:
             _, params = engine.dialect.create_connect_args(url)
-            dsn = params.pop("dsn").replace(";Trusted_Connection=Yes", "")
+            dsn = ";".join(
+                part
+                for part in params.pop("dsn").split(";")
+                if part.partition("=")[0].strip().lower() != "trusted_connection"
+            )
             token = await auth.get_access_token_async()
             token_bytes = token.token.encode("utf-16-le")
             attrs = dict(params.pop("attrs_before", {}))
@@ -191,18 +195,25 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     async def dispose_loop_resources_async(self) -> None:
         """Close the current loop's engine and its owned Azure credential."""
         loop = asyncio.get_running_loop()
+        for closed_loop in list(self._async_auth):
+            if closed_loop.is_closed():
+                await self._dispose_loop_resources_async(closed_loop)
+        await self._dispose_loop_resources_async(loop)
+
+    async def _dispose_loop_resources_async(self, loop: asyncio.AbstractEventLoop) -> None:
         engine = self._async_engines.get(loop)
         try:
             if engine is not None:
-                await engine.dispose()
+                if loop.is_closed():
+                    engine.sync_engine.dispose(close=False)
+                    logger.warning("Discarding Azure SQL pool owned by a closed event loop.")
+                else:
+                    await engine.dispose()
         finally:
-            auth = self._async_auth.get(loop)
+            self._async_engines.pop(loop, None)
+            auth = self._async_auth.pop(loop, None)
             if auth is not None:
                 await auth.close_async()
-                del self._async_auth[loop]
-        # Retain loop ownership until both resources close successfully.
-        if engine is not None:
-            del self._async_engines[loop]
 
     @staticmethod
     def _resolve_sas_token(env_var_name: str, passed_value: str | None = None) -> str | None:

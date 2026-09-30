@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import threading
 import uuid
 import weakref
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
@@ -14,10 +15,10 @@ from typing import TYPE_CHECKING, Any, Literal
 from sqlalchemy import and_, case, create_engine, exists, func, or_, select, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
 from sqlalchemy.orm.session import Session
-from sqlalchemy.pool import AsyncAdaptedQueuePool, StaticPool
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import TextClause
 
 from pyrit.common.path import DB_DATA_PATH
@@ -37,6 +38,20 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
 
 logger = logging.getLogger(__name__)
+
+
+class _SerializedAsyncSession(AsyncSession):
+    def __init__(self, *, engine: AsyncEngine, release: Callable[[], None]) -> None:
+        super().__init__(bind=engine, sync_session_class=MemorySession)
+        self._release: Callable[[], None] | None = release
+
+    async def close(self) -> None:  # pyrit-async-suffix-exempt
+        try:
+            await super().close()
+        finally:
+            if self._release is not None:
+                release, self._release = self._release, None
+                release()
 
 
 class SQLiteMemory(MemoryInterface, metaclass=Singleton):
@@ -86,9 +101,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         self._keepalive: Connection | None = None
         self._verbose = verbose
 
-        # Legacy sync sessions share a connection. Async sessions use a separate bounded
-        # pool on the same named database and must not acquire this thread-owned lock.
-        self._connection_lock: threading.RLock | None = threading.RLock() if self.db_path == ":memory:" else None
+        # Shared-cache SQLite does not wait on table locks. Serialize whole transactions
+        # across sync callers and all event loops, not just within each connection pool.
+        self._connection_lock = threading.RLock() if self.db_path == ":memory:" else None
+        self._transaction_lock = threading.Lock() if self.db_path == ":memory:" else None
+        self._sync_session_depth = 0
 
         self.engine = self._create_engine(has_echo=verbose)
         self.SessionFactory = sessionmaker(bind=self.engine, class_=MemorySession)
@@ -107,8 +124,34 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         database = self._memory_uri if self.db_path == ":memory:" else str(self.db_path)
         kwargs: dict[str, Any] = {}
         if self.db_path == ":memory:":
-            kwargs.update(poolclass=AsyncAdaptedQueuePool, pool_size=1, max_overflow=0)
+            kwargs["poolclass"] = StaticPool
         return create_async_engine(f"sqlite+aiosqlite:///{database}", echo=self._verbose, **kwargs)
+
+    async def get_session_async(self) -> AsyncSession:
+        """
+        Create a session with exclusive access to the shared in-memory database.
+
+        Returns:
+            AsyncSession: A session that releases exclusive access when closed.
+        """
+        if self._uses_legacy_session_override():
+            raise NotImplementedError("Override get_session_async when customizing the legacy get_session hook.")
+        connection_lock = self._transaction_lock
+        if connection_lock is None:
+            return await super().get_session_async()
+        while not connection_lock.acquire(blocking=False):
+            await asyncio.sleep(0.01)
+        try:
+            return _SerializedAsyncSession(engine=self._get_async_engine(), release=connection_lock.release)
+        except BaseException:
+            connection_lock.release()
+            raise
+
+    def _uses_legacy_session_override(self) -> bool:
+        return super()._uses_legacy_session_override() or (
+            type(self).get_session is not MemoryInterface.get_session
+            and type(self).get_session_async is SQLiteMemory.get_session_async
+        )
 
     def _dispose_sync_engine(self) -> None:
         if self._keepalive is not None:
@@ -198,7 +241,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         )
 
         # Create SQL condition using SQLAlchemy's text() with bindparams
-        condition = text(json_conditions).bindparams(**{key: str(value) for key, value in prompt_metadata.items()})
+        # Note: We do NOT convert values to string here, to allow integer comparison in JSON
+        condition = text(json_conditions).bindparams(**dict(prompt_metadata.items()))
         return [condition]
 
     def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> Any:
@@ -334,8 +378,13 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             return session
 
         connection_lock.acquire()
+        if self._sync_session_depth == 0:
+            assert self._transaction_lock is not None
+            self._transaction_lock.acquire()
+        self._sync_session_depth += 1
         close_session = session.close
         released = False
+        owner_thread = threading.get_ident()
 
         def release_once() -> None:
             # Also runs if the session is discarded without being closed, so one caller that
@@ -343,7 +392,14 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             nonlocal released
             if released:
                 return
+            if threading.get_ident() != owner_thread:
+                logger.warning("An in-memory session was discarded by a thread that did not open it.")
+                return
             released = True
+            self._sync_session_depth -= 1
+            if self._sync_session_depth == 0:
+                assert self._transaction_lock is not None
+                self._transaction_lock.release()
             try:
                 connection_lock.release()
             except RuntimeError:

@@ -519,7 +519,6 @@ class FuzzerResultPrinter:
                     self._print_colored(f"{self._indent * 3} Score: {score_value} | {score.score_rationale}", Fore.CYAN)
                 print()
 
-    @legacy_sync_override(lambda: FuzzerResultPrinter._print_conversations)
     async def _print_conversations_async(self, result: FuzzerResult) -> None:
         """
         Print the conversations from successful jailbreaks.

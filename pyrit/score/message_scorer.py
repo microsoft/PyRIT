@@ -4,13 +4,13 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 import logging
 from abc import abstractmethod
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, cast
 
-from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     ComponentRole,
@@ -364,6 +364,23 @@ class MessageScorer(Scorer):
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
 
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+        """
+        Return this scorer carrying the given blocked-response policy.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply.
+
+        Returns:
+            Scorer: ``self`` when the policy already matches, otherwise a shallow copy that
+            keeps sharing the chat target and validator and differs only in the policy.
+        """
+        if self.raise_if_scorer_blocks == raise_if_scorer_blocks:
+            return self
+        scoped = copy.copy(self)
+        scoped.raise_if_scorer_blocks = raise_if_scorer_blocks
+        return scoped
+
     def _get_condition_type(self) -> type[Condition] | None:
         """Return the declared criterion, using the objective validator only for undeclared leaves."""
         if self._get_child_scorers():
@@ -500,29 +517,6 @@ class MessageScorer(Scorer):
                 observations=collector.referenced_by(scores=scores),
             )
 
-    def _context_scorable_from_message(self, *, message: Message) -> Scorable | None:
-        """
-        Build a durable observation anchor for the in-hand message API.
-
-        Returns:
-            Scorable | None: The durable message or content anchor, if one can be represented.
-        """
-        pieces = message.message_pieces
-        persisted = self._memory.get_message_pieces(prompt_ids=[piece.id for piece in pieces])
-        persisted_by_id = {str(piece.id): piece for piece in persisted}
-        matches_storage = all(
-            str(piece.id) in persisted_by_id
-            and _message_piece_digest(piece, include_id=False)
-            == _message_piece_digest(persisted_by_id[str(piece.id)], include_id=False)
-            for piece in pieces
-        )
-        if pieces and matches_storage:
-            return MessageScorable.from_message(message)
-        if len(pieces) == 1:
-            return ContentScorable.from_message(message)
-        return None
-
-    @legacy_sync_override(lambda: MessageScorer._context_scorable_from_message)
     async def _context_scorable_from_message_async(self, *, message: Message) -> Scorable | None:
         """
         Build a durable observation anchor for the in-hand message API.
@@ -1096,30 +1090,6 @@ class MessageScorer(Scorer):
         """
         self._validator.validate(message, objective=objective)
 
-    def _finalize_message_scores(
-        self,
-        *,
-        message: Message,
-        scores: list[Score],
-        anchor: Scorable | None,
-        expectation: ScoringExpectation | None,
-    ) -> None:
-        """Apply legacy and canonical evidence anchors to completed message scores."""
-        persisted_piece_ids = self._get_persisted_piece_ids(message=message)
-        self._drop_ephemeral_score_links(
-            message=message,
-            scores=scores,
-            persisted_piece_ids=persisted_piece_ids,
-        )
-        self._stamp_scorable(
-            message=message,
-            scores=scores,
-            anchor=anchor,
-            persisted_piece_ids=persisted_piece_ids,
-        )
-        self._stamp_scored_expectation(scores=scores, expectation=expectation)
-
-    @legacy_sync_override(lambda: MessageScorer._finalize_message_scores)
     async def _finalize_message_scores_async(
         self,
         *,
@@ -1428,28 +1398,6 @@ class MessageScorer(Scorer):
             piece for piece in message.message_pieces if self._validator.is_message_piece_supported(message_piece=piece)
         ]
 
-    def _get_persisted_piece_ids(self, *, message: Message) -> set[uuid.UUID]:
-        """Return matching message IDs, allowing storage to change timestamp precision."""
-        candidate_ids = [piece.id for piece in message.message_pieces if not piece.not_in_memory]
-        if not candidate_ids:
-            return set()
-
-        stored_pieces = self._memory.get_message_pieces(
-            prompt_ids=[str(piece_id) for piece_id in candidate_ids],
-        )
-        supplied_by_id = {piece.id: piece for piece in message.message_pieces}
-        return {
-            piece.id
-            for piece in stored_pieces
-            if piece.id in supplied_by_id
-            and _message_piece_digest(piece, include_id=False)
-            == _message_piece_digest(
-                supplied_by_id[piece.id].model_copy(update={"timestamp": piece.timestamp}),
-                include_id=False,
-            )
-        }
-
-    @legacy_sync_override(lambda: MessageScorer._get_persisted_piece_ids)
     async def _get_persisted_piece_ids_async(self, *, message: Message) -> set[uuid.UUID]:
         """Return matching message IDs, allowing storage to change timestamp precision."""
         candidate_ids = [piece.id for piece in message.message_pieces if not piece.not_in_memory]

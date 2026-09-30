@@ -1,10 +1,12 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 
 import {
   Badge,
   Button,
   Field,
   Input,
+  MessageBar,
+  MessageBarBody,
   Popover,
   PopoverSurface,
   PopoverTrigger,
@@ -79,6 +81,8 @@ export default function ObjectiveHeader({
   const [resultError, setResultError] = useState('')
   const [showAutomatedIdentity, setShowAutomatedIdentity] = useState(false)
   const contentRef = useRef<HTMLElement>(null)
+  const humanScoreDisabledReasonId = useId()
+  const missingObjective = !objective.trim()
 
   useLayoutEffect(() => {
     const content = contentRef.current
@@ -210,6 +214,13 @@ export default function ObjectiveHeader({
             <Text weight="semibold">Human score</Text>
             <Text className={styles.scoreValueText}>{scoreLabel(humanScore)}</Text>
           </div>
+          {missingObjective && (
+            <MessageBar intent="warning">
+              <MessageBarBody id={humanScoreDisabledReasonId}>
+                Add an objective to enable human scoring.
+              </MessageBarBody>
+            </MessageBar>
+          )}
           <Field label="Update human score">
             <RadioGroup
               className={styles.verdictOptions}
@@ -217,6 +228,7 @@ export default function ObjectiveHeader({
               value={humanVerdict}
               onChange={(_event, data) => setHumanVerdict(data.value as 'success' | 'failure')}
               disabled={!canUpdateOutcome}
+              aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
             >
               <Radio value="success" label="Success" />
               <Radio value="failure" label="Failure" />
@@ -229,6 +241,7 @@ export default function ObjectiveHeader({
               onChange={(_event, data) => setRationale(data.value)}
               resize="vertical"
               disabled={!canUpdateOutcome}
+              aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
             />
           </Field>
           {resultError && <Text role="alert">{resultError}</Text>}
@@ -248,6 +261,7 @@ export default function ObjectiveHeader({
               className={styles.resultAction}
               onClick={handleUpdateResult}
               disabled={!canUpdateOutcome || isUpdatingResult}
+              aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
             >
               {isUpdatingResult ? 'Updating...' : 'Update'}
             </Button>

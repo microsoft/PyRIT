@@ -14,7 +14,6 @@ import logging
 import textwrap
 from datetime import UTC, datetime, timedelta
 
-from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import SeedDataset
@@ -149,30 +148,6 @@ class RefreshDatasets(PyRITInitializer):
                 logger.debug(f"Skipping '{name}': no registered provider to refresh from")
         return selected
 
-    def _is_stale(self, *, memory: MemoryInterface, dataset_name: str, days: int) -> bool:
-        """
-        Determine whether a dataset is stale enough to refresh.
-
-        Args:
-            memory (MemoryInterface): The memory instance to read existing seeds from.
-            dataset_name (str): The dataset to evaluate.
-            days (int): The staleness threshold in days; 0 always refreshes.
-
-        Returns:
-            bool: True if the dataset should be refreshed, otherwise False.
-        """
-        if days == 0:
-            return True
-
-        seeds = memory.get_seeds(dataset_name=dataset_name)
-        newest = max((seed.date_added for seed in seeds if seed.date_added is not None), default=None)
-        if newest is None:
-            return True
-
-        cutoff = datetime.now(tz=UTC) - timedelta(days=days)
-        return newest <= cutoff
-
-    @legacy_sync_override(lambda: RefreshDatasets._is_stale)
     async def _is_stale_async(self, *, memory: MemoryInterface, dataset_name: str, days: int) -> bool:
         """
         Determine whether a dataset is stale enough to refresh.

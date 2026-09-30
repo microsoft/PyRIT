@@ -4,10 +4,10 @@
 # Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
 # See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
+import math
 import re
 
 from pyrit.analytics.text_matching import ApproximateTextMatching
-from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
@@ -60,7 +60,14 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
             categories (list[str] | None): Optional categories to attach to the score. Defaults to None.
             validator (ScorerPromptValidator | None): Custom validator. Defaults to a validator that
                 accepts text assistant responses.
+
+        Raises:
+            ValueError: If ``excerpt_threshold`` is not finite or is outside [0.0, 1.0].
         """
+        # The excerpt rule returns this value as the score itself, so it must be a valid
+        # float_scale value; otherwise only a verbatim leak would fail, and only mid-scan.
+        if not math.isfinite(excerpt_threshold) or not 0.0 <= excerpt_threshold <= 1.0:
+            raise ValueError(f"excerpt_threshold must be finite and between 0.0 and 1.0, got {excerpt_threshold}")
         self._n = n
         self._excerpt_threshold = excerpt_threshold
         self._min_prompt_len = min_prompt_len
@@ -86,27 +93,6 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
             },
         )
 
-    def _get_system_prompt(self, conversation_id: str | None) -> str | None:
-        """
-        Read the known system prompt from the scored conversation's prepended system message.
-
-        Args:
-            conversation_id (str | None): The conversation the response belongs to.
-
-        Returns:
-            str | None: The system prompt text, or None if the conversation has no system message.
-        """
-        if not conversation_id:
-            return None
-
-        memory = CentralMemory.get_memory_instance()
-        messages = memory.get_conversation_messages(conversation_id=conversation_id)
-        for message in messages:
-            if message.api_role == "system":
-                return message.get_value()
-        return None
-
-    @legacy_sync_override(lambda: SystemPromptExtractionScorer._get_system_prompt)
     async def _get_system_prompt_async(self, conversation_id: str | None) -> str | None:
         """
         Read the known system prompt from the scored conversation's prepended system message.

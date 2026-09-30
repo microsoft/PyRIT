@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
-from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
     get_retry_collector,
@@ -405,16 +404,6 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         self._log_attack_outcome(event_data.result)
 
-    def _persist_result(self, *, result: AttackStrategyResultT) -> None:
-        """
-        Persist a completed attack result.
-
-        Args:
-            result (AttackStrategyResultT): The completed result to persist.
-        """
-        self._memory.add_attack_results_to_memory(attack_results=[result])
-
-    @legacy_sync_override(lambda: _DefaultAttackStrategyEventHandler._persist_result)
     async def _persist_result_async(self, *, result: AttackStrategyResultT) -> None:
         """
         Persist a completed attack result.
@@ -709,11 +698,15 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         adversarial_chat: TargetIdentifier | None = None
         adversarial_system_prompt: str | None = None
         adversarial_seed_prompt: str | None = None
+        adversarial_prompt_template: str | None = None
         adversarial_config = self.get_attack_adversarial_config()
         if adversarial_config is not None and getattr(adversarial_config, "target", None) is not None:
             adversarial_chat = TargetIdentifier.from_component_identifier(adversarial_config.target.get_identifier())
             adversarial_system_prompt = self._extract_adversarial_prompt_text(adversarial_config.system_prompt)
             adversarial_seed_prompt = self._extract_adversarial_prompt_text(adversarial_config.first_message)
+            adversarial_prompt_template = self._extract_adversarial_prompt_text(
+                adversarial_config.adversarial_prompt_template
+            )
 
         # Add request converter identifiers if present
         request_converters: list[ConverterIdentifier] | None = None
@@ -744,6 +737,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             response_converters=response_converters,
             adversarial_system_prompt=adversarial_system_prompt,
             adversarial_seed_prompt=adversarial_seed_prompt,
+            adversarial_prompt_template=adversarial_prompt_template,
         )
 
     @staticmethod

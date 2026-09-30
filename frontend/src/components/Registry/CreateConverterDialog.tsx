@@ -498,7 +498,10 @@ export default function CreateConverterDialog({
                       placeholder="Select a converter type"
                       positioning={{
                         align: 'start',
+                        autoSize: 'height',
+                        fallbackPositions: ['above-start'],
                         matchTargetSize: 'width',
+                        overflowBoundary: 'window',
                         position: 'below',
                       }}
                       selectedOptions={selectedType ? [selectedType] : []}

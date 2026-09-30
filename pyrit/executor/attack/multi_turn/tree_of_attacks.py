@@ -14,8 +14,6 @@ from typing import TYPE_CHECKING, Any, cast, overload
 from treelib.tree import Tree
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
-from pyrit.common.async_compatibility import legacy_sync_override
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.common.utils import combine_dict
 from pyrit.exceptions import (
@@ -472,6 +470,9 @@ class _TreeOfAttacksNode:
         self._prepended_history_send_context: PrependedHistorySendContext | None = None
         # Context from prepended conversation (for adversarial chat system prompt)
         self._conversation_context: str | None = None
+        # Number of prepended messages persisted in the objective target conversation. They are
+        # history, not attack turns, so they do not count when deciding whether this is the first turn.
+        self._prepended_message_count = 0
 
         # Initial prompt for first turn (bypasses adversarial chat generation)
         # This supports multimodal messages
@@ -531,6 +532,7 @@ class _TreeOfAttacksNode:
         persisted_messages = list(
             await self._memory.get_conversation_messages_async(conversation_id=self.objective_target_conversation_id)
         )
+        self._prepended_message_count = len(persisted_messages)
         self._prepended_history_send_context = conversation_manager.create_prepended_history_send_context(
             target=self._objective_target,
             conversation_id=self.objective_target_conversation_id,
@@ -935,109 +937,6 @@ class _TreeOfAttacksNode:
         logger.error(f"Node {self.node_id}: Unexpected error during execution: {error}")
         self.error_message = f"Execution error: {str(error)}"
 
-    def duplicate(self) -> _TreeOfAttacksNode:
-        """
-        Create a duplicate of this node for branching.
-
-        This method implements the branching mechanism of the TAP algorithm by creating
-        a new node that inherits the current node's configuration and conversation history.
-        The duplicate serves as a child node that can explore variations of the attack path
-        while maintaining the context established by the parent.
-
-        The duplication process preserves all configuration settings while creating new
-        identifiers and duplicating conversation histories. This allows the child node to
-        diverge from the parent's path while retaining the conversational context that
-        led to the branching point.
-
-        Returns:
-            TreeOfAttacksNode: A new node instance that is a duplicate of this node,
-                ready to explore a new branch in the attack tree.
-
-        Note:
-            Duplication is a key operation in the TAP algorithm, enabling the exploration
-            of multiple attack variations from promising nodes. The tree expands by
-            duplicating successful nodes and pruning unsuccessful ones.
-        """
-        print_deprecation_message(
-            old_item="_TreeOfAttacksNode.duplicate",
-            new_item="_TreeOfAttacksNode.duplicate_async",
-            removed_in="1.4.0",
-        )
-        source_messages = filter_non_replayable_messages(
-            messages=list(self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id))
-        )
-        _validate_stateful_clone_history_compatibility(
-            objective_target=self._objective_target,
-            messages=source_messages,
-        )
-        duplicate_node = _TreeOfAttacksNode(
-            objective_target=self._objective_target,
-            adversarial_chat=self._adversarial_chat,
-            adversarial_chat_seed_prompt=self._adversarial_chat_seed_prompt,
-            adversarial_chat_prompt_template=self._adversarial_chat_prompt_template,
-            adversarial_chat_system_seed_prompt=self._adversarial_chat_system_seed_prompt,
-            objective_scorer=self._objective_scorer,
-            on_topic_scorer=self._on_topic_scorer,
-            request_converters=self._request_converters,
-            response_converters=self._response_converters,
-            auxiliary_scorers=self._auxiliary_scorers,
-            attack_id=self._attack_id,
-            attack_strategy_name=self._attack_strategy_name,
-            modality_router=self._modality_router,
-            record_objective_conversation=self._record_objective_conversation,
-            use_score_as_feedback=self._use_score_as_feedback,
-            expectation=self._expectation,
-            memory_labels=self._memory_labels,
-            desired_response_prefix=self._desired_response_prefix,
-            parent_id=self.node_id,
-            prompt_normalizer=self._prompt_normalizer,
-            prepended_conversation_config=self._prepended_conversation_config,
-        )
-
-        duplicate_node.objective_target_conversation_id = self._memory.duplicate_conversation(
-            conversation_id=self.objective_target_conversation_id
-        )
-        duplicated_messages = filter_non_replayable_messages(
-            messages=list(
-                self._memory.get_conversation_messages(conversation_id=duplicate_node.objective_target_conversation_id)
-            )
-        )
-        if self._prepended_history_send_context:
-            duplicate_node._prepended_history_send_context = (
-                self._prepended_history_send_context.remap_for_duplicate_conversation(
-                    conversation_id=duplicate_node.objective_target_conversation_id,
-                    source_messages=source_messages,
-                    duplicated_messages=duplicated_messages,
-                )
-            )
-        elif (
-            duplicated_messages
-            and self._objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN)
-            and not self._objective_target.configuration.includes(capability=CapabilityName.EDITABLE_HISTORY)
-        ):
-            duplicate_node._prepended_history_send_context = PrependedHistorySendContext(
-                conversation_id=duplicate_node.objective_target_conversation_id,
-                seed_message_ids=(),
-                replay_seed_each_send=False,
-                bootstrap_message_ids=tuple(message.get_piece().id for message in duplicated_messages),
-            )
-
-        duplicate_node.adversarial_chat_conversation_id = self._memory.duplicate_conversation(
-            conversation_id=self.adversarial_chat_conversation_id
-        )
-
-        # Copy conversation context for adversarial chat system prompt
-        duplicate_node._conversation_context = self._conversation_context
-        duplicate_node.last_response = copy.deepcopy(self.last_response)
-
-        # Copy visualization position so the clone starts from the same tree position
-        duplicate_node._vis_node_id = self._vis_node_id
-
-        logger.debug(f"Node {self.node_id}: Created duplicate node {duplicate_node.node_id}")
-
-        return duplicate_node
-
-    @legacy_sync_override(lambda: _TreeOfAttacksNode.duplicate)
     async def duplicate_async(self) -> _TreeOfAttacksNode:
         """
         Create a duplicate of this node for branching.
@@ -1132,6 +1031,7 @@ class _TreeOfAttacksNode:
 
         # Copy conversation context for adversarial chat system prompt
         duplicate_node._conversation_context = self._conversation_context
+        duplicate_node._prepended_message_count = self._prepended_message_count
         duplicate_node.last_response = copy.deepcopy(self.last_response)
 
         # Copy visualization position so the clone starts from the same tree position
@@ -1316,36 +1216,22 @@ class _TreeOfAttacksNode:
             f"Respond with a JSON object containing a 'prompt' field."
         )
 
-    def _is_first_turn(self) -> bool:
-        """
-        Check if this is the first turn of the conversation.
-
-        This method determines whether the node is executing its initial attack turn by
-        examining the objective target conversation history.
-
-        Returns:
-            bool: True if no messages exist in the objective target conversation (first turn),
-                False if the conversation already contains messages (subsequent turns).
-        """
-        target_messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
-        return not target_messages
-
-    @legacy_sync_override(lambda: _TreeOfAttacksNode._is_first_turn)
     async def _is_first_turn_async(self) -> bool:
         """
         Check if this is the first turn of the conversation.
 
         This method determines whether the node is executing its initial attack turn by
-        examining the objective target conversation history.
+        examining the objective target conversation history. Prepended messages are history
+        rather than attack turns, so they are not counted.
 
         Returns:
-            bool: True if no messages exist in the objective target conversation (first turn),
-                False if the conversation already contains messages (subsequent turns).
+            bool: True if the objective target conversation contains no messages beyond the
+                prepended conversation (first turn), False otherwise (subsequent turns).
         """
         target_messages = await self._memory.get_conversation_messages_async(
             conversation_id=self.objective_target_conversation_id
         )
-        return not target_messages
+        return len(target_messages) <= self._prepended_message_count
 
     async def _generate_first_turn_prompt_async(self, objective: str) -> str:
         """
@@ -1901,6 +1787,23 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             first_message=None,
         )
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the TAP identifier with its behavioral search configuration.
+
+        Returns:
+            ComponentIdentifier: The TAP identifier.
+        """
+        return self._create_identifier(
+            params={
+                "tree_width": self._configuration.tree_width,
+                "tree_depth": self._configuration.tree_depth,
+                "branching_factor": self._configuration.branching_factor,
+                "on_topic_checking_enabled": self._configuration.on_topic_checking_enabled,
+                "desired_response_prefix": self._configuration.desired_response_prefix,
+            }
+        )
+
     def _validate_context(self, *, context: TAPAttackContext) -> None:
         """
         Validate the context before execution.
@@ -2185,35 +2088,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # Clear next_message after initialization (it's been used by the first node)
         context.next_message = None
 
-    def _branch_existing_nodes(self, context: TAPAttackContext) -> None:
-        """
-        Branch existing nodes to create new exploration paths.
-
-        Each existing node is branched according to the branching factor to explore variations.
-        The original node is retained, and (`branching_factor` - 1) duplicates are created,
-        resulting in branching_factor total paths from each parent node. Duplicated nodes
-        inherit the full conversation history from their parent.
-
-        Args:
-            context (TAPAttackContext): The attack context containing the current state of nodes.
-        """
-        cloned_nodes = []
-
-        for node in context.nodes:
-            for _ in range(self._configuration.branching_factor - 1):
-                cloned_node = node.duplicate()
-                # Add the adversarial chat conversation ID of the duplicated node to the context's tracking
-                context.related_conversations.add(
-                    ConversationReference(
-                        conversation_id=cloned_node.adversarial_chat_conversation_id,
-                        conversation_type=ConversationType.ADVERSARIAL,
-                    )
-                )
-                cloned_nodes.append(cloned_node)
-
-        context.nodes.extend(cloned_nodes)
-
-    @legacy_sync_override(lambda: TreeOfAttacksWithPruningAttack._branch_existing_nodes)
     async def _branch_existing_nodes_async(self, context: TAPAttackContext) -> None:
         """
         Branch existing nodes to create new exploration paths.
@@ -2531,31 +2405,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             )
         )
 
-    def _create_success_result(self, context: TAPAttackContext) -> TAPAttackResult:
-        """
-        Create a success result for the attack.
-
-        Constructs a `TAPAttackResult` indicating successful objective achievement.
-        The outcome reason includes the achieved score and threshold for transparency.
-        Delegates to `_create_attack_result` for common result construction logic.
-
-        Args:
-            context (TAPAttackContext): The attack context containing the final state
-                after execution, including best conversation ID and score.
-
-        Returns:
-            TAPAttackResult: The success result indicating the attack achieved its objective.
-        """
-        score_value = normalize_score_to_float(context.best_objective_score)
-        outcome_reason = f"Achieved score {score_value:.2f} >= threshold {self._attack_scoring_config.threshold}"
-
-        return self._create_attack_result(
-            context=context,
-            outcome=AttackOutcome.SUCCESS,
-            outcome_reason=outcome_reason,
-        )
-
-    @legacy_sync_override(lambda: TreeOfAttacksWithPruningAttack._create_success_result)
     async def _create_success_result_async(self, context: TAPAttackContext) -> TAPAttackResult:
         """
         Create a success result for the attack.
@@ -2578,41 +2427,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             context=context, outcome=AttackOutcome.SUCCESS, outcome_reason=outcome_reason
         )
 
-    def _create_failure_result(self, context: TAPAttackContext) -> TAPAttackResult:
-        """
-        Create a failure result for the attack.
-
-        Constructs a `TAPAttackResult` indicating the attack failed to achieve its objective
-        within the configured tree depth. The outcome reason includes the best score
-        achieved for diagnostic purposes. Delegates to `_create_attack_result` for common
-        result construction logic.
-
-        Args:
-            context (TAPAttackContext): The attack context containing the final state
-                after execution, including best conversation ID and score.
-
-        Returns:
-            TAPAttackResult: The failure result indicating the attack did not achieve its objective.
-        """
-        best_score = context.best_objective_score
-        if best_score is not None and attack_outcome_from_score(best_score) is AttackOutcome.UNDETERMINED:
-            return self._create_attack_result(
-                context=context,
-                outcome=AttackOutcome.UNDETERMINED,
-                outcome_reason=getattr(best_score, "score_rationale", None)
-                or "Objective scorer could not reach a verdict",
-            )
-
-        normalized_best = normalize_score_to_float(best_score)
-        outcome_reason = f"Did not achieve threshold score. Best score: {normalized_best:.2f}"
-
-        return self._create_attack_result(
-            context=context,
-            outcome=AttackOutcome.FAILURE,
-            outcome_reason=outcome_reason,
-        )
-
-    @legacy_sync_override(lambda: TreeOfAttacksWithPruningAttack._create_failure_result)
     async def _create_failure_result_async(self, context: TAPAttackContext) -> TAPAttackResult:
         """
         Create a failure result for the attack.
@@ -2645,68 +2459,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             context=context, outcome=AttackOutcome.FAILURE, outcome_reason=outcome_reason
         )
 
-    def _create_attack_result(
-        self,
-        *,
-        context: TAPAttackContext,
-        outcome: AttackOutcome,
-        outcome_reason: str,
-    ) -> TAPAttackResult:
-        """
-        Create `TAPAttackResult` with common counting logic and metadata.
-
-        Consolidates the result construction logic used by both success and failure cases.
-        Extracts the last response from the best conversation, compiles auxiliary scores
-        from the top node, calculates tree statistics, and populates all TAP-specific
-        metadata fields.
-
-        Args:
-            context (TAPAttackContext): The attack context containing the final state
-                after execution, including best conversation ID, score, and tree visualization.
-            outcome (AttackOutcome): The attack outcome (`SUCCESS` or `FAILURE`).
-            outcome_reason (str): Human-readable explanation of the outcome.
-
-        Returns:
-            TAPAttackResult: The constructed result containing all relevant information
-                about the attack execution, including conversation ID, objective, outcome,
-                outcome reason, executed turns, last response, last score, and additional metadata.
-        """
-        last_response = self._get_result_response(
-            conversation_id=context.best_conversation_id,
-            score=context.best_objective_score,
-        )
-
-        # Get auxiliary scores from the best node if available
-        auxiliary_scores_summary = self._get_auxiliary_scores_summary(context.nodes)
-
-        # Calculate statistics from tree visualization
-        stats = self._calculate_tree_statistics(context.tree_visualization)
-
-        # Create the result with basic information
-        result = TAPAttackResult(
-            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
-            conversation_id=context.best_conversation_id or "",
-            objective=context.objective,
-            outcome=outcome,
-            outcome_reason=outcome_reason,
-            executed_turns=context.executed_turns,
-            last_response=last_response,
-            automated_score=context.best_objective_score,
-            related_conversations=context.related_conversations,
-            labels=context.memory_labels,
-        )
-
-        # Set attack-specific metadata using properties
-        result.tree_visualization = context.tree_visualization
-        result.nodes_explored = stats["nodes_explored"]
-        result.nodes_pruned = stats["nodes_pruned"]
-        result.max_depth_reached = context.executed_turns
-        result.auxiliary_scores_summary = auxiliary_scores_summary
-        result.best_adversarial_conversation_id = context.best_adversarial_conversation_id
-
-        return result
-
-    @legacy_sync_override(lambda: TreeOfAttacksWithPruningAttack._create_attack_result)
     async def _create_attack_result_async(
         self,
         *,
@@ -2767,61 +2519,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         return result
 
-    def _get_result_response(
-        self,
-        *,
-        conversation_id: str | None,
-        score: Score | None,
-    ) -> MessagePiece | None:
-        """
-        Resolve the response associated with TAP's already-selected score.
-
-        This method does not compare scores or decide which node is best. The caller
-        supplies the conversation and score selected by `_update_best_performing_node`.
-        When a score exists, its message piece ID is used to find the corresponding
-        assistant response in that conversation, keeping `last_response` and
-        `last_score` aligned even when a later response was not scored.
-
-        Duplicated TAP branches preserve lineage through `original_prompt_id`, and
-        memory may attach the score to that original ID rather than the branch-local
-        message ID. Matching either ID resolves the same logical response. If no score
-        exists, the final conversation message is returned only as an unscored
-        reporting fallback.
-
-        Args:
-            conversation_id (str | None): The selected TAP conversation ID.
-            score (Score | None): The selected objective score.
-
-        Returns:
-            MessagePiece | None: The response associated with the selected score, the
-                final unscored message when no score exists, or `None` when it cannot
-                be resolved.
-        """
-        if not conversation_id:
-            return None
-
-        if score:
-            message_piece_id = getattr(score, "message_piece_id", None)
-            if not message_piece_id:
-                return None
-
-            responses = self._memory.get_message_pieces(
-                conversation_id=conversation_id,
-                role="assistant",
-            )
-            return next(
-                (
-                    response
-                    for response in responses
-                    if str(response.id) == str(message_piece_id)
-                    or str(response.original_prompt_id) == str(message_piece_id)
-                ),
-                None,
-            )
-
-        return self._get_last_response_from_conversation(conversation_id)
-
-    @legacy_sync_override(lambda: TreeOfAttacksWithPruningAttack._get_result_response)
     async def _get_result_response_async(
         self,
         *,
@@ -2873,29 +2570,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         return await self._get_last_response_from_conversation_async(conversation_id)
 
-    def _get_last_response_from_conversation(self, conversation_id: str | None) -> MessagePiece | None:
-        """
-        Retrieve the last response from a conversation.
-
-        Fetches all message pieces from memory for the given conversation ID
-        and returns the most recent one. This is typically used to extract the final
-        response from the best performing conversation for inclusion in the attack result.
-
-        Args:
-            conversation_id (str | None): The conversation ID to retrieve from. May be
-                None if no successful conversations were found during the attack.
-
-        Returns:
-            MessagePiece | None: The last response piece from the conversation,
-                or None if no conversation ID was provided or no responses exist.
-        """
-        if not conversation_id:
-            return None
-
-        responses = self._memory.get_message_pieces(conversation_id=conversation_id)
-        return responses[-1] if responses else None
-
-    @legacy_sync_override(lambda: TreeOfAttacksWithPruningAttack._get_last_response_from_conversation)
     async def _get_last_response_from_conversation_async(self, conversation_id: str | None) -> MessagePiece | None:
         """
         Retrieve the last response from a conversation.

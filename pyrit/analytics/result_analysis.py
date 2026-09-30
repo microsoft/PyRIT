@@ -18,6 +18,8 @@ from pyrit.models import (
 if TYPE_CHECKING:
     from pyrit.memory.memory_interface import MemoryInterface
 
+_SYNC_API_REMOVAL_VERSION = "1.4.0"
+
 
 def _compute_stats(successes: int, failures: int, undetermined: int, errors: int) -> AttackStats:
     total_decided = successes + failures
@@ -144,7 +146,7 @@ def get_cached_results_for_technique(
     print_deprecation_message(
         old_item="get_cached_results_for_technique",
         new_item="get_cached_results_for_technique_async",
-        removed_in="1.4.0",
+        removed_in=_SYNC_API_REMOVAL_VERSION,
     )
     filters: list[IdentifierFilter] = [
         IdentifierFilter(
@@ -225,8 +227,11 @@ def _objective_target_eval_hash_for(attack_result: AttackResult) -> str | None:
     """
     Return the ObjectiveTargetEvaluationIdentifier eval hash for a result.
 
-    Walks ``atomic_attack_identifier.attack_technique.objective_target`` and
-    wraps the resulting identifier in ``ObjectiveTargetEvaluationIdentifier``.
+    Walks the current
+    ``atomic_attack_identifier.attack_technique.attack.objective_target``
+    shape and wraps the resulting identifier in
+    ``ObjectiveTargetEvaluationIdentifier``. The legacy direct
+    ``attack_technique.objective_target`` shape is also accepted.
 
     Args:
         attack_result (AttackResult): The attack result whose persisted
@@ -246,7 +251,8 @@ def _objective_target_eval_hash_for(attack_result: AttackResult) -> str | None:
     if technique is None:
         return None
 
-    target = technique.get_child("objective_target")
+    attack = technique.get_child("attack")
+    target = attack.get_child("objective_target") if attack else technique.get_child("objective_target")
     if target is None:
         return None
 

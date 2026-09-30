@@ -22,11 +22,20 @@ from sqlalchemy.sql.sqltypes import NullType
 from pyrit.common.singleton import Singleton
 from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
+from pyrit.memory.memory_embedding import MemoryEmbedding
 from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
 from pyrit.memory.sqlite_memory import SQLiteMemory
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
-from pyrit.models import Conversation, MessagePiece, flatten_to_message_pieces
+from pyrit.models import (
+    Conversation,
+    EmbeddingData,
+    EmbeddingResponse,
+    EmbeddingUsageInformation,
+    Message,
+    MessagePiece,
+    flatten_to_message_pieces,
+)
 from pyrit.prompt_target.text_target import TextTarget
 from unit.mocks import get_sample_conversation_entries
 
@@ -455,6 +464,79 @@ async def test_insert_embedding_entry_async(sqlite_instance):
         assert persisted_embedding_entry is not None
         assert persisted_embedding_entry.embedding == [1, 2, 3]
         assert persisted_embedding_entry.embedding_type_name == "test_type"
+
+
+class _MockEmbeddingGenerator:
+    """Duck-typed ``EmbeddingSupport`` stand-in so no network call is needed."""
+
+    def generate_text_embedding(self, text: str, **kwargs) -> EmbeddingResponse:
+        return EmbeddingResponse(
+            model="mock_model",
+            object="mock_object",
+            usage=EmbeddingUsageInformation(prompt_tokens=0, total_tokens=0),
+            data=[EmbeddingData(embedding=[0.5], index=0, object="mock_object")],
+        )
+
+
+def test_add_multimodal_message_with_embedding_persists_and_skips_non_text_pieces(sqlite_instance):
+    """A multimodal message must persist when embeddings are enabled.
+
+    ``MemoryEmbedding.generate_embedding_memory_data`` raises for non-text pieces, so
+    embedding only the text pieces (instead of failing the whole write) keeps multimodal
+    sends working while text similarity search still covers the embeddable content.
+    """
+    sqlite_instance.memory_embedding = MemoryEmbedding(embedding_model=_MockEmbeddingGenerator())
+    sqlite_instance.add_conversation_to_memory(conversation=Conversation(conversation_id="multimodal-conversation"))
+
+    text_piece = MessagePiece(
+        role="user",
+        original_value="describe this image",
+        conversation_id="multimodal-conversation",
+    )
+    image_piece = MessagePiece(
+        role="user",
+        original_value="/tmp/image.png",
+        original_value_data_type="image_path",
+        converted_value="/tmp/image.png",
+        converted_value_data_type="image_path",
+        conversation_id="multimodal-conversation",
+    )
+
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[text_piece, image_piece]))
+
+    persisted = sqlite_instance.get_message_pieces(conversation_id="multimodal-conversation")
+    assert len(persisted) == 2
+    with sqlite_instance.get_session() as session:
+        embedding_entries = session.query(EmbeddingDataEntry).all()
+        assert len(embedding_entries) == 1
+        assert embedding_entries[0].id == text_piece.id
+
+
+def test_add_message_with_embedding_skips_pieces_not_in_memory(sqlite_instance):
+    """Pieces flagged ``not_in_memory`` are never persisted, so they get no embedding row."""
+    sqlite_instance.memory_embedding = MemoryEmbedding(embedding_model=_MockEmbeddingGenerator())
+    sqlite_instance.add_conversation_to_memory(conversation=Conversation(conversation_id="ephemeral-conversation"))
+
+    persisted_piece = MessagePiece(
+        role="user",
+        original_value="persisted text",
+        conversation_id="ephemeral-conversation",
+    )
+    ephemeral_piece = MessagePiece(
+        role="user",
+        original_value="ephemeral text",
+        conversation_id="ephemeral-conversation",
+        not_in_memory=True,
+    )
+
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[persisted_piece, ephemeral_piece]))
+
+    persisted = sqlite_instance.get_message_pieces(conversation_id="ephemeral-conversation")
+    assert [piece.original_value for piece in persisted] == ["persisted text"]
+    with sqlite_instance.get_session() as session:
+        embedding_entries = session.query(EmbeddingDataEntry).all()
+        assert len(embedding_entries) == 1
+        assert embedding_entries[0].id == persisted_piece.id
 
 
 def test_disable_embedding(sqlite_instance):
@@ -1125,4 +1207,35 @@ async def test_file_backed_database_is_not_serialized_async(isolated_memory_fact
         memory = isolated_memory_factory(db_path=os.path.join(temp_dir, "locking.db"))
         assert memory._connection_lock is None
         # Windows cannot remove the temp directory while the engine still holds the file open.
-        await memory.dispose_engine_async()
+        memory.dispose_engine()
+
+
+def test_get_message_pieces_filters_on_integer_prompt_metadata(sqlite_instance: SQLiteMemory):
+    """An integer prompt_metadata value must be queryable.
+
+    ``get_message_pieces`` types the filter as ``dict[str, str | int]`` and the
+    targets store an int in that column on every request
+    (``pyrit_target_request`` is set to 1), so filtering on one has to work.
+    SQLite's JSON_EXTRACT keeps the JSON type of the stored value and never
+    compares an integer against a text bind parameter, so stringifying the
+    filter value cannot match. The seed path in the same module already leaves
+    the value alone for this reason.
+    """
+    matching = MessagePiece(
+        conversation_id=str(uuid.uuid4()),
+        role="assistant",
+        original_value="sent",
+        prompt_metadata={"pyrit_target_request": 1},
+    )
+    other = MessagePiece(
+        conversation_id=str(uuid.uuid4()),
+        role="assistant",
+        original_value="not sent",
+        prompt_metadata={"pyrit_target_request": 0},
+    )
+    sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=matching), PromptMemoryEntry(entry=other)])
+
+    retrieved = sqlite_instance.get_message_pieces(prompt_metadata={"pyrit_target_request": 1})
+
+    assert len(retrieved) == 1
+    assert retrieved[0].original_value == "sent"

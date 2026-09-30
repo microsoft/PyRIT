@@ -16,6 +16,14 @@ memory = CentralMemory.get_memory_instance()
 messages = await memory.get_conversation_messages_async(conversation_id="example")
 ```
 
+Use the `_async` memory methods in async code. The synchronous methods remain
+available during deprecation. In-memory SQLite serializes transactions across
+threads and event loops to prevent shared-cache table locks.
+
+Before an event loop stops, call `await memory.dispose_loop_resources_async()`
+on that loop. After all memory work stops, call `await memory.dispose_engine_async()`
+to close the remaining resources.
+
 The `MemoryDatabaseType` is a `Literal` with 3 options: IN_MEMORY, SQLITE, AZURE_SQL. (Read more below)
    - `initialize_pyrit_async` takes the `MemoryDatabaseType` and an argument list (`memory_instance_kwargs`), to initialize the shared memory instance.
 

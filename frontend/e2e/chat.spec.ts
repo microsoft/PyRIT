@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
 import type { BackendMessage, BackendMessagePiece } from "@/types";
 import { makeAddMessageResponse } from "./_attacks";
 import { makeTarget } from "./_targets";
@@ -655,8 +655,17 @@ test.describe("Multi-modal: Video response", () => {
       original_value_data_type: "text",
       converted_value_data_type: "video_path",
       original_value: "generated video",
-      converted_value: "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE=",
-      converted_value_mime_type: "video/mp4",
+      // Valid 16x16, one-frame VP8 WebM. A container header alone triggers the error fallback.
+      converted_value:
+        "GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAG3EU2bdLpNu4tTq4QVSalm" +
+        "U6yBoU27i1OrhBZUrmtTrIHYTbuMU6uEElTDZ1OsggEbTbuMU6uEHFO7a1OsggGh7AEAAAAAAABZAAAAAAAA" +
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsirXsYMPQkBNgI1MYXZmNjIuMTIuMTAyV0GNTGF2ZjYyLjEyLjEwMkSJiECP" +
+        "QAAAAAAAFlSua76uAQAAAAAAADXXgQFzxYgZCgaIkdQ8bJyBACK1nIN1bmSIgQCGhVZfVlA4g4EBI+ODhDuaygDg" +
+        "hrCBELqBEBJUw2fYc3OgY8CAZ8iaRaOHRU5DT0RFUkSHjUxhdmY2Mi4xMi4xMDJzc7JjwItjxYgZCgaIkdQ8" +
+        "bGfIoUWjiERVUkFUSU9ORIeTMDA6MDA6MDEuMDAwMDAwMDAwAB9DtnWk54EAo5+BAACAEAIAnQEqEAAQAABH" +
+        "CIWFiJmEiAICAAYZaAAAHFO7a5G7j7OBALeK94EB8YIBePCBAw==",
+      converted_value_mime_type: "video/webm",
       scores: [],
       response_error: "none",
     },
@@ -676,6 +685,8 @@ test.describe("Multi-modal: Video response", () => {
     // Video element should appear
     const video = page.locator("video");
     await expect(video).toBeVisible({ timeout: 10000 });
+    await expect(video).toHaveJSProperty("videoWidth", 16);
+    await expect(video).toHaveJSProperty("error", null);
   });
 });
 
@@ -759,6 +770,12 @@ test.describe("Multi-turn conversation flow", () => {
 
   test("should send three messages in sequence", async ({ page }) => {
     const input = page.getByRole("textbox");
+    let createdAttacks = 0;
+    page.on("request", (request: Request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/attacks") {
+        createdAttacks += 1;
+      }
+    });
 
     // Turn 1
     await input.fill("First turn");
@@ -788,6 +805,7 @@ test.describe("Multi-turn conversation flow", () => {
     await expect(getMessageByText(page, "First turn")).toBeVisible();
     await expect(getMessageByText(page, "Second turn")).toBeVisible();
     await expect(getMessageByText(page, "Third turn")).toBeVisible();
+    expect(createdAttacks).toBe(1);
   });
 
   test("should reset conversation on New Chat and send again", async ({ page }) => {

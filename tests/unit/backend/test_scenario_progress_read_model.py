@@ -125,6 +125,40 @@ async def test_cancelled_refresh_releases_lock_and_updates_partially_loaded_summ
     assert refreshed.summary.overall.succeeded == 2
 
 
+async def test_sync_and_async_snapshots_share_cache_and_cursor() -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    deltas = [_make_delta(run_id="shared", index=index) for index in range(3)]
+    memory.get_scenario_attack_result_deltas_async.side_effect = [
+        ([deltas[0]], False),
+        ([deltas[2]], False),
+    ]
+    memory.get_scenario_attack_result_deltas.return_value = ([deltas[1]], False)
+    read_model = ScenarioProgressReadModel(memory=memory)
+
+    first = await _get_snapshot_async(read_model=read_model, run_id="shared")
+    with pytest.warns(DeprecationWarning):
+        second = read_model.get_snapshot(
+            scenario_result_id="shared",
+            plan=None,
+            plan_complete=False,
+            active_group_ids=(),
+            terminal=False,
+            objective_scorer_identifier=None,
+        )
+    third = await _get_snapshot_async(read_model=read_model, run_id="shared")
+
+    assert [snapshot.summary.overall.completed for snapshot in (first, second, third)] == [1, 2, 3]
+    assert (
+        memory.get_scenario_attack_result_deltas.call_args.kwargs["cursor"].attack_result_id
+        == deltas[0].attack_result_id
+    )
+    assert (
+        memory.get_scenario_attack_result_deltas_async.call_args.kwargs["cursor"].attack_result_id
+        == deltas[1].attack_result_id
+    )
+    assert third.deltas == tuple(deltas)
+
+
 async def test_get_snapshot_invalidates_cache_when_plan_changes() -> None:
     memory = MagicMock(spec=MemoryInterface)
     delta = _make_delta(run_id="run-plan")

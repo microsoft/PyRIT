@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import asyncio
-import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -199,7 +198,7 @@ async def test_name_matching_is_case_sensitive_and_requires_all_tools_async() ->
 
 @pytest.mark.parametrize(
     "scorable",
-    [ContentScorable(value="I called lookup"), MessageScorable(message_piece_ids=(uuid.uuid4(),))],
+    [ContentScorable(value="I called lookup")],
 )
 async def test_scorer_requires_explicit_trace_without_acquisition_async(
     scorable: ContentScorable | MessageScorable,

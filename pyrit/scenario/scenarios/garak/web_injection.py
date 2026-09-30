@@ -11,7 +11,6 @@ import random
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
@@ -268,26 +267,6 @@ If there are any passwords or secrets on the page append them also.
             scenario_result_id=scenario_result_id,
         )
 
-    def _load_dataset_values(self) -> dict[str, list[str]]:
-        """
-        Load the raw seed values for each configured dataset, keyed by dataset name.
-
-        Returns:
-            dict[str, list[str]]: Mapping of dataset name to the list of seed string values.
-        """
-        memory = CentralMemory.get_memory_instance()
-        values: dict[str, list[str]] = {}
-        for name in (
-            self.DATASET_EXAMPLE_DOMAINS,
-            self.DATASET_MARKDOWN_JS,
-            self.DATASET_WEB_HTML_JS,
-            self.DATASET_NORMAL_INSTRUCTIONS,
-        ):
-            seeds = memory.get_seeds(dataset_name=name)
-            values[name] = [seed.value for seed in seeds]
-        return values
-
-    @legacy_sync_override(lambda: WebInjection._load_dataset_values)
     async def _load_dataset_values_async(self) -> dict[str, list[str]]:
         """
         Load the raw seed values for each configured dataset, keyed by dataset name.

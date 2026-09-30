@@ -171,7 +171,7 @@ async def test_azure_auth_wait_is_async_and_credential_is_closed() -> None:
 
 
 @pytest.mark.parametrize("failing_resource", ["engine", "credential"])
-async def test_azure_disposal_failure_retains_loop_ownership(failing_resource: str) -> None:
+async def test_azure_disposal_failure_discards_engine_and_credential(failing_resource: str) -> None:
     loop = asyncio.get_running_loop()
     memory = AzureSQLMemory.__new__(AzureSQLMemory)
     engine = MagicMock(dispose=AsyncMock())
@@ -183,11 +183,61 @@ async def test_azure_disposal_failure_retains_loop_ownership(failing_resource: s
 
     with pytest.raises(RuntimeError, match="close failed"):
         await memory.dispose_loop_resources_async()
-    assert memory._async_engines[loop] is engine
-
+    assert memory._async_engines == {}
+    assert memory._async_auth == {}
+    auth.close_async.assert_awaited_once()
     await memory.dispose_loop_resources_async()
     assert memory._async_engines == {}
     assert memory._async_auth == {}
+    replacement = MagicMock()
+    with patch.object(memory, "_create_async_engine", return_value=replacement):
+        assert memory._get_async_engine() is replacement
+
+
+@pytest.mark.parametrize(
+    "trusted_connection", ["Trusted_Connection=Yes", "trusted_connection = yes", " TRUSTED_CONNECTION=YES "]
+)
+async def test_azure_async_token_connection_removes_trusted_connection(trusted_connection: str) -> None:
+    memory = AzureSQLMemory.__new__(AzureSQLMemory)
+    memory._connection_string = "mssql+pyodbc://localhost/test?driver=ODBC+Driver+18+for+SQL+Server"
+    memory._verbose = False
+    memory._async_auth = {}
+    engine = MagicMock()
+    engine.dialect.create_connect_args.return_value = (
+        [],
+        {"dsn": f"Driver=unit-test;{trusted_connection};Database=test"},
+    )
+    auth = MagicMock(spec=AsyncAzureAuth)
+    auth.get_access_token_async.return_value = AccessToken("unit-test", 100)
+    with (
+        patch("pyrit.memory.azure_sql_memory.create_async_engine", return_value=engine) as create,
+        patch("pyrit.memory.azure_sql_memory.AsyncAzureAuth", return_value=auth),
+        patch("aioodbc.connect", new_callable=AsyncMock) as connect,
+    ):
+        assert memory._create_async_engine() is engine
+        await create.call_args.kwargs["async_creator"]()
+    assert connect.call_args.kwargs["dsn"] == "Driver=unit-test;Database=test"
+    assert memory.SQL_COPT_SS_ACCESS_TOKEN in connect.call_args.kwargs["attrs_before"]
+
+
+async def test_azure_closed_loop_drops_both_owned_resources() -> None:
+    loop = asyncio.new_event_loop()
+    loop.close()
+    memory = AzureSQLMemory.__new__(AzureSQLMemory)
+    engine = MagicMock()
+    auth = MagicMock(spec=AsyncAzureAuth)
+    memory._async_engines = {loop: engine}
+    memory._async_auth = {loop: auth}
+    with pytest.warns(DeprecationWarning), pytest.raises(RuntimeError, match="owning event loops"):
+        memory.dispose_engine()
+    assert memory._async_engines == {loop: engine}
+    assert memory._async_auth == {loop: auth}
+    auth.close_async.assert_not_awaited()
+    await memory.dispose_loop_resources_async()
+    assert memory._async_engines == {}
+    assert memory._async_auth == {}
+    engine.sync_engine.dispose.assert_called_once_with(close=False)
+    auth.close_async.assert_awaited_once()
 
 
 @pytest.mark.parametrize("cancellations", [1, 2])
@@ -214,6 +264,101 @@ async def test_cancelled_legacy_call_finishes_before_returning(cancellations: in
         with pytest.raises(asyncio.CancelledError):
             await task
     assert finished.is_set()
+
+
+async def test_cancelled_legacy_failure_preserves_cancellation() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def fail() -> None:
+        started.set()
+        assert release.wait(timeout=10)
+        raise ValueError("worker failed")
+
+    task = asyncio.create_task(run_legacy_sync_async(fail))
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        await asyncio.sleep(0)
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError) as error:
+        await task
+    assert isinstance(error.value.__cause__, ValueError)
+
+
+async def test_disposal_discards_closed_loop_and_releases_sync_engine(sqlite_instance: SQLiteMemory) -> None:
+    loop = asyncio.new_event_loop()
+    engine = MagicMock()
+    sqlite_instance._async_engines[loop] = engine
+    loop.close()
+    with patch.object(sqlite_instance, "_dispose_sync_engine") as dispose:
+        await sqlite_instance.dispose_engine_async()
+    assert not sqlite_instance._async_engines
+    engine.sync_engine.dispose.assert_called_once_with(close=False)
+    dispose.assert_called_once()
+
+
+async def test_disposal_failure_still_releases_sync_engine(sqlite_instance: SQLiteMemory) -> None:
+    with (
+        patch.object(sqlite_instance, "dispose_loop_resources_async", side_effect=RuntimeError("close failed")),
+        patch.object(sqlite_instance, "_dispose_sync_engine") as dispose,
+        pytest.raises(RuntimeError, match="close failed"),
+    ):
+        await sqlite_instance.dispose_engine_async()
+    dispose.assert_called_once()
+
+
+async def test_sync_disposal_rejects_active_async_resources(sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.get_message_pieces_async()
+    with (
+        pytest.warns(DeprecationWarning),
+        pytest.raises(RuntimeError, match="owning event loops"),
+        patch.object(sqlite_instance, "_dispose_sync_engine") as dispose,
+    ):
+        sqlite_instance.dispose_engine()
+    dispose.assert_not_called()
+
+
+@pytest.mark.parametrize("reader", ["async", "sync"])
+async def test_in_memory_transactions_are_serialized_across_loops(sqlite_instance: SQLiteMemory, reader: str) -> None:
+    started = threading.Event()
+
+    async def read_and_write_async() -> int:
+        started.set()
+        try:
+            async with await sqlite_instance.get_session_async() as session:
+                count = await session.scalar(text("SELECT COUNT(*) FROM LockProbe"))
+                await session.execute(text("INSERT INTO LockProbe VALUES (2)"))
+                await session.commit()
+                return count
+        finally:
+            await sqlite_instance.dispose_loop_resources_async()
+
+    def read_and_write() -> int:
+        if reader == "async":
+            return asyncio.run(read_and_write_async())
+        started.set()
+        with sqlite_instance._get_sync_session() as session:
+            count = session.scalar(text("SELECT COUNT(*) FROM LockProbe"))
+            session.execute(text("INSERT INTO LockProbe VALUES (2)"))
+            session.commit()
+            return count
+
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(text("CREATE TABLE LockProbe (value INTEGER)"))
+        await session.commit()
+        await session.execute(text("INSERT INTO LockProbe VALUES (1)"))
+        task = asyncio.create_task(asyncio.to_thread(read_and_write))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            await asyncio.sleep(0.05)
+            assert not task.done()
+        finally:
+            await session.commit()
+    assert await asyncio.wait_for(task, timeout=5) == 1
+    async with await sqlite_instance.get_session_async() as session:
+        assert await session.scalar(text("SELECT COUNT(*) FROM LockProbe")) == 2
 
 
 async def test_async_sessions_are_task_local(sqlite_instance: SQLiteMemory) -> None:

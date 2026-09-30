@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from pyrit.analytics.result_analysis import AttackStats, _compute_stats
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome
+from pyrit.models import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -66,28 +66,7 @@ def compute_technique_stats(
         targeted_harm_categories=targeted_harm_categories,
     )
 
-    requested = set(technique_eval_hashes)
-    counts: dict[str, tuple[int, int, int, int]] = {}
-    for result in results:
-        identifier = result.atomic_attack_identifier
-        eval_hash = identifier.eval_hash if identifier is not None else None
-        if eval_hash is None or eval_hash not in requested:
-            continue
-
-        s, f, u, e = counts.get(eval_hash, (0, 0, 0, 0))
-        if result.outcome == AttackOutcome.SUCCESS:
-            counts[eval_hash] = (s + 1, f, u, e)
-        elif result.outcome == AttackOutcome.FAILURE:
-            counts[eval_hash] = (s, f + 1, u, e)
-        elif result.outcome == AttackOutcome.ERROR:
-            counts[eval_hash] = (s, f, u, e + 1)
-        else:
-            counts[eval_hash] = (s, f, u + 1, e)
-
-    return {
-        eval_hash: _compute_stats(successes=s, failures=f, undetermined=u, errors=e)
-        for eval_hash, (s, f, u, e) in counts.items()
-    }
+    return _aggregate_technique_stats(results=results, technique_eval_hashes=technique_eval_hashes)
 
 
 async def compute_technique_stats_async(
@@ -133,6 +112,12 @@ async def compute_technique_stats_async(
         targeted_harm_categories=targeted_harm_categories,
     )
 
+    return _aggregate_technique_stats(results=results, technique_eval_hashes=technique_eval_hashes)
+
+
+def _aggregate_technique_stats(
+    *, results: Sequence[AttackResult], technique_eval_hashes: Sequence[str]
+) -> dict[str, AttackStats]:
     requested = set(technique_eval_hashes)
     counts: dict[str, tuple[int, int, int, int]] = {}
     for result in results:
@@ -141,17 +126,18 @@ async def compute_technique_stats_async(
         if eval_hash is None or eval_hash not in requested:
             continue
 
-        s, f, u, e = counts.get(eval_hash, (0, 0, 0, 0))
+        successes, failures, undetermined, errors = counts.get(eval_hash, (0, 0, 0, 0))
         if result.outcome == AttackOutcome.SUCCESS:
-            counts[eval_hash] = (s + 1, f, u, e)
+            successes += 1
         elif result.outcome == AttackOutcome.FAILURE:
-            counts[eval_hash] = (s, f + 1, u, e)
+            failures += 1
         elif result.outcome == AttackOutcome.ERROR:
-            counts[eval_hash] = (s, f, u, e + 1)
+            errors += 1
         else:
-            counts[eval_hash] = (s, f, u + 1, e)
+            undetermined += 1
+        counts[eval_hash] = (successes, failures, undetermined, errors)
 
     return {
-        eval_hash: _compute_stats(successes=s, failures=f, undetermined=u, errors=e)
-        for eval_hash, (s, f, u, e) in counts.items()
+        eval_hash: _compute_stats(successes=successes, failures=failures, undetermined=undetermined, errors=errors)
+        for eval_hash, (successes, failures, undetermined, errors) in counts.items()
     }

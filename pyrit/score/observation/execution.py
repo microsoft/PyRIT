@@ -7,8 +7,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, TypeAlias
 
-from pyrit.common.async_compatibility import legacy_sync_override
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import (
     ContentEntryScorable,
     ContentScorable,
@@ -320,37 +318,6 @@ class _ObservationEvidenceResolver:
         """Initialize the resolver with the observation store."""
         self._memory = memory
 
-    def resolve(self, *, observation: Observation) -> _ObservationEvidence:
-        """
-        Resolve an observation's managed response references.
-
-        Returns:
-            _ObservationEvidence: The reconstructed LLM response.
-
-        Raises:
-            NonReplayableObservationError: If referenced evidence is missing, modified, or unsupported.
-        """
-        print_deprecation_message(
-            old_item="_ObservationEvidenceResolver.resolve",
-            new_item="_ObservationEvidenceResolver.resolve_async",
-            removed_in="1.4.0",
-        )
-        payload = observation.payload
-        if isinstance(payload, ToolEventsObservationPayload):
-            return payload
-        pieces = self._memory.get_message_pieces(prompt_ids=list(observation.evidence_message_piece_ids))
-        pieces_by_id = {piece.id: piece for piece in pieces}
-        stored_content = _load_content_evidence(memory=self._memory, content_id=observation.scorable_content_id)
-        try:
-            observation.validate_evidence(
-                message_pieces=pieces_by_id,
-                stored_content=stored_content,
-            )
-        except ValueError as error:
-            raise NonReplayableObservationError(str(error)) from error
-        return Message(message_pieces=[pieces_by_id[piece_id] for piece_id in observation.response_message_piece_ids])
-
-    @legacy_sync_override(lambda: _ObservationEvidenceResolver.resolve)
     async def resolve_async(self, *, observation: Observation) -> _ObservationEvidence:
         """
         Resolve an observation's managed response references.

@@ -20,7 +20,11 @@ from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.numeric_scale import NumericRubric
 from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
 from pyrit.score.observation.execution import _ObservationEvidence
-from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
+from pyrit.score.response_handler import (
+    JsonSchemaResponseHandler,
+    NumericRangeResponseHandler,
+    ResponseHandler,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
 
@@ -121,9 +125,13 @@ class SelfAskScaleScorer(MessageFloatScaleScorer):
         # When the caller does not supply a response handler, the default JSON handler carries the
         # schema (if any) declared by the system prompt and enforces the numeric score contract, so
         # the round-trip forwards the schema to the scoring target. A caller-supplied handler owns
-        # its own response contract.
-        self._response_handler = response_handler or JsonSchemaResponseHandler(
-            response_schema=schema, numeric_value=True
+        # its own wire format.
+        wire_format_handler = response_handler or JsonSchemaResponseHandler(response_schema=schema, numeric_value=True)
+        # Keep score-domain validation in the parser callback so out-of-range values retry.
+        self._response_handler = NumericRangeResponseHandler(
+            response_handler=wire_format_handler,
+            minimum_value=scale.minimum_value,
+            maximum_value=scale.maximum_value,
         )
 
     @classmethod

@@ -9,7 +9,6 @@ import logging
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
 
-from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -331,6 +330,28 @@ class Scorer(Identifiable, abc.ABC):
         """
         prompt_target: PromptTarget | None = getattr(self, "_prompt_target", None)
         return prompt_target
+
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+        """
+        Return a scorer whose LLM-backed leaves use the given blocked-response policy.
+
+        Scorers that never call an LLM cannot express the policy and return themselves.
+        Subclasses that wrap other scorers (e.g. inverters, composites) should override to
+        delegate, mirroring ``get_chat_target``, because the leaf that calls the LLM is the
+        one that has to decide whether a blocked scoring response raises or yields an
+        undetermined score.
+
+        Implementations return ``self`` when nothing changes so shared instances are not
+        copied needlessly, and otherwise return an independent scorer; callers may hold a
+        registry singleton that must not be mutated.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply to LLM-backed leaves.
+
+        Returns:
+            Scorer: ``self`` when already compliant, otherwise a scorer carrying the policy.
+        """
+        return self
 
     def get_identifier(self) -> ComponentIdentifier:
         """
@@ -1224,28 +1245,6 @@ class Scorer(Identifiable, abc.ABC):
 
         return (value - min_value) / (max_value - min_value)
 
-    def _extract_objective_from_response(self, response: Message) -> str:
-        """
-        Read the objective from the turn before an assistant response.
-
-        Deprecated: use ``pyrit.score.message_scorer.extract_objective_from_previous_turn``.
-
-        Args:
-            response (Message): The response to extract the objective from.
-
-        Returns:
-            str: The objective extracted from the response, or empty string if not found.
-        """
-        from pyrit.score.message_scorer import extract_objective_from_previous_turn
-
-        print_deprecation_message(
-            old_item="Scorer._extract_objective_from_response",
-            new_item="pyrit.score.message_scorer.extract_objective_from_previous_turn",
-            removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
-        )
-        return extract_objective_from_previous_turn(message=response, memory=self._memory)
-
-    @legacy_sync_override(lambda: Scorer._extract_objective_from_response)
     async def _extract_objective_from_response_async(self, response: Message) -> str:
         """
         Read the objective from the turn before an assistant response.

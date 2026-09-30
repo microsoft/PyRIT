@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults, forward_init_parameters
-from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.converter import SearchReplaceConverter
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
@@ -315,6 +314,7 @@ class PromptInject(Scenario):
                     AtomicAttack(
                         atomic_attack_name=f"{technique.value}__goal_{goal_index}",
                         display_group=goal_text,
+                        technique_name=technique.value,
                         attack_technique=AttackTechnique(attack=attack),
                         seed_groups=seed_groups,
                         memory_labels=context.memory_labels,
@@ -357,25 +357,6 @@ class PromptInject(Scenario):
         config._set_goal_texts(goal_texts=goal_texts)
         return config
 
-    def _load_technique_templates(self) -> dict[str, SeedPrompt]:
-        """
-        Load the selected technique templates from memory.
-
-        Returns:
-            dict[str, SeedPrompt]: Technique templates keyed by technique name.
-
-        Raises:
-            DatasetConstraintError: If a selected technique has no template.
-        """
-        seeds = CentralMemory.get_memory_instance().get_seeds(dataset_name=self.TECHNIQUE_DATASET_NAME)
-        templates = {seed.name: seed for seed in seeds if isinstance(seed, SeedPrompt) and seed.name}
-        selected = {technique.value for technique in self._scenario_techniques}
-        missing = selected - templates.keys()
-        if missing:
-            raise DatasetConstraintError(f"PromptInject technique templates are missing: {sorted(missing)}.")
-        return templates
-
-    @legacy_sync_override(lambda: PromptInject._load_technique_templates)
     async def _load_technique_templates_async(self) -> dict[str, SeedPrompt]:
         """
         Load the selected technique templates from memory.

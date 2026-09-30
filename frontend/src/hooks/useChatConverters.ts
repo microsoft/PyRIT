@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { buildConverterInputs } from '@/components/Chat/converterTypes'
+import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
@@ -21,6 +22,7 @@ interface VersionedInput extends ConverterInputPiece {
 }
 
 interface ConversionState {
+  generation: string
   sourceInputs: ConverterInputPiece[]
   inputs: VersionedInput[]
   nextRevision: number
@@ -152,8 +154,10 @@ function invalidatePiece(state: ConversionState, pieceId: string): ConversionSta
 }
 
 export function useChatConverters(text: string, attachments: MessageAttachment[]): ChatConverterController {
+  const { generation } = useRuntime()
   const inputs = useMemo(() => buildConverterInputs(text, attachments), [text, attachments])
   const [state, setState] = useState<ConversionState>(() => ({
+    generation,
     sourceInputs: inputs,
     inputs: inputs.map((input: ConverterInputPiece) => ({ ...input, revision: 0 })),
     nextRevision: 0,
@@ -169,7 +173,28 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   const nextRunId = useRef(0)
   const activeRun = useRef<number | null>(null)
 
-  if (state.sourceInputs !== inputs) setState(reconcileInputs(state, inputs))
+  if (state.generation !== generation) {
+    // A runtime generation change invalidates every generated result. Working
+    // edits follow the same rule reconcileInputs applies: they survive only
+    // when their underlying piece is unchanged, so a stale edit can never be
+    // applied to text the user swapped in with the new generation.
+    const next = reconcileInputs(state, inputs)
+    setState({
+      ...next,
+      generation,
+      stageResults: {},
+      errors: {},
+      applied: {},
+      runId: state.runId + 1,
+      isConverting: false,
+    })
+  } else if (state.sourceInputs !== inputs) {
+    setState(reconcileInputs(state, inputs))
+  }
+
+  useEffect(() => {
+    activeRun.current = null
+  }, [generation])
 
   const setPipeline = useCallback((
     pieceType: string,

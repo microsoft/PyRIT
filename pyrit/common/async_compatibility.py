@@ -32,7 +32,10 @@ async def run_legacy_sync_async(operation: Callable[P, R], *args: P.args, **kwar
                 await asyncio.shield(task)
             except asyncio.CancelledError:
                 continue
-        task.result()
+            except Exception:
+                break
+        if not task.cancelled() and task.exception() is not None:
+            raise asyncio.CancelledError from task.exception()
         raise
 
 

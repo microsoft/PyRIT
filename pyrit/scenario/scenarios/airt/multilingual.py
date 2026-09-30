@@ -9,7 +9,6 @@ from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pyrit.common import apply_defaults
-from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.path import DATASETS_PATH
 from pyrit.converter import RandomTranslationConverter, TranslationConverter
 from pyrit.executor.attack import PromptSendingAttack
@@ -32,7 +31,6 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import (
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
-    from pyrit.scenario.core import ScenarioTechnique
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import TrueFalseScorer
 
@@ -237,48 +235,6 @@ class Multilingual(Scenario):
         dataset = SeedDataset.from_yaml_file(cls._DEFAULT_LANGUAGES_SEED_PROMPT_PATH)
         return [str(seed.value) for seed in dataset.seeds]
 
-    def _resolve_languages(self) -> list[str]:
-        """
-        Resolve the languages for this run, replaying the persisted set on resume.
-
-        On a fresh run this reads the run parameters: an explicit ``languages`` set or a random
-        ``num_languages`` sample (defaulting to a small random draw when neither is given). On resume
-        the originally chosen set is read back from the stored ``ScenarioResult`` metadata so a random
-        sample isn't redrawn (which would diverge from the persisted attacks).
-
-        Returns:
-            list[str]: The explicit or randomly sampled languages for this run.
-
-        Raises:
-            ValueError: If both ``num_languages`` and ``languages`` are provided,
-            or if ``num_languages`` is out of bounds.
-        """
-        if self._scenario_result_id is not None:
-            stored = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
-            if stored:
-                persisted = (stored[0].metadata or {}).get(_LANGUAGES_METADATA_KEY)
-                if persisted:
-                    return _normalize_languages(list(persisted))
-
-        num_languages = self.params.get("num_languages")
-        languages = self.params.get("languages")
-
-        if num_languages is not None and languages is not None:
-            raise ValueError(
-                "Please provide only one of `num_languages` (random selection) or `languages` (specific selection)."
-            )
-
-        if languages is not None:
-            if not languages:
-                raise ValueError("languages must contain at least one language.")
-            return _normalize_languages(languages)
-
-        count = int(num_languages) if num_languages is not None else _DEFAULT_NUM_LANGUAGES
-        if count < 1 or count > len(self._default_languages):
-            raise ValueError(f"num_languages must be between 1 and {len(self._default_languages)}.")
-        return _normalize_languages(random.sample(self._default_languages, count))
-
-    @legacy_sync_override(lambda: Multilingual._resolve_languages)
     async def _resolve_languages_async(self) -> list[str]:
         """
         Resolve the languages for this run, replaying the persisted set on resume.

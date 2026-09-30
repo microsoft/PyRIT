@@ -8,7 +8,6 @@ import random
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
@@ -149,24 +148,6 @@ class SystemPromptExtraction(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    def _load_system_prompts(self) -> list[str]:
-        """
-        Load the real system prompts (the *what*) from the configured datasets in memory.
-
-        Returns:
-            list[str]: The system-prompt strings, subsampled per dataset to ``system_prompt_subsample``.
-        """
-        memory = CentralMemory.get_memory_instance()
-        rng = random.Random(self._random_seed)
-        system_prompts: list[str] = []
-        for name in (DATASET_DRH_SYSTEM_PROMPTS, DATASET_TM_SYSTEM_PROMPTS):
-            values = [seed.value for seed in memory.get_seeds(dataset_name=name)]
-            if len(values) > self._system_prompt_subsample:
-                values = rng.sample(values, self._system_prompt_subsample)
-            system_prompts.extend(values)
-        return system_prompts
-
-    @legacy_sync_override(lambda: SystemPromptExtraction._load_system_prompts)
     async def _load_system_prompts_async(self) -> list[str]:
         """
         Load the real system prompts (the *what*) from the configured datasets in memory.
@@ -184,23 +165,6 @@ class SystemPromptExtraction(Scenario):
             system_prompts.extend(values)
         return system_prompts
 
-    def _load_templates_by_category(self) -> dict[str, list[str]]:
-        """
-        Load the extraction templates (the *how*) from memory, grouped by ``technique`` metadata.
-
-        Returns:
-            dict[str, list[str]]: Mapping of technique category to its extraction request templates.
-        """
-        memory = CentralMemory.get_memory_instance()
-        templates_by_category: dict[str, list[str]] = {}
-        for seed in memory.get_seeds(dataset_name=DATASET_EXTRACTION_TEMPLATES):
-            category = (seed.metadata or {}).get("technique")
-            if not category:
-                continue
-            templates_by_category.setdefault(str(category), []).append(seed.value)
-        return templates_by_category
-
-    @legacy_sync_override(lambda: SystemPromptExtraction._load_templates_by_category)
     async def _load_templates_by_category_async(self) -> dict[str, list[str]]:
         """
         Load the extraction templates (the *how*) from memory, grouped by ``technique`` metadata.

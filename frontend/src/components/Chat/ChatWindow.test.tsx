@@ -1483,6 +1483,75 @@ describe("ChatWindow Integration", () => {
     });
   });
 
+  it("should preserve a first-send error when the created attack route commits later", async () => {
+    const user = userEvent.setup();
+    mockedMapper.buildMessagePieces.mockResolvedValue([
+      { data_type: "text", original_value: "Keep failed draft" },
+    ]);
+    mockedAttacksApi.createAttack.mockResolvedValue({
+      attack_result_id: "ar-created",
+      conversation_id: "conv-created",
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    mockedAttacksApi.addMessage.mockRejectedValue(new Error("First send failed"));
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+
+    const { rerender } = render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+    await user.type(screen.getByRole("textbox"), "Keep failed draft");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+    expect(await screen.findByText(/First send failed/)).toBeInTheDocument();
+
+    rerender(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-created"
+          conversationId="conv-created"
+          activeConversationId="conv-created"
+        />
+      </TestWrapper>
+    );
+
+    expect(mockedAttacksApi.getMessages).not.toHaveBeenCalled();
+    expect(screen.getByText(/First send failed/)).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toHaveValue("Keep failed draft");
+    expect(screen.getByRole("button", { name: /send/i })).toBeEnabled();
+  });
+
+  it("should reload when returning while another conversation load is still pending", async () => {
+    const history = makeTextResponse("Original history").messages;
+    let finishOtherLoad: (value: typeof history) => void = () => {};
+    mockedAttacksApi.getMessages
+      .mockResolvedValueOnce(history)
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOtherLoad = resolve; }))
+      .mockResolvedValueOnce(history);
+    mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
+    const props = {
+      ...defaultProps,
+      attackResultId: "ar-return",
+      conversationId: "conv-original",
+      activeConversationId: "conv-original",
+    };
+    const { rerender } = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+    expect(await screen.findByText("Original history")).toBeInTheDocument();
+
+    rerender(<TestWrapper><ChatWindow {...props} activeConversationId="conv-other" /></TestWrapper>);
+    expect(mockedAttacksApi.getMessages).toHaveBeenLastCalledWith("ar-return", "conv-other");
+    rerender(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+    expect(mockedAttacksApi.getMessages).toHaveBeenLastCalledWith("ar-return", "conv-original");
+    expect(await screen.findByText("Original history")).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBeEnabled();
+
+    await act(async () => { finishOtherLoad(makeTextResponse("Other history").messages); });
+    expect(screen.getByText("Original history")).toBeInTheDocument();
+    expect(screen.queryByText("Other history")).not.toBeInTheDocument();
+  });
+
   it("should extract plain string from axios-style error response", async () => {
     const user = userEvent.setup();
 
