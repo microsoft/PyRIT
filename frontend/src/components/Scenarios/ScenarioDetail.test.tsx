@@ -280,7 +280,6 @@ describe('ScenarioDetail', () => {
       {
         techniques: ['default_technique'],
         include_baseline: true,
-        max_dataset_size: null,
       },
       expect.any(AbortSignal),
     )
@@ -376,7 +375,6 @@ describe('ScenarioDetail', () => {
           target_name: 'target-a',
           techniques: ['default_technique'],
           include_baseline: true,
-          max_dataset_size: null,
           ...(name ? { adversarial_target_name: name } : {}),
         },
         expect.any(AbortSignal),
@@ -875,7 +873,7 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 
-  it('sends an unlimited dataset size when blank, with default concurrency/retries', async () => {
+  it('preserves an unknown default limit when blank, with default concurrency/retries', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
@@ -885,10 +883,55 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     const request = mockStartRun.mock.calls[0][0]
     expect(request).not.toHaveProperty('dataset_names')
-    expect(request.max_dataset_size).toBeNull()
+    expect(request).not.toHaveProperty('max_dataset_size')
     expect(request.max_concurrency).toBe(10)
     expect(request.max_retries).toBe(0)
   })
+
+  it.each(['unchanged', 'all', 'type-and-clear'])(
+    'preserves user intent when the default estimate is unavailable: %s',
+    async (selection) => {
+      const user = userEvent.setup()
+      mockGetScenario.mockResolvedValueOnce(makeScenario({
+        default_run_size: {
+          status: 'unavailable',
+          estimated_attack_count: null,
+          components: [],
+          datasets: [],
+          note: 'Default estimate timed out.',
+        },
+      }))
+      renderDetail('/scanner/foundry.red_team_agent')
+      const input = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
+      expect(input).toHaveValue(null)
+      expect(within(screen.getByTestId('run-estimate')).getByText('Scenario default')).toBeInTheDocument()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
+      expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
+
+      if (selection === 'all') {
+        await user.click(screen.getByRole('button', { name: 'Use all data' }))
+      } else if (selection === 'type-and-clear') {
+        await user.type(input, '3')
+        await user.clear(input)
+      } else {
+        await user.click(screen.getByTestId('baseline-checkbox'))
+      }
+
+      if (selection !== 'unchanged') {
+        expect(within(screen.getByTestId('run-estimate')).getByText('Unlimited')).toBeInTheDocument()
+        await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1].max_dataset_size).toBeNull())
+      }
+      await confirmRunPreview(user)
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+      const launchRequest = mockStartRun.mock.calls[0][0]
+      if (selection === 'unchanged') {
+        expect(launchRequest).not.toHaveProperty('max_dataset_size')
+        expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
+      } else {
+        expect(launchRequest.max_dataset_size).toBeNull()
+      }
+    },
+  )
 
   it('shows the combined configured dataset size without submitting it as an override', async () => {
     const user = userEvent.setup()
@@ -1212,7 +1255,6 @@ describe('ScenarioDetail', () => {
       scenario_name: 'foundry.red_team_agent',
       target_name: 'target-a',
       techniques: ['default_technique'],
-      max_dataset_size: null,
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: true,
@@ -1302,7 +1344,6 @@ describe('ScenarioDetail', () => {
       scenario_name: 'airt.jailbreak',
       target_name: 'target-a',
       techniques: ['prompt_sending'],
-      max_dataset_size: null,
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: false,
@@ -1314,7 +1355,6 @@ describe('ScenarioDetail', () => {
     const expectedEstimateRequest = {
       target_name: 'target-a',
       techniques: ['prompt_sending'],
-      max_dataset_size: null,
       include_baseline: false,
       scenario_params: {
         num_jailbreak_attempts: 1,

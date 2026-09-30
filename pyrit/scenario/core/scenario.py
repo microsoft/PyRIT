@@ -753,6 +753,9 @@ class Scenario(ABC):
         """
         Describe finite limits, or count existing groups for an unlimited preview.
 
+        Mixed-cap configurations retain their finite child limits. Their selected
+        counts are available, but their full population counts remain unknown.
+
         Args:
             read_dataset_counts: Allow read-only group resolution when no finite budget exists.
 
@@ -766,12 +769,24 @@ class Scenario(ABC):
         budget = self._get_run_size_budget()
         if budget is None and read_dataset_counts:
             with read_only_dataset_resolution():
-                groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+                groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(
+                    apply_sampling=self._dataset_config.has_size_cap
+                )
+            caps = self._dataset_config.size_caps_by_dataset()
             datasets = [
                 ScenarioDatasetSummary(
                     name=name,
-                    logical_seed_group_count=len(groups),
+                    logical_seed_group_count=None if self._dataset_config.has_size_cap else len(groups),
                     selected_seed_group_count=len(groups),
+                    configured_caps=[
+                        ScenarioDatasetSizeCap(
+                            label=label,
+                            count=count,
+                            configured_on=configured_on,
+                            dataset_name=name,
+                        )
+                        for label, count, configured_on in caps.get(name, [])
+                    ],
                 )
                 for name, groups in groups_by_dataset.items()
             ]

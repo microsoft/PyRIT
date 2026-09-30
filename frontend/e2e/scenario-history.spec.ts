@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { READY_RUNTIME } from "./_runtime";
+
 const RUN_ID = "123e4567-e89b-12d3-a456-426614174000";
 const ACTIVE_RUN_ID = "123e4567-e89b-12d3-a456-426614174001";
 const QUEUED_RUN_ID = "123e4567-e89b-12d3-a456-426614174002";
@@ -249,6 +251,14 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ status: "healthy" }),
+    });
+  });
+
+  await page.route(/\/api\/runtime(?:\?|$)/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(READY_RUNTIME),
     });
   });
 
@@ -548,7 +558,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(page.getByTitle("Scanner")).toHaveAttribute("aria-current", "page");
   });
 
-  test("sends one exact configuration to estimate and launch, then completes live polling", async ({ page }) => {
+  test("sends explicit unlimited selection to estimate and launch, then completes live polling", async ({ page }) => {
     const mocks = await mockScenarioAPIs(page);
     await page.goto(`/scanner/${SCENARIO_NAME}`);
 
@@ -558,6 +568,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(preview).toBeVisible();
 
     await configurePromptSendingRun(page);
+    await page.getByRole("button", { name: "Use all data" }).click();
 
     const expectedEstimateRequest = {
       target_name: "test-target",

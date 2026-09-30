@@ -158,11 +158,12 @@ class TestAdversarialEstimateScope:
                 side_effect=AssertionError("Preview queried datasets"),
             ),
         ):
-            registry.get_class("garak.api_key")
+            scenario = registry.create_instance("garak.api_key")
             service = ScenarioService()
-            default = await service._get_default_run_size_estimate_async(
-                metadata=_make_scenario_metadata(registry_name="garak.api_key"),
-            )
+            with patch.object(registry, "create_instance", return_value=scenario):
+                default = await service._get_default_run_size_estimate_async(
+                    metadata=_make_scenario_metadata(registry_name="garak.api_key"),
+                )
             configured = await service.estimate_scenario_run_size_async(
                 scenario_name="garak.api_key",
                 request=ScenarioRunSizeEstimateRequest(max_dataset_size=7),

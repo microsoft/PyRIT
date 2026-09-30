@@ -612,6 +612,7 @@ function ScenarioLaunchForm({
     [scenario],
   )
   const [maxDatasetSize, setMaxDatasetSize] = useState(configuredDefaultMaxDatasetSize)
+  const [datasetLimitEdited, setDatasetLimitEdited] = useState(false)
   const [harmCategoriesFilter, setHarmCategoriesFilter] = useState('')
   const [dataTypesFilter, setDataTypesFilter] = useState('')
   const [maxConcurrency, setMaxConcurrency] = useState(DEFAULT_MAX_CONCURRENCY)
@@ -664,9 +665,13 @@ function ScenarioLaunchForm({
     [isBaselineForbidden, techniqueOptions],
   )
   const techniques = selectedTechniques
-  const maxDatasetSizeOverride = maxDatasetSize.trim() === ''
-    ? ''
-    : maxDatasetSize === configuredDefaultMaxDatasetSize ? undefined : maxDatasetSize
+  const maxDatasetSizeOverride = !datasetLimitEdited
+    ? undefined
+    : maxDatasetSize.trim() === ''
+      ? ''
+      : maxDatasetSize === configuredDefaultMaxDatasetSize ? undefined : maxDatasetSize
+  const datasetSizeLabel = maxDatasetSize.trim()
+    || (maxDatasetSizeOverride === '' ? 'Unlimited' : 'Scenario default')
   const estimateResult = useMemo(
     () => buildEstimateRequest({
       scenario,
@@ -1135,7 +1140,7 @@ function ScenarioLaunchForm({
                   label="Max dataset size"
                   hint={configuredDefaultMaxDatasetSize
                     ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Clear this field to remove the dataset size limit.`
-                    : 'Enter a positive integer to limit the dataset size, or leave empty for no dataset size limit.'}
+                    : 'The default limit is unknown. Leave unchanged to keep it, enter a limit, or choose Use all data.'}
                 >
                   <Input
                     className={styles.numberInput}
@@ -1143,10 +1148,25 @@ function ScenarioLaunchForm({
                     min={1}
                     value={maxDatasetSize}
                     disabled={submitting}
-                    onChange={(_, data) => setMaxDatasetSize(data.value)}
+                    onChange={(_, data) => {
+                      setMaxDatasetSize(data.value)
+                      setDatasetLimitEdited(true)
+                    }}
                     data-testid="max-dataset-size-input"
                   />
                 </Field>
+                {!configuredDefaultMaxDatasetSize && (
+                  <Button
+                    className={styles.touchTarget}
+                    disabled={submitting}
+                    onClick={() => {
+                      setMaxDatasetSize('')
+                      setDatasetLimitEdited(true)
+                    }}
+                  >
+                    Use all data
+                  </Button>
+                )}
                 <Field
                   label="Harm categories"
                   hint="Comma-separated values. A seed must match every listed category."
@@ -1230,7 +1250,7 @@ function ScenarioLaunchForm({
                 <div className={styles.costEstimateRow}>
                   <dt>Dataset size</dt>
                   <dd>
-                    {maxDatasetSize.trim() || 'Unlimited'}
+                    {datasetSizeLabel}
                   </dd>
                 </div>
                 <div className={styles.costEstimateRow}>
@@ -1325,7 +1345,7 @@ function ScenarioLaunchForm({
                           </Text>
                           <Text size={200} className={styles.hint}>
                             {previewDatasets.length > 0 ? 'Custom override' : 'Scenario defaults'}
-                            {maxDatasetSize.trim() ? ` - dataset size limit: ${maxDatasetSize.trim()}` : ' - no dataset size limit'}
+                            {` - dataset size: ${datasetSizeLabel}`}
                           </Text>
                         </div>
                       </dd>

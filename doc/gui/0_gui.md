@@ -305,8 +305,10 @@ does not bound these generated populations.
 The default dataset limit is **5** when no limit is supplied. Existing explicit
 scenario limits populate the **Max dataset size** field. Clear that field to
 remove all dataset size caps, including child caps in a compound configuration.
-An empty field sends explicit `null` for both estimation and launch. Omitting
-the API field (as the CLI does without `--max-dataset-size`) keeps scenario defaults.
+Clearing a populated field sends explicit `null` for both estimation and launch.
+If the default estimate is unavailable, the field can start empty. Leaving it
+unchanged preserves the scenario defaults; choose **Use all data** to remove the limits.
+Omitting the API field (as the CLI does without `--max-dataset-size`) keeps scenario defaults.
 Separate prompt-generation caps still apply.
 
 After you clear the limit on the selected scenario page, the estimate shows

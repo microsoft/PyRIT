@@ -36,7 +36,7 @@ from pyrit.models import (
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.registry import ScenarioRegistry, TargetRegistry
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
 from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import SubStringScorer
@@ -93,6 +93,56 @@ class _OfflineResumeScenario(Scenario):
                 memory_labels=context.memory_labels,
             )
         ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("same_population", [False, True])
+async def test_mixed_cap_preview_preserves_selection_async(*, nested: bool, same_population: bool) -> None:
+    memory = CentralMemory.get_memory_instance()
+    capped_name = "capped"
+    unlimited_name = capped_name if same_population else "unlimited"
+    await memory.add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(value=f"capped-{index}", dataset_name=capped_name, harm_categories=["capped"])
+            for index in range(3)
+        ]
+        + [
+            SeedObjective(value=f"unlimited-{index}", dataset_name=unlimited_name, harm_categories=["unlimited"])
+            for index in range(4)
+        ],
+        added_by="preview-test",
+    )
+    config = CompoundDatasetAttackConfiguration(
+        configurations=[
+            DatasetAttackConfiguration(
+                dataset_names=[capped_name], max_dataset_size=1, filters={"harm_categories": ["capped"]}
+            ),
+            DatasetAttackConfiguration(
+                dataset_names=[unlimited_name], max_dataset_size=None, filters={"harm_categories": ["unlimited"]}
+            ),
+        ],
+        max_dataset_size=None,
+    )
+    if nested:
+        config = CompoundDatasetAttackConfiguration(configurations=[config], max_dataset_size=None)
+    scenario = _OfflineResumeScenario()
+    scenario.set_params_from_args(args={"objective_target": MockPromptTarget(), "dataset_config": config})
+
+    preview = await scenario.get_run_size_estimate_async(read_dataset_counts=True)
+
+    assert preview.estimated_attack_count == 5
+    assert sum(dataset.selected_seed_group_count for dataset in preview.datasets) == 5
+    assert all(dataset.logical_seed_group_count is None for dataset in preview.datasets)
+    capped_summary = next(dataset for dataset in preview.datasets if dataset.name == capped_name)
+    assert [cap.count for cap in capped_summary.configured_caps] == [1]
+    assert scenario._dataset_config is config
+    assert config.has_size_cap
+    assert memory.get_scenario_results() == []
+
+    await scenario.initialize_async()
+    plan = scenario._build_run_plan()
+    assert sum(len(group.seed_group_ids) for group in plan.atomic_groups) == 5
 
 
 @pytest.fixture
