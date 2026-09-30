@@ -3,6 +3,9 @@ import { makeAddMessageResponse } from "./_attacks";
 import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
 import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
+import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
+
+const TOUR_STEP_COUNT = TOUR_STEPS.length;
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
@@ -341,6 +344,31 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       await route.fulfill(jsonResponse({ converter_types: [] }));
       return;
     }
+    if (apiPath === "/scenarios/catalog" || apiPath === "/scenarios/runs") {
+      await route.fulfill(
+        jsonResponse({
+          items: [],
+          pagination: {
+            limit: 50,
+            has_more: false,
+            next_cursor: null,
+            prev_cursor: null,
+          },
+        })
+      );
+      return;
+    }
+    if (apiPath === "/scenarios/runs/queue") {
+      await route.fulfill(
+        jsonResponse({
+          revision: 0,
+          snapshot_at: "2026-07-22T13:10:00.000Z",
+          active: null,
+          queued: [],
+        })
+      );
+      return;
+    }
 
     throw new Error(`Unhandled touch-target API request: ${method} ${apiPath}`);
   });
@@ -667,34 +695,42 @@ test.describe("Mobile touch targets", () => {
     await page.goto("/");
     await page.getByTestId("start-tour").click();
 
-    await expect(page.getByText("1 of 5")).toBeVisible();
+    // Scope to the tooltip: the views the tour visits have their own
+    // "Next" controls, such as History's pagination.
+    const tooltip = page.getByTestId("tour-tooltip-card");
+
+    await expect(page.getByText(`1 of ${TOUR_STEP_COUNT}`)).toBeVisible();
     await expectMinimumTouchTargets(
-      page.getByRole("button", {
+      tooltip.getByRole("button", {
         name: /^(Close|Skip tour|Next)$/,
       })
     );
 
-    for (const step of [2, 3, 4]) {
-      await page
+    for (let step = 2; step < TOUR_STEP_COUNT; step += 1) {
+      await tooltip
         .getByRole("button", { name: "Next", exact: true })
         .click({ force: true });
-      await expect(page.getByText(`${step} of 5`)).toBeVisible();
+      await expect(
+        page.getByText(`${step} of ${TOUR_STEP_COUNT}`)
+      ).toBeVisible();
       await expectMinimumTouchTargets(
-        page.getByRole("button", {
+        tooltip.getByRole("button", {
           name: /^(Close|Skip tour|Back|Next)$/,
         })
       );
     }
 
-    await page
+    await tooltip
       .getByRole("button", { name: "Next", exact: true })
       .click({ force: true });
-    await expect(page.getByText("5 of 5")).toBeVisible();
+    await expect(
+      page.getByText(`${TOUR_STEP_COUNT} of ${TOUR_STEP_COUNT}`)
+    ).toBeVisible();
     await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Back", exact: true })
+      tooltip.getByRole("button", { name: "Back", exact: true })
     );
     await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Anchors Away!", exact: true })
+      tooltip.getByRole("button", { name: "Anchors Away!", exact: true })
     );
   });
 });
@@ -764,7 +800,7 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
 
   await page.getByRole("button", { name: "Home", exact: true }).click();
   await page.getByTestId("start-tour").click();
-  await expect(page.getByText("1 of 5")).toBeVisible();
+  await expect(page.getByText(`1 of ${TOUR_STEP_COUNT}`)).toBeVisible();
   await expectCompactDesktopTarget(
     page.getByRole("button", { name: "Close", exact: true })
   );
