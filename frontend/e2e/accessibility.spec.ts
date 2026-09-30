@@ -1,8 +1,10 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { makeTarget } from "./_targets";
+import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
+const TOUR_STEP_COUNT = TOUR_STEPS.length;
 
 type TourViewportName = "mobile" | "desktop";
 
@@ -72,8 +74,8 @@ async function expectTourContainedAndActionable(
 
   const dialog = page.getByRole("alertdialog");
 
-  for (let step = 0; step < 5; step += 1) {
-    await expect(dialog).toContainText(`${step + 1} of 5`);
+  for (let step = 0; step < TOUR_STEP_COUNT; step += 1) {
+    await expect(dialog).toContainText(`${step + 1} of ${TOUR_STEP_COUNT}`);
     await expectTourContained(page, dialog, viewportName === "mobile");
 
     if (viewportName === "desktop" && step === 0) {
@@ -85,7 +87,7 @@ async function expectTourContainedAndActionable(
       expect(dialogBox!.x).toBeGreaterThanOrEqual(targetBox!.x + targetBox!.width);
     }
 
-    if (step < 4) {
+    if (step < TOUR_STEP_COUNT - 1) {
       await dialog.getByRole("button", { name: "Next", exact: true }).click();
     }
   }
