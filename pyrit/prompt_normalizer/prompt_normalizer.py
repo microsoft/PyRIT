@@ -8,11 +8,13 @@ import os
 import tempfile
 import traceback
 import wave
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextlib import AbstractAsyncContextManager, nullcontext
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from pyrit.converter import Converter
 from pyrit.exceptions import (
     ComponentRole,
     EmptyResponseException,
@@ -66,15 +68,23 @@ class PromptNormalizer:
             raise RuntimeError("Memory is not initialized")
         return self._memory
 
-    def __init__(self, start_token: str = "⟪", end_token: str = "⟫") -> None:
+    def __init__(
+        self,
+        start_token: str = "⟪",
+        end_token: str = "⟫",
+        *,
+        converter_guard: Callable[[Converter], AbstractAsyncContextManager[None]] | None = None,
+    ) -> None:
         """
         Initialize the PromptNormalizer.
 
         start_token and end_token are used to delineate which part of a prompt is converted.
+        ``converter_guard`` optionally coordinates shared converter instances during conversion only.
         """
         self._memory = CentralMemory.get_memory_instance()
         self._start_token = start_token
         self._end_token = end_token
+        self._converter_guard = converter_guard
         self.id = str(uuid4())
 
     async def send_prompt_async(
@@ -316,12 +326,14 @@ class PromptNormalizer:
                                 outer_context.objective_target_conversation_id if outer_context else None
                             ),
                         ):
-                            converter_result = await converter.convert_tokens_async(
-                                prompt=converted_text,
-                                input_type=converted_text_data_type,
-                                start_token=self._start_token,
-                                end_token=self._end_token,
-                            )
+                            guard = self._converter_guard(converter) if self._converter_guard else nullcontext()
+                            async with guard:
+                                converter_result = await converter.convert_tokens_async(
+                                    prompt=converted_text,
+                                    input_type=converted_text_data_type,
+                                    start_token=self._start_token,
+                                    end_token=self._end_token,
+                                )
                         converted_text = converter_result.output_text
                         converted_text_data_type = converter_result.output_type
                     except Exception:

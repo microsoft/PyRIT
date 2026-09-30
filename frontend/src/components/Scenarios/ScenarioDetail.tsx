@@ -31,6 +31,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import TargetSelect from '@/components/Config/TargetSelect'
+import { useRuntime } from '@/hooks/useRuntime'
 import ParameterField from '@/components/Parameters/ParameterField'
 import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import {
@@ -441,11 +442,13 @@ function ScenarioDetailContent({
   const decodedScenarioName = routerPathParamValue(encodedScenarioName)
 
   const [scenario, setScenario] = useState<RegisteredScenario | null>(null)
+  const { generation, ready } = useRuntime()
   const [scenarioStatus, setScenarioStatus] = useState<LoadStatus>('loading')
   const [scenarioError, setScenarioError] = useState<string | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
 
   useEffect(() => {
+    if (!ready) return
     let cancelled = false
     scenariosApi
       .getScenario(decodedScenarioName)
@@ -465,7 +468,7 @@ function ScenarioDetailContent({
     return () => {
       cancelled = true
     }
-  }, [decodedScenarioName, refetchCount])
+  }, [decodedScenarioName, refetchCount, generation, ready])
 
   const handleRetry = (): void => {
     setScenarioStatus('loading')
@@ -560,6 +563,9 @@ function ScenarioLaunchForm({
   labels,
   onNavigate,
 }: ScenarioLaunchFormProps) {
+  const runtime = useRuntime()
+  const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
+  const staleSelection = selectionGeneration !== runtime.generation
   const styles = useScenarioDetailStyles()
   const navigate = useNavigate()
   const formId = `scenario-launch-${encodeURIComponent(scenario.scenario_name).replace(/%/g, '-')}`
@@ -594,6 +600,9 @@ function ScenarioLaunchForm({
     return ''
   })
   const [selectedTechniques, setSelectedTechniques] = useState<string[]>(() => defaultTechniques)
+  const unavailableSelection = (
+    targetName !== '' && !targets.some((target) => target.target_registry_name === targetName)
+  ) || selectedTechniques.some((name) => !techniqueOptions.some((technique) => technique.name === name))
   const [baselineChecked, setBaselineChecked] = useState(
     () => !isBaselineForbidden && scenario.include_baseline_by_default,
   )
@@ -729,12 +738,12 @@ function ScenarioLaunchForm({
   const estimateRequestKey = useMemo(
     () => estimateRequest === null
       ? null
-      : JSON.stringify({ scenarioName: scenario.scenario_name, request: estimateRequest }),
-    [estimateRequest, scenario.scenario_name],
+      : JSON.stringify({ scenarioName: scenario.scenario_name, request: estimateRequest, generation: runtime.generation }),
+    [estimateRequest, scenario.scenario_name, runtime.generation],
   )
 
   useEffect(() => {
-    if (estimateRequest === null || estimateRequestKey === null) {
+    if (!runtime.ready || staleSelection || estimateRequest === null || estimateRequestKey === null) {
       return
     }
 
@@ -781,7 +790,7 @@ function ScenarioLaunchForm({
       window.clearTimeout(debounceTimer)
       controller.abort()
     }
-  }, [estimateRequest, estimateRequestKey, scenario.scenario_name])
+  }, [estimateRequest, estimateRequestKey, scenario.scenario_name, runtime.ready, staleSelection])
 
   let estimateState: ScenarioRunEstimateState
   if (!estimateResult.ok) {
@@ -870,7 +879,7 @@ function ScenarioLaunchForm({
   }
 
   const handleLaunchConfirmed = async (): Promise<void> => {
-    if (isSubmittingRef.current) {
+    if (isSubmittingRef.current || !runtime.ready || staleSelection || unavailableSelection) {
       return
     }
 
@@ -949,6 +958,21 @@ function ScenarioLaunchForm({
                 <MessageBarBody role="alert">{validationError}</MessageBarBody>
               </MessageBar>
             )}
+            {(staleSelection || (targetName && unavailableSelection)) && (
+              <MessageBar intent="warning">
+                <MessageBarBody>
+                  PyRIT was reinitialized. Review the refreshed target and technique selections before starting.
+                  Your parameter drafts have been preserved.
+                  <Button onClick={() => {
+                    setSelectedTechniques(selectedTechniques.filter((name) =>
+                      techniqueOptions.some((technique) => technique.name === name)))
+                    setSelectionGeneration(runtime.generation)
+                  }}>
+                    I have reviewed the refreshed selections
+                  </Button>
+                </MessageBarBody>
+              </MessageBar>
+            )}
             {apiError && (
               <MessageBar intent="error">
                 <MessageBarBody role="alert">{apiError}</MessageBarBody>
@@ -972,11 +996,15 @@ function ScenarioLaunchForm({
                   className={styles.control}
                   value={targetName}
                   disabled={submitting}
-                  onChange={(_, data) => setTargetName(data.value)}
+                  onChange={(_, data) => { setTargetName(data.value); setSelectionGeneration(runtime.generation) }}
                   data-testid="scenario-target-select"
                   aria-label="Objective Target"
                 >
-                  <option value="">{targets.length === 0 ? 'No targets configured' : 'Select an objective target'}</option>
+                  {!targets.some((target) => target.target_registry_name === targetName) && (
+                    <option value={targetName} disabled>
+                      {targets.length === 0 ? 'No targets configured' : 'Select an available target'}
+                    </option>
+                  )}
                   {targets.map((target) => (
                     <option key={target.target_registry_name} value={target.target_registry_name}>
                       {targetOptionLabel(target)}
@@ -1241,7 +1269,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={submitting || techniqueSelectionInvalid}
+                disabled={!runtime.ready || staleSelection || unavailableSelection || submitting || techniqueSelectionInvalid}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan

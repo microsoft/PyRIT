@@ -124,7 +124,11 @@ class TemplateSegmentConverter(Converter):
             list[str]: List of segments, padded with empty strings if needed.
         """
         words = prompt.split()
-        num_splits = min(len(words), self._number_parameters - 1)
+        # Interior split points live strictly between the first and last word, so at most
+        # len(words) - 1 of them exist. Cap the split count there too, or random.sample
+        # raises "Sample larger than population" when the prompt has more than one word
+        # but fewer words than the template has parameters.
+        num_splits = min(max(len(words) - 1, 0), self._number_parameters - 1)
 
         # Handle edge case where we can't sample from an empty range
         if num_splits > 0 and len(words) > 1:

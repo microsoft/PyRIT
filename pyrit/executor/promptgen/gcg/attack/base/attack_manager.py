@@ -3,15 +3,17 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import math
 import random
 import time
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -39,6 +41,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
+
+    from pyrit.executor.promptgen.gcg.extension_protocols import LossFunction
 
 logger = logging.getLogger(__name__)
 
@@ -325,13 +329,17 @@ class AttackPrompt:
             target (str):
                 The target of the attack
             tokenizer (Transformer Tokenizer):
-                The tokenizer used to convert text into tokens. Must have a configured chat template
-                (i.e., ``tokenizer.chat_template`` is not ``None``); ``apply_chat_template`` is used
-                to render the user/assistant exchange instead of model-specific fastchat templates.
+                A fast tokenizer with a configured chat template. The template must render each
+                message once and preserve its content, apart from surrounding whitespace.
+                Unsupported templates or token boundaries raise an error rather than guessing slices.
             control_init (str, optional):
                 A string used to control the attack (default is "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !")
             test_prefixes (list, optional):
                 A list of prefixes to test the attack (default is _DEFAULT_TEST_PREFIXES).
+
+        Raises:
+            ValueError: If the tokenizer or template cannot provide safe token slices, or the control
+                or target has no non-whitespace text or tokens. Empty goals are supported for target-only datasets.
         """
         if test_prefixes is None:
             test_prefixes = list(_DEFAULT_TEST_PREFIXES)
@@ -347,69 +355,149 @@ class AttackPrompt:
 
         self._update_ids()
 
+    def _content_bounds(self, *, prompt: str, messages: list[dict[str, str]], message_index: int) -> tuple[int, int]:
+        """
+        Locate one message using a probe that leaves the other message unchanged.
+
+        Anchor both ends of the probe to the complete prompt, without searching for role markers
+        or separators that may also occur inside the content.
+
+        Args:
+            prompt (str): The complete rendered conversation.
+            messages (list[dict[str, str]]): The original user and assistant messages.
+            message_index (int): The message whose content bounds are needed.
+
+        Returns:
+            tuple[int, int]: Inclusive start and exclusive end of the rendered content.
+
+        Raises:
+            ValueError: If the template drops, duplicates, or transforms content, or changes its
+                surrounding scaffolding when the content is replaced.
+        """
+        marker = f"pyrit{uuid4().hex}"
+        probe_messages = [dict(message) for message in messages]
+        probe_messages[message_index]["content"] = marker
+        scaffold = self.tokenizer.apply_chat_template(probe_messages, tokenize=False)
+        role = messages[message_index]["role"]
+        error = (
+            f"Cannot safely locate {role} content in the chat template. "
+            "The template must render each message once and preserve its content, "
+            "apart from surrounding whitespace."
+        )
+        if not isinstance(scaffold, str) or scaffold.count(marker) != 1:
+            raise ValueError(error)
+
+        prefix, suffix = scaffold.split(marker)
+        start, stop = len(prefix), len(prompt) - len(suffix)
+        if (
+            start > stop
+            or not prompt.startswith(prefix)
+            or not prompt.endswith(suffix)
+            or prompt[start:stop].strip() != messages[message_index]["content"].strip()
+        ):
+            raise ValueError(error)
+        return start, stop
+
+    def _token_slice(
+        self,
+        *,
+        prompt: str,
+        offsets: list[tuple[int, int]],
+        start: int,
+        stop: int,
+        name: str,
+        allow_empty: bool = False,
+    ) -> slice:
+        """
+        Map a character span to all its tokens, including repeated byte-level offsets.
+
+        Args:
+            prompt (str): The complete rendered conversation.
+            offsets (list[tuple[int, int]]): Character offsets for each token.
+            start (int): Inclusive character start.
+            stop (int): Exclusive character end.
+            name (str): Component name for validation errors.
+            allow_empty (bool): Whether an empty span is valid.
+
+        Returns:
+            slice: The corresponding token range.
+
+        Raises:
+            ValueError: If a required span has no tokens or a token crosses a content boundary.
+        """
+        indices: list[int] = []
+        for i, (token_start, token_stop) in enumerate(offsets):
+            if token_start >= token_stop or token_start >= stop or token_stop <= start:
+                continue
+            outside = prompt[token_start:start].strip() or prompt[stop:token_stop].strip()
+            if outside:
+                # Added role tokens can consume neighboring whitespace through lstrip/rstrip.
+                if prompt[max(start, token_start) : min(stop, token_stop)].strip():
+                    raise ValueError(f"GCG {name} token crosses a content boundary in the chat template.")
+                continue
+            indices.append(i)
+        if start == stop or not indices:
+            if not allow_empty:
+                raise ValueError(f"GCG {name} contains no tokens in the rendered prompt.")
+            boundary = next((i for i, (_, token_stop) in enumerate(offsets) if token_stop > start), len(offsets))
+            return slice(boundary, boundary)
+
+        return slice(indices[0], indices[-1] + 1)
+
     def _update_ids(self) -> None:
-        # Render the goal+control as the user turn and the target as the assistant turn using the
-        # tokenizer's built-in chat template. This replaces fastchat's per-model Conversation logic
-        # and works for any HuggingFace chat-tuned model (issue #965).
+        if not self.control.strip() or not self.target.strip():
+            raise ValueError("GCG control and target must contain non-whitespace text.")
+        if not self.tokenizer.is_fast:
+            raise ValueError("GCG requires a fast tokenizer (use_fast=True) for character-to-token alignment.")
         messages = [
             {"role": "user", "content": f"{self.goal} {self.control}"},
-            {"role": "assistant", "content": f"{self.target}"},
+            {"role": "assistant", "content": self.target},
         ]
         prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+        user_start, user_end = self._content_bounds(prompt=prompt, messages=messages, message_index=0)
+        assistant_start, assistant_end = self._content_bounds(prompt=prompt, messages=messages, message_index=1)
+        if not user_start <= user_end <= assistant_start <= assistant_end:
+            raise ValueError("Cannot safely locate user and assistant content in conversation order.")
 
-        encoding = self.tokenizer(prompt)
+        raw_user = messages[0]["content"]
+        rendered_user = prompt[user_start:user_end]
+        raw_leading = len(raw_user) - len(raw_user.lstrip())
+        rendered_leading = len(rendered_user) - len(rendered_user.lstrip())
+        user_origin = user_start + rendered_leading - raw_leading
+        goal_start = max(user_start, user_origin)
+        goal_end = max(goal_start, min(user_end, user_origin + len(self.goal)))
+        control_start = max(user_start, min(user_end, user_origin + len(self.goal) + 1))
+
+        # Templates already supply their special tokens. Offset spans handle both unmapped
+        # whitespace and multiple byte-level tokens sharing the same character position.
+        encoding = self.tokenizer(prompt, add_special_tokens=False, return_offsets_mapping=True)
         toks = encoding.input_ids
-
-        # Locate goal/control/target substrings in the rendered prompt.
-        goal_start = prompt.find(self.goal)
-        control_start = prompt.find(self.control)
-        target_start = prompt.find(self.target)
-        if goal_start == -1 or control_start == -1 or target_start == -1:
-            raise ValueError(
-                "Could not locate goal/control/target in chat-templated prompt. "
-                f"prompt={prompt!r}, goal={self.goal!r}, "
-                f"control={self.control!r}, target={self.target!r}"
-            )
-
-        # ``char_to_token`` returns None when the character index has no
-        # corresponding token (e.g. when the substring ends exactly at the end
-        # of the prompt or lands on whitespace squashed into a neighbouring
-        # token). For end positions we clamp to ``len(toks)``; for start
-        # positions we walk forward to the next character that does map to a
-        # token. Both are necessary for the slice arithmetic to remain valid
-        # across tokenizers/templates.
-        def end_tok(char_pos: int) -> int:
-            tok: int | None = encoding.char_to_token(char_pos)
-            return len(toks) if tok is None else tok
-
-        def start_tok(char_pos: int) -> int:
-            limit = len(prompt)
-            cur = char_pos
-            while cur < limit:
-                tok: int | None = encoding.char_to_token(cur)
-                if tok is not None:
-                    return tok
-                cur += 1
-            return len(toks)
-
-        self._goal_slice = slice(
-            start_tok(goal_start),
-            end_tok(goal_start + len(self.goal)),
+        offsets = encoding["offset_mapping"]
+        goal_slice = self._token_slice(
+            prompt=prompt,
+            offsets=offsets,
+            start=goal_start,
+            stop=goal_end,
+            name="goal",
+            allow_empty=not self.goal.strip(),
         )
-        self._control_slice = slice(
-            start_tok(control_start),
-            end_tok(control_start + len(self.control)),
+        control_slice = self._token_slice(
+            prompt=prompt, offsets=offsets, start=control_start, stop=user_end, name="control"
         )
-        target_start_tok = start_tok(target_start)
-        target_end_tok = end_tok(target_start + len(self.target))
-        self._target_slice = slice(target_start_tok, target_end_tok)
-        self._loss_slice = slice(target_start_tok - 1, target_end_tok - 1)
-        # Assistant role tokens are everything between the control end and the target start.
-        # This works for any chat template (e.g. llama-2 "[/INST]", phi-3 "<|assistant|>", etc.)
-        # without us needing to know the literal marker text.
-        self._assistant_role_slice = slice(self._control_slice.stop, self._target_slice.start)
+        target_slice = self._token_slice(
+            prompt=prompt, offsets=offsets, start=assistant_start, stop=assistant_end, name="target"
+        )
+        if not self.goal.strip():
+            goal_slice = slice(control_slice.start, control_slice.start)
+        if goal_slice.stop > control_slice.start or control_slice.stop > target_slice.start:
+            raise ValueError("GCG token slices overlap across a content boundary.")
 
-        self.input_ids = torch.tensor(toks[: self._target_slice.stop], device="cpu")
+        self._goal_slice = goal_slice
+        self._control_slice = control_slice
+        self._target_slice = target_slice
+        self._loss_slice = slice(target_slice.start - 1, target_slice.stop - 1)
+        self._assistant_role_slice = slice(control_slice.stop, target_slice.start)
+        self.input_ids = torch.tensor(toks[: target_slice.stop], device="cpu")
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def generate(self, model: Any, gen_config: Any = None) -> torch.Tensor:
@@ -474,12 +562,17 @@ class AttackPrompt:
         raise NotImplementedError("Gradient function not yet implemented")
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
-    def logits(self, model: Any, test_controls: Any = None, return_ids: bool = False) -> Any:
+    def _build_candidate_batch(
+        self,
+        model: Any,
+        test_controls: Any = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
-        Compute logits for one or more candidate controls.
+        Build candidate token ids and their optional padding mask.
 
         Returns:
-            Any: Model logits, optionally paired with their token ids.
+            tuple[torch.Tensor, torch.Tensor | None]: Candidate token ids and
+                an attention mask when string controls require padding.
 
         Raises:
             ValueError: If candidate controls have an invalid type or shape.
@@ -525,14 +618,220 @@ class AttackPrompt:
             self.input_ids.unsqueeze(0).repeat(test_ids.shape[0], 1).to(model.device), 1, locs, test_ids
         )
         attn_mask = (ids != pad_tok).type(ids.dtype) if pad_tok >= 0 else None
+        return ids, attn_mask
+
+    @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
+    def logits(
+        self,
+        model: Any,
+        test_controls: Any = None,
+        return_ids: bool = False,
+        logits_to_keep: torch.Tensor | None = None,
+    ) -> Any:
+        """
+        Compute logits for one or more candidate controls.
+
+        Returns:
+            Any: Model logits, optionally paired with their token ids.
+
+        Raises:
+            ValueError: If candidate controls have an invalid type or shape.
+        """
+        ids, attn_mask = self._build_candidate_batch(model, test_controls)
+
+        model_kwargs: dict[str, Any] = {"input_ids": ids, "attention_mask": attn_mask}
+        if logits_to_keep is not None:
+            model_kwargs["logits_to_keep"] = logits_to_keep
 
         if return_ids:
-            del locs, test_ids
-            return model(input_ids=ids, attention_mask=attn_mask).logits, ids
-        del locs, test_ids
-        logits = model(input_ids=ids, attention_mask=attn_mask).logits
+            return model(**model_kwargs).logits, ids
+        logits = model(**model_kwargs).logits
         del ids
         return logits
+
+    @staticmethod
+    def _expand_prefix_cache(prefix_cache: Any, batch_size: int) -> Any:
+        """
+        Return an independently mutable, batch-expanded view of a model KV cache.
+
+        Returns:
+            Any: A cache whose batch dimension is expanded to ``batch_size``.
+
+        Raises:
+            ValueError: If the source cache contains more than one sequence.
+            TypeError: If the model returned an unsupported cache structure.
+        """
+
+        def contains_non_scalar_tensor(value: Any) -> bool:
+            if isinstance(value, torch.Tensor):
+                return value.ndim > 0
+            if isinstance(value, dict):
+                return any(contains_non_scalar_tensor(item) for item in value.values())
+            if isinstance(value, (tuple, list)):
+                return any(contains_non_scalar_tensor(item) for item in value)
+            return False
+
+        if hasattr(prefix_cache, "layers"):
+            expanded_cache = copy(prefix_cache)
+            expanded_layers = []
+            for layer in prefix_cache.layers:
+                keys = getattr(layer, "keys", None)
+                values = getattr(layer, "values", None)
+                if not isinstance(keys, torch.Tensor) or not isinstance(values, torch.Tensor):
+                    raise TypeError(f"Unsupported prefix-cache layer type: {type(layer)!r}")
+                try:
+                    additional_state = (value for name, value in vars(layer).items() if name not in {"keys", "values"})
+                except TypeError as exc:
+                    raise TypeError(f"Unsupported prefix-cache layer type: {type(layer)!r}") from exc
+                if any(contains_non_scalar_tensor(value) for value in additional_state):
+                    raise TypeError(f"Unsupported state in prefix-cache layer type: {type(layer)!r}")
+                if keys.ndim == 0 or values.ndim == 0 or keys.shape[0] != 1 or values.shape[0] != 1:
+                    raise ValueError("Prefix cache must be computed for exactly one sequence")
+
+                expanded_layer = copy(layer)
+                expanded_layer.keys = keys.expand(batch_size, *keys.shape[1:])
+                expanded_layer.values = values.expand(batch_size, *values.shape[1:])
+                expanded_layers.append(expanded_layer)
+            expanded_cache.layers = expanded_layers
+            return expanded_cache
+
+        if isinstance(prefix_cache, (tuple, list)):
+            expanded_legacy_cache = []
+            for layer in prefix_cache:
+                if not isinstance(layer, (tuple, list)) or not all(isinstance(value, torch.Tensor) for value in layer):
+                    raise TypeError(f"Unsupported prefix-cache layer type: {type(layer)!r}")
+                if any(value.ndim == 0 or value.shape[0] != 1 for value in layer):
+                    raise ValueError("Prefix cache must be computed for exactly one sequence")
+                expanded_legacy_cache.append(tuple(value.expand(batch_size, *value.shape[1:]) for value in layer))
+            return tuple(expanded_legacy_cache)
+
+        raise TypeError(f"Unsupported prefix-cache type: {type(prefix_cache)!r}")
+
+    def _loss_with_prefix_cache(
+        self,
+        model: Any,
+        test_controls: Any,
+        loss_function: Any,
+        logit_positions: torch.Tensor,
+    ) -> torch.Tensor | None:
+        """
+        Score candidates after evaluating their invariant prefix once.
+
+        Returns:
+            torch.Tensor | None: One scalar loss per candidate control, or ``None``
+                when the model's cache cannot be safely batch-expanded.
+        """
+        token_ids, attention_mask = self._build_candidate_batch(model, test_controls)
+        prefix_length = self._control_slice.start - 1
+        prefix_kwargs: dict[str, Any] = {
+            "input_ids": token_ids[:1, :prefix_length],
+            "use_cache": True,
+            "return_dict": True,
+            "logits_to_keep": 1,
+        }
+        if attention_mask is not None:
+            prefix_kwargs["attention_mask"] = attention_mask[:1, :prefix_length]
+        prefix_output = model(**prefix_kwargs)
+        try:
+            prefix_cache = self._expand_prefix_cache(
+                getattr(prefix_output, "past_key_values", None), token_ids.shape[0]
+            )
+        except (TypeError, ValueError):
+            del prefix_output, token_ids
+            return None
+        del prefix_output
+
+        suffix_kwargs: dict[str, Any] = {
+            "input_ids": token_ids[:, prefix_length:],
+            "past_key_values": prefix_cache,
+            "use_cache": False,
+            "return_dict": True,
+            "logits_to_keep": logit_positions - prefix_length,
+        }
+        if attention_mask is not None:
+            suffix_kwargs["attention_mask"] = attention_mask
+        logits = model(**suffix_kwargs).logits
+        del prefix_cache
+
+        try:
+            result: torch.Tensor = loss_function.compute_loss_from_selected_logits(
+                logits=logits,
+                token_ids=token_ids,
+                target_slice=self._target_slice,
+                control_slice=self._control_slice,
+            )
+            return result
+        finally:
+            del logits, token_ids
+
+    def loss(
+        self,
+        model: Any,
+        test_controls: Any,
+        loss_function: LossFunction,
+        *,
+        use_prefix_cache: bool = False,
+    ) -> torch.Tensor:
+        """
+        Compute per-candidate loss without returning full logits from the worker.
+
+        The model forward pass and loss calculation stay in the process that owns
+        the model. Only the batch-sized loss tensor crosses the worker boundary.
+
+        Returns:
+            torch.Tensor: One scalar loss per candidate control.
+        """
+        selective_loss = cast("Any", loss_function)
+        try:
+            forward_parameters = inspect.signature(model.forward).parameters
+        except (TypeError, ValueError):
+            forward_parameters = {}
+
+        supports_selective_logits = "logits_to_keep" in forward_parameters
+        supports_prefix_cache = "past_key_values" in forward_parameters and "use_cache" in forward_parameters
+
+        if supports_selective_logits and hasattr(selective_loss, "get_required_logit_positions"):
+            logit_positions = selective_loss.get_required_logit_positions(
+                target_slice=self._target_slice,
+                control_slice=self._control_slice,
+                device=model.device,
+            )
+            if use_prefix_cache and supports_prefix_cache and self._control_slice.start > 1:
+                cached_loss = self._loss_with_prefix_cache(
+                    model,
+                    test_controls,
+                    selective_loss,
+                    logit_positions,
+                )
+                if cached_loss is not None:
+                    return cached_loss
+            logits, token_ids = self.logits(
+                model,
+                test_controls,
+                return_ids=True,
+                logits_to_keep=logit_positions,
+            )
+            try:
+                result: torch.Tensor = selective_loss.compute_loss_from_selected_logits(
+                    logits=logits,
+                    token_ids=token_ids,
+                    target_slice=self._target_slice,
+                    control_slice=self._control_slice,
+                )
+                return result
+            finally:
+                del logits, token_ids
+
+        logits, token_ids = self.logits(model, test_controls, return_ids=True)
+        try:
+            return loss_function.compute_loss(
+                logits=logits,
+                token_ids=token_ids,
+                target_slice=self._target_slice,
+                control_slice=self._control_slice,
+            )
+        finally:
+            del logits, token_ids
 
     def target_loss(self, logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
         """
@@ -1966,6 +2265,7 @@ class ModelWorkerOperation(str, Enum):
 
     GRAD = "grad"
     LOGITS = "logits"
+    LOSS = "loss"
     CONTRAST_LOGITS = "contrast_logits"
     TEST = "test"
     TEST_LOSS = "test_loss"

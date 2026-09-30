@@ -92,6 +92,18 @@ print(f"  Identity Hash: {scorer_identity.hash}")
 # - **`krippendorff_alpha_humans`**: Agreement among human evaluators (baseline quality of labels)
 # - **`krippendorff_alpha_model`**: Agreement across multiple model scoring trials (model consistency)
 # - **`krippendorff_alpha_combined`**: Overall agreement between humans and model
+#
+# ### Error Split by Rater Agreement
+#
+# When a gold set has more than one human rater, the harm metrics also report the mean absolute error
+# separately for **unanimous** responses (every rater on the same side of `contested_threshold`, 0.5) and
+# **contested** responses (the raters split across it, so the gold label rests on a 2-1 vote rather than a
+# consensus). The aggregate MAE spends part of the scorer's error budget on the contested rows, so a scorer
+# can look strong overall while sitting near chance on exactly the responses humans found hard.
+# - **`mean_absolute_error_unanimous`** and **`num_unanimous_responses`**
+# - **`mean_absolute_error_contested`** and **`num_contested_responses`**
+#
+# These are `None` for single-rater gold sets, where there is no disagreement to measure.
 
 # %% [markdown]
 # ## Retrieving Scorer Metrics

@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import errno
 import json
+import os
+import stat
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +20,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     _append_jsonl_entry,
     _load_jsonl,
     _metrics_to_registry_dict,
+    _rewrite_jsonl_atomically,
     add_evaluation_results,
     find_harm_metrics_by_eval_hash,
     find_objective_metrics_by_eval_hash,
@@ -467,3 +471,333 @@ def test_replace_evaluation_results_preserves_other_entries(tmp_path):
         assert replaced["metrics"]["accuracy"] == 0.99
     finally:
         sio._file_write_locks = original_locks
+
+
+def test_replace_evaluation_results_keeps_unparseable_lines(tmp_path):
+    import pyrit.score.scorer_evaluation.scorer_metrics_io as sio
+
+    original_locks = sio._file_write_locks.copy()
+    try:
+        path = tmp_path / "test_metrics.jsonl"
+        add_evaluation_results(
+            file_path=path,
+            scorer_identifier=_make_identifier(class_name="A"),
+            eval_hash="keep_me",
+            metrics=_make_objective_metrics(accuracy=0.70),
+        )
+        torn = '{"hash_b": "b", "metrics": {"acc'
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(torn + "\n")
+
+        replace_evaluation_results(
+            file_path=path,
+            scorer_identifier=_make_identifier(class_name="B_new"),
+            eval_hash="new_hash",
+            metrics=_make_objective_metrics(accuracy=0.99),
+        )
+
+        assert torn in path.read_text(encoding="utf-8"), "the rewrite deleted a line it could not read"
+        hashes = {entry["eval_hash"] for entry in _load_jsonl(path)}
+        assert hashes == {"keep_me", "new_hash"}
+    finally:
+        sio._file_write_locks = original_locks
+
+
+def test_replace_evaluation_results_leaves_registry_intact_after_a_failed_read(tmp_path):
+    import pyrit.score.scorer_evaluation.scorer_metrics_io as sio
+
+    original_locks = sio._file_write_locks.copy()
+    try:
+        path = tmp_path / "test_metrics.jsonl"
+        add_evaluation_results(
+            file_path=path,
+            scorer_identifier=_make_identifier(class_name="A"),
+            eval_hash="hash_a",
+            metrics=_make_objective_metrics(accuracy=0.70),
+        )
+        add_evaluation_results(
+            file_path=path,
+            scorer_identifier=_make_identifier(class_name="C"),
+            eval_hash="hash_c",
+            metrics=_make_objective_metrics(accuracy=0.80),
+        )
+        undecodable = path.read_bytes() + b'{"eval_hash": "bad", "metrics": \xff\xfe}\n'
+        path.write_bytes(undecodable)
+
+        with pytest.raises(UnicodeDecodeError):
+            replace_evaluation_results(
+                file_path=path,
+                scorer_identifier=_make_identifier(class_name="New"),
+                eval_hash="new_hash",
+                metrics=_make_objective_metrics(accuracy=0.99),
+            )
+
+        assert path.read_bytes() == undecodable, "a partial read must not be rewritten over the registry"
+    finally:
+        sio._file_write_locks = original_locks
+
+
+def test_replace_evaluation_results_preserves_raw_lines_and_endings(tmp_path):
+    import pyrit.score.scorer_evaluation.scorer_metrics_io as sio
+
+    original_locks = sio._file_write_locks.copy()
+    try:
+        path = tmp_path / "test_metrics.jsonl"
+        original = (
+            b'  {"eval_hash": "keep", "metrics": {"value": 1}}\r\n'
+            b"\t  \r\n"
+            b"\n"
+            b"\tnot json  \n"
+            b'  {"eval_hash": "other", "metrics": {"value": 2}}'
+        )
+        path.write_bytes(original)
+
+        replace_evaluation_results(
+            file_path=path,
+            scorer_identifier=_make_identifier(),
+            eval_hash="new_hash",
+            metrics=_make_objective_metrics(accuracy=0.99),
+        )
+
+        rewritten = path.read_bytes()
+        assert rewritten.startswith(original)
+        assert rewritten.endswith(b"\n")
+        assert [entry["eval_hash"] for entry in _load_jsonl(path)] == ["keep", "other", "new_hash"]
+    finally:
+        sio._file_write_locks = original_locks
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission semantics")
+def test_replace_evaluation_results_preserves_existing_permissions(tmp_path):
+    import pyrit.score.scorer_evaluation.scorer_metrics_io as sio
+
+    original_locks = sio._file_write_locks.copy()
+    try:
+        path = tmp_path / "test_metrics.jsonl"
+        path.write_text('{"eval_hash": "keep", "metrics": {}}\n', encoding="utf-8")
+        path.chmod(0o664)
+
+        replace_evaluation_results(
+            file_path=path,
+            scorer_identifier=_make_identifier(),
+            eval_hash="new_hash",
+            metrics=_make_objective_metrics(accuracy=0.99),
+        )
+
+        assert stat.S_IMODE(path.stat().st_mode) == 0o664
+    finally:
+        sio._file_write_locks = original_locks
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission semantics")
+def test_existing_registry_permissions_are_applied_before_staging_write(tmp_path):
+    import pyrit.score.scorer_evaluation.scorer_metrics_io as sio
+
+    path = tmp_path / "test_metrics.jsonl"
+    path.write_text('{"value": 1}\n', encoding="utf-8")
+    path.chmod(0o600)
+
+    real_create_staging_file = sio._create_staging_file
+    real_fdopen = os.fdopen
+    staging_paths = []
+
+    def record_staging_file(file_path, mode=0o666):
+        staging_path, fd = real_create_staging_file(file_path, mode=mode)
+        staging_paths.append(staging_path)
+        return staging_path, fd
+
+    class PermissionCheckingWriter:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            self.stream.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def write(self, content):
+            assert stat.S_IMODE(staging_paths[0].stat().st_mode) == 0o600
+            return self.stream.write(content)
+
+    with (
+        patch.object(sio, "_create_staging_file", side_effect=record_staging_file),
+        patch.object(
+            os,
+            "fdopen",
+            side_effect=lambda *args, **kwargs: PermissionCheckingWriter(real_fdopen(*args, **kwargs)),
+        ),
+    ):
+        _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission semantics")
+def test_existing_registry_staging_file_is_private_at_creation(tmp_path):
+    path = tmp_path / "test_metrics.jsonl"
+    path.write_text('{"value": 1}\n', encoding="utf-8")
+    path.chmod(0o600)
+
+    original_umask = os.umask(0o022)
+    real_open = os.open
+    creation_modes = []
+
+    def record_creation_mode(file_path, flags, mode=0o777, **kwargs):
+        fd = real_open(file_path, flags, mode, **kwargs)
+        if Path(file_path).name.startswith(f"{path.name}.tmp-"):
+            creation_modes.append(stat.S_IMODE(Path(file_path).stat().st_mode))
+        return fd
+
+    try:
+        with patch.object(os, "open", side_effect=record_creation_mode):
+            _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+    finally:
+        os.umask(original_umask)
+
+    assert creation_modes == [0o600]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX umask semantics")
+def test_new_registry_uses_umask_permissions(tmp_path):
+    path = tmp_path / "test_metrics.jsonl"
+    original_umask = os.umask(0o022)
+    try:
+        _rewrite_jsonl_atomically(path, [json.dumps({"value": 1}) + "\n"])
+        assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    finally:
+        os.umask(original_umask)
+
+
+def test_cleanup_preserves_replace_error_and_removes_read_only_staging_file(tmp_path):
+    path = tmp_path / "test_metrics.jsonl"
+    original = b'{"value": 1}\n'
+    path.write_bytes(original)
+    real_unlink = Path.unlink
+    cleanup_attempts: list[str] = []
+
+    def fail_once_for_staging_file(self, missing_ok=False):
+        if self.name.startswith(f"{path.name}.tmp-") and not cleanup_attempts:
+            cleanup_attempts.append(self.name)
+            raise PermissionError("read-only staging file")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    with (
+        patch(
+            "pyrit.score.scorer_evaluation.scorer_metrics_io.os.replace",
+            side_effect=PermissionError("replace failed"),
+        ),
+        patch.object(Path, "unlink", new=fail_once_for_staging_file),
+    ):
+        with pytest.raises(PermissionError, match="replace failed"):
+            _rewrite_jsonl_atomically(path, [json.dumps({"value": 2}) + "\n"])
+
+    assert cleanup_attempts
+    assert path.read_bytes() == original
+    assert not list(tmp_path.glob(f"{path.name}.tmp-*"))
+
+
+def test_rewrite_jsonl_atomically_uses_distinct_staging_files(tmp_path):
+    path = tmp_path / "test_metrics.jsonl"
+    names: list[str] = []
+    real_replace = os.replace
+
+    def record_replace(source, destination):
+        names.append(Path(source).name)
+        real_replace(source, destination)
+
+    with patch("pyrit.score.scorer_evaluation.scorer_metrics_io.os.replace", side_effect=record_replace):
+        _rewrite_jsonl_atomically(path, [json.dumps({"value": 1}) + "\n"])
+        _rewrite_jsonl_atomically(path, [json.dumps({"value": 2}) + "\n"])
+
+    assert len(names) == 2
+    assert len(set(names)) == 2
+
+
+def test_rewrite_jsonl_atomically_retries_staging_collisions(tmp_path: Path) -> None:
+    path = tmp_path / "test_metrics.jsonl"
+    path.write_bytes(b'{"value": 1}\n')
+    collision = tmp_path / "test_metrics.jsonl.tmp-occupied"
+    other_writer = b'{"value": "other writer"}\n'
+    collision.write_bytes(other_writer)
+
+    with patch(
+        "pyrit.score.scorer_evaluation.scorer_metrics_io.secrets.token_hex",
+        side_effect=["occupied", "available"],
+    ) as token_hex:
+        _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+
+    assert token_hex.call_count == 2
+    assert path.read_bytes() == b'{"value": 2}\n'
+    assert collision.read_bytes() == other_writer
+    assert set(tmp_path.iterdir()) == {path, collision}
+
+
+def test_rewrite_jsonl_atomically_preserves_files_when_staging_collisions_exhaust_retries(tmp_path: Path) -> None:
+    path = tmp_path / "test_metrics.jsonl"
+    original = b'{"value": 1}\n'
+    path.write_bytes(original)
+    collision = tmp_path / "test_metrics.jsonl.tmp-occupied"
+    other_writer = b'{"value": "other writer"}\n'
+    collision.write_bytes(other_writer)
+
+    with patch(
+        "pyrit.score.scorer_evaluation.scorer_metrics_io.secrets.token_hex", return_value="occupied"
+    ) as token_hex:
+        with pytest.raises(FileExistsError, match="Could not create a unique staging file"):
+            _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+
+    assert token_hex.call_count == 100
+    assert path.read_bytes() == original
+    assert collision.read_bytes() == other_writer
+    assert set(tmp_path.iterdir()) == {path, collision}
+
+
+def test_rewrite_jsonl_atomically_closes_descriptor_after_fdopen_failure(tmp_path: Path) -> None:
+    path = tmp_path / "test_metrics.jsonl"
+    original = b'{"value": 1}\n'
+    path.write_bytes(original)
+    with patch.object(os, "fdopen", side_effect=OSError("fdopen failed")) as fdopen:
+        with pytest.raises(OSError, match="fdopen failed"):
+            _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+
+    with pytest.raises(OSError) as error:
+        os.fstat(fdopen.call_args.args[0])
+    assert error.value.errno == errno.EBADF
+    assert path.read_bytes() == original
+    assert not list(tmp_path.glob(f"{path.name}.tmp-*"))
+
+
+@pytest.mark.parametrize(
+    "unlink_errors",
+    [
+        pytest.param([OSError("cleanup failed")], id="unlink"),
+        pytest.param([PermissionError("read-only staging file"), OSError("cleanup failed")], id="read-only-retry"),
+    ],
+)
+def test_cleanup_failure_is_logged_without_masking_replace_error(
+    *, tmp_path: Path, caplog: pytest.LogCaptureFixture, unlink_errors: list[OSError]
+) -> None:
+    path = tmp_path / "test_metrics.jsonl"
+    original = b'{"value": 1}\n'
+    path.write_bytes(original)
+    original_mode = stat.S_IMODE(path.stat().st_mode)
+    replace_error = PermissionError("replace failed")
+
+    with (
+        patch.object(os, "replace", side_effect=replace_error),
+        patch.object(Path, "unlink", autospec=True, side_effect=unlink_errors) as unlink,
+    ):
+        with pytest.raises(PermissionError, match="replace failed") as error:
+            _rewrite_jsonl_atomically(path, ['{"value": 2}\n'])
+
+    assert error.value is replace_error
+    assert path.read_bytes() == original
+    assert stat.S_IMODE(path.stat().st_mode) == original_mode
+    staging_paths = list(tmp_path.glob(f"{path.name}.tmp-*"))
+    assert len(staging_paths) == 1
+    staging_path = staging_paths[0]
+    assert [call.args[0] for call in unlink.call_args_list] == [staging_path] * len(unlink_errors)
+    assert caplog.messages == [f"Failed to clean up staging file {staging_path}: cleanup failed"]
+    staging_path.unlink()

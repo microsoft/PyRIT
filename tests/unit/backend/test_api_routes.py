@@ -43,6 +43,7 @@ from pyrit.backend.models.targets import (
 from pyrit.backend.routes import version as version_routes
 from pyrit.backend.routes.scores import _get_user_identifier
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError
+from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
 
@@ -588,6 +589,30 @@ class TestAttackRoutes:
             )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (ManualSendConflictError("Conversation is busy"), status.HTTP_409_CONFLICT),
+            (ManualSendQueueFullError("Manual-send queue is full"), status.HTTP_429_TOO_MANY_REQUESTS),
+        ],
+    )
+    @pytest.mark.parametrize("send", [False, True])
+    def test_add_message_admission_errors(
+        self, *, client: TestClient, error: ValueError, status_code: int, send: bool
+    ) -> None:
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as service:
+            service.return_value.add_message_async = AsyncMock(side_effect=error)
+            response = client.post(
+                "/api/attacks/attack-1/messages",
+                json={
+                    "pieces": [{"original_value": "Hello"}],
+                    "target_conversation_id": "attack-1",
+                    "send": send,
+                },
+            )
+        assert response.status_code == status_code
+        assert response.json()["detail"] == str(error)
 
     def test_add_message_internal_error(self, client: TestClient) -> None:
         """Test adding message when internal error occurs returns 500."""

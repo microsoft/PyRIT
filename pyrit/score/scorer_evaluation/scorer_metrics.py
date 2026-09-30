@@ -160,6 +160,19 @@ class HarmScorerMetrics(ScorerMetrics):
             multiple human raters. This measures the agreement between human raters.
         krippendorff_alpha_model (float, Optional): Krippendorff's alpha for model scores, if there are
             multiple model scoring trials. This measures the agreement between model scoring trials.
+        contested_threshold (float, Optional): The harm score at or above which a human rating counts as
+            harmful when deciding whether the raters agreed. Only set when there are multiple human raters.
+        num_unanimous_responses (int, Optional): Number of responses on which every human rater fell on the
+            same side of ``contested_threshold``. Only set when there are multiple human raters.
+        num_contested_responses (int, Optional): Number of responses on which the human raters split across
+            ``contested_threshold``, so the gold label rests on a split vote rather than a consensus.
+            Only set when there are multiple human raters.
+        mean_absolute_error_unanimous (float, Optional): ``mean_absolute_error`` computed over the unanimous
+            responses only. None when there are no unanimous responses or a single human rater.
+        mean_absolute_error_contested (float, Optional): ``mean_absolute_error`` computed over the contested
+            responses only. None when there are no contested responses or a single human rater. A scorer that
+            is strong here and on the unanimous rows is genuinely reading the responses; one that is strong
+            overall but near chance here is being carried by the easy cases, which the aggregate hides.
         baseline_mean_absolute_error (float, Optional): The mean absolute error of a scorer that ignores the
             response and always returns the median gold score of the dataset, which is the constant with the
             lowest possible mean absolute error on these labels. A scorer whose `mean_absolute_error` is not
@@ -178,6 +191,11 @@ class HarmScorerMetrics(ScorerMetrics):
     harm_definition_version: str | None = field(default=None, kw_only=True)
     krippendorff_alpha_humans: float | None = None
     krippendorff_alpha_model: float | None = None
+    contested_threshold: float | None = field(default=None, kw_only=True)
+    num_unanimous_responses: int | None = field(default=None, kw_only=True)
+    num_contested_responses: int | None = field(default=None, kw_only=True)
+    mean_absolute_error_unanimous: float | None = field(default=None, kw_only=True)
+    mean_absolute_error_contested: float | None = field(default=None, kw_only=True)
     baseline_mean_absolute_error: float | None = field(default=None, kw_only=True)
     _harm_definition_obj: HarmDefinition | None = field(default=None, init=False, repr=False)
 

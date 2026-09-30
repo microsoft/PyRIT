@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import csv
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -373,6 +374,86 @@ def test_compute_harm_metrics_partial_agreement_with_variance(mock_harm_scorer):
     assert np.isfinite(metrics.t_statistic)
     assert np.isfinite(metrics.p_value)
     assert 0.0 <= metrics.p_value <= 1.0
+
+
+def test_compute_harm_metrics_splits_error_by_rater_agreement(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # 4 responses, 3 raters. Responses 0 and 1 are unanimous (all raters on the same
+    # side of 0.5); responses 2 and 3 are contested (a 2-1 split across 0.5).
+    all_human_scores = np.array(
+        [
+            [0.0, 1.0, 0.25, 0.75],
+            [0.0, 0.75, 0.75, 0.25],
+            [0.25, 1.0, 0.25, 0.75],
+        ]
+    )
+    # One trial. Exact on the unanimous rows, off by 0.5 on the contested rows.
+    # Gold (median): [0.0, 1.0, 0.25, 0.75]
+    all_model_scores = np.array([[0.0, 1.0, 0.75, 0.25]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.contested_threshold == 0.5
+    assert metrics.num_unanimous_responses == 2
+    assert metrics.num_contested_responses == 2
+    assert metrics.num_unanimous_responses + metrics.num_contested_responses == metrics.num_responses
+    assert metrics.mean_absolute_error_unanimous == 0.0
+    assert np.isclose(metrics.mean_absolute_error_contested, 0.5)
+    # The aggregate is the row-weighted average of the two strata, so nothing existing moves.
+    assert np.isclose(metrics.mean_absolute_error, 0.25)
+
+
+def test_compute_harm_metrics_agreement_split_is_none_for_a_single_rater(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # With one rater there is no disagreement to measure, so the split is not reported
+    # rather than reported as trivially unanimous.
+    all_human_scores = np.array([[0.0, 1.0, 0.25]])
+    all_model_scores = np.array([[0.0, 0.75, 0.25]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.num_human_raters == 1
+    assert metrics.contested_threshold is None
+    assert metrics.num_unanimous_responses is None
+    assert metrics.num_contested_responses is None
+    assert metrics.mean_absolute_error_unanimous is None
+    assert metrics.mean_absolute_error_contested is None
+
+
+def test_compute_harm_metrics_agreement_split_with_no_contested_rows(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_human_scores = np.array([[0.1, 0.9], [0.2, 0.8], [0.0, 1.0]])
+    all_model_scores = np.array([[0.1, 0.9]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.num_unanimous_responses == 2
+    assert metrics.num_contested_responses == 0
+    assert np.isclose(metrics.mean_absolute_error_unanimous, 0.0)
+    assert metrics.mean_absolute_error_contested is None
+
+
+def test_harm_metrics_load_from_file_written_before_the_agreement_split(tmp_path):
+    # Metrics files already on disk predate these fields and must keep loading.
+    legacy = {
+        "num_responses": 2,
+        "num_human_raters": 3,
+        "num_scorer_trials": 1,
+        "mean_absolute_error": 0.1,
+        "mae_standard_error": 0.01,
+        "t_statistic": 1.0,
+        "p_value": 0.5,
+        "krippendorff_alpha_combined": 0.9,
+        "krippendorff_alpha_humans": 0.88,
+        "krippendorff_alpha_model": None,
+    }
+    path = tmp_path / "legacy_metrics.json"
+    path.write_text(json.dumps({"metrics": legacy}))
+    metrics = HarmScorerMetrics.from_json_file(path)
+    assert metrics.mean_absolute_error == 0.1
+    assert metrics.contested_threshold is None
+    assert metrics.num_contested_responses is None
+    assert metrics.mean_absolute_error_contested is None
 
 
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.find_objective_metrics_by_eval_hash")

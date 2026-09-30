@@ -6,7 +6,7 @@
 These tests construct real ``IndividualPromptAttack`` / ``ProgressiveMultiPromptAttack``
 instances and exercise their wiring all the way down through
 ``GCGAttackPrompt._update_ids``, which calls ``tokenizer.apply_chat_template`` and
-walks character positions via ``char_to_token``. They live here (not under
+maps character spans through token offsets. They live here (not under
 ``tests/unit/``) because they require a real HuggingFace tokenizer (gpt2) to
 back the chat-template pipeline — mocking that out would defeat the test's
 purpose, which is to catch kwarg-mismatch and template-compatibility bugs that
@@ -75,9 +75,9 @@ def _make_mock_worker_with_real_tokenizer() -> MagicMock:
     """Worker mock backed by a real gpt2 tokenizer.
 
     The wiring tests construct real ``GCGAttackPrompt`` instances which call
-    ``tokenizer.apply_chat_template`` and then walk character positions in the
-    rendered prompt. We need a real string + a tokenizer that can answer
-    ``char_to_token`` queries on it, so we back the mock with the smallest
+    ``tokenizer.apply_chat_template`` and then map character spans in the
+    rendered prompt. We need a real string and a tokenizer that provides
+    offset mappings for it, so we back the mock with the smallest
     workable real HF tokenizer (gpt2) plus an explicit llama-2-style chat
     template (gpt2 ships without one).
     """

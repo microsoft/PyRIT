@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
     from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
+    from pyrit.score.float_scale.float_scale_fallback_scorer import FloatScaleFallbackScorer
     from pyrit.score.float_scale.float_scale_score_aggregator import (
         FloatScaleScoreAggregator,
         FloatScaleScorerAllCategories,
@@ -87,6 +88,7 @@ if TYPE_CHECKING:
         LlamaGuardScorer,
         render_llamaguard_prompt,
     )
+    from pyrit.score.true_false.local_refusal_classifier_scorer import LocalRefusalClassifierScorer
     from pyrit.score.true_false.manual_scorer import ManualScorer
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
@@ -139,6 +141,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.shieldgemma_scorer import ShieldGemmaScorer, render_shieldgemma_prompt
     from pyrit.score.true_false.substring_scorer import SubStringScorer
     from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
+    from pyrit.score.true_false.true_false_fallback_scorer import TrueFalseFallbackScorer
     from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
     from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
     from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
@@ -169,6 +172,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FloatScaleScoreAggregator": "pyrit.score.float_scale.float_scale_score_aggregator",
     "FloatScaleScorerAllCategories": "pyrit.score.float_scale.float_scale_score_aggregator",
     "FloatScaleScorerByCategory": "pyrit.score.float_scale.float_scale_score_aggregator",
+    "FloatScaleFallbackScorer": "pyrit.score.float_scale.float_scale_fallback_scorer",
     "FloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
     "MessageFloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
     "MessageTrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
@@ -190,6 +194,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TraceAcquisitionError": "pyrit.score.observation.trace_client",
     "TraceClient": "pyrit.score.observation.trace_client",
     "JsonSchemaResponseHandler": "pyrit.score.response_handler",
+    "LocalRefusalClassifierScorer": "pyrit.score.true_false.local_refusal_classifier_scorer",
     "LDAPInjectionOutputScorer": "pyrit.score.true_false.regex.ldap_injection_output_scorer",
     "LikertScaleEvalFiles": "pyrit.score.float_scale.self_ask_likert_scorer",
     "LikertScale": "pyrit.score.float_scale.likert_scale",
@@ -272,6 +277,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "SubStringScorer": "pyrit.score.true_false.substring_scorer",
     "SystemPromptExtractionScorer": "pyrit.score.float_scale.system_prompt_extraction_scorer",
     "TrueFalseCompositeScorer": "pyrit.score.true_false.true_false_composite_scorer",
+    "TrueFalseFallbackScorer": "pyrit.score.true_false.true_false_fallback_scorer",
     "TrueFalseInverterScorer": "pyrit.score.true_false.true_false_inverter_scorer",
     "TrueFalseQuestion": "pyrit.score.true_false.self_ask_true_false_scorer",
     "TrueFalseQuestionPaths": "pyrit.score.true_false.self_ask_true_false_scorer",

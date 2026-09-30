@@ -306,6 +306,81 @@ class TestCrossEntropyLoss:
 
         assert out.shape == (batch_size,)
 
+    @pytest.mark.parametrize(
+        ("target_weight", "control_weight"),
+        [(1.0, 0.0), (0.0, 0.5), (0.7, 0.3)],
+    )
+    def test_selected_logits_match_full_logits(self, target_weight: float, control_weight: float) -> None:
+        batch_size = 3
+        target_slice = slice(5, 8)
+        control_slice = slice(1, 4)
+        torch.manual_seed(21)
+        logits = torch.randn(batch_size, 10, 25)
+        token_ids = torch.randint(0, 25, (batch_size, 10))
+        loss_function = CrossEntropyLoss(target_weight=target_weight, control_weight=control_weight)
+
+        positions = loss_function.get_required_logit_positions(
+            target_slice=target_slice,
+            control_slice=control_slice,
+        )
+        selected = loss_function.compute_loss_from_selected_logits(
+            logits=logits[:, positions, :],
+            token_ids=token_ids,
+            target_slice=target_slice,
+            control_slice=control_slice,
+        )
+        full = loss_function.compute_loss(
+            logits=logits,
+            token_ids=token_ids,
+            target_slice=target_slice,
+            control_slice=control_slice,
+        )
+
+        assert torch.equal(selected, full)
+
+    def test_selected_logit_positions_follow_enabled_terms(self) -> None:
+        target_only = CrossEntropyLoss(target_weight=1.0, control_weight=0.0)
+        combined = CrossEntropyLoss(target_weight=1.0, control_weight=0.1)
+
+        assert torch.equal(
+            target_only.get_required_logit_positions(
+                target_slice=slice(5, 8),
+                control_slice=slice(1, 4),
+            ),
+            torch.tensor([4, 5, 6]),
+        )
+        assert torch.equal(
+            combined.get_required_logit_positions(
+                target_slice=slice(5, 8),
+                control_slice=slice(1, 4),
+            ),
+            torch.tensor([4, 5, 6, 0, 1, 2]),
+        )
+
+    def test_selected_logits_reject_wrong_sequence_length(self) -> None:
+        loss_function = CrossEntropyLoss(target_weight=1.0, control_weight=0.1)
+
+        with pytest.raises(ValueError, match="expected 6, got 5"):
+            loss_function.compute_loss_from_selected_logits(
+                logits=torch.randn(2, 5, 20),
+                token_ids=torch.randint(0, 20, (2, 10)),
+                target_slice=slice(5, 8),
+                control_slice=slice(1, 4),
+            )
+
+    def test_selected_logits_reject_corrupted_zero_weight_state(self) -> None:
+        loss_function = CrossEntropyLoss()
+        loss_function._target_weight = 0.0
+        loss_function._control_weight = 0.0
+
+        with pytest.raises(RuntimeError, match="produced no terms"):
+            loss_function.compute_loss_from_selected_logits(
+                logits=torch.empty(2, 0, 20),
+                token_ids=torch.randint(0, 20, (2, 10)),
+                target_slice=slice(5, 8),
+                control_slice=slice(1, 4),
+            )
+
 
 def _make_filter_tokenizer() -> MagicMock:
     """Build a fresh, deterministic, stateless mock tokenizer for filter tests.
