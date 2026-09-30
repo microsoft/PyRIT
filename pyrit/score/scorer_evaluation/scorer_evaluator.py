@@ -30,6 +30,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     find_objective_metrics_by_eval_hash,
     replace_evaluation_results,
 )
+from pyrit.score.true_false.multi_label_true_false_scorer import MultiLabelTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -83,7 +84,12 @@ class ScorerEvaluator(abc.ABC):
 
         Args:
             scorer (Scorer): The scorer to evaluate.
+
+        Raises:
+            ValueError: If a multi-label scorer has not been projected onto one label.
         """
+        if isinstance(scorer, MultiLabelTrueFalseScorer):
+            raise ValueError("Evaluate one label at a time using TrueFalseScoreSelector.")
         self.scorer = scorer
 
     @classmethod

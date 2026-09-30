@@ -153,6 +153,7 @@ project:
             - file: code/scoring/3_combining_scorers.ipynb
             - file: code/scoring/4_scorer_metrics.ipynb
             - file: code/scoring/5_tool_call_scorer.ipynb
+            - file: code/scoring/6_multi_label_true_false_scorers.ipynb
         - file: code/memory/0_memory.md
           children:
             - file: code/memory/1_sqlite_memory.ipynb

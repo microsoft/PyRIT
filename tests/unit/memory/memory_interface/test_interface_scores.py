@@ -29,6 +29,44 @@ def _test_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
     )
 
 
+@pytest.mark.parametrize("category", ["harmful_response", "HARMFUL_RESPONSE"])
+def test_get_scores_matches_whole_category_elements(sqlite_instance: MemoryInterface, category):
+    message = MessagePiece(role="assistant", original_value="response", conversation_id=str(uuid4())).to_message()
+    sqlite_instance.add_message_to_memory(request=message)
+    categories = [["harmful_response"], ["other", "harmful_response"], ["not_harmful_response"], ["harmful"], []]
+    scores = [
+        Score(
+            score_type="true_false",
+            score_value="false",
+            score_category=labels,
+            message_piece_id=message.get_piece().id,
+            scorer_class_identifier=_test_scorer_id(),
+        )
+        for labels in categories
+    ]
+    sqlite_instance.add_scores_to_memory(scores=scores)
+
+    matched = sqlite_instance.get_scores(score_category=category)
+    assert {score.id for score in matched} == {score.id for score in scores[:2]}
+
+
+def test_get_scores_category_filter_uses_bound_sql_server_json_membership():
+    from unittest.mock import patch
+
+    from sqlalchemy.dialects import mssql
+
+    from pyrit.memory import AzureSQLMemory
+
+    memory = AzureSQLMemory.__new__(AzureSQLMemory)
+    with patch.object(memory, "_query_entries", return_value=[]) as query:
+        assert memory.get_scores(score_category="harmful_response") == []
+    condition = query.call_args.kwargs["conditions"]
+    compiled = condition.compile(dialect=mssql.dialect())
+    assert "OPENJSON" in str(compiled)
+    assert "harmful_response" in compiled.params.values()
+    assert "harmful_response" not in str(compiled)
+
+
 def test_get_scores_by_label(sqlite_instance: MemoryInterface, sample_conversations: Sequence[MessagePiece]):
     # create list of scores that are associated with sample conversation entries
     # assert that that list of scores is the same as expected :-)
