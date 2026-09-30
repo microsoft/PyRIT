@@ -32,9 +32,9 @@ class _AdversarialTarget(MockPromptTarget):
         super().__init__()
         self.system_prompts: list[str] = []
 
-    def set_system_prompt(self, *, system_prompt: str, conversation_id: str, **kwargs) -> None:
+    async def set_system_prompt_async(self, *, system_prompt: str, conversation_id: str) -> None:
         self.system_prompts.append(system_prompt)
-        super().set_system_prompt(system_prompt=system_prompt, conversation_id=conversation_id, **kwargs)
+        await super().set_system_prompt_async(system_prompt=system_prompt, conversation_id=conversation_id)
 
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         message = normalized_conversation[-1]

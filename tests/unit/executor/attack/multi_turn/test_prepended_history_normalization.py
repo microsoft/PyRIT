@@ -374,7 +374,7 @@ async def test_tap_seeded_stateless_retained_and_cloned_branches_replay_only_ori
         branch._objective = "objective"
         await branch._send_prompt_to_target_async(prompt)
 
-    deep_clone = cloned.duplicate()
+    deep_clone = await cloned.duplicate_async()
     deep_clone._objective = "objective"
     await deep_clone._send_prompt_to_target_async("depth three cloned")
 
@@ -420,7 +420,7 @@ async def test_tap_stateful_clone_bootstraps_duplicated_branch_once():
     assert node._prepended_history_send_context
     assert node._prepended_history_send_context.is_seed_consumed
 
-    cloned = node.duplicate()
+    cloned = await node.duplicate_async()
     cloned._objective = "objective"
     cloned_conversation_id = cloned.objective_target_conversation_id
     assert cloned_conversation_id != parent_conversation_id
@@ -454,7 +454,7 @@ async def test_tap_unseeded_stateful_clone_bootstraps_duplicated_branch_once():
     await node._send_prompt_to_target_async("parent first")
     assert node._prepended_history_send_context is None
 
-    cloned = node.duplicate()
+    cloned = await node.duplicate_async()
     cloned._objective = "objective"
     cloned_conversation_id = cloned.objective_target_conversation_id
     assert cloned._prepended_history_send_context
@@ -472,7 +472,7 @@ async def test_tap_unseeded_stateful_clone_bootstraps_duplicated_branch_once():
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_tap_branch_preserves_multimodal_last_response():
+async def test_tap_branch_preserves_multimodal_last_response() -> None:
     target = _RecordingTarget()
     node = _make_tap_node(target=target)
     node.last_response = Message(
@@ -486,7 +486,7 @@ def test_tap_branch_preserves_multimodal_last_response():
         ]
     )
 
-    duplicate = node.duplicate()
+    duplicate = await node.duplicate_async()
 
     assert duplicate.last_response == node.last_response
     assert duplicate.last_response is not node.last_response
@@ -530,7 +530,7 @@ async def test_tap_unseeded_stateless_retained_and_cloned_branches_send_current_
         branch._objective = "objective"
         await branch._send_prompt_to_target_async(prompt)
 
-    deep_clone = cloned.duplicate()
+    deep_clone = await cloned.duplicate_async()
     deep_clone._objective = "objective"
     await deep_clone._send_prompt_to_target_async("depth three cloned")
 
@@ -616,7 +616,7 @@ async def test_tap_clone_does_not_replay_non_text_live_converter_output(tmp_path
     node._objective = "objective"
 
     await node._send_prompt_to_target_async("depth one")
-    cloned = node.duplicate()
+    cloned = await node.duplicate_async()
     cloned._objective = "objective"
     await cloned._send_prompt_to_target_async("depth two")
 
@@ -663,7 +663,7 @@ async def test_tap_stateful_clone_rejects_non_text_converter_history(tmp_path: P
     await node._send_prompt_to_target_async("depth one")
 
     with pytest.raises(ValueError, match="cannot clone.*non-text output.*image_path"):
-        node.duplicate()
+        await node.duplicate_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -688,7 +688,7 @@ async def test_tap_stateful_clone_accepts_converter_pipeline_with_final_text_out
     node._objective = "objective"
 
     await node._send_prompt_to_target_async("depth one")
-    cloned = node.duplicate()
+    cloned = await node.duplicate_async()
     cloned._objective = "objective"
     await cloned._send_prompt_to_target_async("depth two")
 

@@ -209,7 +209,7 @@ async def test_scale_scorer_retries_out_of_range_score(out_of_range_value: str, 
             ]
         )
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(side_effect=[[_response(out_of_range_value)], [_response("10")]])
 

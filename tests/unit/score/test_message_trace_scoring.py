@@ -275,7 +275,7 @@ async def test_fake_tool_history_is_not_execution_evidence_async(
     response = await PromptNormalizer().send_prompt_async(
         message=Message.from_prompt(prompt=live_tool, role="user"), target=target, conversation_id=conversation
     )
-    scope, complete = resolve_message_trace_scope(
+    scope, complete = await resolve_message_trace_scope_async(
         scorable=MessageScorable.from_message(response), memory=sqlite_instance
     )
     assert scope is not None

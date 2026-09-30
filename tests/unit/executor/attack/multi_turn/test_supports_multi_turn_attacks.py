@@ -529,7 +529,7 @@ class TestTAPNodeDuplicateSystemMessages:
         )
         (await memory.add_message_pieces_to_memory_async(message_pieces=[sys_piece, user_piece, asst_piece]))
 
-        duplicate = node.duplicate()
+        duplicate = await node.duplicate_async()
 
         # The duplicate should have a different conversation_id
         assert duplicate.objective_target_conversation_id != node.objective_target_conversation_id
@@ -568,7 +568,7 @@ class TestTAPNodeDuplicateSystemMessages:
         )
         (await memory.add_message_pieces_to_memory_async(message_pieces=[sys_piece, user_piece, asst_piece]))
 
-        duplicate = node.duplicate()
+        duplicate = await node.duplicate_async()
 
         assert duplicate.objective_target_conversation_id != node.objective_target_conversation_id
 
@@ -592,7 +592,7 @@ class TestTAPNodeDuplicateSystemMessages:
         )
         (await memory.add_message_pieces_to_memory_async(message_pieces=[user_piece]))
 
-        duplicate = node.duplicate()
+        duplicate = await node.duplicate_async()
 
         assert duplicate.objective_target_conversation_id != node.objective_target_conversation_id
         dup_messages = await memory.get_conversation_messages_async(
@@ -629,7 +629,7 @@ class TestTAPNodeDuplicateSystemMessages:
         )
         (await memory.add_message_pieces_to_memory_async(message_pieces=[target_piece]))
 
-        duplicate = node.duplicate()
+        duplicate = await node.duplicate_async()
 
         dup_adv_messages = await memory.get_conversation_messages_async(
             conversation_id=duplicate.adversarial_chat_conversation_id
@@ -662,7 +662,7 @@ class TestTAPNodeDuplicateSystemMessages:
         )
         (await memory.add_message_pieces_to_memory_async(message_pieces=[sys1, user_piece, sys2]))
 
-        duplicate = node.duplicate()
+        duplicate = await node.duplicate_async()
 
         dup_messages = await memory.get_conversation_messages_async(
             conversation_id=duplicate.objective_target_conversation_id
@@ -680,7 +680,7 @@ class TestTAPNodeDuplicateSystemMessages:
         memory = CentralMemory.get_memory_instance()
 
         # Don't seed any messages
-        duplicate = node.duplicate()
+        duplicate = await node.duplicate_async()
 
         assert duplicate.objective_target_conversation_id != node.objective_target_conversation_id
         dup_messages = await memory.get_conversation_messages_async(
@@ -688,21 +688,21 @@ class TestTAPNodeDuplicateSystemMessages:
         )
         assert len(dup_messages) == 0
 
-    def test_duplicate_node_has_correct_parent_id(self):
+    async def test_duplicate_node_has_correct_parent_id(self) -> None:
         """The duplicate node's parent_id should be the original node's node_id."""
         node = self._make_tap_node(supports_multi_turn=False)
 
-        duplicate = node.duplicate()
+        duplicate = await node.duplicate_async()
 
         assert duplicate.parent_id == node.node_id
         assert duplicate.node_id != node.node_id
 
-    def test_duplicate_node_copies_conversation_context(self):
+    async def test_duplicate_node_copies_conversation_context(self) -> None:
         """The duplicate node should inherit the _conversation_context from the original."""
         node = self._make_tap_node(supports_multi_turn=False)
         node._conversation_context = "Some prior conversation context"
 
-        duplicate = node.duplicate()
+        duplicate = await node.duplicate_async()
 
         assert duplicate._conversation_context == "Some prior conversation context"
 
@@ -726,7 +726,7 @@ class TestTAPNodeDuplicateSystemMessages:
         )
         (await memory.add_message_pieces_to_memory_async(message_pieces=[sys_piece, user_piece]))
 
-        duplicate = node.duplicate()
+        duplicate = await node.duplicate_async()
 
         dup_messages = await memory.get_conversation_messages_async(
             conversation_id=duplicate.objective_target_conversation_id
@@ -753,7 +753,7 @@ class TestTAPNodeDuplicateSystemMessages:
         )
         (await memory.add_message_pieces_to_memory_async(message_pieces=[sys_piece, user_piece]))
 
-        node.duplicate()
+        await node.duplicate_async()
 
         # Original conversation should still have both messages
         orig_messages = await memory.get_conversation_messages_async(
@@ -788,7 +788,7 @@ class TestTAPNodeDuplicateSystemMessages:
         )
         (await memory.add_message_pieces_to_memory_async(message_pieces=[sys_text, sys_image, user_piece]))
 
-        duplicate = node.duplicate()
+        duplicate = await node.duplicate_async()
 
         dup_messages = await memory.get_conversation_messages_async(
             conversation_id=duplicate.objective_target_conversation_id
@@ -943,7 +943,7 @@ class TestTAPBranchingPreservesSystemPrompts:
         (await memory.add_message_pieces_to_memory_async(message_pieces=[sys_piece, user_piece, asst_piece]))
 
         # Depth 2: branch with the full logical history.
-        branch1 = node.duplicate()
+        branch1 = await node.duplicate_async()
 
         branch1_msgs = await memory.get_conversation_messages_async(
             conversation_id=branch1.objective_target_conversation_id
@@ -972,7 +972,7 @@ class TestTAPBranchingPreservesSystemPrompts:
         assert [m.api_role for m in branch1_full] == ["system", "user", "assistant", "user", "assistant"]
 
         # Depth 3: branch again from branch1
-        branch2 = branch1.duplicate()
+        branch2 = await branch1.duplicate_async()
 
         branch2_msgs = await memory.get_conversation_messages_async(
             conversation_id=branch2.objective_target_conversation_id
@@ -1006,7 +1006,7 @@ class TestTAPBranchingPreservesSystemPrompts:
         )
         (await memory.add_message_pieces_to_memory_async(message_pieces=[sys_piece, user_piece, asst_piece]))
 
-        branch = node.duplicate()
+        branch = await node.duplicate_async()
 
         branch_msgs = await memory.get_conversation_messages_async(
             conversation_id=branch.objective_target_conversation_id
@@ -1023,7 +1023,7 @@ class TestTAPBranchingPreservesSystemPrompts:
         (await memory.add_message_pieces_to_memory_async(message_pieces=[user2]))
 
         # Branch again — should have all 4 messages
-        branch2 = branch.duplicate()
+        branch2 = await branch.duplicate_async()
         branch2_msgs = await memory.get_conversation_messages_async(
             conversation_id=branch2.objective_target_conversation_id
         )

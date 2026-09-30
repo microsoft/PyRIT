@@ -617,8 +617,8 @@ class TestGenerateSimulatedConversationAsync:
                 )
             )
             mock_attack_class.return_value = mock_attack
-            mock_memory = MagicMock()
-            mock_memory.get_conversation_messages.return_value = iter([])
+            mock_memory = MagicMock(spec=MemoryInterface)
+            mock_memory.get_conversation_messages_async.return_value = []
             mock_memory_class.get_memory_instance.return_value = mock_memory
 
             result = await generate_simulated_conversation_async(
@@ -669,8 +669,8 @@ class TestGenerateSimulatedConversationAsync:
                 )
             )
             mock_attack_class.return_value = mock_attack
-            mock_memory = MagicMock()
-            mock_memory.get_conversation_messages.return_value = iter([])
+            mock_memory = MagicMock(spec=MemoryInterface)
+            mock_memory.get_conversation_messages_async.return_value = []
             mock_memory_class.get_memory_instance.return_value = mock_memory
 
             result = await generate_simulated_conversation_async(
@@ -715,8 +715,8 @@ class TestGenerateSimulatedConversationAsync:
                 )
             )
             mock_attack_class.return_value = mock_attack
-            mock_memory = MagicMock()
-            mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+            mock_memory = MagicMock(spec=MemoryInterface)
+            mock_memory.get_conversation_messages_async.return_value = sample_conversation
             mock_memory_class.get_memory_instance.return_value = mock_memory
 
             result = await generate_simulated_conversation_async(

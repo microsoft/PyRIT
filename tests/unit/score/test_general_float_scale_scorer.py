@@ -205,7 +205,7 @@ async def test_general_float_scorer_retries_out_of_range_score(patch_central_dat
             ]
         )
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(side_effect=[[_response(150)], [_response(40)]])
 
