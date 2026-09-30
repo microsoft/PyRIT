@@ -1,4 +1,4 @@
-import type { TargetInstance } from '@/types'
+import type { FilterOption, TargetInstance } from '@/types'
 import { targetType } from '@/utils/targetIdentity'
 
 /** Display name for each known modality, shared by the table icons and the filters. */
@@ -51,12 +51,6 @@ export interface TargetFilters {
 }
 
 export const DEFAULT_TARGET_FILTERS: TargetFilters = { types: [], inputs: [], outputs: [], capabilities: [] }
-
-/** A filter choice: the raw value and the text shown for it. */
-export interface FilterOption {
-  value: string
-  label: string
-}
 
 /** Choices per filter; a filter with no choices cannot narrow the table and is not shown. */
 export type TargetFilterOptions = Record<keyof TargetFilters, FilterOption[]>

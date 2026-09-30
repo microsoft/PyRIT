@@ -534,7 +534,7 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
     const resetButton = screen.getByRole('button', { name: 'Reset all filters' })
-    expect(resetButton).toBeDisabled()
+    expect(resetButton).toHaveAttribute('aria-disabled', 'true')
 
     await pickFilterOption(user, 'Filter by type:', 'OpenAIChatTarget')
     await pickFilterOption(user, 'Filter by input:', 'Image')
@@ -549,7 +549,7 @@ describe('TargetTable', () => {
     expect(screen.getByRole('combobox', { name: 'Filter by output:' })).toHaveValue('')
     expect(screen.getByRole('combobox', { name: 'Filter by capability:' })).toHaveValue('')
     expect(screen.getAllByRole('row', { name: /openai_chat_gpt4|azure_image_dalle|text_target_basic/ })).toHaveLength(3)
-    expect(resetButton).toBeDisabled()
+    expect(resetButton).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('should only show a modality filter that can narrow the targets', () => {
@@ -662,7 +662,7 @@ describe('TargetTable', () => {
     expect(screen.getByRole('row', { name: /text_chat/ })).toBeInTheDocument()
     expect(screen.getByRole('row', { name: /audio_chat/ })).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('')
-    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('should not bring back a selection when a later reload offers it again', async () => {

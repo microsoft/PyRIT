@@ -322,6 +322,21 @@ test.describe("Target Registry Page", () => {
     // Second target should now appear
     await expect(page.getByText("dall-e-3", { exact: true })).toBeVisible({ timeout: 10000 });
   });
+
+  test("should keep focus on Reset all filters after it clears them", async ({ page }) => {
+    await routeResponsiveTargetData(page, FILTER_TARGETS);
+    await goToTargets(page);
+    await checkFilterOptions(page, "Filter by type:", ["OpenAIChatTarget"]);
+    await expect(page.getByTestId("target-row-filter-speech")).toHaveCount(0);
+
+    const reset = page.getByRole("button", { name: "Reset all filters", exact: true });
+    await reset.focus();
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByTestId("target-row-filter-speech")).toBeVisible();
+    await expect(reset).toBeFocused();
+    await expect(reset).toHaveAttribute("aria-disabled", "true");
+  });
 });
 
 test.describe("Create Target Dialog", () => {

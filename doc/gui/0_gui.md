@@ -297,7 +297,7 @@ Until you expand or collapse the section, its default follows the current group 
 
 The Configuration view manages the targets available for attacks.
 
-<img width="1636" alt="Target configuration" src="images/config.png" />
+<img width="1664" alt="Target configuration" src="images/config.png" />
 
 #### Target Table
 

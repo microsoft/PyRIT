@@ -9,6 +9,8 @@ import {
   mergeClasses,
 } from '@fluentui/react-components'
 import { FilterDismissRegular } from '@fluentui/react-icons'
+import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
+import type { FilterOption } from '@/types'
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
 import type { HistoryFilters } from './historyFilters'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
@@ -32,57 +34,9 @@ function formatMultiSelectValue(selected: string[]): string {
   return `${selected[0]} (+${selected.length - 1})`
 }
 
-interface SearchableMultiComboboxProps {
-  placeholder: string
-  selectedOptions: string[]
-  options: string[]
-  onSelect: (selected: string[]) => void
-  testid: string
-  className?: string
-}
-
-function SearchableMultiCombobox({
-  placeholder,
-  selectedOptions,
-  options,
-  onSelect,
-  testid,
-  className,
-}: SearchableMultiComboboxProps) {
-  const [open, setOpen] = useState(false)
-  const [search, setSearch] = useState('')
-
-  const filtered = search
-    ? options.filter((o) => o.toLowerCase().includes(search.toLowerCase()))
-    : options
-
-  return (
-    <Combobox
-      className={className}
-      placeholder={placeholder}
-      multiselect
-      freeform
-      open={open}
-      onOpenChange={(_e, data) => {
-        setOpen(data.open)
-        // Clear search text both when opening (start fresh) and when closing
-        // (so the formatted value is shown again).
-        setSearch('')
-      }}
-      selectedOptions={selectedOptions}
-      value={open ? search : formatMultiSelectValue(selectedOptions)}
-      onChange={(e) => setSearch((e.target as HTMLInputElement).value)}
-      onOptionSelect={(_e, data) => {
-        onSelect(data.selectedOptions)
-        setSearch('')
-      }}
-      data-testid={testid}
-    >
-      {filtered.map((o) => (
-        <Option key={o} value={o}>{o}</Option>
-      ))}
-    </Combobox>
-  )
+/** History's choices are plain strings, shown as they are. */
+function toFilterOptions(values: string[]): FilterOption[] {
+  return values.map((value: string) => ({ value, label: value }))
 }
 
 interface HistoryFiltersBarProps {
@@ -173,7 +127,7 @@ export default function HistoryFiltersBar({
             size="small"
             icon={<FilterDismissRegular />}
             aria-label="Reset all filters"
-            disabled={!hasActiveFilters}
+            disabledFocusable={!hasActiveFilters}
             onClick={() => onFiltersChange({ ...DEFAULT_HISTORY_FILTERS })}
             data-testid="reset-filters-btn"
           />
@@ -182,17 +136,17 @@ export default function HistoryFiltersBar({
           className={styles.filterDropdown}
           placeholder="All operators"
           selectedOptions={operatorFilters}
-          options={operatorOptions}
+          options={toFilterOptions(operatorOptions)}
           onSelect={(selected) => setFilter('operator', selected)}
-          testid="operator-filter"
+          testId="operator-filter"
         />
         <SearchableMultiCombobox
           className={styles.filterDropdown}
           placeholder="All operations"
           selectedOptions={operationFilters}
-          options={operationOptions}
+          options={toFilterOptions(operationOptions)}
           onSelect={(selected) => setFilter('operation', selected)}
-          testid="operation-filter"
+          testId="operation-filter"
         />
         <Combobox
           className={styles.filterDropdown}
@@ -237,9 +191,9 @@ export default function HistoryFiltersBar({
           className={styles.filterDropdown}
           placeholder="All attack types"
           selectedOptions={attackTypeFilters}
-          options={attackTypeOptions}
+          options={toFilterOptions(attackTypeOptions)}
           onSelect={(selected) => setFilter('attackTypes', selected)}
-          testid="attack-type-filter"
+          testId="attack-type-filter"
         />
         <Combobox
           className={styles.filterDropdown}

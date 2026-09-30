@@ -3,7 +3,6 @@ import {
   TOUCH_INPUT_QUERY,
   MINIMUM_TOUCH_TARGET_SIZE,
   mobileTouchTarget,
-  mobileTouchTargetHeight,
 } from '../../styles/touchTargets'
 
 // Room for the filter name, a long choice, and the "(+N)" count; longer text ellipsizes.
@@ -60,9 +59,6 @@ export const useTargetFiltersBarStyles = makeStyles({
         minHeight: MINIMUM_TOUCH_TARGET_SIZE,
       },
     },
-  },
-  option: {
-    ...mobileTouchTargetHeight,
   },
   resetButton: {
     ...mobileTouchTarget,

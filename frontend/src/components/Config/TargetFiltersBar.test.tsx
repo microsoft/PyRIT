@@ -92,7 +92,10 @@ describe('TargetFiltersBar', () => {
   it('should reset every filter, and only when one is set', async () => {
     const user = userEvent.setup()
     const { rerender } = render(<TestWrapper><TargetFiltersBar {...defaultProps} /></TestWrapper>)
-    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeDisabled()
+    const reset = screen.getByRole('button', { name: 'Reset all filters' })
+    expect(reset).toHaveAttribute('aria-disabled', 'true')
+    await user.click(reset)
+    expect(defaultProps.onFiltersChange).not.toHaveBeenCalled()
 
     rerender(
       <TestWrapper>
