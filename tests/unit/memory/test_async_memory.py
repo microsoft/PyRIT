@@ -5,20 +5,30 @@ import ast
 import asyncio
 import inspect
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from azure.core.credentials import AccessToken
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.dialects.mssql.aioodbc import MSDialectAsync_aioodbc
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import Session
 
 from pyrit.auth.azure_auth import AsyncAzureAuth
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.memory import AzureSQLMemory, MemoryInterface, SQLiteMemory
 from pyrit.models import Conversation, Message, MessagePiece, SeedPrompt
+
+
+@pytest.fixture
+def mock_aioodbc_connect() -> Iterator[AsyncMock]:
+    connect = AsyncMock()
+    driver = MagicMock(spec=["connect", "Connection"], connect=connect)
+    # Block native ODBC imports so these unit tests also cover hosts without the driver.
+    with patch.dict("sys.modules", {"aioodbc": driver, "pyodbc": None}):
+        yield connect
 
 
 def test_public_memory_io_has_explicit_async_counterparts() -> None:
@@ -244,7 +254,9 @@ async def test_azure_disposal_failure_discards_engine_and_credential(failing_res
 @pytest.mark.parametrize(
     "trusted_connection", ["Trusted_Connection=Yes", "trusted_connection = yes", " TRUSTED_CONNECTION=YES "]
 )
-async def test_azure_async_token_connection_removes_trusted_connection(trusted_connection: str) -> None:
+async def test_azure_async_token_connection_removes_trusted_connection(
+    trusted_connection: str, mock_aioodbc_connect: AsyncMock
+) -> None:
     memory = AzureSQLMemory.__new__(AzureSQLMemory)
     memory._connection_string = "mssql+pyodbc://localhost/test?driver=ODBC+Driver+18+for+SQL+Server"
     memory._verbose = False
@@ -259,12 +271,12 @@ async def test_azure_async_token_connection_removes_trusted_connection(trusted_c
     with (
         patch("pyrit.memory.azure_sql_memory.create_async_engine", return_value=engine) as create,
         patch("pyrit.memory.azure_sql_memory.AsyncAzureAuth", return_value=auth),
-        patch("aioodbc.connect", new_callable=AsyncMock) as connect,
     ):
         assert memory._create_async_engine() is engine
         await create.call_args.kwargs["async_creator"]()
-    assert connect.call_args.kwargs["dsn"] == "Driver=unit-test;Database=test"
-    assert memory.SQL_COPT_SS_ACCESS_TOKEN in connect.call_args.kwargs["attrs_before"]
+    mock_aioodbc_connect.assert_awaited_once()
+    assert mock_aioodbc_connect.call_args.kwargs["dsn"] == "Driver=unit-test;Database=test"
+    assert memory.SQL_COPT_SS_ACCESS_TOKEN in mock_aioodbc_connect.call_args.kwargs["attrs_before"]
 
 
 async def test_azure_closed_loop_drops_both_owned_resources() -> None:
@@ -596,7 +608,7 @@ async def test_async_override_can_call_super_without_using_legacy_override(sqlit
     assert await memory.get_unique_attack_class_names_async() == []
 
 
-async def test_azure_async_creator_preserves_options_and_refreshes_token() -> None:
+async def test_azure_async_creator_preserves_options_and_refreshes_token(mock_aioodbc_connect: AsyncMock) -> None:
     memory = AzureSQLMemory.__new__(AzureSQLMemory)
     memory._connection_string = (
         "mssql+pyodbc://@example.invalid/test?"
@@ -605,30 +617,35 @@ async def test_azure_async_creator_preserves_options_and_refreshes_token() -> No
     memory._verbose = False
     memory._async_auth = {}
     memory._async_engines = {}
-    credential = MagicMock()
+    engine = MagicMock(spec=AsyncEngine)
+    engine.dialect = MSDialectAsync_aioodbc()
+    credential = MagicMock(spec=AsyncAzureAuth)
     credential.get_access_token_async = AsyncMock(side_effect=[AccessToken("first", 10), AccessToken("second", 20)])
     credential.close_async = AsyncMock()
     with (
         patch("pyrit.memory.azure_sql_memory.AsyncAzureAuth", return_value=credential),
-        patch("pyrit.memory.azure_sql_memory.create_async_engine", wraps=create_async_engine) as factory,
-        patch("aioodbc.connect", new_callable=AsyncMock) as connect,
+        patch("pyrit.memory.azure_sql_memory.create_async_engine", return_value=engine) as factory,
     ):
-        engine = memory._get_async_engine()
+        assert memory._get_async_engine() is engine
         try:
             creator = factory.call_args.kwargs["async_creator"]
             await creator()
             await creator()
-            options = connect.await_args_list[0].kwargs
+            assert mock_aioodbc_connect.await_count == 2
+            options = mock_aioodbc_connect.await_args_list[0].kwargs
             assert "Encrypt=yes" in options["dsn"]
             assert "TrustServerCertificate=no" in options["dsn"]
             assert "Trusted_Connection" not in options["dsn"]
             assert options["attrs_before"][1256][4:] == "first".encode("utf-16-le")
-            assert connect.await_args_list[1].kwargs["attrs_before"][1256][4:] == "second".encode("utf-16-le")
-            assert engine.url.drivername == "mssql+aioodbc"
+            assert mock_aioodbc_connect.await_args_list[1].kwargs["attrs_before"][1256][4:] == "second".encode(
+                "utf-16-le"
+            )
+            assert factory.call_args.args[0].drivername == "mssql+aioodbc"
             assert factory.call_args.kwargs["pool_pre_ping"] is True
             assert factory.call_args.kwargs["pool_recycle"] == 1800
         finally:
             await memory.dispose_loop_resources_async()
     credential.close_async.assert_awaited_once()
+    engine.dispose.assert_awaited_once()
     assert memory._async_auth == {}
     assert memory._async_engines == {}
