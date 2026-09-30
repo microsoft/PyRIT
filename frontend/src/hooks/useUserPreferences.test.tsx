@@ -205,7 +205,6 @@ describe('useUserPreferences', () => {
 
   it('reads old account-scoped targets without importing browser-wide labels or display choices', () => {
     window.localStorage.setItem('pyrit.targetDefaults.v1.tenant:alice', JSON.stringify(chosenPreferences.targets))
-    window.localStorage.setItem('pyrit.hiddenTargetRegistryNames', JSON.stringify(['someone-elses-target']))
     window.localStorage.setItem('pyrit.globalLabels', JSON.stringify({ operation: 'someone_else' }))
     window.localStorage.setItem('pyrit.themeMode', 'dark')
     window.localStorage.setItem('pyrit.chatMarkdownMode', 'markdown')
@@ -236,13 +235,13 @@ describe('useUserPreferences', () => {
 
   it('migrates legacy local settings on the next write without falling back after a clear', () => {
     window.localStorage.setItem('pyrit.targetDefaults.v1.local', JSON.stringify(chosenPreferences.targets))
-    window.localStorage.setItem('pyrit.hiddenTargetRegistryNames', JSON.stringify(['hidden-target']))
     window.localStorage.setItem('pyrit.globalLabels', JSON.stringify({ operation: 'op_legacy', team: 'blue' }))
     window.localStorage.setItem('pyrit.themeMode', 'dark')
     window.localStorage.setItem('pyrit.chatMarkdownMode', 'markdown')
     const preferences = readUserPreferences('local')
     expect(preferences).toEqual({
       ...chosenPreferences,
+      hiddenTargetRegistryNames: [],
       labels: { operation: 'op_legacy', team: 'blue' },
     })
     writeUserPreferences('local', DEFAULT_USER_PREFERENCES)

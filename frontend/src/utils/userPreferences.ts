@@ -25,19 +25,7 @@ function isTargetReference(value: unknown): value is TargetReference | null {
   )
 }
 
-function readLegacyHiddenTargetRegistryNames(accountKey: string): string[] {
-  if (accountKey !== 'local') return []
-
-  const stored = window.localStorage.getItem('pyrit.hiddenTargetRegistryNames')
-  if (stored === null) return []
-  const value: unknown = JSON.parse(stored)
-  if (!Array.isArray(value) || !value.every((registryName: unknown) => typeof registryName === 'string')) {
-    throw new Error('Saved hidden targets are invalid.')
-  }
-  return value
-}
-
-function parsePreferences(raw: string, legacyHiddenTargetRegistryNames: string[]): UserPreferences {
+function parsePreferences(raw: string): UserPreferences {
   const value: unknown = JSON.parse(raw)
   if (
     !isRecord(value)
@@ -60,7 +48,7 @@ function parsePreferences(raw: string, legacyHiddenTargetRegistryNames: string[]
   }
   return {
     targets: { objective: value.targets.objective, adversarial: value.targets.adversarial },
-    hiddenTargetRegistryNames: value.hiddenTargetRegistryNames ?? legacyHiddenTargetRegistryNames,
+    hiddenTargetRegistryNames: value.hiddenTargetRegistryNames ?? [],
     labels: Object.fromEntries(
       Object.entries(value.labels).map(([key, label]) => [key, typeof label === 'string' ? label : null]),
     ),
@@ -82,7 +70,6 @@ function readLegacyPreferences(accountKey: string): UserPreferences {
   }
   if (accountKey !== 'local') return preferences
 
-  preferences.hiddenTargetRegistryNames = readLegacyHiddenTargetRegistryNames(accountKey)
   const labels = window.localStorage.getItem('pyrit.globalLabels')
   if (labels !== null) {
     const value: unknown = JSON.parse(labels)
@@ -109,9 +96,7 @@ function readLegacyPreferences(accountKey: string): UserPreferences {
 export function readUserPreferences(accountKey: string): UserPreferences {
   const stored = window.localStorage.getItem(userPreferencesStorageKey(accountKey))
   if (stored === null) return readLegacyPreferences(accountKey)
-
-  const legacyHiddenTargetRegistryNames = readLegacyHiddenTargetRegistryNames(accountKey)
-  return parsePreferences(stored, legacyHiddenTargetRegistryNames)
+  return parsePreferences(stored)
 }
 
 export function writeUserPreferences(accountKey: string, preferences: UserPreferences): void {
