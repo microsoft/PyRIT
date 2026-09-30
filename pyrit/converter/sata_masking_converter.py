@@ -11,7 +11,7 @@ from pyrit.converter.text_selection_strategy import (
 )
 from pyrit.models import ComponentIdentifier, PromptDataType
 
-# Wiki-infill template from Dong et al. (SATA). Compose with TaskFramingConverter
+# Wiki-infill template from Dong et al. (SATA). Compose with PromptTemplateConverter
 # after masking; this converter only performs the mask/word-selection step.
 SATA_TASK_TEMPLATE = (
     "A wiki entry is a page within a wiki, which is a collaborative website that allows "
@@ -42,7 +42,7 @@ class SATAMaskingConverter(Converter):
 
     This is the word-selection step for Simple Assistive Task Linkage (SATA)
     [@dong2025sata]. PyRIT already provides HarmBench seeds and
-    ``TaskFramingConverter``; this converter supplies deterministic masking so
+    ``PromptTemplateConverter``; this converter supplies deterministic masking so
     the two can be composed into the SATA infill attack.
 
     Selection is dependency-free (no POS tagger or NLTK download). Use

@@ -428,6 +428,8 @@ class TestScoring:
         ("role", "data_type", "value"),
         [
             ("simulated_assistant", "text", "MARKER"),
+            ("simulated_assistant", "function_call", '{"name":"MARKER","arguments":{}}'),
+            ("simulated_tool", "function_call_output", '{"output":"MARKER"}'),
             ("assistant", "reasoning", "MARKER"),
             ("user", "function_call", '{"name":"MARKER","arguments":{}}'),
             ("assistant", "tool_call", '{"type":"web_search_call","query":"MARKER"}'),
@@ -476,6 +478,27 @@ class TestScoring:
         )
         scorable = _message_scorable(_piece(value="MARKER", role="user"))
         assert await scorer.score_async(scorable=scorable) == []
+
+    @pytest.mark.parametrize(
+        ("role", "data_type", "value", "field"),
+        [
+            ("simulated_assistant", "function_call", '{"name":"MARKER","arguments":{}}', "tool_name"),
+            ("simulated_tool", "function_call_output", '{"output":"MARKER"}', "tool_response"),
+        ],
+    )
+    async def test_synthetic_artifacts_require_explicit_role_opt_in_async(
+        self, *, role: ChatMessageRole, data_type: PromptDataType, value: str, field: str
+    ) -> None:
+        scorer = AgentThreatRulesScorer(
+            cache=False,
+            fields=[field],
+            validator=ScorerPromptValidator(supported_data_types=[data_type], supported_roles=[role]),
+        )
+        scores = await scorer.score_async(
+            scorable=_message_scorable(_piece(value=value, role=role, data_type=data_type))
+        )
+        assert scores[0].get_value() is True
+        assert "not proof of tool execution" in scores[0].score_value_description
 
 
 @pytest.mark.usefixtures("routed_digest")
