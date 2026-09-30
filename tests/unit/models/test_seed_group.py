@@ -7,6 +7,7 @@ import uuid
 
 import pytest
 
+from pyrit.models import MessagePiece, RequestTraceContext
 from pyrit.models.seeds import (
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
@@ -19,6 +20,68 @@ from pyrit.models.seeds import (
 # =============================================================================
 # SeedGroup Tests
 # =============================================================================
+
+
+@pytest.mark.parametrize("has_next_message", [False, True])
+def test_seed_extraction_marks_only_history_and_preserves_seed_metadata(has_next_message: bool) -> None:
+    prompts = [
+        SeedPrompt(value="Instructions", role="system", sequence=0),
+        SeedPrompt(value="Earlier request", role="user", sequence=1),
+        SeedPrompt(
+            value='{"call_id":"c","name":"lookup","arguments":"{}"}',
+            role="assistant",
+            data_type="function_call",
+            sequence=2,
+        ),
+        SeedPrompt(
+            value='{"call_id":"c","output":"result"}', role="tool", data_type="function_call_output", sequence=3
+        ),
+    ]
+    if has_next_message:
+        prompts.append(SeedPrompt(value="Next request", role="user", sequence=4))
+    for prompt in prompts:
+        prompt.metadata = {
+            "keep": "value",
+            RequestTraceContext.METADATA_KEY: {"old": "trace"},
+            RequestTraceContext.REQUEST_METADATA_KEY: {"old": "request"},
+        }
+    group = SeedGroup(seeds=prompts)
+    original = group.model_dump()
+
+    history = group.prepended_conversation
+    assert history is not None
+    assert [message.get_piece().role for message in history] == [
+        "system",
+        "user",
+        "simulated_assistant",
+        "simulated_tool",
+    ]
+    for message in history:
+        assert message.get_piece().prompt_metadata == {
+            "keep": "value",
+            MessagePiece.PREPENDED_HISTORY_METADATA_KEY: True,
+        }
+    next_message = group.next_message
+    if has_next_message:
+        assert next_message is not None
+        assert next_message.get_piece().prompt_metadata == prompts[-1].metadata
+        assert MessagePiece.PREPENDED_HISTORY_METADATA_KEY not in next_message.get_piece().prompt_metadata
+    else:
+        assert next_message is None
+    assert group.model_dump() == original
+
+
+def test_outgoing_seed_user_messages_are_not_prepended_history() -> None:
+    group = SeedGroup(
+        seeds=[
+            SeedPrompt(value="First request", role="user", sequence=0, metadata={"keep": "first"}),
+            SeedPrompt(value="Second request", role="user", sequence=1, metadata={"keep": "second"}),
+        ]
+    )
+    assert [message.get_piece().prompt_metadata for message in group.user_messages] == [
+        {"keep": "first"},
+        {"keep": "second"},
+    ]
 
 
 class TestSeedGroupInit:

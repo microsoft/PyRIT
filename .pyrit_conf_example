@@ -111,6 +111,15 @@ operation: op_trash_panda
 # Applies only to the pyrit_backend server.
 max_concurrent_scenario_runs: 3
 
+# Live Reinitialization
+# ---------------------
+# Allows administrators to apply saved configuration changes without restarting
+# the backend. Enable only when the deployment has exactly one backend process
+# and one replica. Known worker and replica settings are checked as an additional
+# safeguard. Live apply rejects busy runtimes and requires a restart if
+# initialization fails after replacement begins.
+enable_live_reinitialization: false
+
 # Custom Initializer Registration (REST API)
 # -------------------------------------------
 # When true, the REST API accepts POST /api/initializers to register custom

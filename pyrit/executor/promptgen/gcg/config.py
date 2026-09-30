@@ -185,6 +185,9 @@ class GCGAlgorithmConfig:
             Defaults to False.
         filter_cand (bool): Drop candidates whose token-length changes after
             re-tokenization. Defaults to True.
+        use_prefix_cache (bool): Cache the invariant prompt prefix while
+            scoring candidate suffixes. Defaults to False because reduced-
+            precision cache reuse can introduce small numerical differences.
         random_seed (int): Seed for ``torch``/``numpy``/``random``. Defaults to 42.
         control_init (str): Initial suffix string the optimization starts from.
             Defaults to twenty space-separated ``!`` tokens.
@@ -212,6 +215,7 @@ class GCGAlgorithmConfig:
     learning_rate: float = 0.01
     allow_non_ascii: bool = False
     filter_cand: bool = True
+    use_prefix_cache: bool = False
     random_seed: int = 42
     control_init: str = _DEFAULT_CONTROL_INIT
     sampling: SamplingStrategy | None = None

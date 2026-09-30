@@ -2819,7 +2819,13 @@ class MemoryInterface(abc.ABC):
         self.add_message_pieces_to_memory(message_pieces=message_pieces)
 
         if self.memory_embedding:
-            for piece in message_pieces:
+            # Embeddings power text similarity search and only describe text pieces.
+            # A multimodal message (e.g. text plus an image_path piece) must still
+            # persist instead of failing the whole write, and pieces flagged
+            # not_in_memory are never persisted, so no embedding row may reference them.
+            for piece in pieces_to_persist:
+                if piece.converted_value_data_type != "text":
+                    continue
                 embedding_entry = self.memory_embedding.generate_embedding_memory_data(message_piece=piece)
                 embedding_entries.append(embedding_entry)
 
