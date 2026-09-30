@@ -131,7 +131,7 @@ export interface MessageMediaDisplayPiece {
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
 export interface Message {
-  role: 'user' | 'assistant' | 'simulated_assistant' | 'system'
+  role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system'
   content: string
   timestamp: string
   /**

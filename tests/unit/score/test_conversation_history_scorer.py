@@ -8,7 +8,7 @@ import pytest
 from unit.mocks import store_message
 
 from pyrit.memory import CentralMemory
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score import (
     ContentScorable,
     FloatScaleThresholdScorer,
@@ -727,6 +727,31 @@ async def test_conversation_scorer_excludes_simulated_history_by_default(patch_c
     assert "real request" in rendered
     assert "real answer" in rendered
     assert "fabricated answer" not in rendered
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("role", ["simulated_assistant", "simulated_tool", "assistant", "tool"])
+async def test_conversation_scorer_opt_in_labels_match_evidence_role(role: ChatMessageRole) -> None:
+    memory = CentralMemory.get_memory_instance()
+    piece = MessagePiece(
+        role=role,
+        original_value='{"call_id":"call-1","output":"tool result"}',
+        original_value_data_type="function_call_output" if "tool" in role else "text",
+        conversation_id=str(uuid.uuid4()),
+    )
+    memory.add_message_pieces_to_memory(message_pieces=[piece])
+    wrapped = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped._score_nested_async = AsyncMock(return_value=[])
+    wrapped.get_identifier.return_value = _make_scorer_id()
+    scorer = create_conversation_scorer(scorer=wrapped, validator=ScorerPromptValidator(supported_roles=[role]))
+
+    await scorer.score_async(scorable=MessageScorable.from_message(piece.to_message()))
+
+    wrapped._score_nested_async.assert_awaited_once()
+    rendered = wrapped._score_nested_async.await_args.kwargs["scorable"]
+    label = piece.api_role.capitalize() + (" (simulated)" if piece.is_simulated else "")
+    assert isinstance(rendered, ContentScorable)
+    assert rendered.value == f"{label}: {piece.converted_value}\n"
 
 
 async def test_conversation_scorer_does_not_apply_role_policy_to_trigger(patch_central_database):
