@@ -51,13 +51,21 @@ dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dat
 # %% [markdown]
 # For more control, use `SeedDatasetProvider` to fetch datasets and pass explicit `seed_groups`.
 # This is useful when you need to filter, combine, or inspect the prompts before running.
+#
+# The default techniques below include `AsciiSmugglerConverter`, which only accepts printable
+# ASCII (0x20-0x7E). Filter out seed groups containing newlines, other control characters, or
+# non-ASCII text before sampling. This preserves the original text of the selected objectives.
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.models import SeedGroup
 
 datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["harmbench"])  # type: ignore
-seed_groups: list[SeedGroup] = datasets[0].seed_groups  # type: ignore
+seed_groups: list[SeedGroup] = [
+    group
+    for group in datasets[0].seed_groups
+    if all(seed.value.isascii() and seed.value.isprintable() for seed in group.seeds)
+]
 
 # Pass explicit seed_groups instead of dataset_names
 dataset_config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=2)

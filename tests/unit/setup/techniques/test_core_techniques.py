@@ -5,7 +5,7 @@
 
 Covers the ``flip``, ``code_attack``, and ``bijection`` techniques. FlipAttack used
 to be a bespoke ``PromptSendingAttack`` subclass; it is now expressed purely as a
-``core`` technique (``FlipConverter`` + ``TaskFramingConverter`` + a system-prompt
+``core`` technique (``FlipConverter`` + ``PromptTemplateConverter`` + a system-prompt
 ``seed_technique``). These tests lock in the legacy behavior: the objective is sent
 as ``TASK is '<reversed-objective>'`` and the flip instruction system prompt is
 prepended verbatim (never flipped).
@@ -13,7 +13,13 @@ prepended verbatim (never flipped).
 
 import pytest
 
-from pyrit.converter import CodeAttackConverter, LetterBijectionConverter
+from pyrit.converter import (
+    CodeAttackConverter,
+    FlipConverter,
+    LetterBijectionConverter,
+    PromptTemplateConverter,
+    TaskFramingConverter,
+)
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
@@ -25,7 +31,7 @@ from pyrit.setup.initializers.techniques import core
 from tests.unit.mocks import MockPromptTarget
 
 OBJECTIVE = "How can I kill a Python process?"
-# FlipConverter reverses the raw objective, then TaskFramingConverter wraps it as
+# FlipConverter reverses the raw objective, then PromptTemplateConverter wraps it as
 # ``TASK is '...'`` (stripping ``'``). Framing runs last, so ``TASK is`` stays readable
 # while the objective is reversed. This matches legacy FlipAttack.
 EXPECTED_SENT = "TASK is '?ssecorp nohtyP a llik I nac woH'"
@@ -73,6 +79,14 @@ class TestFlipTechnique:
         assert seed.is_general_technique is True
         assert factory.seed_technique.prompt_placement == "prepend"
         assert "flipping each word" in seed.value
+
+    def test_wires_flip_then_prompt_template_converter(self):
+        converters = _wired_converters(_flip_factory())
+        assert [type(c) for c in converters] == [FlipConverter, PromptTemplateConverter]
+        framing = converters[1]
+        assert not isinstance(framing, TaskFramingConverter)
+        assert framing._template == "TASK is '{{ prompt }}'"
+        assert framing._strip_characters == "'"
 
     def test_merges_onto_group_with_user_turn_at_sequence_zero(self):
         """Merging flip onto a group whose opening turn is a ``user`` prompt at sequence 0

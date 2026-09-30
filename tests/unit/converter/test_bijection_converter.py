@@ -131,6 +131,84 @@ async def test_digit_converter_literal_apostrophe_round_trip():
     assert converter.decode(encoded.output_text) == "it's"
 
 
+async def test_digit_converter_literal_digit_round_trip():
+    """A literal number survives encoding instead of being read back as letter tokens."""
+    custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
+    converter = DigitBijectionConverter(mapping=custom_mapping)
+
+    encoded = await converter.convert_async(prompt="abc 123 xyz")
+
+    # Unescaped, "12" is c's token and the literal number would decode as "w3"/"c3".
+    assert encoded.output_text == "101112 ~1~2~3 333435"
+    assert converter.decode(encoded.output_text) == "abc 123 xyz"
+
+
+async def test_digit_converter_literal_marker_round_trip():
+    """The escape character itself is doubled so it can still be sent literally."""
+    custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
+    converter = DigitBijectionConverter(mapping=custom_mapping)
+
+    encoded = await converter.convert_async(prompt="a~b")
+
+    assert encoded.output_text == "10~~11"
+    assert converter.decode(encoded.output_text) == "a~b"
+
+
+@pytest.mark.parametrize("num_digits", [2, 3, 4])
+@pytest.mark.parametrize(
+    ("encoded_text", "expected"),
+    [
+        ("", ""),
+        ("~", "~"),
+        ("~~~", "~~"),
+        ("~!", "~!"),
+        ("~a", "~a"),
+        ("~\n", "~\n"),
+        ("~'", "~'"),
+        ("'~", "'~"),
+        ("~~", "~"),
+        ("~~~~", "~~"),
+        ("~0", "0"),
+        ("~9", "9"),
+        ("~1~2~3", "123"),
+        ("~~~0", "~0"),
+    ],
+)
+def test_digit_converter_decode_literal_escape_boundaries(*, num_digits: int, encoded_text: str, expected: str) -> None:
+    converter = DigitBijectionConverter(num_digits=num_digits, seed=42)
+
+    assert converter.decode(encoded_text) == expected
+
+
+@pytest.mark.parametrize("num_digits", [2, 3, 4])
+def test_digit_converter_decode_preserves_trailing_literal_marker(num_digits: int) -> None:
+    converter = DigitBijectionConverter(num_digits=num_digits, seed=42)
+    encoded_text = converter.encode(prompt="Top")
+
+    assert converter.decode(encoded_text + "~") == "Top~"
+
+
+@pytest.mark.parametrize("num_digits", [2, 3, 4])
+@pytest.mark.parametrize(
+    "prompt",
+    ["abc 123 xyz", "CVE-2021-44228", "pi is 3.14159", "BOB's 7 cats~", "~12", "0000000000", "a1B2~c3", "~'7A~~"],
+)
+def test_digit_converter_round_trips_digit_bearing_prompts(*, num_digits: int, prompt: str) -> None:
+    """Digit-bearing prompts round-trip for every mapping width, not just lucky mappings."""
+    for seed in range(12):
+        converter = DigitBijectionConverter(num_digits=num_digits, seed=seed)
+        assert converter.decode(converter.encode(prompt=prompt)) == prompt
+
+
+def test_digit_converter_teaching_instructions_cover_literal_digits() -> None:
+    """The target is told the escape rule, since it has to apply the same one."""
+    instructions = DigitBijectionConverter(seed=42).get_teaching_instructions()
+
+    assert "Encode each literal digit as one tilde (~) followed by that digit" in instructions
+    assert "each literal tilde as two tildes (~~)" in instructions
+    assert "Preserve a tilde that is not followed by another tilde or a digit." in instructions
+
+
 async def test_digit_converter_uppercase_letter_after_apostrophe_round_trip():
     custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
     converter = DigitBijectionConverter(mapping=custom_mapping)
@@ -188,9 +266,9 @@ def test_digit_converter_teaching_instructions_describe_marker_rules() -> None:
 
 @pytest.mark.parametrize(
     ("prompt", "encoded_text"),
-    [("it's", "1829''28"), ("I'm", "'18''22")],
+    [("it's", "1829''28"), ("I'm", "'18''22"), ("top 10", "292425 ~1~0")],
 )
-def test_digit_converter_teaching_instructions_include_contraction_examples(*, prompt: str, encoded_text: str) -> None:
+def test_digit_converter_teaching_instructions_include_examples(*, prompt: str, encoded_text: str) -> None:
     custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
     converter = DigitBijectionConverter(mapping=custom_mapping)
 
@@ -210,7 +288,7 @@ def test_digit_converter_teaching_instructions_use_configured_mapping(num_digits
     assert f"{num_digits}-digit tokens" in instructions
     for letter, token in converter.mapping.items():
         assert f"{letter}={token}" in instructions
-    for prompt in ("it's", "I'm"):
+    for prompt in ("it's", "I'm", "top 10"):
         encoded_text = converter.encode(prompt=prompt)
         assert f'"{prompt}" encodes to "{encoded_text}"' in instructions
         assert converter.decode(encoded_text) == prompt
