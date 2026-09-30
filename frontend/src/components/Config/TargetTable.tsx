@@ -224,6 +224,7 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
     <>
       {innerTargets.map((inner, idx) => (
         <TableRow key={`${parentKey}-inner-${idx}`} className={styles.innerTargetRow}>
+          <TableCell className={styles.actionCell} />
           <TableCell className={styles.registryNameCell}>
             <Text size={200} className={styles.registryNameText}>#{idx + 1} {inner.target_registry_name}</Text>
           </TableCell>
@@ -272,6 +273,7 @@ export default function TargetTable({
     [preferences.hiddenTargetRegistryNames],
   )
   const [showHiddenTargets, setShowHiddenTargets] = useState(false)
+  const [previousHiddenTargetCount, setPreviousHiddenTargetCount] = useState<number | null>(null)
   // Tracks which RoundRobinTarget rows are expanded to show inner targets.
   // We use a Set of target_registry_name strings — when a name is in the set,
   // that row's sub-rows are visible.
@@ -301,6 +303,13 @@ export default function TargetTable({
     () => targets.filter((target) => hiddenTargetRegistryNames.has(target.target_registry_name)).length,
     [hiddenTargetRegistryNames, targets],
   )
+
+  if (previousHiddenTargetCount !== hiddenTargetCount) {
+    setPreviousHiddenTargetCount(hiddenTargetCount)
+    if (hiddenTargetCount === 0 && previousHiddenTargetCount !== null) {
+      setShowHiddenTargets(false)
+    }
+  }
 
   const displayedTargets = useMemo(
     () => showHiddenTargets
