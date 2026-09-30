@@ -74,6 +74,16 @@ def _seed_attack(memory: MemoryInterface, *, response_parts: list[str]) -> Attac
     return attack
 
 
+def _duplicate_attack(memory: MemoryInterface, *, attack: AttackResult) -> AttackResult:
+    duplicate = AttackResult(
+        conversation_id=memory.duplicate_conversation(conversation_id=attack.conversation_id),
+        objective=attack.objective,
+        outcome=attack.outcome,
+    )
+    memory.add_attack_results_to_memory(attack_results=[duplicate])
+    return duplicate
+
+
 @pytest.mark.parametrize(
     ("cli_printer", "helper", "fmt"),
     [
@@ -85,9 +95,11 @@ def _seed_attack(memory: MemoryInterface, *, response_parts: list[str]) -> Attac
 async def test_cli_and_notebook_reports_match(
     cli_printer, helper, fmt, sqlite_instance, patch_central_database, tmp_path
 ):
+    two_piece_attack = _seed_attack(sqlite_instance, response_parts=["first part", "second part"])
     attacks = [
         _seed_attack(sqlite_instance, response_parts=["single reply"]),
-        _seed_attack(sqlite_instance, response_parts=["first part", "second part"]),
+        two_piece_attack,
+        _duplicate_attack(sqlite_instance, attack=two_piece_attack),
     ]
     result = make_scenario_result(attack_results={"tech_a": attacks}, objective_scorer_identifier=OBJECTIVE_SCORER)
     cli_path, notebook_path = tmp_path / "cli_report", tmp_path / "notebook_report"

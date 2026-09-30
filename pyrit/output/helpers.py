@@ -18,7 +18,7 @@ from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinte
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.output.conversation.json import JsonConversationMemoryPrinter, JsonConversationPrinter
 from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
-from pyrit.output.conversation.source import MemoryConversationSource, ObjectiveScoreConversationSource
+from pyrit.output.conversation.source import MemoryConversationSource
 from pyrit.output.scenario_result.html import HtmlScenarioReportPrinter
 from pyrit.output.scenario_result.json import (
     ConversationEntry,
@@ -281,14 +281,17 @@ async def _collect_conversation_entries_async(
     if not selected:
         return []
 
-    memory_source = MemoryConversationSource()
+    objective_scorer_identifier = result.objective_scorer_identifier
+    source = MemoryConversationSource()
+    printer = JsonConversationPrinter(source=source)
     entries: list[ConversationEntry] = []
     for atomic_attack_name, attack in selected:
-        source = ObjectiveScoreConversationSource(
-            source=memory_source, objective_scorer_identifier=result.objective_scorer_identifier
-        )
         messages = await source.get_messages_async(conversation_id=attack.conversation_id)
-        structured = await JsonConversationPrinter(source=source).build_async(messages, include_scores=True)
+        structured = await printer.build_async(
+            messages,
+            include_scores=objective_scorer_identifier is not None,
+            objective_scorer_identifier=objective_scorer_identifier,
+        )
         entries.append((atomic_attack_name, attack, structured))
     return entries
 
