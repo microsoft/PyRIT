@@ -519,7 +519,7 @@ async def test_image_scoring_defers_observation_until_media_snapshot_support_asy
     assert (await sqlite_instance.get_observations_async(observation_ids=[])) == []
 
 
-async def test_audio_transcript_scoring_persists_only_root_score_without_observation_async(
+async def test_audio_transcript_scoring_retains_child_without_observation_async(
     sqlite_instance: MemoryInterface,
     tmp_path: Path,
 ) -> None:
@@ -544,8 +544,18 @@ async def test_audio_transcript_scoring_persists_only_root_score_without_observa
 
     assert score.score_value == "true"
     assert score.observation_ids == []
-    assert len(sqlite_instance._query_entries(ScoreEntry)) == 1
-    assert (await sqlite_instance.get_observations_async(observation_ids=[])) == []
+    stored = await sqlite_instance.get_scores_async(score_type="true_false", include_intermediate=True)
+    assert len(stored) == 2
+    child = next(item for item in stored if item.id != score.id)
+    assert child.scorer_class_identifier.class_name == "SelfAskTrueFalseScorer"
+    assert isinstance(child.scorable, ContentEntryScorable)
+    content = sqlite_instance.get_scorable_content(content_ids=[child.scorable.content_id])
+    assert content[child.scorable.content_id].value == "transcript"
+    assert child.observation_ids == []
+    assert child.id != score.id
+    assert [item.id for item in await sqlite_instance.get_scores_async(score_type="true_false")] == [score.id]
+    assert all(piece.converted_value != "transcript" for piece in await sqlite_instance.get_message_pieces_async())
+    assert await sqlite_instance.get_observations_async(observation_ids=[]) == []
 
 
 async def test_blocked_partial_content_scoring_defers_unreplayable_observation_async(
@@ -981,7 +991,7 @@ async def test_shieldgemma_ephemeral_duplicate_replay_preserves_live_metadata_as
     assert replay.score_metadata == live.score_metadata
 
 
-async def test_composite_persists_only_final_score_with_child_observation_async(
+async def test_composite_retains_child_score_with_shared_observation_async(
     sqlite_instance: MemoryInterface,
 ) -> None:
     target = MagicMock(spec=PromptTarget)
@@ -996,7 +1006,13 @@ async def test_composite_persists_only_final_score_with_child_observation_async(
         expectation=ScoringExpectation(objective="Judge this response"),
     )
 
-    assert len(sqlite_instance._query_entries(ScoreEntry)) == 1
+    stored = await sqlite_instance.get_scores_async(score_type="true_false", include_intermediate=True)
+    assert len(stored) == 2
+    child = next(item for item in stored if item.id != scores[0].id)
+    assert child.observation_ids == scores[0].observation_ids
+    assert child.id != scores[0].id
+    assert len(sqlite_instance._query_entries(ObservationEntry)) == 1
+    assert [item.id for item in await sqlite_instance.get_scores_async(score_type="true_false")] == [scores[0].id]
     assert len(scores[0].observation_ids) == 1
     assert await sqlite_instance.get_observations_async(observation_ids=scores[0].observation_ids)
 

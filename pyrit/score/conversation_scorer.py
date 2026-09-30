@@ -32,6 +32,7 @@ class ConversationScorer(MessageScorer, ABC):
     Note: This class cannot be instantiated directly. Use create_conversation_scorer() factory instead.
     """
 
+    _REQUIRES_CONVERSATION_HISTORY = True
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
         enforce_all_pieces_valid=False,
@@ -159,10 +160,13 @@ class ConversationScorer(MessageScorer, ABC):
             expectation=wrapped_scorer._select_expectation(expectation=expectation),
         )
         trigger_piece = message.message_pieces[0]
+        results = []
         for score in scores:
-            score.message_piece_id = trigger_piece.id or trigger_piece.original_prompt_id
-            score.scorable = None
-        return scores
+            parent = self._create_wrapper_score(score)
+            parent.message_piece_id = trigger_piece.id or trigger_piece.original_prompt_id
+            parent.scorable = None
+            results.append(parent)
+        return results
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """

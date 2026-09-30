@@ -32,6 +32,7 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
     a true/false objective score.
     """
 
+    _REQUIRES_CONVERSATION_HISTORY = True
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"], supported_roles=["assistant"]
     )

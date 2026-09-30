@@ -6,7 +6,9 @@ from __future__ import annotations
 import abc
 import asyncio
 import logging
+import uuid
 from abc import abstractmethod
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -35,16 +37,16 @@ from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
-    _observation_collection,
+    _collect_scores,
     _ObservationEvidence,
     _ObservationEvidenceResolver,
+    _scoring_collection,
     _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
 )
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Awaitable, Callable, Sequence
 
     from pyrit.exceptions import ComponentRole
@@ -465,7 +467,7 @@ class Scorer(Identifiable, abc.ABC):
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
         expectation = self.prepare_expectation(expectation=expectation)
-        with _observation_collection() as collector:
+        with _scoring_collection() as collector:
             try:
                 with _scoring_scorable_context(scorable), _scoring_expectation_context(expectation):
                     scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
@@ -477,10 +479,11 @@ class Scorer(Identifiable, abc.ABC):
                 raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
 
             self._stamp_scored_expectation(scores=scores, expectation=expectation)
-            observations = collector.referenced_by(scores=scores)
+            observations = collector.referenced_by(scores=[*scores, *collector.intermediate_scores])
             return await self._validate_and_persist_scores_async(
                 scores=scores,
                 observations=observations,
+                intermediate_scores=collector.intermediate_scores,
             )
 
     @staticmethod
@@ -702,39 +705,36 @@ class Scorer(Identifiable, abc.ABC):
         *,
         scores: list[Score],
         observations: Sequence[Observation] = (),
+        intermediate_scores: Sequence[Score] = (),
     ) -> list[Score]:
         """
         Validate and persist non-empty scorer output.
 
         Returns:
             list[Score]: The original scores.
+
+        Raises:
+            ValueError: If a wrapper reuses an intermediate result ID.
         """
         if not scores:
             return []
 
         self.validate_return_scores(scores=scores)
+        intermediate_ids = {str(score.id) for score in intermediate_scores}
+        if any(str(score.id) in intermediate_ids for score in scores):
+            raise ValueError("A wrapper must create a new result instead of reusing an intermediate score ID.")
         requires_file_copy = any(
             isinstance(score.scorable, ContentScorable) and score.scorable.data_type in MEDIA_PATH_DATA_TYPES
-            for score in scores
+            for score in [*scores, *intermediate_scores]
         )
         if requires_file_copy:
-            if observations:
-                await self._memory.add_scores_to_memory_async(
-                    scores=scores,
-                    observations=observations,
-                )
-            else:
-                await self._memory.add_scores_to_memory_async(scores=scores)
+            await self._memory.add_scores_to_memory_async(
+                scores=scores, observations=observations, intermediate_scores=intermediate_scores
+            )
         else:
-            if observations:
-                (
-                    await self._memory.add_scores_to_memory_async(
-                        scores=scores,
-                        observations=observations,
-                    )
-                )
-            else:
-                (await self._memory.add_scores_to_memory_async(scores=scores))
+            await self._memory.add_scores_to_memory_async(
+                scores=scores, observations=observations, intermediate_scores=intermediate_scores
+            )
         return scores
 
     async def _score_nested_async(
@@ -747,7 +747,7 @@ class Scorer(Identifiable, abc.ABC):
         Score a scorable as a child in a scorer tree.
 
         The parent supplies only this child's supported conditions. The root scorer
-        owns persistence, so this path validates input and output without persisting.
+        owns persistence, so this path collects validated output without committing it.
 
         Args:
             scorable (Scorable): What to look at.
@@ -762,7 +762,24 @@ class Scorer(Identifiable, abc.ABC):
         self._stamp_scored_expectation(scores=scores, expectation=expectation)
         if scores:
             self.validate_return_scores(scores=scores)
+            _collect_scores(scores)
         return scores
+
+    def _create_wrapper_score(self, score: Score) -> Score:
+        """
+        Copy a child's judgment into a new wrapper-owned result without changing the child.
+
+        Returns:
+            Score: An independent result with a new ID, timestamp, and scorer identity.
+        """
+        return score.model_copy(
+            deep=True,
+            update={
+                "id": uuid.uuid4(),
+                "timestamp": datetime.now(UTC),
+                "scorer_class_identifier": self.get_identifier(),
+            },
+        )
 
     async def score_observation_async(
         self,

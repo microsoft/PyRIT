@@ -59,7 +59,10 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
             assert len(scores) == 1
             assert isinstance(scores[0], Score)
             assert scores[0].score_value == "0.8"
-            mock_add_scores.assert_called_once_with(scores=[scores[0]])
+            mock_add_scores.assert_called_once()
+            assert mock_add_scores.call_args.kwargs["scores"] == scores
+            assert mock_add_scores.call_args.kwargs["observations"] == []
+            assert mock_add_scores.call_args.kwargs["intermediate_scores"] == []
             assert run_llm_scoring.call_args.kwargs["value"] == "converted code"
 
 

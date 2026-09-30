@@ -134,12 +134,32 @@ async def _load_content_evidence_async(
     return (content, digest) if content is not None and digest is not None else None
 
 
-class _ObservationCollector:
-    """Observations created during one root scoring operation."""
+class _ScoringCollector:
+    """Observations and intermediate judgments created during one root scoring operation."""
 
     def __init__(self) -> None:
-        """Initialize an empty observation collection."""
+        """Initialize empty observation and intermediate-score collections."""
         self._observations: dict[uuid.UUID, Observation] = {}
+        self._scores: dict[str, Score] = {}
+
+    def add_scores(self, scores: Sequence[Score]) -> None:
+        """
+        Snapshot finalized nested results without changing caller-owned scores.
+
+        Raises:
+            ValueError: If an ID is reused for a different judgment.
+        """
+        for score in scores:
+            snapshot = score.model_copy(deep=True)
+            score_id = str(score.id)
+            if score_id in self._scores and self._scores[score_id] != snapshot:
+                raise ValueError(f"Intermediate score ID {score_id} was reused with different values.")
+            self._scores[score_id] = snapshot
+
+    @property
+    def intermediate_scores(self) -> list[Score]:
+        """The results of nested scorers at any depth, excluding the public call's returned results."""
+        return list(self._scores.values())
 
     def add(self, observation: Observation) -> None:
         """
@@ -162,10 +182,11 @@ class _ObservationCollector:
         ]
 
 
-_CURRENT_OBSERVATION_COLLECTOR: ContextVar[_ObservationCollector | None] = ContextVar(
+_CURRENT_OBSERVATION_COLLECTOR: ContextVar[_ScoringCollector | None] = ContextVar(
     "current_observation_collector",
     default=None,
 )
+_CURRENT_SCORE_COLLECTOR: ContextVar[_ScoringCollector | None] = ContextVar("current_score_collector", default=None)
 _CURRENT_SCORING_EXPECTATION: ContextVar[ScoringExpectation | None] = ContextVar(
     "current_scoring_expectation",
     default=None,
@@ -181,19 +202,28 @@ _CURRENT_SCORING_MESSAGE: ContextVar[Message | None] = ContextVar(
 
 
 @contextmanager
-def _observation_collection() -> Iterator[_ObservationCollector]:
+def _scoring_collection() -> Iterator[_ScoringCollector]:
     """
-    Create the observation collector for one public scoring call.
+    Collect observations and intermediate results for one public scoring call.
 
     Yields:
-        _ObservationCollector: The root operation's collector.
+        _ScoringCollector: The root operation's collector.
     """
-    collector = _ObservationCollector()
+    collector = _ScoringCollector()
     token = _CURRENT_OBSERVATION_COLLECTOR.set(collector)
+    score_token = _CURRENT_SCORE_COLLECTOR.set(collector)
     try:
         yield collector
     finally:
         _CURRENT_OBSERVATION_COLLECTOR.reset(token)
+        _CURRENT_SCORE_COLLECTOR.reset(score_token)
+
+
+def _collect_scores(scores: Sequence[Score]) -> None:
+    """Retain nested results even when observation capture is suppressed."""
+    collector = _CURRENT_SCORE_COLLECTOR.get()
+    if collector is not None:
+        collector.add_scores(scores)
 
 
 def _collect_observation(observation: Observation) -> None:

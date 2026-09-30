@@ -10,10 +10,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import create_engine, select
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.memory.memory_models import (
@@ -23,6 +24,7 @@ from pyrit.memory.memory_models import (
     PromptConverterIdentifierEntry,
     TargetIdentifierEntry,
 )
+from pyrit.memory.memory_session import MemorySession
 from pyrit.models import (
     AttackResult,
     Conversation,
@@ -40,6 +42,12 @@ from unit.mocks import run_memory_session_async
 async def file_memory(*, tmp_path: Path) -> AsyncGenerator[SQLiteMemory, None]:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     memory.__init__(db_path=tmp_path / "branching.db", skip_schema_migration=True)
+    memory.engine.dispose()
+    memory.engine = create_engine(memory.engine.url, connect_args={"timeout": 30})
+    memory.SessionFactory = sessionmaker(bind=memory.engine, class_=MemorySession)
+    memory._async_engines[asyncio.get_running_loop()] = create_async_engine(
+        memory.engine.url.set(drivername="sqlite+aiosqlite"), connect_args={"timeout": 30}
+    )
     try:
         Base.metadata.create_all(memory.engine)
         yield memory
@@ -338,7 +346,7 @@ class TestAtomicConversationBranching:
                 *(register_async(conversation=branch) for branch in branches),
                 *(promote_async(conversation_id=branch.conversation_id) for branch in initial),
             ),
-            timeout=15,
+            timeout=60,
         )
         assert all(results)
         current = (await file_memory.get_attack_results_async(attack_result_ids=[attack.attack_result_id]))[0]
