@@ -11,10 +11,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
-from pyrit.registry import InitializerRegistry, TargetRegistry
+from pyrit.registry import AttackRegistry, InitializerRegistry, Registry, TargetRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import reset_setup_registries, validate_reinitialization_memory
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_reset_setup_registries_discards_attack_catalog_without_resetting_memory() -> None:
+    with patch.dict(Registry._singletons):
+        registry = AttackRegistry.get_registry_singleton()
+        memory = CentralMemory.get_memory_instance()
+
+        reset_setup_registries()
+
+        assert AttackRegistry.get_registry_singleton() is not registry
+        assert CentralMemory.get_memory_instance() is memory
 
 
 async def test_preflight_uses_isolated_registry_without_changing_live_state() -> None:
