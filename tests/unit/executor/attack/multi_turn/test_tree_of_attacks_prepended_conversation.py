@@ -8,7 +8,9 @@ conversation, but they are history rather than attack turns: the first live turn
 set the adversarial system prompt and honor ``next_message``.
 """
 
+import asyncio
 import json
+from unittest.mock import patch
 
 import pytest
 from unit.mocks import MockPromptTarget
@@ -19,6 +21,7 @@ from pyrit.executor.attack import (
     PAIRAttack,
     TreeOfAttacksWithPruningAttack,
 )
+from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackOutcome, Message, MessagePiece, Score
 from pyrit.score import FloatScaleThresholdScorer
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
@@ -128,7 +131,10 @@ async def test_prepended_conversation_sets_adversarial_system_prompt_with_contex
     assert all("PRIOR-ASSISTANT-TURN" in system_prompt for system_prompt in adversarial_chat.system_prompts)
 
 
-async def test_prepended_conversation_sends_next_message_first(sqlite_instance):
+@pytest.mark.parametrize("sibling_sends_first", [False, True])
+async def test_prepended_conversation_sends_next_message_first(
+    *, sqlite_instance: SQLiteMemory, sibling_sends_first: bool
+) -> None:
     objective_target = MockPromptTarget()
     adversarial_chat = _AdversarialTarget()
     attack = _build_attack(
@@ -142,10 +148,33 @@ async def test_prepended_conversation_sends_next_message_first(sqlite_instance):
         Message.from_prompt(prompt="PRIOR-ASSISTANT-TURN", role="assistant"),
     ]
 
-    await attack.execute_async(
-        objective="do X",
-        prepended_conversation=prepended,
-        next_message=Message.from_prompt(prompt="MY-CUSTOM-FIRST-PROMPT", role="user"),
-    )
+    requests: list[Message] = []
+    sibling_sent = asyncio.Event()
+    send_async = objective_target._send_prompt_to_target_async
 
-    assert objective_target.prompt_sent[0] == "MY-CUSTOM-FIRST-PROMPT"
+    async def record_send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        message = normalized_conversation[-1]
+        if sibling_sends_first and message.get_value() == "MY-CUSTOM-FIRST-PROMPT":
+            await asyncio.wait_for(sibling_sent.wait(), timeout=10)
+        requests.append(message)
+        responses = await send_async(normalized_conversation=normalized_conversation)
+        if message.get_value() != "MY-CUSTOM-FIRST-PROMPT":
+            sibling_sent.set()
+        return responses
+
+    with patch.object(objective_target, "_send_prompt_to_target_async", side_effect=record_send_async):
+        await attack.execute_async(
+            objective="do X",
+            prepended_conversation=prepended,
+            next_message=Message.from_prompt(prompt="MY-CUSTOM-FIRST-PROMPT", role="user"),
+        )
+
+    seeded_requests = [message for message in requests if message.get_value() == "MY-CUSTOM-FIRST-PROMPT"]
+    assert len(seeded_requests) == 1
+    seeded_conversation_id = seeded_requests[0].message_pieces[0].conversation_id
+    conversation_requests = [
+        message for message in requests if message.message_pieces[0].conversation_id == seeded_conversation_id
+    ]
+    assert conversation_requests[0].get_value() == "MY-CUSTOM-FIRST-PROMPT"
+    if sibling_sends_first:
+        assert objective_target.prompt_sent[0] != "MY-CUSTOM-FIRST-PROMPT"
