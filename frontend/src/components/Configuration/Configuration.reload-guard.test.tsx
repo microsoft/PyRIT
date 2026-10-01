@@ -107,6 +107,7 @@ describe('Configuration failed environment reload guard', () => {
       content: 'operator: alice\n',
       source: 'C:/Users/test/.pyrit/config.yaml',
       version: 'config-v1',
+      live_reinitialization_enabled: false,
     })
     mockedConfigurationApi.listEnvironmentFiles.mockResolvedValueOnce({
       items: [
@@ -140,7 +141,7 @@ describe('Configuration failed environment reload guard', () => {
 
     mockedConfigurationApi.listEnvironmentFiles.mockRejectedValueOnce(new Error('Reload failed'))
 
-    await user.click(screen.getByRole('button', { name: 'Reload' }))
+    await user.click(screen.getByRole('button', { name: 'Reload file' }))
     await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
 
     expect(await screen.findByText('Reload failed')).toBeInTheDocument()

@@ -261,7 +261,7 @@ class PromptInject(Scenario):
             self._objective_scorer_identifier = self._objective_scorer.get_identifier()
         self._dataset_config = config
         groups = await config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
-        self._technique_templates = self._load_technique_templates()
+        self._technique_templates = await self._load_technique_templates_async()
         return groups
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
@@ -314,6 +314,7 @@ class PromptInject(Scenario):
                     AtomicAttack(
                         atomic_attack_name=f"{technique.value}__goal_{goal_index}",
                         display_group=goal_text,
+                        technique_name=technique.value,
                         attack_technique=AttackTechnique(attack=attack),
                         seed_groups=seed_groups,
                         memory_labels=context.memory_labels,
@@ -356,7 +357,7 @@ class PromptInject(Scenario):
         config._set_goal_texts(goal_texts=goal_texts)
         return config
 
-    def _load_technique_templates(self) -> dict[str, SeedPrompt]:
+    async def _load_technique_templates_async(self) -> dict[str, SeedPrompt]:
         """
         Load the selected technique templates from memory.
 
@@ -366,7 +367,7 @@ class PromptInject(Scenario):
         Raises:
             DatasetConstraintError: If a selected technique has no template.
         """
-        seeds = CentralMemory.get_memory_instance().get_seeds(dataset_name=self.TECHNIQUE_DATASET_NAME)
+        seeds = await CentralMemory.get_memory_instance().get_seeds_async(dataset_name=self.TECHNIQUE_DATASET_NAME)
         templates = {seed.name: seed for seed in seeds if isinstance(seed, SeedPrompt) and seed.name}
         selected = {technique.value for technique in self._scenario_techniques}
         missing = selected - templates.keys()

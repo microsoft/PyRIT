@@ -504,9 +504,10 @@ class TestExecuteAttackFromSeedGroupsAsync:
             captured_kwargs.update(kwargs)
             return await original_from_seed_group_async(seed_group=seed_group, **kwargs)
 
-        attack.params_type.from_seed_group_async = capture_from_seed_group_async
-
-        try:
+        # patch.object restores the underlying classmethod descriptor; assigning the
+        # attribute back by hand would leave a method bound to AttackParameters behind,
+        # so subclasses would resolve cls to the base class.
+        with patch.object(attack.params_type, "from_seed_group_async", capture_from_seed_group_async):
             executor = AttackExecutor()
             sg = create_seed_group("Test objective")
 
@@ -519,9 +520,6 @@ class TestExecuteAttackFromSeedGroupsAsync:
 
             assert captured_kwargs.get("adversarial_chat") is mock_adversarial_chat
             assert captured_kwargs.get("objective_scorer") is mock_objective_scorer
-        finally:
-            # Restore the original to prevent test pollution in parallel test runs
-            attack.params_type.from_seed_group_async = original_from_seed_group_async
 
     async def test_validates_explicit_empty_field_overrides_for_seed_groups(self):
         """Test that explicit empty field_overrides still validate seed group length."""

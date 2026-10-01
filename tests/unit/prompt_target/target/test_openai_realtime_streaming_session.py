@@ -12,6 +12,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
@@ -47,6 +48,7 @@ def _paced_chunks(chunks: list[bytes], finish: asyncio.Event):
 def _build_target() -> MagicMock:
     """Build a MagicMock target exposing the connection + audio surface the session calls."""
     target = MagicMock(name="RealtimeTarget")
+    target._memory = MagicMock(spec=MemoryInterface)
     target.SAMPLE_RATE_HZ = 24000
 
     connection = AsyncMock(name="connection")
@@ -102,7 +104,9 @@ def _mock_session_wire(session: _OpenAIRealtimeStreamingSession) -> None:
 
 
 def _build_normalizer() -> MagicMock:
-    normalizer = MagicMock(name="PromptNormalizer")
+    from unit.mocks import get_mock_prompt_normalizer
+
+    normalizer = get_mock_prompt_normalizer()
     normalizer.add_prepended_conversation_to_memory_async = AsyncMock()
     # Identity: the session treats ``converted is raw_pcm`` as "no converters ran".
     normalizer.convert_audio_async = AsyncMock(side_effect=lambda raw_pcm, **kw: raw_pcm)

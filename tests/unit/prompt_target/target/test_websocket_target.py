@@ -257,7 +257,7 @@ async def test_cancellation_during_websocket_setup_occurs_after_target_invocatio
     sqlite_instance: SQLiteMemory,
 ) -> None:
     seed = create_message(value="Seed")
-    sqlite_instance.add_message_to_memory(request=seed)
+    (await sqlite_instance.add_message_to_memory_async(request=seed))
     send_context = PrependedHistorySendContext(
         conversation_id="conversation",
         seed_message_ids=(seed.get_piece().id,),
@@ -362,7 +362,7 @@ async def test_consumed_context_retains_history_for_reconnect(
     for sequence, message in enumerate([seed, first_request, first_response]):
         for piece in message.message_pieces:
             piece.sequence = sequence
-        sqlite_instance.add_message_to_memory(request=message)
+        (await sqlite_instance.add_message_to_memory_async(request=message))
 
     send_context = PrependedHistorySendContext(
         conversation_id="conversation",

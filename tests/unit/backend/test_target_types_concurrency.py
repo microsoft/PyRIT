@@ -13,7 +13,7 @@ from pyrit.backend.main import app
 from pyrit.backend.services.target_service import TargetService
 
 
-async def test_health_remains_schedulable_during_cold_target_types() -> None:
+async def test_health_remains_schedulable_during_cold_target_types(compatibility_headers: dict[str, str]) -> None:
     discovery_started = Event()
     discovery_release = Event()
     discovery_finished = Event()
@@ -30,7 +30,7 @@ async def test_health_remains_schedulable_during_cold_target_types() -> None:
         patch.object(service._registry, "get_all_registered_class_metadata", side_effect=_blocking_metadata_discovery),
         patch("pyrit.backend.routes.targets.get_target_service", return_value=service),
     ):
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers=compatibility_headers) as client:
             types_request = asyncio.create_task(client.get("/api/targets/types"))
             assert await asyncio.to_thread(discovery_started.wait, 5)
 

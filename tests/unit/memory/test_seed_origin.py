@@ -35,25 +35,25 @@ class TestSeedOrigin:
         else:
             seed = seed_type(value="An objective", origin=origin, dataset_name="origins")
         await sqlite_instance.add_seeds_to_memory_async(seeds=[seed], added_by="operator")
-        [stored] = sqlite_instance.get_seeds(origin=origin)
+        [stored] = await sqlite_instance.get_seeds_async(origin=origin)
         assert stored.origin is origin
         assert stored.added_by == "operator"
         assert type(stored) is seed_type
         assert type(stored).model_validate_json(stored.model_dump_json()).origin is origin
         await sqlite_instance.add_seeds_to_memory_async(seeds=[stored], added_by="operator")
-        assert len(sqlite_instance.get_seeds(origin=origin)) == 1
+        assert len(await sqlite_instance.get_seeds_async(origin=origin)) == 1
 
     async def test_edit_preserves_origin_async(self, sqlite_instance: MemoryInterface) -> None:
         await sqlite_instance.add_seeds_to_memory_async(
             seeds=[SeedObjective(value="Original", origin=SeedOrigin.GENERATED, dataset_name="editable")],
             added_by="operator",
         )
-        [stored] = sqlite_instance.get_seeds(dataset_name="editable")
+        [stored] = await sqlite_instance.get_seeds_async(dataset_name="editable")
         stored.value = "Edited"
         await sqlite_instance.replace_seeds_for_dataset_async(
             dataset_name="editable", seeds=[stored], added_by="operator"
         )
-        [edited] = sqlite_instance.get_seeds(dataset_name="editable")
+        [edited] = await sqlite_instance.get_seeds_async(dataset_name="editable")
         assert edited.value == "Edited"
         assert edited.origin is SeedOrigin.GENERATED
 
@@ -72,7 +72,7 @@ class TestSeedOrigin:
                 seeds=[SeedObjective(value="Same text", dataset_name="same", origin=origin)],
                 added_by="operator",
             )
-        [stored] = sqlite_instance.get_seeds()
+        [stored] = await sqlite_instance.get_seeds_async()
         assert stored.origin is SeedOrigin.LOCAL
 
     async def test_filter_and_remove_async(self, sqlite_instance: MemoryInterface) -> None:
@@ -80,10 +80,10 @@ class TestSeedOrigin:
             seeds=[SeedObjective(value=origin.value, origin=origin) for origin in SeedOrigin],
             added_by="operator",
         )
-        assert len(sqlite_instance.get_seeds()) == len(SeedOrigin)
-        assert sqlite_instance.remove_seeds_from_memory(origin=SeedOrigin.GENERATED) == 1
-        assert not sqlite_instance.get_seeds(origin=SeedOrigin.GENERATED)
-        assert len(sqlite_instance.get_seeds()) == len(SeedOrigin) - 1
+        assert len(await sqlite_instance.get_seeds_async()) == len(SeedOrigin)
+        assert await sqlite_instance.remove_seeds_from_memory_async(origin=SeedOrigin.GENERATED) == 1
+        assert not await sqlite_instance.get_seeds_async(origin=SeedOrigin.GENERATED)
+        assert len(await sqlite_instance.get_seeds_async()) == len(SeedOrigin) - 1
 
     async def test_group_filter_preserves_membership_async(self, sqlite_instance: MemoryInterface) -> None:
         group_id = uuid4()
@@ -94,9 +94,9 @@ class TestSeedOrigin:
             ],
             added_by="operator",
         )
-        [group] = sqlite_instance.get_seed_groups(origin=SeedOrigin.GENERATED)
+        [group] = await sqlite_instance.get_seed_groups_async(origin=SeedOrigin.GENERATED)
         assert len(group.seeds) == 2
-        assert sqlite_instance.remove_seed_groups_from_memory(origin=SeedOrigin.GENERATED) == 2
+        assert await sqlite_instance.remove_seed_groups_from_memory_async(origin=SeedOrigin.GENERATED) == 2
 
     def test_yaml_import_origin(self, tmp_path: Path) -> None:
         single = tmp_path / "seed.yaml"

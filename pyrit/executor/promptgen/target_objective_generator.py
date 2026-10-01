@@ -137,7 +137,7 @@ class TargetObjectiveGenerator(
             prompt = self._system_prompt.render_template_value(
                 instructions=context.instructions, count=context.count, harm_categories=context.harm_categories
             )
-        self._target.set_system_prompt(system_prompt=prompt, conversation_id=context.conversation_id)
+        await self._target.set_system_prompt_async(system_prompt=prompt, conversation_id=context.conversation_id)
         context._conversation_initialized = True
 
     async def _perform_async(self, *, context: TargetObjectiveGeneratorContext) -> TargetObjectiveGeneratorResult:

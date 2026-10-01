@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, final
+from typing import TYPE_CHECKING, Any, ClassVar, cast, final
 
 from tqdm.auto import tqdm
 
@@ -23,8 +23,8 @@ from pyrit.common import get_global_default_values
 from pyrit.common.utils import to_sha256
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
+from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
 from pyrit.memory import CentralMemory
-from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
@@ -132,6 +132,11 @@ class Scenario(ABC):
 
     #: Whether the default estimator must mirror matrix-builder seed compatibility.
     RUN_SIZE_USES_FACTORY_COMPATIBILITY: ClassVar[bool] = False
+
+    #: Whether LLM-backed scorers constructed by ``_get_default_objective_scorer`` raise
+    #: when their own target blocks a scoring request. Subclasses may disable this when
+    #: an unavailable verdict is an expected result rather than a scenario error.
+    RAISE_IF_DEFAULT_SCORER_BLOCKS: ClassVar[bool] = True
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -452,13 +457,17 @@ class Scenario(ABC):
         # if the scenario has override composite scorer questions, use them to build a composite scorer
         composite_scorer_questions_paths = type(self)._get_additional_scoring_questions()
         if composite_scorer_questions_paths:
-            path_scorers: list[TrueFalseScorer] = [
+            path_scorers: list[SelfAskTrueFalseScorer] = [
                 SelfAskTrueFalseScorer.from_question(
                     chat_target=chat_target, question=TrueFalseQuestion.from_yaml(path)
                 )
                 for path in composite_scorer_questions_paths
             ]
-            backstop_scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
+            for path_scorer in path_scorers:
+                path_scorer.raise_if_scorer_blocks = self.RAISE_IF_DEFAULT_SCORER_BLOCKS
+            refusal_scorer = SelfAskRefusalScorer(chat_target=chat_target)
+            refusal_scorer.raise_if_scorer_blocks = self.RAISE_IF_DEFAULT_SCORER_BLOCKS
+            backstop_scorer = TrueFalseInverterScorer(scorer=refusal_scorer)
             scorer = TrueFalseCompositeScorer(
                 aggregator=TrueFalseScoreAggregator.AND,
                 scorers=[*path_scorers, backstop_scorer],
@@ -474,14 +483,37 @@ class Scenario(ABC):
                 f"Using registry default objective scorer: {type(registry_default_scorer).__name__} "
                 f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
             )
-            return registry_default_scorer
+            return self._apply_scorer_block_policy(scorer=registry_default_scorer)
 
-        scorer = TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=chat_target))
+        refusal_scorer = SelfAskRefusalScorer(chat_target=chat_target)
+        refusal_scorer.raise_if_scorer_blocks = self.RAISE_IF_DEFAULT_SCORER_BLOCKS
+        scorer = TrueFalseInverterScorer(scorer=refusal_scorer)
         logger.warning(
             f"Using fallback default objective scorer: {type(scorer).__name__} "
             f"with chat target: {type(chat_target).__name__ if chat_target else 'None'}"
         )
         return scorer
+
+    def _apply_scorer_block_policy(self, *, scorer: TrueFalseScorer) -> TrueFalseScorer:
+        """
+        Apply ``RAISE_IF_DEFAULT_SCORER_BLOCKS`` to a scorer this scenario did not construct.
+
+        The registry default scorer is a shared instance handed to every scenario, and it is
+        typically a composite wrapping the scorers that actually call an LLM. Delegating to
+        ``with_scorer_block_policy`` lets each wrapper reach its own leaves and copy only what
+        changed, so the shared instance is never mutated.
+
+        Args:
+            scorer (TrueFalseScorer): The scorer to apply the policy to.
+
+        Returns:
+            TrueFalseScorer: ``scorer`` unchanged when it already matches the policy or
+            cannot express it, otherwise an independent scorer carrying the policy.
+        """
+        return cast(
+            "TrueFalseScorer",
+            scorer.with_scorer_block_policy(raise_if_scorer_blocks=self.RAISE_IF_DEFAULT_SCORER_BLOCKS),
+        )
 
     def set_params_from_args(self, *, args: dict[str, Any]) -> None:
         """
@@ -708,10 +740,8 @@ class Scenario(ABC):
                 )
             ]
 
-        from pyrit.scenario.core.matrix_atomic_attack_builder import (
-            filter_compatible_seed_groups,
-            resolve_technique_factories_for_techniques,
-        )
+        from pyrit.scenario.core._technique_resolution import resolve_technique_factories_for_techniques
+        from pyrit.scenario.core.matrix_atomic_attack_builder import filter_compatible_seed_groups
 
         factories = resolve_technique_factories_for_techniques(
             scenario_techniques=self._scenario_techniques,
@@ -753,10 +783,8 @@ class Scenario(ABC):
             dict[str, tuple[int, int]] | None: Technique names mapped to minimum and maximum
                 compatible counts, or ``None`` when the configured sampling shape is unsupported.
         """
-        from pyrit.scenario.core.matrix_atomic_attack_builder import (
-            filter_compatible_seed_groups,
-            resolve_technique_factories_for_techniques,
-        )
+        from pyrit.scenario.core._technique_resolution import resolve_technique_factories_for_techniques
+        from pyrit.scenario.core.matrix_atomic_attack_builder import filter_compatible_seed_groups
 
         summaries = {dataset.name: dataset for dataset in datasets}
         factories = resolve_technique_factories_for_techniques(
@@ -987,7 +1015,9 @@ class Scenario(ABC):
         # rather than a silent restart, so the original progress isn't orphaned without
         # the user knowing.
         if self._scenario_result_id:
-            existing_results = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
+            existing_results = await self._memory.get_scenario_results_async(
+                scenario_result_ids=[self._scenario_result_id]
+            )
 
             if not existing_results:
                 raise ValueError(
@@ -1008,9 +1038,11 @@ class Scenario(ABC):
                 reconstructed_plan = self._build_run_plan()
                 metadata = dict(stored_result.metadata)
                 metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = reconstructed_plan.model_dump(mode="json", exclude_none=True)
-                self._memory.update_scenario_metadata(
-                    scenario_result_id=self._scenario_result_id,
-                    metadata=metadata,
+                (
+                    await self._memory.update_scenario_metadata_async(
+                        scenario_result_id=self._scenario_result_id,
+                        metadata=metadata,
+                    )
                 )
             return  # Valid resume - skip creating new scenario result
 
@@ -1035,7 +1067,7 @@ class Scenario(ABC):
             },
         )
 
-        self._memory.add_scenario_results_to_memory(scenario_results=[result])
+        (await self._memory.add_scenario_results_to_memory_async(scenario_results=[result]))
         self._scenario_result_id = str(result.id)
         logger.info(f"Created new scenario result with ID: {self._scenario_result_id}")
 
@@ -1310,12 +1342,11 @@ class Scenario(ABC):
             f"(ID: {self._scenario_result_id}, state: {stored_result.scenario_run_state})"
         )
 
-    def _get_completed_objective_hashes_for_attack(self, *, atomic_attack: AtomicAttack) -> set[str]:
+    async def _get_completed_objective_hashes_by_attack_async(self) -> dict[tuple[str, str | None], set[str]]:
         """
-        Return the set of ``objective_sha256`` values already completed (non-error)
-        for a specific atomic attack inside this scenario.
+        Index completed objective hashes for every atomic attack in this scenario.
 
-        Queries ``AttackResultEntry`` rows directly by ``attribution_parent_id`` —
+        Read the persisted attack results once by ``attribution_parent_id`` —
         which is stamped at write-time by the attack persistence path — so
         results from an interrupted run are visible even though the
         ``ScenarioResult.attack_results`` aggregate may not yet reflect them.
@@ -1329,40 +1360,40 @@ class Scenario(ABC):
         ``parent_eval_hash`` was introduced (or by callers that don't supply
         one) match name-only as a backward-compatible fallback.
 
-        Args:
-            atomic_attack (AtomicAttack): The live atomic attack whose
-                ``atomic_attack_name`` and technique identifier scope the query.
+        ``ERROR`` rows and rows carrying an ``AttackPreparationFailure`` are
+        excluded: neither reached the objective target, so both stay pending.
 
         Returns:
-            set[str]: ``objective_sha256`` hex strings for completed-without-error rows.
+            dict[tuple[str, str | None], set[str]]: Completed objective hashes keyed by
+                collection name and technique eval hash. A missing eval hash retains
+                the legacy name-only matching behavior.
+
+        Raises:
+            Exception: If persisted progress cannot be read. Treating a failed read as
+                empty progress would re-execute already-completed objectives.
         """
         if not self._scenario_result_id:
-            return set()
+            return {}
 
-        atomic_attack_name = atomic_attack.atomic_attack_name
-        expected_eval_hash = atomic_attack.technique_eval_hash
-
-        completed_hashes: set[str] = set()
-        try:
-            rows = self._memory.get_attack_results(scenario_result_id=self._scenario_result_id)
-            for row in rows:
-                if row.outcome == AttackOutcome.ERROR:
-                    continue
-                if row.attribution_data is None:
-                    continue
-                if row.attribution_data.get("parent_collection") != atomic_attack_name:
-                    continue
-                row_eval_hash = row.attribution_data.get("parent_eval_hash")
-                if row_eval_hash is not None and row_eval_hash != expected_eval_hash:
-                    continue
-                if row.objective:
-                    completed_hashes.add(to_sha256(row.objective))
-        except Exception as e:
-            logger.warning(
-                f"Failed to retrieve completed objective hashes for atomic attack '{atomic_attack_name}': {str(e)}"
-            )
-
-        return completed_hashes
+        rows = await self._memory.get_attack_results_async(scenario_result_id=self._scenario_result_id)
+        completed_by_attack: dict[tuple[str, str | None], set[str]] = {}
+        for row in rows:
+            # ERROR rows hit infrastructure problems, and preparation failures never reached the
+            # objective target at all, so neither measured the objective and both stay pending.
+            # Every other row did reach the target and recorded the best verdict available --
+            # including UNDETERMINED when no scorer was configured or the scorer abstained. Those
+            # are measured results of a deterministic configuration; retrying them would re-send
+            # the objective on every resume without ever converging.
+            if row.outcome == AttackOutcome.ERROR or not row.attribution_data or not row.objective:
+                continue
+            if AttackPreparationFailure.from_result(result=row) is not None:
+                continue
+            name = row.attribution_data.get("parent_collection")
+            eval_hash = row.attribution_data.get("parent_eval_hash")
+            if not isinstance(name, str) or (eval_hash is not None and not isinstance(eval_hash, str)):
+                continue
+            completed_by_attack.setdefault((name, eval_hash), set()).add(to_sha256(row.objective))
+        return completed_by_attack
 
     async def _get_remaining_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
@@ -1372,7 +1403,8 @@ class Scenario(ABC):
         atomic attack enforces uniqueness of objective hashes at construction
         time, and the executor stamps ``attribution_parent_id`` +
         ``attribution_data["parent_collection"]`` on the row so a content-hash
-        join is sufficient.
+        join is sufficient. Each call reads a fresh snapshot before filtering any
+        seed groups; a read failure propagates to the scenario's retry policy.
 
         Returns:
             list[AtomicAttack]: List of atomic attacks with uncompleted objectives.
@@ -1382,9 +1414,14 @@ class Scenario(ABC):
             return self._atomic_attacks
 
         remaining_attacks: list[AtomicAttack] = []
+        # Read and index one snapshot before changing any attack's remaining work.
+        completed_by_attack = await self._get_completed_objective_hashes_by_attack_async()
 
         for atomic_attack in self._atomic_attacks:
-            completed_hashes = self._get_completed_objective_hashes_for_attack(atomic_attack=atomic_attack)
+            name = atomic_attack.atomic_attack_name
+            completed_hashes = completed_by_attack.get((name, atomic_attack.technique_eval_hash), set()) | (
+                completed_by_attack.get((name, None), set())
+            )
 
             if completed_hashes:
                 original_count = len(atomic_attack.seed_groups)
@@ -1528,7 +1565,7 @@ class Scenario(ABC):
                 "call await scenario.initialize_async() first."
             )
             if self._scenario_result_id:
-                self._mark_scenario_failed(scenario_result_id=self._scenario_result_id, error=error)
+                (await self._mark_scenario_failed_async(scenario_result_id=self._scenario_result_id, error=error))
             raise error
 
         if not self._scenario_result_id:
@@ -1544,11 +1581,13 @@ class Scenario(ABC):
                 return await self._execute_scenario_async()
             except asyncio.CancelledError:
                 try:
-                    self._memory.update_scenario_run_state(
-                        scenario_result_id=scenario_result_id,
-                        scenario_run_state=ScenarioRunState.CANCELLED,
-                        error_message="Scenario run was cancelled",
-                        error_type="CancelledError",
+                    (
+                        await self._memory.update_scenario_run_state_async(
+                            scenario_result_id=scenario_result_id,
+                            scenario_run_state=ScenarioRunState.CANCELLED,
+                            error_message="Scenario run was cancelled",
+                            error_type="CancelledError",
+                        )
                     )
                 except Exception:
                     logger.exception(f"Failed to persist cancellation state for scenario '{self._name}'")
@@ -1557,7 +1596,9 @@ class Scenario(ABC):
                 last_exception = e
 
                 # Get current scenario to check number of tries
-                scenario_results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
+                scenario_results = await self._memory.get_scenario_results_async(
+                    scenario_result_ids=[scenario_result_id]
+                )
                 current_tries = scenario_results[0].number_tries if scenario_results else retry_attempt + 1
 
                 # Check if we have more retries available
@@ -1577,7 +1618,7 @@ class Scenario(ABC):
                     f"(initial + {self._max_retries} retries) with error: {str(e)}. Giving up.",
                     exc_info=True,
                 )
-                self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=e)
+                (await self._mark_scenario_failed_async(scenario_result_id=scenario_result_id, error=e))
                 raise
 
         # This should never be reached, but just in case
@@ -1610,20 +1651,21 @@ class Scenario(ABC):
         scenario_result_id: str = self._scenario_result_id
 
         # Increment number_tries at the start of each run
-        scenario_results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
+        scenario_results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         if scenario_results:
             current_scenario = scenario_results[0]
             current_scenario.number_tries += 1
-            entry = ScenarioResultEntry(entry=current_scenario)
-            self._memory._update_entry(entry)
+            await self._memory.update_scenario_result_async(scenario_result=current_scenario)
             logger.info(f"Scenario '{self._name}' attempt #{current_scenario.number_tries}")
         else:
             raise ValueError(f"Scenario result with ID {scenario_result_id} not found")
 
         # Mark scenario as in progress
-        self._memory.update_scenario_run_state(
-            scenario_result_id=scenario_result_id,
-            scenario_run_state=ScenarioRunState.IN_PROGRESS,
+        (
+            await self._memory.update_scenario_run_state_async(
+                scenario_result_id=scenario_result_id,
+                scenario_run_state=ScenarioRunState.IN_PROGRESS,
+            )
         )
 
         # Get remaining atomic attacks (filters out completed ones and updates objectives)
@@ -1632,12 +1674,14 @@ class Scenario(ABC):
         if not remaining_attacks:
             logger.info(f"Scenario '{self._name}' has no remaining objectives to execute")
             # Mark scenario as completed
-            self._memory.update_scenario_run_state(
-                scenario_result_id=scenario_result_id,
-                scenario_run_state=ScenarioRunState.COMPLETED,
+            (
+                await self._memory.update_scenario_run_state_async(
+                    scenario_result_id=scenario_result_id,
+                    scenario_run_state=ScenarioRunState.COMPLETED,
+                )
             )
             # Retrieve and return the current scenario result
-            scenario_results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
+            scenario_results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
             if scenario_results:
                 return scenario_results[0]
             raise ValueError(f"Scenario result with ID {scenario_result_id} not found")
@@ -1666,13 +1710,15 @@ class Scenario(ABC):
             logger.info(f"Scenario '{self._name}' completed successfully")
 
             # Mark scenario as completed
-            self._memory.update_scenario_run_state(
-                scenario_result_id=scenario_result_id,
-                scenario_run_state=ScenarioRunState.COMPLETED,
+            (
+                await self._memory.update_scenario_run_state_async(
+                    scenario_result_id=scenario_result_id,
+                    scenario_run_state=ScenarioRunState.COMPLETED,
+                )
             )
 
             # Retrieve and return final scenario result
-            scenario_results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
+            scenario_results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
             if not scenario_results:
                 raise ValueError(f"Scenario result with ID {self._scenario_result_id} not found")
 
@@ -1718,16 +1764,18 @@ class Scenario(ABC):
             incomplete_objectives=atomic_results.incomplete_objectives,
         )
 
-    def _mark_scenario_failed(self, *, scenario_result_id: str, error: BaseException) -> None:
+    async def _mark_scenario_failed_async(self, *, scenario_result_id: str, error: BaseException) -> None:
         """Mark the scenario run as FAILED, deriving message/type from ``error``."""
         error_message = str(error)
         if error.__cause__ is not None:
             error_message = f"{error_message} Caused by {type(error.__cause__).__name__}: {str(error.__cause__)}"
-        self._memory.update_scenario_run_state(
-            scenario_result_id=scenario_result_id,
-            scenario_run_state=ScenarioRunState.FAILED,
-            error_message=error_message,
-            error_type=type(error).__name__,
+        (
+            await self._memory.update_scenario_run_state_async(
+                scenario_result_id=scenario_result_id,
+                scenario_run_state=ScenarioRunState.FAILED,
+                error_message=error_message,
+                error_type=type(error).__name__,
+            )
         )
 
     async def _execute_atomic_attacks_parallel_async(

@@ -32,6 +32,7 @@ class ConversationScorer(MessageScorer, ABC):
     Note: This class cannot be instantiated directly. Use create_conversation_scorer() factory instead.
     """
 
+    _REQUIRES_CONVERSATION_HISTORY = True
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
         enforce_all_pieces_valid=False,
@@ -116,7 +117,9 @@ class ConversationScorer(MessageScorer, ABC):
 
         # Retrieve the full conversation from memory using the conversation_id
         conversation = (
-            self._memory.get_conversation_messages(conversation_id=conversation_id) if conversation_id else []
+            (await self._memory.get_conversation_messages_async(conversation_id=conversation_id))
+            if conversation_id
+            else []
         )
 
         if not conversation:
@@ -133,7 +136,9 @@ class ConversationScorer(MessageScorer, ABC):
                 # A scorer can narrow this further: supported_roles=["user", "assistant"] leaves
                 # tool output out of the scored text.
                 if piece.api_role in ["user", "assistant", "tool"] and self._validator.is_role_supported(piece):
-                    role_display = "Assistant (simulated)" if piece.is_simulated else piece.api_role.capitalize()
+                    role_display = piece.api_role.capitalize()
+                    if piece.is_simulated:
+                        role_display += " (simulated)"
                     # For blocked pieces with partial content, use the partial content
                     # instead of the error JSON when should_score_blocked_content is enabled
                     if (
@@ -155,10 +160,13 @@ class ConversationScorer(MessageScorer, ABC):
             expectation=wrapped_scorer._select_expectation(expectation=expectation),
         )
         trigger_piece = message.message_pieces[0]
+        results = []
         for score in scores:
-            score.message_piece_id = trigger_piece.id or trigger_piece.original_prompt_id
-            score.scorable = None
-        return scores
+            parent = self._create_wrapper_score(score)
+            parent.message_piece_id = trigger_piece.id or trigger_piece.original_prompt_id
+            parent.scorable = None
+            results.append(parent)
+        return results
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """

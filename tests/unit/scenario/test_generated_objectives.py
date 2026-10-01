@@ -46,12 +46,12 @@ async def test_generated_dataset_runs_existing_scenario_async(sqlite_instance: M
             ).to_message()
         ]
 
-    assert not sqlite_instance.get_seeds(dataset_name=provider.dataset_name)
+    assert not await sqlite_instance.get_seeds_async(dataset_name=provider.dataset_name)
     with patch.object(generation_target, "_send_prompt_to_target_async", side_effect=respond_async) as generate:
         dataset = await provider.fetch_dataset_async()
     generate.assert_called_once()
     await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="operator")
-    stored = sqlite_instance.get_seeds(dataset_name=provider.dataset_name, origin=SeedOrigin.GENERATED)
+    stored = await sqlite_instance.get_seeds_async(dataset_name=provider.dataset_name, origin=SeedOrigin.GENERATED)
     assert len(stored) == 10
 
     config = DatasetAttackConfiguration(dataset_names=[provider.dataset_name], auto_fetch=False)

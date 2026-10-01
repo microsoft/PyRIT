@@ -37,11 +37,11 @@ class TestTargetObjectiveGenerator:
         with patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async):
             result = await generator.execute_async(instructions="Test formatting.", count=10)
         assert result.objectives == [f"Objective {index}" for index in range(10)]
-        stored = sqlite_instance.get_message_pieces(conversation_id=result.conversation_id)
+        stored = await sqlite_instance.get_message_pieces_async(conversation_id=result.conversation_id)
         responses = [piece for piece in stored if piece.role == "assistant"]
         assert len(responses) == 1
         assert [value.strip() for value in json.loads(responses[0].converted_value)["objectives"]] == result.objectives
-        assert not sqlite_instance.get_seeds()
+        assert not await sqlite_instance.get_seeds_async()
 
     async def test_default_yaml_controls_prompt_and_schema_async(self) -> None:
         target = MockPromptTarget()
@@ -429,7 +429,7 @@ value: |
         target = MockPromptTarget()
         generator = TargetObjectiveGenerator(target=target)
         with (
-            patch.object(target, "set_system_prompt", side_effect=RuntimeError("Conversation already exists")),
+            patch.object(target, "set_system_prompt_async", side_effect=RuntimeError("Conversation already exists")),
             patch.object(target, "reset_conversation_async", new_callable=AsyncMock) as reset,
             pytest.raises(RuntimeError),
         ):

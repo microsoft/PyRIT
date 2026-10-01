@@ -80,7 +80,7 @@ def test_get_scenario_run_history_page_delegates_to_component(sqlite_instance: M
 
     with (
         patch.object(_ScenarioHistoryQueries, "get_page", return_value=(records, True)) as mock_get_page,
-        patch.object(sqlite_instance, "get_scenario_history_aggregates", return_value={}) as mock_aggregates,
+        patch.object(sqlite_instance, "_execute_get_scenario_history_aggregates", return_value={}) as mock_aggregates,
     ):
         result = sqlite_instance.get_scenario_run_history_page(scenario_names=["Test"], limit=50)
 
@@ -103,7 +103,7 @@ def test_get_page_rejects_invalid_limit(sqlite_instance: MemoryInterface, limit:
     """Limit outside 1..100 raises before any session is opened."""
     component = _ScenarioHistoryQueries(memory=sqlite_instance)
     with (
-        patch.object(sqlite_instance, "get_session", side_effect=AssertionError("session opened before validation")),
+        patch.object(sqlite_instance, "_get_session", side_effect=AssertionError("session opened before validation")),
         pytest.raises(ValueError, match="between 1 and 100"),
     ):
         _get_page(component, limit=limit)

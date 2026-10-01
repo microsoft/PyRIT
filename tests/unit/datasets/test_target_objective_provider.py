@@ -57,16 +57,18 @@ class TestTargetObjectiveProvider:
         with patch.object(provider._generator, "execute_async", new_callable=AsyncMock, return_value=result) as execute:
             dataset = await provider.fetch_dataset_async()
         execute.assert_awaited_once_with(instructions="Test", count=10, harm_categories=["test"])
-        assert not sqlite_instance.get_seeds()
+        assert not await sqlite_instance.get_seeds_async()
         assert len(dataset.seeds) == 10
         assert all(isinstance(seed, SeedObjective) for seed in dataset.seeds)
         assert all(seed.dataset_name == "generated" and seed.origin is SeedOrigin.GENERATED for seed in dataset.seeds)
         assert all(not seed.is_jinja_template and seed.added_by is None for seed in dataset.seeds)
         await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="operator")
-        stored = sqlite_instance.get_seeds(dataset_name="generated", origin=SeedOrigin.GENERATED)
+        stored = await sqlite_instance.get_seeds_async(dataset_name="generated", origin=SeedOrigin.GENERATED)
         assert len(stored) == 10
         assert all(seed.metadata == {"generation_conversation_id": result.conversation_id} for seed in stored)
-        by_conversation = sqlite_instance.get_seeds(metadata={"generation_conversation_id": result.conversation_id})
+        by_conversation = await sqlite_instance.get_seeds_async(
+            metadata={"generation_conversation_id": result.conversation_id}
+        )
         assert len(by_conversation) == 10
         assert stored[0].added_by == "operator"
 
@@ -108,7 +110,7 @@ class TestTargetObjectiveProvider:
             pytest.raises(RuntimeError, match="Failed"),
         ):
             await provider.fetch_dataset_async()
-        assert not sqlite_instance.get_seeds()
+        assert not await sqlite_instance.get_seeds_async()
 
     @pytest.mark.parametrize("name", ["", "  "])
     def test_rejects_blank_name(self, name: str) -> None:

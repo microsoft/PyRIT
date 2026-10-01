@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import copy
 import math
 import uuid
 from typing import TYPE_CHECKING, cast
@@ -104,6 +105,26 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+        """
+        Apply the policy to the wrapped float-scale scorer.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply to LLM-backed leaves.
+
+        Returns:
+            Scorer: ``self`` when the wrapped scorer is unchanged, otherwise a copy wrapping
+            the updated scorer.
+        """
+        scoped_inner = cast(
+            "FloatScaleScorer", self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
+        )
+        if scoped_inner is self._scorer:
+            return self
+        scoped = copy.copy(self)
+        scoped._scorer = scoped_inner
+        return scoped
+
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the scorer whose value is compared to the threshold."""
         return (self._scorer,)
@@ -192,7 +213,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         else:
             comparison_symbol = "="
 
-        score = scores[0]
+        score = self._create_wrapper_score(scores[0])
         score.score_type = "true_false"
         score.score_value = str(threshold_result)
         score.status = ScoreStatus.COMPLETE
@@ -209,7 +230,6 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         )
         score.score_value_description = aggregate_score.description
         score.score_category = aggregate_score.category
-        score.id = uuid.uuid4()
         score.scorer_class_identifier = self.get_identifier()
         score.observation_ids = _merge_observation_ids(scores=scores)
         # Store the original float value in metadata for granular comparison

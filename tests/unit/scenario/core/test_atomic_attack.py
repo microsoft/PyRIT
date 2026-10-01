@@ -10,8 +10,10 @@ import pytest
 
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
@@ -20,6 +22,7 @@ from pyrit.models import (
     SeedGroup,
     SeedObjective,
     SeedPrompt,
+    TargetIdentifier,
 )
 from pyrit.scenario import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -1002,14 +1005,14 @@ class TestEnrichAtomicAttackIdentifiers:
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
 
-            mock_memory = MagicMock()
-            mock_memory.update_attack_result_by_id.return_value = True
+            mock_memory = MagicMock(spec=MemoryInterface)
+            mock_memory.update_attack_result_by_id_async = AsyncMock(return_value=True)
             with patch("pyrit.scenario.core.atomic_attack.CentralMemory") as mock_cm:
                 mock_cm.get_memory_instance.return_value = mock_memory
                 await atomic.run_async()
 
-        mock_memory.update_attack_result_by_id.assert_called_once()
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args.kwargs
+        mock_memory.update_attack_result_by_id_async.assert_called_once()
+        call_kwargs = mock_memory.update_attack_result_by_id_async.call_args.kwargs
         assert call_kwargs["attack_result_id"] == "00000000-0000-0000-0000-000000000001"
         assert "atomic_attack_identifier" in call_kwargs["update_fields"]
         # The persisted dict should have the AtomicAttack shape
@@ -1043,12 +1046,12 @@ class TestEnrichAtomicAttackIdentifiers:
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
 
-            mock_memory = MagicMock()
+            mock_memory = MagicMock(spec=MemoryInterface)
             with patch("pyrit.scenario.core.atomic_attack.CentralMemory") as mock_cm:
                 mock_cm.get_memory_instance.return_value = mock_memory
                 await atomic.run_async()
 
-        mock_memory.update_attack_result_by_id.assert_not_called()
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1279,3 +1282,38 @@ class TestAtomicAttackTechniqueEvalHash:
             atomic_attack_name="same",
         )
         assert a1.technique_eval_hash != a2.technique_eval_hash
+
+    def test_hash_differs_for_different_adversarial_prompt_template(self, sample_seed_groups):
+        """Two otherwise-identical adversarial attacks that differ only in their resolved
+        per-turn adversarial_prompt_template must land in different resume buckets --
+        otherwise resuming a scenario after only the follow-up prompt changed would
+        silently reuse results generated under the old template."""
+        adv_target = TargetIdentifier(class_name="AdvChat", class_module="pyrit.test")
+
+        attack_a = MagicMock(spec=AttackStrategy)
+        attack_a.get_identifier.return_value = AttackIdentifier(
+            class_name="RedTeamingAttack",
+            class_module="pyrit.test",
+            adversarial_chat=adv_target,
+            adversarial_prompt_template="A: {{ feedback_text }}",
+        )
+        attack_b = MagicMock(spec=AttackStrategy)
+        attack_b.get_identifier.return_value = AttackIdentifier(
+            class_name="RedTeamingAttack",
+            class_module="pyrit.test",
+            adversarial_chat=adv_target,
+            adversarial_prompt_template="B: {{ feedback_text }}",
+        )
+
+        a1 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=attack_a),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        a2 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=attack_b),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        assert a1.technique_eval_hash != a2.technique_eval_hash
+        assert a1.logical_group_id != a2.logical_group_id

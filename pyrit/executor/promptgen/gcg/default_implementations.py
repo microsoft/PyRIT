@@ -214,6 +214,102 @@ class CrossEntropyLoss:
         result: torch.Tensor = total
         return result
 
+    def get_required_logit_positions(
+        self,
+        *,
+        target_slice: slice,
+        control_slice: slice,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
+        """
+        Return sequence positions whose logits contribute to this loss.
+
+        Causal language-model logits at position ``n - 1`` predict the token
+        at position ``n``. Disabled loss terms are omitted entirely so models
+        supporting ``logits_to_keep`` need not project unused hidden states
+        through the vocabulary-sized LM head.
+
+        Args:
+            target_slice (slice): Target-token positions in the full sequence.
+            control_slice (slice): Control-token positions in the full sequence.
+            device (torch.device | str | None): Device on which to create the
+                returned index tensor.
+
+        Returns:
+            torch.Tensor: Ordered sequence positions required by the enabled
+                target and control loss terms.
+        """
+        positions: list[torch.Tensor] = []
+        if self._target_weight > 0:
+            positions.append(torch.arange(target_slice.start - 1, target_slice.stop - 1, device=device))
+        if self._control_weight > 0:
+            positions.append(torch.arange(control_slice.start - 1, control_slice.stop - 1, device=device))
+        return torch.cat(positions)
+
+    def compute_loss_from_selected_logits(
+        self,
+        *,
+        logits: torch.Tensor,
+        token_ids: torch.Tensor,
+        target_slice: slice,
+        control_slice: slice,
+    ) -> torch.Tensor:
+        """
+        Compute loss from logits ordered by ``get_required_logit_positions``.
+
+        Args:
+            logits (torch.Tensor): Selected logits with shape
+                ``(batch_size, required_positions, vocab_size)``.
+            token_ids (torch.Tensor): Full input token ids with shape
+                ``(batch_size, sequence_length)``.
+            target_slice (slice): Target-token positions in ``token_ids``.
+            control_slice (slice): Control-token positions in ``token_ids``.
+
+        Returns:
+            torch.Tensor: Per-candidate scalar loss with shape ``(batch_size,)``.
+
+        Raises:
+            ValueError: If the selected-logit count does not match the enabled
+                target and control terms.
+            RuntimeError: If both loss terms are unexpectedly disabled.
+        """
+        target_length = target_slice.stop - target_slice.start if self._target_weight > 0 else 0
+        control_length = control_slice.stop - control_slice.start if self._control_weight > 0 else 0
+        expected_length = target_length + control_length
+        if logits.shape[1] != expected_length:
+            raise ValueError(
+                "Selected logits must contain one position per enabled loss token; "
+                f"expected {expected_length}, got {logits.shape[1]}"
+            )
+
+        criterion = nn.CrossEntropyLoss(reduction="none")
+        total: torch.Tensor | None = None
+        offset = 0
+
+        if self._target_weight > 0:
+            target_term = criterion(
+                logits[:, offset : offset + target_length, :].transpose(1, 2),
+                token_ids[:, target_slice],
+            ).mean(dim=-1)
+            total = self._target_weight * target_term
+            offset += target_length
+
+        if self._control_weight > 0:
+            control_term = criterion(
+                logits[:, offset : offset + control_length, :].transpose(1, 2),
+                token_ids[:, control_slice],
+            ).mean(dim=-1)
+            weighted_control = self._control_weight * control_term
+            total = weighted_control if total is None else total + weighted_control
+
+        if total is None:
+            raise RuntimeError(
+                "CrossEntropyLoss.compute_loss_from_selected_logits produced no terms; "
+                "this indicates a corrupted instance with both weights at 0."
+            )
+        result: torch.Tensor = total
+        return result
+
 
 class LengthPreservingFilter:
     """

@@ -2,7 +2,8 @@
 # Licensed under the MIT license.
 
 from typing import get_type_hints
-from unittest.mock import MagicMock
+
+from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
 from pyrit.message_normalizer import ConversationContextNormalizer
@@ -35,6 +36,6 @@ def test_get_message_normalizer_returns_default_when_none():
 
 
 def test_get_message_normalizer_returns_custom():
-    mock_normalizer = MagicMock()
+    mock_normalizer = get_mock_prompt_normalizer()
     config = PrependedConversationConfig(message_normalizer=mock_normalizer)
     assert config.get_message_normalizer() is mock_normalizer

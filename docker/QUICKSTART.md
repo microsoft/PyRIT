@@ -77,14 +77,17 @@ The GUI shows PyRIT version in a tooltip on the logo:
 
 ## Docker Compose
 
-Use profiles to run specific modes:
+First follow [Source Build Provenance](./README.md#source-build-provenance) to
+export the full source commit and exact dirty flag in the current shell, and
+build the devcontainer base image as described in [Build and Start](./README.md#build-and-start).
+From the `docker/` directory, use profiles to run specific modes:
 
 ```bash
 # Jupyter mode
-docker-compose --profile jupyter up
+docker compose --profile jupyter up --build
 
 # GUI mode
-docker-compose --profile gui up
+docker compose --profile gui up --build
 ```
 
 ## Troubleshooting

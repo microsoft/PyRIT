@@ -20,7 +20,7 @@ async def test_seed_origins_roundtrip_azure_sql_async(azuresql_instance: AzureSQ
             added_by="seed_origin_integration",
         )
         for origin in SeedOrigin:
-            [seed] = azuresql_instance.get_seeds(dataset_name=dataset_name, origin=origin)
+            [seed] = await azuresql_instance.get_seeds_async(dataset_name=dataset_name, origin=origin)
             assert seed.origin is origin
     finally:
-        azuresql_instance.remove_seeds_from_memory(dataset_name=dataset_name)
+        await azuresql_instance.remove_seeds_from_memory_async(dataset_name=dataset_name)
