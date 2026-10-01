@@ -70,7 +70,7 @@ def test_invalid_prompt_limit_is_rejected(limit: int) -> None:
 @pytest.mark.parametrize("kwargs", [{}, {"max_prompts_per_technique": None}])
 async def test_omitted_and_none_keep_finite_prompt_default_async(kwargs: dict[str, None]) -> None:
     scenario = WebInjection(**kwargs)
-    with patch.object(scenario, "_load_dataset_values", side_effect=AssertionError("Preview read datasets")):
+    with patch.object(scenario, "_load_dataset_values_async", side_effect=AssertionError("Preview read datasets")):
         estimate = await scenario.get_default_run_size_estimate_async()
     assert estimate.dataset_size == BoundedDatasetSize(value=62)
     assert estimate.estimated_attack_count == 124
@@ -94,14 +94,14 @@ async def test_every_technique_is_capped_and_preview_bounds_plan_async(*, limit:
             "include_baseline": baseline,
         }
     )
-    with patch.object(scenario, "_load_dataset_values", side_effect=AssertionError("Preview read data")):
+    with patch.object(scenario, "_load_dataset_values_async", side_effect=AssertionError("Preview read data")):
         estimate = await scenario.get_run_size_estimate_async()
     expected_bound = 7 * limit + min(limit, 2)
     assert estimate.dataset_size == BoundedDatasetSize(value=expected_bound)
     assert estimate.estimated_attack_count == expected_bound * (1 + baseline)
     with (
         patch.object(scenario._dataset_config, "_collect_named_seeds_async", return_value=[]),
-        patch.object(scenario, "_load_dataset_values", return_value=values),
+        patch.object(scenario, "_load_dataset_values_async", return_value=values),
     ):
         await scenario.initialize_async()
         full_groups = await scenario._resolve_seed_groups_by_dataset_async(apply_sampling=False)
@@ -109,7 +109,7 @@ async def test_every_technique_is_capped_and_preview_bounds_plan_async(*, limit:
         resumed.set_params_from_args(args=scenario.params)
         with (
             patch.object(resumed._dataset_config, "_collect_named_seeds_async", return_value=[]),
-            patch.object(resumed, "_load_dataset_values", return_value=values),
+            patch.object(resumed, "_load_dataset_values_async", return_value=values),
         ):
             await resumed.initialize_async()
     attacks = scenario._atomic_attacks
@@ -202,7 +202,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_atomic_attacks_one_per_technique_plus_baseline(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -223,7 +223,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_no_baseline_when_disabled(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -239,7 +239,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_seed_groups_pair_objective_and_prompt(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -260,7 +260,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_exfil_technique_uses_markdown_scorer(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -277,7 +277,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_xss_technique_uses_xss_scorer(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -299,7 +299,7 @@ class TestWebInjectionAtomicAttacks:
             "garak_xss_normal_instructions": [],
         }
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=empty):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=empty):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -311,7 +311,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_max_prompts_per_technique_caps_output(self, mock_objective_target, dataset_values):
         scenario = WebInjection(max_prompts_per_technique=3)
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,

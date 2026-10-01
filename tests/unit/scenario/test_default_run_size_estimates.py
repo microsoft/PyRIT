@@ -4,6 +4,7 @@
 """Configuration-only previews stay separate from exact initialized run plans."""
 
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,7 +25,7 @@ from pyrit.models import (
     SeedObjective,
     scenario_dataset_size_from_limit,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario.core import (
     AtomicAttack,
@@ -43,7 +44,10 @@ from pyrit.scenario.scenarios.foundry.red_team_agent import FoundryComposite, Fo
 from pyrit.scenario.scenarios.garak.api_key import ApiKey
 from pyrit.scenario.scenarios.garak.encoding import Encoding
 from pyrit.scenario.scenarios.garak.exploitation import Exploitation
+from pyrit.scenario.scenarios.garak.figstep import FigStep
+from pyrit.scenario.scenarios.garak.latent_injection import LatentInjection, LatentInjectionDatasetConfiguration
 from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination, PackageHallucinationTechnique
+from pyrit.scenario.scenarios.garak.prompt_inject import PromptInject, PromptInjectDatasetConfiguration
 from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
     SystemPromptExtraction,
     SystemPromptExtractionTechnique,
@@ -142,7 +146,113 @@ async def test_default_estimate_uses_five_without_population_or_persistence_asyn
     assert estimate.datasets[0].logical_seed_group_count is None
     assert estimate.datasets[0].selected_seed_group_count is None
     assert estimate.datasets[0].configured_caps[0].count == 5
-    assert scenario._memory.get_scenario_results() == []
+    assert await scenario._memory.get_scenario_results_async() == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("preview", [True, False])
+@pytest.mark.parametrize(
+    ("scenario_class", "constructor_args", "run_args", "message"),
+    [
+        (
+            PromptInject,
+            {},
+            {
+                "dataset_config": PromptInjectDatasetConfiguration(
+                    dataset_names=PromptInject.required_datasets(), max_dataset_size=1
+                )
+            },
+            "must be at least the number of goal_texts",
+        ),
+        (PromptInject, {}, {"goal_texts": []}, "non-empty strings"),
+        (PromptInject, {}, {"goal_texts": ["duplicate", "duplicate"]}, "duplicate"),
+        (PromptInject, {}, {"dataset_config": DatasetAttackConfiguration()}, "only supports"),
+        (
+            LatentInjection,
+            {},
+            {"dataset_config": LatentInjectionDatasetConfiguration(dataset_names=["wrong"])},
+            "requires exactly",
+        ),
+        (LatentInjection, {}, {"families": []}, "non-empty selection"),
+        (LatentInjection, {}, {"families": ["latent_jailbreak"]}, "explicit harm_scorer"),
+        (ApiKey, {}, {"dataset_config": DatasetAttackConfiguration()}, "only supports"),
+        (
+            FigStep,
+            {"objective_scorer": _scorer()},
+            {"dataset_config": DatasetAttackConfiguration(dataset_names=["wrong"])},
+            "exactly one",
+        ),
+        (Exploitation, {}, {"prompt_cap": 0}, "prompt_cap must be greater than zero"),
+        (Exploitation, {}, {"prompt_cap": -1}, "prompt_cap must be greater than zero"),
+        (SystemPromptExtraction, {"prompt_cap": 0}, {}, "prompt_cap must be greater than zero"),
+        (SystemPromptExtraction, {"prompt_cap": -1}, {}, "prompt_cap must be greater than zero"),
+        (SystemPromptExtraction, {"system_prompt_subsample": 0}, {}, "system_prompt_subsample"),
+        (PackageHallucination, {"max_prompts_per_language": 0}, {}, "max_prompts_per_language"),
+        (PackageHallucination, {"max_prompts_per_language": -1}, {}, "max_prompts_per_language"),
+        (TextAdaptive, {"objective_scorer": _scorer()}, {"max_attempts_per_objective": 0}, "must be >= 1"),
+        (TextAdaptive, {"objective_scorer": _scorer()}, {"max_attempts_per_objective": -1}, "must be >= 1"),
+    ],
+)
+async def test_configuration_only_checks_are_shared_before_dataset_reads_async(
+    *,
+    scenario_class: type[Scenario],
+    constructor_args: dict[str, Any],
+    run_args: dict[str, Any],
+    message: str,
+    preview: bool,
+) -> None:
+    scenario = scenario_class(**constructor_args)
+    target = MockPromptTarget()
+    if scenario_class is FigStep:
+        target._configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_message_pieces=True,
+                input_modalities=frozenset({frozenset({"text", "image_path"})}),
+            )
+        )
+    scenario.set_params_from_args(args={"objective_target": target, **run_args})
+    with patch.object(
+        scenario, "_resolve_seed_groups_by_dataset_async", side_effect=AssertionError("Resolved datasets")
+    ) as resolve:
+        with pytest.raises(ValueError, match=message):
+            if preview:
+                await scenario.get_run_size_estimate_async()
+            else:
+                await scenario.initialize_async()
+    resolve.assert_not_called()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("cap", [3, 12, None])
+async def test_prompt_inject_valid_coverage_caps_still_have_configuration_only_previews_async(cap: int | None) -> None:
+    scenario = PromptInject()
+    scenario.set_params_from_args(
+        args={
+            "dataset_config": PromptInjectDatasetConfiguration(
+                dataset_names=PromptInject.required_datasets(), max_dataset_size=cap
+            )
+        }
+    )
+    estimate = await scenario.get_run_size_estimate_async()
+    if cap is None:
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+    else:
+        assert estimate.estimated_attack_count == cap * 5
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_compound_configuration_checks_children_before_a_bounded_preview_async() -> None:
+    config = CompoundDatasetAttackConfiguration(
+        configurations=[
+            DatasetAttackConfiguration(dataset_names=["missing"]),
+            PromptInjectDatasetConfiguration(dataset_names=PromptInject.required_datasets(), max_dataset_size=1),
+        ],
+        max_dataset_size=10,
+    )
+    scenario = _MatrixEstimateScenario()
+    scenario.set_params_from_args(args={"dataset_config": config})
+    with pytest.raises(ValueError, match="number of goal_texts"):
+        await scenario.get_run_size_estimate_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -272,11 +382,11 @@ async def test_preview_five_becomes_exact_three_in_persisted_run_plan_async() ->
     assert estimate.estimated_attack_count == 15
     with patch.object(scenario, "_resolve_seed_groups_by_dataset_async", return_value={"inline": groups}):
         await scenario.initialize_async()
-    [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
+    [stored] = await scenario._memory.get_scenario_results_async(scenario_result_ids=[scenario._scenario_result_id])
     plan = stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
     assert sum(len(group["seed_group_ids"]) for group in plan["atomic_groups"]) == 9
     assert len(plan["seed_groups"]) == 3
-    snapshot = ScenarioProgressReadModel(memory=scenario._memory).get_snapshot(
+    snapshot = await ScenarioProgressReadModel(memory=scenario._memory).get_snapshot_async(
         scenario_result_id=scenario._scenario_result_id,
         plan=ScenarioRunPlan.model_validate(plan),
         plan_complete=True,
@@ -382,7 +492,7 @@ async def test_encoding_keeps_converter_and_prompt_configuration_factors_async()
 async def test_web_injection_estimate_does_not_load_or_synthesize_populations_async() -> None:
     scenario = WebInjection()
     with (
-        patch.object(scenario, "_load_dataset_values", side_effect=AssertionError("Loaded dataset")),
+        patch.object(scenario, "_load_dataset_values_async", side_effect=AssertionError("Loaded dataset")),
         patch.object(scenario, "_build_synthesized_seed_groups", side_effect=AssertionError("Synthesized seeds")),
     ):
         estimate = await scenario.get_default_run_size_estimate_async()

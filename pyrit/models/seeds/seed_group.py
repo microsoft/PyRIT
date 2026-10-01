@@ -367,8 +367,8 @@ class SeedGroup(BaseModel):
             if not prepended_prompts:
                 return None
 
-            return self._prompts_to_messages(prepended_prompts)
-        return self._prompts_to_messages(list(self.prompts))
+            return self._prompts_to_messages(prepended_prompts, is_history=True)
+        return self._prompts_to_messages(list(self.prompts), is_history=True)
 
     @property
     def next_message(self) -> Message | None:
@@ -428,7 +428,7 @@ class SeedGroup(BaseModel):
 
         return last_sequence_prompts[0].role if last_sequence_prompts else None
 
-    def _prompts_to_messages(self, prompts: Sequence[SeedPrompt]) -> list[Message]:
+    def _prompts_to_messages(self, prompts: Sequence[SeedPrompt], *, is_history: bool = False) -> list[Message]:
         """
         Convert a sequence of SeedPrompts to Messages.
 
@@ -436,6 +436,7 @@ class SeedGroup(BaseModel):
 
         Args:
             prompts: The prompts to convert.
+            is_history: Whether all pieces are prepended history rather than outgoing requests.
 
         Returns:
             Messages created from the prompts.
@@ -452,8 +453,6 @@ class SeedGroup(BaseModel):
             message_pieces = []
             for prompt in sequence_prompts:
                 role = prompt.role or "user"
-                if role == "assistant":
-                    role = "simulated_assistant"
 
                 piece = MessagePiece(
                     role=role,
@@ -463,6 +462,8 @@ class SeedGroup(BaseModel):
                     sequence=sequence,
                     prompt_metadata=prompt.metadata,
                 )
+                if is_history or piece.api_role in {"assistant", "tool"}:
+                    piece.set_simulated_role()
                 message_pieces.append(piece)
 
             messages.append(Message(message_pieces=message_pieces))

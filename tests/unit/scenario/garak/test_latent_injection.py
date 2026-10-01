@@ -82,6 +82,22 @@ def _ids(scenario: LatentInjection) -> dict[str, list[str]]:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestLatentDefaults:
+    @pytest.mark.parametrize(
+        ("kwargs", "expected_cap"),
+        [({}, 92), ({"max_dataset_size": None}, None), ({"max_dataset_size": 23}, 23)],
+    )
+    async def test_configuration_defaults_resolve_with_family_coverage_async(
+        self, *, kwargs: dict[str, int | None], expected_cap: int | None
+    ) -> None:
+        config = _config(**kwargs)
+        groups = await config.get_attack_seed_groups_async()
+        assert config.max_dataset_size == expected_cap
+        assert len(config.coverage_keys) == 23
+        assert {config._coverage_key(group) for group in groups} == set(config.coverage_keys)
+        full = await config.get_attack_seed_groups_async(apply_sampling=False)
+        assert len(groups) == (min(expected_cap, len(full)) if expected_cap is not None else len(full))
+        assert len(full) > 92
+
     async def test_default_population_budget_and_estimate_async(self) -> None:
         scenario = LatentInjection()
         await _initialize_async(scenario)
@@ -172,11 +188,13 @@ class TestLatentPopulation:
             assert "document" not in group.objective.value
             assert len(group.objective.value) < 180
 
-    @pytest.mark.parametrize("cap", [-1, 0, 3])
-    async def test_runtime_budget_is_validated_without_sampling_async(self, cap: int) -> None:
+    @pytest.mark.parametrize(
+        ("cap", "message"), [(-1, "positive integer"), (0, "positive integer"), (3, "family/trigger pairs")]
+    )
+    async def test_runtime_budget_is_validated_without_sampling_async(self, cap: int, message: str) -> None:
         config = _config(families=["whois", "resume"])
         config.max_dataset_size = cap
-        with pytest.raises(DatasetConstraintError, match="family/trigger pairs"):
+        with pytest.raises(DatasetConstraintError, match=message):
             await config.get_attack_seed_groups_async(apply_sampling=False)
 
     async def test_filters_validators_and_config_identity_async(self, seeded_memory_async: MemoryInterface) -> None:
@@ -189,7 +207,9 @@ class TestLatentPopulation:
             validators=[seen.append],
         )
         scenario = LatentInjection()
-        with patch.object(seeded_memory_async, "get_seeds", wraps=seeded_memory_async.get_seeds) as get_seeds:
+        with patch.object(
+            seeded_memory_async, "get_seeds_async", wraps=seeded_memory_async.get_seeds_async
+        ) as get_seeds:
             await _initialize_async(
                 scenario, dataset_config=config, scenario_techniques=[LatentInjectionTechnique.Bare]
             )
@@ -217,7 +237,8 @@ class TestLatentPopulation:
 
     async def test_source_follows_each_carrier_async(self, seeded_memory_async: MemoryInterface) -> None:
         sources = {
-            name: list(seeded_memory_async.get_seeds(dataset_name=name)) for name in LatentInjection.required_datasets()
+            name: list(await seeded_memory_async.get_seeds_async(dataset_name=name))
+            for name in LatentInjection.required_datasets()
         }
         contexts = sources[LatentInjectionDatasetConfiguration.CONTEXT_DATASET_NAME]
         for index, seed in enumerate(contexts):
@@ -246,7 +267,8 @@ class TestLatentPopulation:
         self, seeded_memory_async: MemoryInterface, role: str, value: str, message: str
     ) -> None:
         sources = {
-            name: list(seeded_memory_async.get_seeds(dataset_name=name)) for name in LatentInjection.required_datasets()
+            name: list(await seeded_memory_async.get_seeds_async(dataset_name=name))
+            for name in LatentInjection.required_datasets()
         }
         next(
             seed for seed in sources[f"garak_latent_injection_{role}"] if seed.metadata["family"] == "whois"
@@ -258,7 +280,8 @@ class TestLatentPopulation:
 
     async def test_empty_trigger_raises_async(self, seeded_memory_async: MemoryInterface) -> None:
         sources = {
-            name: list(seeded_memory_async.get_seeds(dataset_name=name)) for name in LatentInjection.required_datasets()
+            name: list(await seeded_memory_async.get_seeds_async(dataset_name=name))
+            for name in LatentInjection.required_datasets()
         }
         for seed in sources[LatentInjectionDatasetConfiguration.TRIGGER_DATASET_NAME]:
             seed.value = " "
@@ -302,7 +325,8 @@ class TestLatentAttacks:
     async def test_literals_survive_conversion_async(self, seeded_memory_async: MemoryInterface, role: str) -> None:
         literal = "Unicode: \u4f60\n{{ braces }} \\g<1> \\1"
         sources = {
-            name: list(seeded_memory_async.get_seeds(dataset_name=name)) for name in LatentInjection.required_datasets()
+            name: list(await seeded_memory_async.get_seeds_async(dataset_name=name))
+            for name in LatentInjection.required_datasets()
         }
         for seed in sources[f"garak_latent_injection_{role}"]:
             seed.value = literal + ("<|trigger|>" if role == "payload_templates" else "")
@@ -346,11 +370,13 @@ class TestLatentAttacks:
         identities = _ids(original)
         original._atomic_attacks[0].set_scenario_result_id(original._scenario_result_id)
         await original._atomic_attacks[0].run_async()
-        get_seeds = seeded_memory_async.get_seeds
+        get_seeds = seeded_memory_async.get_seeds_async
         resumed = LatentInjection(scenario_result_id=original._scenario_result_id)
-        with patch.object(
-            seeded_memory_async, "get_seeds", side_effect=lambda **kwargs: list(reversed(get_seeds(**kwargs)))
-        ):
+
+        async def reversed_seeds_async(**kwargs: Any) -> list[Seed]:
+            return list(reversed(await get_seeds(**kwargs)))
+
+        with patch.object(seeded_memory_async, "get_seeds_async", side_effect=reversed_seeds_async):
             await _initialize_async(
                 resumed,
                 dataset_config=_config(families=["whois"], max_dataset_size=2),
@@ -397,7 +423,8 @@ class TestLatentAttacks:
         }
         await _initialize_async(original, **args)
         sources = {
-            name: list(seeded_memory_async.get_seeds(dataset_name=name)) for name in LatentInjection.required_datasets()
+            name: list(await seeded_memory_async.get_seeds_async(dataset_name=name))
+            for name in LatentInjection.required_datasets()
         }
         for seed in sources[LatentInjectionDatasetConfiguration.CONTEXT_DATASET_NAME]:
             seed.value += " changed"

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.analytics.technique_analysis import compute_technique_stats
+from pyrit.analytics.technique_analysis import compute_technique_stats_async
 from pyrit.converter import Converter, SearchReplaceConverter
 from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, Message, MessagePiece, SeedObjective
@@ -313,7 +313,7 @@ class TestPromptInjectAtomicAttacks:
         with patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async) as send:
             await scenario.run_async()
         assert send.call_count == 2
-        stats = compute_technique_stats(
+        stats = await compute_technique_stats_async(
             technique_eval_hashes=[print_attack.technique_eval_hash, say_attack.technique_eval_hash],
             memory=sqlite_instance,
         )
@@ -453,6 +453,21 @@ class TestPromptInjectAtomicAttacks:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPromptInjectDatasetSampling:
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [({}, 12), ({"max_dataset_size": None}, 210), ({"max_dataset_size": 6}, 6)],
+    )
+    async def test_configuration_default_covers_custom_goals_async(
+        self, *, kwargs: dict[str, int | None], expected: int
+    ) -> None:
+        goals = [f"goal {index}" for index in range(6)]
+        config = PromptInjectDatasetConfiguration(
+            dataset_names=PromptInject.required_datasets(), goal_texts=goals, **kwargs
+        )
+        groups = await config.get_attack_seed_groups_async()
+        assert len(groups) == expected
+        assert {group.objective.metadata["goal_text"] for group in groups} == set(goals)
+
     @pytest.mark.parametrize("grouped", [False, True])
     async def test_both_resolvers_preserve_goal_coverage_async(self, grouped: bool) -> None:
         goals = ["goal A", "goal B", "goal C"]

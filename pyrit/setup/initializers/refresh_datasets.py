@@ -86,7 +86,7 @@ class RefreshDatasets(PyRITInitializer):
         days = self._parse_days()
         memory = CentralMemory.get_memory_instance()
 
-        names_in_memory = set(memory.get_seed_dataset_names())
+        names_in_memory = set(await memory.get_seed_dataset_names_async())
         if not names_in_memory:
             logger.warning("No datasets in memory to refresh")
             return
@@ -100,7 +100,7 @@ class RefreshDatasets(PyRITInitializer):
         up_to_date: list[str] = []
         failed: list[str] = []
         for name in candidates:
-            if not self._is_stale(memory=memory, dataset_name=name, days=days):
+            if not (await self._is_stale_async(memory=memory, dataset_name=name, days=days)):
                 up_to_date.append(name)
                 continue
             try:
@@ -148,7 +148,7 @@ class RefreshDatasets(PyRITInitializer):
                 logger.debug(f"Skipping '{name}': no registered provider to refresh from")
         return selected
 
-    def _is_stale(self, *, memory: MemoryInterface, dataset_name: str, days: int) -> bool:
+    async def _is_stale_async(self, *, memory: MemoryInterface, dataset_name: str, days: int) -> bool:
         """
         Determine whether a dataset is stale enough to refresh.
 
@@ -163,7 +163,7 @@ class RefreshDatasets(PyRITInitializer):
         if days == 0:
             return True
 
-        seeds = memory.get_seeds(dataset_name=dataset_name)
+        seeds = await memory.get_seeds_async(dataset_name=dataset_name)
         newest = max((seed.date_added for seed in seeds if seed.date_added is not None), default=None)
         if newest is None:
             return True

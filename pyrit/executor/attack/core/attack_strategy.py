@@ -404,14 +404,14 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         self._log_attack_outcome(event_data.result)
 
-    def _persist_result(self, *, result: AttackStrategyResultT) -> None:
+    async def _persist_result_async(self, *, result: AttackStrategyResultT) -> None:
         """
         Persist a completed attack result.
 
         Args:
             result (AttackStrategyResultT): The completed result to persist.
         """
-        self._memory.add_attack_results_to_memory(attack_results=[result])
+        (await self._memory.add_attack_results_to_memory_async(attack_results=[result]))
 
     @staticmethod
     def _apply_attribution(
@@ -545,7 +545,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._apply_targeted_harm_categories(context=context, result=error_result)
 
         try:
-            self._memory.add_attack_results_to_memory(attack_results=[error_result])
+            (await self._memory.add_attack_results_to_memory_async(attack_results=[error_result]))
         except Exception as persistence_error:
             context._error_result_persistence_error = persistence_error
 
@@ -861,7 +861,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             context._objective_target_conversation_lifecycle = None
 
         if context._persist_attack_result:
-            self._default_event_handler._persist_result(result=result)
+            (await self._default_event_handler._persist_result_async(result=result))
         return result
 
     def _validate_scoring_expectation(self, *, context: AttackStrategyContextT) -> None:

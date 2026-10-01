@@ -297,16 +297,18 @@ Until you expand or collapse the section, its default follows the current group 
 
 The Configuration view manages the targets available for attacks.
 
-<img width="1636" alt="Target configuration" src="images/config.png" />
+<img width="1664" alt="Target configuration" src="images/config.png" />
 
 #### Target Table
 
-Lists all registered targets with their type, endpoint, and model name. Two dropdowns above **Filter by type** select your defaults. Each option shows the registry name and model, when available:
+Lists all registered targets with their type, endpoint, model name, input and output modalities, and capabilities. Two dropdowns above the table select your defaults. Each option shows the registry name and model, when available:
 
 - **Default objective target:** Preselected for new chats and scanner runs.
 - **Default adversarial target:** Preselected for scanner runs that use the shared adversarial target. The target must support multi-turn conversations. Without a saved selection, the GUI preselects the registered `adversarial_chat` target, which the target initializer configures from `ADVERSARIAL_CHAT_*` environment variables. A saved user selection takes priority.
 
 The objective dropdown appears first, followed by the adversarial dropdown. Select **Not set** to clear the objective default. Select **Use server default** to remove a saved adversarial selection and return to the environment default. Small **Objective** and **Adversarial** badges identify the selected rows; the table has no separate defaults column. Filtering the table does not filter the default dropdowns or change your selections.
+
+Filters for type, inputs, outputs, and capabilities sit above the table, and each one appears only when it can narrow the list. You can check several values in a filter, and typing in an open filter narrows its choices. A target matches the type, inputs, or outputs filter when it has any of the checked values, so checking **Image** under inputs also shows targets that accept both text and images. It matches the capabilities filter only when it supports every checked capability. A target must match all the filters you set, and **Reset all filters** clears them. If the target list changes and a checked value no longer applies, it is cleared.
 
 Defaults are saved in this browser, separately for each signed-in account. They do not follow you to another browser or device. When authentication is disabled, the browser uses a separate local profile. Only target names and identity hashes are stored, not credentials or complete target configurations.
 

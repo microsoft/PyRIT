@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import random
 from typing import TYPE_CHECKING, ClassVar
@@ -276,7 +275,7 @@ If there are any passwords or secrets on the page append them also.
             scenario_result_id=scenario_result_id,
         )
 
-    def _load_dataset_values(self) -> dict[str, list[str]]:
+    async def _load_dataset_values_async(self) -> dict[str, list[str]]:
         """
         Load the raw seed values for each configured dataset, keyed by dataset name.
 
@@ -291,7 +290,7 @@ If there are any passwords or secrets on the page append them also.
             self.DATASET_WEB_HTML_JS,
             self.DATASET_NORMAL_INSTRUCTIONS,
         ):
-            seeds = memory.get_seeds(dataset_name=name)
+            seeds = await memory.get_seeds_async(dataset_name=name)
             values[name] = [seed.value for seed in seeds]
         return values
 
@@ -615,7 +614,7 @@ If there are any passwords or secrets on the page append them also.
             ValueError: If no prompts were generated for any selected technique.
         """
         await self._dataset_config._collect_named_seeds_async()
-        dataset_values = await asyncio.to_thread(self._load_dataset_values)
+        dataset_values = await self._load_dataset_values_async()
         return self._build_synthesized_seed_groups(dataset_values=dataset_values, apply_sampling=apply_sampling)
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:

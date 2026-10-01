@@ -18,7 +18,7 @@ from pyrit.models import (
     TraceScorable,
 )
 from pyrit.score.observation.execution import NonReplayableObservationError, _collect_observation
-from pyrit.score.observation.message_trace_resolver import resolve_message_trace_scope
+from pyrit.score.observation.message_trace_resolver import resolve_message_trace_scope_async
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -61,7 +61,7 @@ class OtelToolCallScorer(TrueFalseScorer):
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
-            params={"matching_version": 1, "message_scope_version": 1},
+            params={"matching_version": 1, "message_scope_version": 2},
             children={"source": self._source.get_identifier()},
         )
 
@@ -69,7 +69,7 @@ class OtelToolCallScorer(TrueFalseScorer):
         if not isinstance(scorable, (MessageScorable, TraceScorable)):
             raise TypeError("OtelToolCallScorer requires a MessageScorable or an explicit TraceScorable.")
         scope, correlation_complete = (
-            resolve_message_trace_scope(scorable=scorable, memory=self._memory)
+            await resolve_message_trace_scope_async(scorable=scorable, memory=self._memory)
             if isinstance(scorable, MessageScorable)
             else (scorable, True)
         )

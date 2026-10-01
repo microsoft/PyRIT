@@ -13,7 +13,6 @@ from pyrit.registry.components.attack_technique_registry import AttackTechniqueR
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 if TYPE_CHECKING:
     from pathlib import Path

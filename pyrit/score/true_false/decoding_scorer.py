@@ -22,6 +22,7 @@ class DecodingScorer(MessageTrueFalseScorer):
     text matching strategy.
     """
 
+    _REQUIRES_CONVERSATION_HISTORY = True
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"], supported_roles=["assistant"]
     )
@@ -78,7 +79,7 @@ class DecodingScorer(MessageTrueFalseScorer):
                 whether any of the user piece values match the response.
         """
         memory = CentralMemory.get_memory_instance()
-        user_request = memory.get_request_from_response(response=message_piece.to_message())
+        user_request = await memory.get_request_from_response_async(response=message_piece.to_message())
 
         match_found = False
 

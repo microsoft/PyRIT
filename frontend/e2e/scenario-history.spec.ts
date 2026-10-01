@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./_fixtures";
+import { mockVersion } from "./_compatibility";
 
 import { READY_RUNTIME } from "./_runtime";
 
@@ -271,6 +272,7 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
+        ...mockVersion(),
         version: "1.1.0",
         display: "PyRIT 1.1.0",
         default_labels: {

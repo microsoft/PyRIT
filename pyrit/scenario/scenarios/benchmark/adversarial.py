@@ -12,7 +12,7 @@ import uuid
 from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from pyrit.analytics import get_cached_results_for_technique
+from pyrit.analytics import get_cached_results_for_technique_async
 from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, SCORER_SEED_PROMPT_PATH
 from pyrit.common.utils import to_sha256
@@ -527,7 +527,7 @@ class AdversarialBenchmark(Scenario):
         if not self._is_cache_reuse_enabled() or self._scenario_result_id:
             return atomic_attacks
 
-        self._apply_reusable_cached_results(atomic_attacks=atomic_attacks)
+        (await self._apply_reusable_cached_results_async(atomic_attacks=atomic_attacks))
         return atomic_attacks
 
     def _get_technique_factory_overrides(self) -> dict[str, AttackTechniqueFactory] | None:
@@ -673,14 +673,14 @@ class AdversarialBenchmark(Scenario):
             newly executed objective results.
         """
         try:
-            self._persist_precomputed_cached_results()
+            (await self._persist_precomputed_cached_results_async())
         except Exception as error:
             if self._scenario_result_id:
-                self._mark_scenario_failed(scenario_result_id=self._scenario_result_id, error=error)
+                (await self._mark_scenario_failed_async(scenario_result_id=self._scenario_result_id, error=error))
             raise
         return await super().run_async()
 
-    def _apply_reusable_cached_results(self, *, atomic_attacks: list[AtomicAttack]) -> None:
+    async def _apply_reusable_cached_results_async(self, *, atomic_attacks: list[AtomicAttack]) -> None:
         """
         Remove only objectives having an exact reusable result.
 
@@ -688,7 +688,7 @@ class AdversarialBenchmark(Scenario):
             atomic_attacks: Candidate attacks whose seed groups may be pruned.
         """
         self._precomputed_cached_results = {}
-        reusable = self._collect_reusable_cached_results(atomic_attacks=atomic_attacks)
+        reusable = await self._collect_reusable_cached_results_async(atomic_attacks=atomic_attacks)
         for attack in atomic_attacks:
             prior_results = reusable.get(attack.atomic_attack_name, [])
             if not prior_results:
@@ -707,7 +707,9 @@ class AdversarialBenchmark(Scenario):
                 fully_cached_count,
             )
 
-    def _collect_reusable_cached_results(self, *, atomic_attacks: list[AtomicAttack]) -> dict[str, list[AttackResult]]:
+    async def _collect_reusable_cached_results_async(
+        self, *, atomic_attacks: list[AtomicAttack]
+    ) -> dict[str, list[AttackResult]]:
         """
         Select the newest exact compatible result for each objective.
 
@@ -721,11 +723,11 @@ class AdversarialBenchmark(Scenario):
         Returns:
             dict[str, list[AttackResult]]: Reusable results keyed by atomic attack name.
         """
-        candidate_names = self._collect_cached_completion_pairs(atomic_attacks=atomic_attacks)
+        candidate_names = await self._collect_cached_completion_pairs_async(atomic_attacks=atomic_attacks)
         candidate_results = [
             result for name in candidate_names for result in self._cached_results_by_name.get(name, [])
         ]
-        compatible_parent_ids = self._get_compatible_cache_parent_ids(results=candidate_results)
+        compatible_parent_ids = await self._get_compatible_cache_parent_ids_async(results=candidate_results)
         reusable: dict[str, list[AttackResult]] = {}
 
         for attack in atomic_attacks:
@@ -757,7 +759,7 @@ class AdversarialBenchmark(Scenario):
                 ]
         return reusable
 
-    def _get_compatible_cache_parent_ids(self, *, results: list[AttackResult]) -> set[str]:
+    async def _get_compatible_cache_parent_ids_async(self, *, results: list[AttackResult]) -> set[str]:
         """
         Return parent scenario IDs produced by this benchmark version.
 
@@ -775,7 +777,7 @@ class AdversarialBenchmark(Scenario):
         if not parent_ids:
             return set()
         try:
-            parent_results = self._memory.get_scenario_results(
+            parent_results = await self._memory.get_scenario_results_async(
                 scenario_result_ids=parent_ids,
                 scenario_name=type(self).__name__,
                 scenario_version=self.VERSION,
@@ -828,7 +830,7 @@ class AdversarialBenchmark(Scenario):
             scorer_identifier = attack_identifier.get_child("objective_scorer") if attack_identifier else None
         return ScorerEvaluationIdentifier(scorer_identifier).eval_hash if scorer_identifier else None
 
-    def _persist_precomputed_cached_results(self) -> None:
+    async def _persist_precomputed_cached_results_async(self) -> None:
         """
         Copy reusable results into the current scenario result.
 
@@ -859,10 +861,10 @@ class AdversarialBenchmark(Scenario):
                         },
                     )
                 )
-        self._memory.add_attack_results_to_memory(attack_results=copies)
+        (await self._memory.add_attack_results_to_memory_async(attack_results=copies))
         self._precomputed_cached_results = {}
 
-    def _collect_cached_completion_pairs(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:
+    async def _collect_cached_completion_pairs_async(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:
         """
         Return the set of ``atomic_attack_name`` values already cached for this scenario's objective target.
 
@@ -930,7 +932,7 @@ class AdversarialBenchmark(Scenario):
         raw_results_by_hash: dict[str, list[AttackResult]] = {}
         try:
             for technique_eval_hash in set().union(*lookup_hashes_by_name.values()) if lookup_hashes_by_name else set():
-                raw_results_by_hash[technique_eval_hash] = get_cached_results_for_technique(
+                raw_results_by_hash[technique_eval_hash] = await get_cached_results_for_technique_async(
                     self._memory,
                     technique_eval_hash=technique_eval_hash,
                     objective_target_eval_hash=objective_target_eval_hash,

@@ -5,7 +5,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from unit.mocks import get_image_message_piece, store_message
+from unit.mocks import get_image_message_piece, store_message_async
 
 from pyrit.analytics import ApproximateTextMatching, ExactTextMatching
 from pyrit.memory.central_memory import CentralMemory
@@ -26,7 +26,7 @@ async def test_score_async_unsupported_data_type_returns_empty(
     request = image_message_piece.to_message()
     scorer = SubStringScorer(substring="test", categories=["new_category"])
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(request)))
     assert scores == []
 
     os.remove(image_message_piece.converted_value)
@@ -118,7 +118,7 @@ async def test_substring_scorer_adds_to_memory():
         scorer = SubStringScorer(substring="string", categories=["new_category"])
         await scorer.score_text_async(text="string")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()
 
 
 async def test_substring_scorer_no_category():
@@ -127,4 +127,4 @@ async def test_substring_scorer_no_category():
         scorer = SubStringScorer(substring="string")
         await scorer.score_text_async(text="string")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()

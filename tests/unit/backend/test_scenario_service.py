@@ -67,9 +67,9 @@ class _EstimateTechnique(ScenarioTechnique):
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(compatibility_headers: dict[str, str]) -> TestClient:
     """Create a test client for the FastAPI app."""
-    return TestClient(app)
+    return TestClient(app, headers=compatibility_headers)
 
 
 @pytest.fixture(autouse=True)
@@ -148,6 +148,37 @@ def test_catalog_preserves_adversarial_default_usage(uses_default: bool) -> None
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAdversarialEstimateScope:
+    @pytest.mark.parametrize(
+        ("scenario_name", "estimate_request", "message"),
+        [
+            (
+                "garak.prompt_inject",
+                ScenarioRunSizeEstimateRequest(max_dataset_size=1),
+                "must be at least the number of goal_texts",
+            ),
+            (
+                "garak.exploitation",
+                ScenarioRunSizeEstimateRequest(scenario_params={"prompt_cap": 0}),
+                "prompt_cap must be greater than zero",
+            ),
+        ],
+    )
+    async def test_configured_preview_rejects_impossible_parameters_without_dataset_reads_async(
+        self, *, scenario_name: str, estimate_request: ScenarioRunSizeEstimateRequest, message: str
+    ) -> None:
+        registry = ScenarioRegistry()
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(
+                DatasetAttackConfiguration,
+                "_collect_named_seeds_async",
+                side_effect=AssertionError("Preview queried datasets"),
+            ),
+        ):
+            service = ScenarioService()
+            with pytest.raises(ValueError, match=message):
+                await service.estimate_scenario_run_size_async(scenario_name=scenario_name, request=estimate_request)
+
     async def test_default_and_configured_previews_do_not_load_datasets_async(self) -> None:
         registry = ScenarioRegistry()
         with (

@@ -215,6 +215,12 @@ class AdaptiveScenario(Scenario):
 
         return atomic_attacks
 
+    def _validate_runtime_configuration(self) -> None:
+        super()._validate_runtime_configuration()
+        max_attempts = int(self.params.get("max_attempts_per_objective", 3))
+        if max_attempts < 1:
+            raise ValueError(f"max_attempts_per_objective must be >= 1, got {max_attempts}")
+
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate the configured envelope budget, excluding adaptive inner attempts.

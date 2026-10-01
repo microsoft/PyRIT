@@ -442,7 +442,7 @@ class TestFortressMemory:
             dataset = await loader.fetch_dataset_async()
 
         await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="test")
-        stored = sqlite_instance.get_seeds(dataset_name="fortress")
+        stored = await sqlite_instance.get_seeds_async(dataset_name="fortress")
         assert len(stored) == len(dataset.seeds)
         original_metadata = {seed.value: seed.metadata for seed in dataset.seeds}
         assert {seed.value: seed.metadata for seed in stored} == original_metadata

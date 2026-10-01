@@ -173,6 +173,12 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
     # Change to workspace root
     os.chdir(WORKSPACE_ROOT)
 
+    subprocess.run(
+        [sys.executable, "-m", "build_scripts.stamp_compatibility", "--development"],
+        cwd=WORKSPACE_ROOT,
+        check=True,
+    )
+
     # Set development mode environment variable
     env = os.environ.copy()
     env["PYRIT_DEV_MODE"] = "true"
@@ -220,7 +226,12 @@ def start_frontend():
 
     # Start frontend process with stdout piped so we can detect the actual port
     npm_cmd = "npm.cmd" if is_windows() else "npm"
-    return subprocess.Popen([npm_cmd, "run", "dev"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return subprocess.Popen(
+        [npm_cmd, "run", "dev"],
+        env={**os.environ, "PYRIT_PYTHON": sys.executable},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
 
 
 def _detect_frontend_port(frontend_process, *, timeout: int = 10) -> int:

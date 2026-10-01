@@ -272,7 +272,7 @@ class Jailbreak(Scenario):
                 )
         return super()._resolve_scenario_techniques(scenario_techniques=scenario_techniques)
 
-    def _resolve_templates(self) -> list[str]:
+    async def _resolve_templates_async(self) -> list[str]:
         """
         Resolve the jailbreak templates for this run, replaying the persisted set on resume.
 
@@ -289,7 +289,7 @@ class Jailbreak(Scenario):
                 ``jailbreak_names`` contains an unknown template.
         """
         if self._scenario_result_id is not None:
-            stored = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
+            stored = await self._memory.get_scenario_results_async(scenario_result_ids=[self._scenario_result_id])
             if stored:
                 persisted = (stored[0].metadata or {}).get(_JAILBREAK_TEMPLATES_METADATA_KEY)
                 if persisted:
@@ -460,7 +460,7 @@ class Jailbreak(Scenario):
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
-        self._resolved_jailbreaks = self._resolve_templates()
+        self._resolved_jailbreaks = await self._resolve_templates_async()
         num_attempts = self.params["num_jailbreak_attempts"]
 
         technique_factories = resolve_technique_factories(context=context, extra_factories=_extra_default_factories())

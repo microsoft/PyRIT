@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from collections.abc import Generator
-from contextlib import closing, contextmanager
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import numpy as np
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from pyrit.memory import AzureSQLMemory
 from pyrit.memory.memory_models import (
@@ -115,8 +116,10 @@ def make_scenario_result(
     return ScenarioResult(scenario_identifier=identifier, **kwargs)
 
 
-@contextmanager
-def cleanup_conversation_data(memory: AzureSQLMemory, conversation_ids: list[str]) -> Generator[None, None, None]:
+@asynccontextmanager
+async def cleanup_conversation_data_async(
+    memory: AzureSQLMemory, conversation_ids: list[str]
+) -> AsyncGenerator[None, None]:
     """
     Context manager to ensure cleanup of test data from attack results and message pieces.
 
@@ -132,26 +135,30 @@ def cleanup_conversation_data(memory: AzureSQLMemory, conversation_ids: list[str
     try:
         yield
     finally:
-        with closing(memory.get_session()) as session:
-            try:
-                # Delete attack results first (foreign key dependencies)
-                session.query(AttackResultEntry).filter(AttackResultEntry.conversation_id.in_(conversation_ids)).delete(
-                    synchronize_session=False
-                )
+        async with await memory.get_session_async() as async_session:
 
-                # Delete message pieces
-                session.query(PromptMemoryEntry).filter(PromptMemoryEntry.conversation_id.in_(conversation_ids)).delete(
-                    synchronize_session=False
-                )
+            def cleanup(session: Session) -> None:
+                try:
+                    # Delete attack results first (foreign key dependencies)
+                    session.query(AttackResultEntry).filter(
+                        AttackResultEntry.conversation_id.in_(conversation_ids)
+                    ).delete(synchronize_session=False)
 
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                print(f"Cleanup failed: {e}")
+                    # Delete message pieces
+                    session.query(PromptMemoryEntry).filter(
+                        PromptMemoryEntry.conversation_id.in_(conversation_ids)
+                    ).delete(synchronize_session=False)
+
+                    session.commit()
+                except SQLAlchemyError as e:
+                    session.rollback()
+                    print(f"Cleanup failed: {e}")
+
+            await async_session.run_sync(cleanup)
 
 
-@contextmanager
-def cleanup_scenario_data(memory: AzureSQLMemory, test_id: str) -> Generator[None, None, None]:
+@asynccontextmanager
+async def cleanup_scenario_data_async(memory: AzureSQLMemory, test_id: str) -> AsyncGenerator[None, None]:
     """
     Context manager to ensure cleanup of scenario result test data.
 
@@ -167,25 +174,31 @@ def cleanup_scenario_data(memory: AzureSQLMemory, test_id: str) -> Generator[Non
     try:
         yield
     finally:
-        with closing(memory.get_session()) as session:
-            try:
-                # Query all scenario results and filter by test_id label
-                all_results = session.query(ScenarioResultEntry).filter(ScenarioResultEntry.labels.isnot(None)).all()
+        async with await memory.get_session_async() as async_session:
 
-                for result in all_results:
-                    if result.labels and result.labels.get("test_id") == test_id:
-                        session.delete(result)
+            def cleanup(session: Session) -> None:
+                try:
+                    # Query all scenario results and filter by test_id label
+                    all_results = (
+                        session.query(ScenarioResultEntry).filter(ScenarioResultEntry.labels.isnot(None)).all()
+                    )
 
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                print(f"Cleanup failed: {e}")
+                    for result in all_results:
+                        if result.labels and result.labels.get("test_id") == test_id:
+                            session.delete(result)
+
+                    session.commit()
+                except SQLAlchemyError as e:
+                    session.rollback()
+                    print(f"Cleanup failed: {e}")
+
+            await async_session.run_sync(cleanup)
 
 
-@contextmanager
-def cleanup_scenario_data_by_field(
+@asynccontextmanager
+async def cleanup_scenario_data_by_field_async(
     memory: AzureSQLMemory, test_id: str, field_name: str
-) -> Generator[None, None, None]:
+) -> AsyncGenerator[None, None]:
     """
     Context manager to ensure cleanup of scenario result test data by objective_target_identifier field.
 
@@ -203,23 +216,27 @@ def cleanup_scenario_data_by_field(
     try:
         yield
     finally:
-        with closing(memory.get_session()) as session:
-            try:
-                all_results = (
-                    session.query(ScenarioResultEntry)
-                    .filter(ScenarioResultEntry.objective_target_identifier.isnot(None))
-                    .all()
-                )
+        async with await memory.get_session_async() as async_session:
 
-                for result in all_results:
-                    field_value = result.objective_target_identifier.get(field_name, "")
-                    if test_id in field_value:
-                        session.delete(result)
+            def cleanup(session: Session) -> None:
+                try:
+                    all_results = (
+                        session.query(ScenarioResultEntry)
+                        .filter(ScenarioResultEntry.objective_target_identifier.isnot(None))
+                        .all()
+                    )
 
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                print(f"Cleanup failed: {e}")
+                    for result in all_results:
+                        field_value = result.objective_target_identifier.get(field_name, "")
+                        if test_id in field_value:
+                            session.delete(result)
+
+                    session.commit()
+                except SQLAlchemyError as e:
+                    session.rollback()
+                    print(f"Cleanup failed: {e}")
+
+            await async_session.run_sync(cleanup)
 
 
 async def test_get_seeds_with_metadata_filter(azuresql_instance: AzureSQLMemory):
@@ -252,34 +269,38 @@ async def test_get_seeds_with_metadata_filter(azuresql_instance: AzureSQLMemory)
     await azuresql_instance.add_seeds_to_memory_async(seeds=[sp1, sp2])
 
     # Verify seeds were inserted
-    inserted_seeds = azuresql_instance.get_seeds(added_by=test_id)
+    inserted_seeds = await azuresql_instance.get_seeds_async(added_by=test_id)
     assert len(inserted_seeds) == 2, f"Expected 2 seeds with added_by='{test_id}', got {len(inserted_seeds)}"
 
     # Test single metadata filter (combining with added_by to avoid old test data)
-    result = azuresql_instance.get_seeds(metadata={"key1": value1}, added_by=test_id)
+    result = await azuresql_instance.get_seeds_async(metadata={"key1": value1}, added_by=test_id)
     assert len(result) == 1, f"Expected 1 seed with metadata {{'key1': '{value1}'}}, got {len(result)}"
     assert result[0].metadata == {"key1": value1}
 
     # Test multiple metadata filters (ALL must be present)
-    result2 = azuresql_instance.get_seeds(metadata={"key1": value2, "key2": value1}, added_by=test_id)
+    result2 = await azuresql_instance.get_seeds_async(metadata={"key1": value2, "key2": value1}, added_by=test_id)
     assert len(result2) == 1
     assert result2[0].metadata == {"key1": value2, "key2": value1}
 
     # Clean up using public API
-    with closing(azuresql_instance.get_session()) as session:
-        try:
-            # Delete seeds by their IDs
-            from pyrit.memory.memory_models import SeedEntry
+    async with await azuresql_instance.get_session_async() as async_session:
 
-            session.query(SeedEntry).filter(SeedEntry.id.in_([sp1.id, sp2.id])).delete(synchronize_session=False)
-            session.commit()
-        except SQLAlchemyError as e:
-            session.rollback()
-            print(f"Cleanup failed: {e}")
+        def cleanup(session: Session) -> None:
+            try:
+                # Delete seeds by their IDs
+                from pyrit.memory.memory_models import SeedEntry
+
+                session.query(SeedEntry).filter(SeedEntry.id.in_([sp1.id, sp2.id])).delete(synchronize_session=False)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                print(f"Cleanup failed: {e}")
+
+        await async_session.run_sync(cleanup)
 
     # Ensure that entries are removed (filter by added_by to check only our test data)
-    assert azuresql_instance.get_seeds(metadata={"key1": value1}, added_by=test_id) == []
-    assert azuresql_instance.get_seeds(metadata={"key2": value1}, added_by=test_id) == []
+    assert (await azuresql_instance.get_seeds_async(metadata={"key1": value1}, added_by=test_id)) == []
+    assert (await azuresql_instance.get_seeds_async(metadata={"key2": value1}, added_by=test_id)) == []
 
 
 async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
@@ -298,7 +319,7 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
         f"conv_label_3_{test_id}",
     ]
 
-    with cleanup_conversation_data(azuresql_instance, conversation_ids):
+    async with cleanup_conversation_data_async(azuresql_instance, conversation_ids):
         # Create message pieces for the attack conversations
         piece1 = MessagePiece(
             conversation_id=conversation_ids[0],
@@ -319,7 +340,7 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
             converted_value="Test 3",
         )
 
-        azuresql_instance.add_message_pieces_to_memory(message_pieces=[piece1, piece2, piece3])
+        (await azuresql_instance.add_message_pieces_to_memory_async(message_pieces=[piece1, piece2, piece3]))
 
         # Create attack results with labels
         atomic_id = get_test_atomic_attack_identifier()
@@ -345,25 +366,29 @@ async def test_get_attack_results_by_labels(azuresql_instance: AzureSQLMemory):
             labels={"op_id": f"op456_{test_id}", "category": "test", "priority": "high"},
         )
 
-        azuresql_instance.add_attack_results_to_memory(attack_results=[result1, result2, result3])
+        (await azuresql_instance.add_attack_results_to_memory_async(attack_results=[result1, result2, result3]))
 
         # Test filtering by single label
-        results = azuresql_instance.get_attack_results(labels={"op_id": f"op123_{test_id}"})
+        results = await azuresql_instance.get_attack_results_async(labels={"op_id": f"op123_{test_id}"})
         assert len(results) == 2
         conv_ids = {r.conversation_id for r in results}
         assert conversation_ids[0] in conv_ids
         assert conversation_ids[1] in conv_ids
 
         # Test filtering by multiple labels (ALL must be present)
-        results = azuresql_instance.get_attack_results(labels={"op_id": f"op123_{test_id}", "category": "test"})
+        results = await azuresql_instance.get_attack_results_async(
+            labels={"op_id": f"op123_{test_id}", "category": "test"}
+        )
         assert len(results) == 2
 
-        results = azuresql_instance.get_attack_results(labels={"op_id": f"op123_{test_id}", "priority": "high"})
+        results = await azuresql_instance.get_attack_results_async(
+            labels={"op_id": f"op123_{test_id}", "priority": "high"}
+        )
         assert len(results) == 1
         assert results[0].conversation_id == conversation_ids[0]
 
         # Test filtering with no matches
-        results = azuresql_instance.get_attack_results(labels={"op_id": "nonexistent"})
+        results = await azuresql_instance.get_attack_results_async(labels={"op_id": "nonexistent"})
         results = [r for r in results if test_id in r.conversation_id]
         assert len(results) == 0
 
@@ -379,7 +404,7 @@ async def test_scenario_result_scorer_identifier_roundtrip(
     """
     test_id = generate_test_id()
 
-    with cleanup_scenario_data(azuresql_instance, test_id):
+    async with cleanup_scenario_data_async(azuresql_instance, test_id):
         # Create a ComponentIdentifier with various fields
         scorer_identifier = get_test_scorer_identifier(
             scorer_type="true_false",
@@ -398,10 +423,10 @@ async def test_scenario_result_scorer_identifier_roundtrip(
             labels={"test_id": test_id},
         )
 
-        azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+        (await azuresql_instance.add_scenario_results_to_memory_async(scenario_results=[scenario]))
 
         # Retrieve and verify
-        results = azuresql_instance.get_scenario_results(labels={"test_id": test_id})
+        results = await azuresql_instance.get_scenario_results_async(labels={"test_id": test_id})
         assert len(results) == 1
 
         retrieved = results[0]
@@ -426,7 +451,7 @@ async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory)
     # Use unique names to avoid test pollution
     test_id = generate_test_id()
 
-    with cleanup_scenario_data(azuresql_instance, test_id):
+    async with cleanup_scenario_data_async(azuresql_instance, test_id):
         # Create scenario results with labels
         scorer_id = get_test_scorer_identifier()
         scenario1 = make_scenario_result(
@@ -459,29 +484,35 @@ async def test_get_scenario_results_by_labels(azuresql_instance: AzureSQLMemory)
             labels={"environment": "prod", "test_id": test_id},
         )
 
-        azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3])
+        (
+            await azuresql_instance.add_scenario_results_to_memory_async(
+                scenario_results=[scenario1, scenario2, scenario3]
+            )
+        )
 
         # Test filtering by single label
-        results = azuresql_instance.get_scenario_results(labels={"environment": "test", "test_id": test_id})
+        results = await azuresql_instance.get_scenario_results_async(labels={"environment": "test", "test_id": test_id})
         assert len(results) == 2
         names = {r.scenario_name for r in results}
         assert f"Test Scenario 1 {test_id}" in names
         assert f"Test Scenario 2 {test_id}" in names
 
         # Test filtering by multiple labels (ALL must be present)
-        results = azuresql_instance.get_scenario_results(
+        results = await azuresql_instance.get_scenario_results_async(
             labels={"environment": "test", "priority": "high", "test_id": test_id}
         )
         assert len(results) == 2
 
-        results = azuresql_instance.get_scenario_results(
+        results = await azuresql_instance.get_scenario_results_async(
             labels={"environment": "test", "team": "red", "test_id": test_id}
         )
         assert len(results) == 1
         assert results[0].scenario_name == f"Test Scenario 1 {test_id}"
 
         # Test filtering with no matches
-        results = azuresql_instance.get_scenario_results(labels={"environment": "staging", "test_id": test_id})
+        results = await azuresql_instance.get_scenario_results_async(
+            labels={"environment": "staging", "test_id": test_id}
+        )
         assert len(results) == 0
 
 
@@ -497,7 +528,7 @@ async def test_get_scenario_results_by_target_endpoint(
     # Use unique names to avoid test pollution
     test_id = generate_test_id()
 
-    with cleanup_scenario_data_by_field(azuresql_instance, test_id, "endpoint"):
+    async with cleanup_scenario_data_by_field_async(azuresql_instance, test_id, "endpoint"):
         # Create scenario results with different endpoints
         scorer_id = get_test_scorer_identifier()
         scenario1 = make_scenario_result(
@@ -537,33 +568,41 @@ async def test_get_scenario_results_by_target_endpoint(
             objective_scorer_identifier=scorer_id,
         )
 
-        azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3, scenario4])
+        (
+            await azuresql_instance.add_scenario_results_to_memory_async(
+                scenario_results=[scenario1, scenario2, scenario3, scenario4]
+            )
+        )
 
         # Test case-insensitive substring matching - search for test_id specific endpoints
-        results = azuresql_instance.get_scenario_results(objective_target_endpoint=test_id)
+        results = await azuresql_instance.get_scenario_results_async(objective_target_endpoint=test_id)
         assert len(results) == 4  # All should have test_id in their endpoint
 
-        results = azuresql_instance.get_scenario_results(objective_target_endpoint=f"openai.com/{test_id}")
+        results = await azuresql_instance.get_scenario_results_async(objective_target_endpoint=f"openai.com/{test_id}")
         assert len(results) == 0  # test_id comes before openai.com
 
-        results = azuresql_instance.get_scenario_results(objective_target_endpoint=f"{test_id}.openai")
+        results = await azuresql_instance.get_scenario_results_async(objective_target_endpoint=f"{test_id}.openai")
         assert len(results) == 2
         names = {r.scenario_name for r in results}
         assert f"OpenAI Test {test_id}" in names
         assert f"Azure OpenAI Test {test_id}" in names
 
         # Test case-insensitive with AZURE
-        results = azuresql_instance.get_scenario_results(objective_target_endpoint=f"{test_id}.openai.AZURE")
+        results = await azuresql_instance.get_scenario_results_async(
+            objective_target_endpoint=f"{test_id}.openai.AZURE"
+        )
         assert len(results) == 1
         assert results[0].scenario_name == f"Azure OpenAI Test {test_id}"
 
         # Test anthropic
-        results = azuresql_instance.get_scenario_results(objective_target_endpoint=f"{test_id}.AnThRoPiC")
+        results = await azuresql_instance.get_scenario_results_async(objective_target_endpoint=f"{test_id}.AnThRoPiC")
         assert len(results) == 1
         assert results[0].scenario_name == f"Anthropic Test {test_id}"
 
         # Test cognitiveservices
-        results = azuresql_instance.get_scenario_results(objective_target_endpoint=f"{test_id}.cognitiveservices")
+        results = await azuresql_instance.get_scenario_results_async(
+            objective_target_endpoint=f"{test_id}.cognitiveservices"
+        )
         assert len(results) == 1
         assert results[0].scenario_name == f"Azure Other {test_id}"
 
@@ -580,7 +619,7 @@ async def test_get_scenario_results_by_target_model_name(
     # Use unique model name suffixes to avoid test pollution
     test_id = generate_test_id()
 
-    with cleanup_scenario_data_by_field(azuresql_instance, test_id, "model_name"):
+    async with cleanup_scenario_data_by_field_async(azuresql_instance, test_id, "model_name"):
         # Create scenario results with different model names
         scorer_id = get_test_scorer_identifier()
         scenario1 = make_scenario_result(
@@ -612,34 +651,42 @@ async def test_get_scenario_results_by_target_model_name(
             objective_scorer_identifier=scorer_id,
         )
 
-        azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3, scenario4])
+        (
+            await azuresql_instance.add_scenario_results_to_memory_async(
+                scenario_results=[scenario1, scenario2, scenario3, scenario4]
+            )
+        )
 
         # Test case-insensitive substring matching - search for test_id
-        results = azuresql_instance.get_scenario_results(objective_target_model_name=test_id)
+        results = await azuresql_instance.get_scenario_results_async(objective_target_model_name=test_id)
         assert len(results) == 4  # All should have test_id in their model name
 
         # Test case-insensitive substring matching - gpt with test_id
-        results = azuresql_instance.get_scenario_results(objective_target_model_name=f"gpt-4-turbo-{test_id}")
+        results = await azuresql_instance.get_scenario_results_async(
+            objective_target_model_name=f"gpt-4-turbo-{test_id}"
+        )
         assert len(results) == 1
         assert results[0].scenario_name == f"GPT-4 Test {test_id}"
 
         # Test case-insensitive substring matching - GPT-4 (uppercase)
-        results = azuresql_instance.get_scenario_results(objective_target_model_name=f"GPT-4o-{test_id}")
+        results = await azuresql_instance.get_scenario_results_async(objective_target_model_name=f"GPT-4o-{test_id}")
         assert len(results) == 1
         assert results[0].scenario_name == f"GPT-4 Omni Test {test_id}"
 
         # Test substring in the middle - version number
-        results = azuresql_instance.get_scenario_results(objective_target_model_name=f"3.5-turbo-{test_id}")
+        results = await azuresql_instance.get_scenario_results_async(objective_target_model_name=f"3.5-turbo-{test_id}")
         assert len(results) == 1
         assert results[0].scenario_name == f"GPT-3.5 Test {test_id}"
 
         # Test case-insensitive with different model family
-        results = azuresql_instance.get_scenario_results(objective_target_model_name=f"CLAUDE-3-opus-{test_id}")
+        results = await azuresql_instance.get_scenario_results_async(
+            objective_target_model_name=f"CLAUDE-3-opus-{test_id}"
+        )
         assert len(results) == 1
         assert results[0].scenario_name == f"Claude Test {test_id}"
 
         # Test turbo suffix with test_id
-        results = azuresql_instance.get_scenario_results(objective_target_model_name=f"turbo-{test_id}")
+        results = await azuresql_instance.get_scenario_results_async(objective_target_model_name=f"turbo-{test_id}")
         assert len(results) == 2
         names = {r.scenario_name for r in results}
         assert f"GPT-4 Test {test_id}" in names
@@ -658,7 +705,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
     now = datetime.now(tz=UTC)
     yesterday = now - timedelta(days=1)
 
-    with cleanup_scenario_data(azuresql_instance, test_id):
+    async with cleanup_scenario_data_async(azuresql_instance, test_id):
         # Create scenario results with various attributes
         scorer_id = get_test_scorer_identifier()
         scenario1 = make_scenario_result(
@@ -707,10 +754,14 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
             completion_time=yesterday,
         )
 
-        azuresql_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3])
+        (
+            await azuresql_instance.add_scenario_results_to_memory_async(
+                scenario_results=[scenario1, scenario2, scenario3]
+            )
+        )
 
         # Test combining name filter with labels
-        results = azuresql_instance.get_scenario_results(
+        results = await azuresql_instance.get_scenario_results_async(
             scenario_name=f"Test Environment {test_id}",
             labels={"environment": "test", "test_id": test_id},
         )
@@ -718,7 +769,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
         assert results[0].scenario_name == f"Test Environment {test_id}"
 
         # Test combining endpoint, model name, and labels
-        results = azuresql_instance.get_scenario_results(
+        results = await azuresql_instance.get_scenario_results_async(
             objective_target_endpoint=f"api-{test_id}.openai",
             objective_target_model_name=f"gpt-4-turbo-{test_id}",
             labels={"priority": "high", "test_id": test_id},
@@ -728,7 +779,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
 
         # Test combining version and time filters with test_id
         # Add 1 second buffer to account for SQL Server datetime precision differences
-        results = azuresql_instance.get_scenario_results(
+        results = await azuresql_instance.get_scenario_results_async(
             pyrit_version="0.4.0",
             added_before=now + timedelta(seconds=1),
             labels={"test_id": test_id},
@@ -736,7 +787,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
         assert len(results) == 2
 
         # Test combining all filters - should match only one
-        results = azuresql_instance.get_scenario_results(
+        results = await azuresql_instance.get_scenario_results_async(
             scenario_name=f"Production Test {test_id}",
             pyrit_version="0.4.0",
             objective_target_endpoint=f"api-{test_id}",
@@ -747,7 +798,7 @@ async def test_get_scenario_results_combined_filters(azuresql_instance: AzureSQL
         assert results[0].scenario_name == f"Production Test {test_id}"
 
         # Test combining filters with no matches
-        results = azuresql_instance.get_scenario_results(
+        results = await azuresql_instance.get_scenario_results_async(
             objective_target_endpoint=f"api-{test_id}",
             labels={"environment": "staging", "test_id": test_id},
         )

@@ -193,7 +193,9 @@ class PackageHallucination(Scenario):
             known_packages=set(), ecosystem=default_spec.ecosystem
         )
 
-        self._max_prompts_per_language = max_prompts_per_language or self.DEFAULT_MAX_PROMPTS_PER_LANGUAGE
+        self._max_prompts_per_language = (
+            self.DEFAULT_MAX_PROMPTS_PER_LANGUAGE if max_prompts_per_language is None else max_prompts_per_language
+        )
         self._random_seed = random_seed if random_seed is not None else 42
         self._known_packages_by_technique: dict[str, set[str]] = {}
 
@@ -210,6 +212,11 @@ class PackageHallucination(Scenario):
         )
 
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
+
+    def _validate_runtime_configuration(self) -> None:
+        super()._validate_runtime_configuration()
+        if self._max_prompts_per_language < 1:
+            raise ValueError("max_prompts_per_language must be greater than zero")
 
     def _get_run_size_budget(self) -> BoundedDatasetSize:
         """Return the combined generated-prompt cap for the selected languages."""

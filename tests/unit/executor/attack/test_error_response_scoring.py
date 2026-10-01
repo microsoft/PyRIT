@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import store_message
+from unit.mocks import store_message_async
 
 from pyrit.exceptions import ComponentRole, get_execution_context
 from pyrit.executor.attack import (
@@ -28,6 +28,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     SingleTurnAttackContext,
 )
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackOutcome,
     ComponentIdentifier,
@@ -61,9 +62,9 @@ def mock_target():
 
 @pytest.fixture
 def mock_memory():
-    memory = MagicMock()
-    memory.get_conversation_messages.return_value = []
-    memory.add_message_to_memory = MagicMock()
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    memory.add_message_to_memory_async = AsyncMock()
     return memory
 
 
@@ -259,7 +260,7 @@ async def test_error_response_produces_undetermined_outcome(mock_target, patch_c
         max_attempts_on_failure=0,
     )
     conversation_id = str(uuid.uuid4())
-    error_response = store_message(create_error_response(conversation_id))
+    error_response = await store_message_async(create_error_response(conversation_id))
 
     score = await attack._evaluate_response_async(
         response=error_response, objective=OBJECTIVE, expectation=ScoringExpectation(objective=OBJECTIVE)

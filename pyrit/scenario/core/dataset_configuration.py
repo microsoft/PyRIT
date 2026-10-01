@@ -27,7 +27,6 @@ Inline configs (``seeds=`` / ``seed_groups=``) never touch memory.
 
 from __future__ import annotations
 
-import asyncio
 import random
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -421,6 +420,16 @@ class DatasetConfiguration:
         """Return the configured selection budget without reading or sampling seeds."""
         return scenario_dataset_size_from_limit(self.max_dataset_size)
 
+    def validate_configuration(self) -> None:
+        """
+        Check parameter constraints without resolving dataset contents.
+
+        Raises:
+            DatasetConstraintError: If the selection cap is not positive.
+        """
+        if self.max_dataset_size is not None and self.max_dataset_size < 1:
+            raise DatasetConstraintError("'max_dataset_size' must be a positive integer (>= 1).")
+
     def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
         """
         Describe configured caps for each named dataset or inline source.
@@ -500,13 +509,7 @@ class DatasetConfiguration:
             DatasetConstraintError: If the dataset yields no seeds even after auto-fetch, or
                 if auto-fetch itself fails (the provider error is chained as the cause).
         """
-        found = list(
-            await asyncio.to_thread(
-                self._memory.get_seeds,
-                dataset_name=dataset_name,
-                **self._get_seeds_filters,
-            )
-        )
+        found = list(await self._memory.get_seeds_async(dataset_name=dataset_name, **self._get_seeds_filters))
         auto_fetch_allowed = self._auto_fetch and _AUTO_FETCH_ALLOWED.get()
         if not found and auto_fetch_allowed:
             try:
@@ -515,17 +518,9 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' could not be loaded: auto-fetch from the registered provider failed."
                 ) from exc
-            found = list(
-                await asyncio.to_thread(
-                    self._memory.get_seeds,
-                    dataset_name=dataset_name,
-                    **self._get_seeds_filters,
-                )
-            )
+            found = list(await self._memory.get_seeds_async(dataset_name=dataset_name, **self._get_seeds_filters))
         if not found:
-            unfiltered = (
-                await asyncio.to_thread(self._memory.get_seeds, dataset_name=dataset_name) if self._filters else []
-            )
+            unfiltered = await self._memory.get_seeds_async(dataset_name=dataset_name) if self._filters else []
             if unfiltered:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' has seeds, but none match the configured filters {self._filters}."
@@ -719,6 +714,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             DatasetConstraintError: If a configured dataset yields no seeds, the resolved
                 dataset fails validation, or no attack groups could be built.
         """
+        self.validate_configuration()
         groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
         self.validate(resolved)
         groups = [group for groups in groups_by_dataset.values() for group in groups]
@@ -755,6 +751,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             DatasetConstraintError: If a configured dataset yields no seeds, the resolved
                 dataset fails validation, or no attack groups could be built.
         """
+        self.validate_configuration()
         groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
         self.validate(resolved)
         sampled = self._sample_groups_by_dataset(groups_by_dataset) if apply_sampling else groups_by_dataset
@@ -919,6 +916,12 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             value=min(total, self.max_dataset_size) if self.max_dataset_size is not None else total
         )
 
+    def validate_configuration(self) -> None:
+        """Check the compound and every child without resolving dataset contents."""
+        super().validate_configuration()
+        for child in self._configurations:
+            child.validate_configuration()
+
     def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
         """
         Describe child and combined caps for every contributed dataset.
@@ -968,6 +971,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         Raises:
             DatasetConstraintError: If a child yields nothing, or the combined result fails validation.
         """
+        self.validate_configuration()
         groups: list[AttackSeedGroup] = []
         for child in self._configurations:
             groups.extend(await child.get_attack_seed_groups_async(apply_sampling=apply_sampling))
@@ -991,6 +995,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         Raises:
             DatasetConstraintError: If a child yields nothing, or the combined result fails validation.
         """
+        self.validate_configuration()
         merged: dict[str, list[AttackSeedGroup]] = {}
         for child in self._configurations:
             child_groups = await child.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)

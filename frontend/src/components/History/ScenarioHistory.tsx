@@ -275,7 +275,7 @@ export default function ScenarioHistory({
               size="small"
               icon={<FilterDismissRegular />}
               aria-label="Reset all filters"
-              disabled={!hasFilters}
+              disabledFocusable={!hasFilters}
               onClick={() => onFiltersChange({ ...DEFAULT_SCENARIO_HISTORY_FILTERS })}
               data-testid="scenario-reset-filters-btn"
             />
