@@ -217,17 +217,17 @@ def _make_msg(*, text: str, conversation_id: str) -> Message:
     return MessagePiece(role="user", original_value=text, conversation_id=conversation_id).to_message()
 
 
-def _persist_turn(*, memory: SQLiteMemory, target: A2ATarget, request: Message, response: Message) -> None:
+async def _persist_turn_async(*, memory: SQLiteMemory, target: A2ATarget, request: Message, response: Message) -> None:
     conversation_id = request.get_piece().conversation_id
     assert conversation_id is not None
-    memory.add_conversation_to_memory(
+    await memory.add_conversation_to_memory_async(
         conversation=Conversation(
             conversation_id=conversation_id,
             target_identifier=target.get_identifier(),
         )
     )
-    memory.add_message_to_memory(request=request)
-    memory.add_message_to_memory(request=response)
+    await memory.add_message_to_memory_async(request=request)
+    await memory.add_message_to_memory_async(request=response)
 
 
 @pytest.mark.parametrize("protocol_version", ["0.3", "1.0", "auto"])
@@ -240,8 +240,8 @@ async def test_a2a_http_multi_turn_continuity(
     request = _make_msg(text="remember avocado-42", conversation_id=cid)
     first = await target.send_prompt_async(message=request)
     assert first[0].get_value() == "Stored."
-    _persist_turn(memory=sqlite_instance, target=target, request=request, response=first[0])
-    assert len(sqlite_instance.get_conversation_messages(conversation_id=cid)) == 2
+    await _persist_turn_async(memory=sqlite_instance, target=target, request=request, response=first[0])
+    assert len(await sqlite_instance.get_conversation_messages_async(conversation_id=cid)) == 2
     second = await target.send_prompt_async(message=_make_msg(text="recall", conversation_id=cid))
     assert second[0].get_value() == "avocado-42"
     assert executor.requests[0].context_id == executor.requests[1].context_id

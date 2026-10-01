@@ -54,7 +54,7 @@ async def test_concurrent_sends_store_the_emitted_context_async(sqlite_instance:
             for i in range(2)
         )
     )
-    requests = sqlite_instance.get_message_pieces()
+    requests = await sqlite_instance.get_message_pieces_async()
     links = [RequestTraceContext.from_metadata(piece.prompt_metadata) for piece in requests if piece.role == "user"]
     assert {link.traceparent for link in links if link} == set(emitted)
     assert len(set(emitted)) == 2
@@ -292,7 +292,7 @@ async def test_failed_http_send_keeps_only_request_trace_metadata_async(sqlite_i
         await PromptNormalizer().send_prompt_async(
             message=Message.from_prompt(prompt="run", role="user"), target=target
         )
-    pieces = sqlite_instance.get_message_pieces()
+    pieces = await sqlite_instance.get_message_pieces_async()
     request = next(piece for piece in pieces if piece.role == "user")
     response = next(piece for piece in pieces if piece.role == "assistant")
     assert RequestTraceContext.from_metadata(request.prompt_metadata) is not None

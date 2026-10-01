@@ -260,7 +260,7 @@ async def test_fake_tool_history_is_not_execution_evidence_async(
     await ConversationManager().add_prepended_conversation_to_memory_async(
         prepended_conversation=history, conversation_id=conversation
     )
-    stored = sqlite_instance.get_conversation_messages(conversation_id=conversation)
+    stored = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation)
     assert [message.get_piece().role for message in stored] == ["user", "simulated_assistant", "simulated_tool"]
     assert all(message.get_piece().prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY] for message in stored)
     target = _agent_target(client=client, provider=provider)

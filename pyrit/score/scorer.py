@@ -1266,7 +1266,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         Read the objective from the turn before an assistant response.
 
-        Deprecated: use ``pyrit.score.message_scorer.extract_objective_from_previous_turn``.
+        Deprecated: use ``pyrit.score.message_scorer.extract_objective_from_previous_turn_async``.
 
         Args:
             response (Message): The response to extract the objective from.
@@ -1278,7 +1278,7 @@ class Scorer(Identifiable, abc.ABC):
 
         print_deprecation_message(
             old_item="Scorer._extract_objective_from_response",
-            new_item="pyrit.score.message_scorer.extract_objective_from_previous_turn",
+            new_item="pyrit.score.message_scorer.extract_objective_from_previous_turn_async",
             removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
         return await extract_objective_from_previous_turn_async(message=response, memory=self._memory)
