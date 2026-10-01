@@ -294,6 +294,42 @@ async def test_cultural_category_filter_and_hidden_violation():
     assert seed.metadata["scenario_english"] == "English scenario 2 for japan"
 
 
+@pytest.mark.parametrize(
+    "category, upstream_label",
+    [
+        # Labels exactly as they appear in the ``category`` column of every
+        # data/cultural/<country>/scenario_prompts.csv on the Hugging Face dataset.
+        (XLSafetyBenchCulturalCategory.FOOD_DIETARY_LAW_AND_HOSPITALITY, "Food, Dietary Law & Hospitality"),
+        (XLSafetyBenchCulturalCategory.DEATH_GRIEF_AND_FUNERAL_PRACTICES, "Death, Grief & Funeral Practices"),
+        (
+            XLSafetyBenchCulturalCategory.HIERARCHY_ADDRESS_AND_SOCIAL_DEFERENCE,
+            "Hierarchy, Address & Social Deference",
+        ),
+    ],
+)
+async def test_cultural_category_filter_matches_upstream_labels_with_commas(category, upstream_label):
+    loader = _XLSafetyBenchCulturalDataset(countries=[XLSafetyBenchCountry.FRANCE], categories=[category])
+    rows = [
+        {
+            "id": "CC-fr-1",
+            "category": upstream_label,
+            "sensitivity_english": "s",
+            "sensitivity_local": "s",
+            "base_query_english": "q",
+            "base_query_local": "q",
+            "scenario_english": "English scenario",
+            "scenario_local": "Local scenario",
+            "hidden_violation": "v",
+        }
+    ]
+
+    with patch.object(loader, "_fetch_from_url", return_value=rows):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    assert dataset.seeds[0].metadata["category"] == upstream_label
+
+
 async def test_cultural_skips_empty_scenario():
     loader = _XLSafetyBenchCulturalDataset(countries=[XLSafetyBenchCountry.FRANCE])
     rows = [
