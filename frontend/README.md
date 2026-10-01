@@ -129,7 +129,7 @@ npm run test:watch    # Watch mode for development
 npm run test:coverage # Run with coverage report (85%+ threshold)
 
 # End-to-End Tests (Playwright)
-npm run test:e2e          # Run headless (auto-starts frontend + backend via dev.py)
+npm run test:e2e          # Run headless (default local setup uses dev.py)
 npm run test:e2e:headed   # Run with visible browser windows (requires display)
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
@@ -174,8 +174,14 @@ retry, and uploads diagnostic artifacts named by project, shard, and workflow
 attempt. Per-shard blob reports are replaced on reruns so **Re-run failed jobs**
 can reuse the reports from successful shards.
 
-Local E2E tests use `dev.py` to automatically start both frontend and backend
-servers. If servers are already running, they will be reused.
+Default local E2E runs (`CI` and `E2E_FRONTEND_PORT` unset) use `dev.py` to
+automatically start both frontend and backend servers and can reuse servers
+that are already running. Setting `E2E_FRONTEND_PORT` locally instead starts
+only a dedicated Vite server, expects the backend to already be running, and
+disables server reuse.
+
+In CI with `E2E_SEEDED_MODE=true`, Playwright starts its own backend and Vite
+servers with reuse disabled, even when `E2E_FRONTEND_PORT` is set.
 
 > **Note**: `test:e2e:ui` and `test:e2e:headed` require a graphical display and won't work in headless environments like devcontainers. Use `npm run test:e2e` for CI/headless testing.
 
