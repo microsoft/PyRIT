@@ -816,7 +816,8 @@ async def test_responses_probes_suppress_provider_io_and_preserve_state(
                 capabilities=[CapabilityName.JSON_OUTPUT],
                 test_modalities=set(),
                 retries=0,
-                per_probe_timeout_s=0.2,
+                # The deadline includes async memory access before the mocked request.
+                per_probe_timeout_s=5.0,
             )
 
         if outcome == "cancel":
