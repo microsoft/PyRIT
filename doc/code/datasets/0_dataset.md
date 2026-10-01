@@ -56,26 +56,6 @@ A `SeedDataset` is a collection of related `SeedGroups` that you want to test to
 
 Datasets can be loaded from local YAML files or fetched remotely from sources like HuggingFace, making it easy to share and version test cases across teams.
 
-## Dataset selection limits
-
-`DatasetAttackConfiguration`, used by scenarios, defaults to a maximum size of
-**5**, unless the scenario or specialized configuration sets another limit.
-`PromptInjectDatasetConfiguration` defaults to 12 and
-`LatentInjectionDatasetConfiguration` to 92, to support their required coverage.
-Explicit `None` removes that cap.
-The general `DatasetConfiguration` remains uncapped. Limits apply to the combined
-selection; `CompoundDatasetAttackConfiguration.per_dataset(...)` sets per-dataset caps.
-
-`get_size_budget()` returns a `ScenarioDatasetSizeEstimate`: `bounded` is an upper
-limit, `all_available` is finite source data without a total cap, and
-`indeterminate` means the size contract is unknown.
-Pre-run estimates use configured limits and scenario factors without reading
-datasets. After initialization, the run plan supplies the exact planned count.
-
-Previews and initialization share configuration-only validation. Invalid caps
-and parameter combinations are rejected before dataset reads. Checks that need
-dataset contents, such as family/trigger coverage, still run during resolution.
-
 ## Generated Datasets
 
 A generation provider uses a configured `PromptTarget` to create a dataset. Store the result
