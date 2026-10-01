@@ -23,6 +23,11 @@ from pydantic import AliasChoices, BaseModel, Field, computed_field, field_valid
 from pyrit.models.parameter import Parameter
 from pyrit.models.results.scenario_result import ScenarioRunState
 from pyrit.models.retry_event import RetryEvent
+from pyrit.models.scenario_dataset_size_estimate import (
+    DatasetLimitInput,
+    IndeterminateDatasetSize,
+    ScenarioDatasetSizeEstimate,
+)
 
 # Authoritative set of dataset seed filters exposed over the run request surface. Each entry
 # is used verbatim as a ``MemoryInterface.get_seeds`` keyword argument, so a filter key IS the
@@ -63,6 +68,7 @@ class ScenarioRunSizeEstimateStatus(str, Enum):
     """Confidence level for a scenario run-size estimate."""
 
     Exact = "exact"
+    Approximate = "approximate"
     Conditional = "conditional"
     Unavailable = "unavailable"
 
@@ -125,12 +131,12 @@ class ScenarioDatasetSummary(BaseModel):
 
     name: str = Field(..., min_length=1)
     kind: Literal["dataset", "synthesized"] = "dataset"
-    logical_seed_group_count: int = Field(
-        ...,
+    logical_seed_group_count: int | None = Field(
+        default=None,
         ge=0,
         validation_alias=AliasChoices("logical_seed_group_count", "seed_group_count"),
     )
-    selected_seed_group_count: int = Field(..., ge=0)
+    selected_seed_group_count: int | None = Field(default=None, ge=0)
     configured_caps: list[ScenarioDatasetSizeCap] = Field(default_factory=list)
     selection_note: str | None = None
 
@@ -162,6 +168,8 @@ class ScenarioRunSizeEstimate(BaseModel):
     condition: ScenarioRunSizeEstimateCondition | None = None
     components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
     datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
+    dataset_size: ScenarioDatasetSizeEstimate = Field(default_factory=IndeterminateDatasetSize)
+    dataset_limit: DatasetLimitInput = Field(default_factory=DatasetLimitInput)
     effective_parameters: dict[str, bool | int | float | str | list[str]] = Field(
         default_factory=dict,
         description="Scenario parameter values used by this estimate, including implicit runtime defaults.",
@@ -229,15 +237,18 @@ class ScenarioRunSizeEstimate(BaseModel):
         if self.status is not ScenarioRunSizeEstimateStatus.Conditional and self.condition is not None:
             raise ValueError(f"{self.status.value.capitalize()} run-size estimates cannot include condition")
 
-        if self.status is ScenarioRunSizeEstimateStatus.Exact:
+        if self.status in (ScenarioRunSizeEstimateStatus.Exact, ScenarioRunSizeEstimateStatus.Approximate):
             if self.total_attack_count is None:
-                raise ValueError("Exact run-size estimates require total_attack_count")
+                raise ValueError(f"{self.status.value.capitalize()} run-size estimates require total_attack_count")
             for field_name, bound in (
                 ("minimum_attack_count", self.minimum_attack_count),
                 ("maximum_attack_count", self.maximum_attack_count),
             ):
                 if bound is not None and bound != self.total_attack_count:
-                    raise ValueError(f"Exact run-size estimates require {field_name} to equal total_attack_count")
+                    raise ValueError(
+                        f"{self.status.value.capitalize()} run-size estimates require {field_name} "
+                        "to equal total_attack_count"
+                    )
             if component_total != self.total_attack_count:
                 raise ValueError(f"Run-size estimate components total {component_total}, not {self.total_attack_count}")
             return self
@@ -273,14 +284,25 @@ class ScenarioRunSizeEstimate(BaseModel):
         return self
 
     @classmethod
-    def unavailable(cls, *, note: str = "Default-run size estimate is unavailable.") -> "ScenarioRunSizeEstimate":
+    def unavailable(
+        cls,
+        *,
+        note: str = "Default-run size estimate is unavailable.",
+        dataset_size: ScenarioDatasetSizeEstimate | None = None,
+        dataset_limit: DatasetLimitInput | None = None,
+    ) -> "ScenarioRunSizeEstimate":
         """
         Build an unavailable estimate without presenting a guessed total.
 
         Returns:
             ScenarioRunSizeEstimate: An unavailable estimate.
         """
-        return cls(status=ScenarioRunSizeEstimateStatus.Unavailable, note=note)
+        return cls(
+            status=ScenarioRunSizeEstimateStatus.Unavailable,
+            note=note,
+            dataset_size=dataset_size or IndeterminateDatasetSize(),
+            dataset_limit=dataset_limit or DatasetLimitInput(),
+        )
 
 
 ScenarioDefaultRunSizeEstimate = ScenarioRunSizeEstimate

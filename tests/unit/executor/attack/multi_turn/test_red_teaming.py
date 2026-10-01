@@ -686,7 +686,7 @@ class TestSetupPhase:
         assert len(context) == 2
         assert all(item["role"] == "user" for item in context)
         assert "stored result" in str(context)
-        source = CentralMemory.get_memory_instance().get_conversation_messages(
+        source = await CentralMemory.get_memory_instance().get_conversation_messages_async(
             conversation_id=basic_context.session.conversation_id
         )
         assert {"function_call", "function_call_output"} <= {
@@ -1230,7 +1230,9 @@ class TestAttackExecution:
         assert next(iter(result.related_conversations)).conversation_type is ConversationType.ADVERSARIAL
         assert "I cannot assist with that request." in (result.outcome_reason or "")
         mock_send.assert_not_awaited()
-        [persisted_result] = CentralMemory.get_memory_instance().get_attack_results(objective="Test objective")
+        [persisted_result] = await CentralMemory.get_memory_instance().get_attack_results_async(
+            objective="Test objective"
+        )
         assert persisted_result.outcome is AttackOutcome.UNDETERMINED
         assert AttackPreparationFailure.from_result(result=persisted_result) == preparation_failure
 
@@ -1290,7 +1292,9 @@ class TestAttackExecution:
         # rather than re-running the objective under new conversation ids.
         assert AttackPreparationFailure.from_result(result=result) is None
         assert "Blocked by content filter." in (result.outcome_reason or "")
-        [persisted_result] = CentralMemory.get_memory_instance().get_attack_results(objective="Test objective")
+        [persisted_result] = await CentralMemory.get_memory_instance().get_attack_results_async(
+            objective="Test objective"
+        )
         assert AttackPreparationFailure.from_result(result=persisted_result) is None
 
     async def test_unrelated_adversarial_bad_request_still_propagates(

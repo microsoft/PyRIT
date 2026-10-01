@@ -54,7 +54,7 @@ async def test_generated_dataset_runs_existing_scenario_async(sqlite_instance: M
     stored = await sqlite_instance.get_seeds_async(dataset_name=provider.dataset_name, origin=SeedOrigin.GENERATED)
     assert len(stored) == 10
 
-    config = DatasetAttackConfiguration(dataset_names=[provider.dataset_name], auto_fetch=False)
+    config = DatasetAttackConfiguration(dataset_names=[provider.dataset_name], max_dataset_size=None, auto_fetch=False)
     target = MockPromptTarget()
     scenario = RapidResponse(objective_scorer=SubStringScorer(substring="default"))
     scenario.set_params_from_args(

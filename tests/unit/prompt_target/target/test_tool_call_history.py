@@ -155,10 +155,10 @@ async def test_chat_history_groups_multiple_calls_and_separates_outputs() -> Non
 @pytest.mark.parametrize("piece", [_call_piece(), _output_piece()])
 async def test_tool_history_rejected_before_provider_send(piece: MessagePiece) -> None:
     target = _target(OpenAIChatTarget, enabled=False)
-    target._memory.add_conversation_to_memory(
+    await target._memory.add_conversation_to_memory_async(
         conversation=Conversation(conversation_id="history", target_identifier=target.get_identifier())
     )
-    target._memory.add_message_to_memory(request=piece.to_message())
+    await target._memory.add_message_to_memory_async(request=piece.to_message())
     request = MessagePiece(role="user", original_value="Continue.", conversation_id="history").to_message()
     with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send:
         with pytest.raises(ValueError, match="does not support tool-history modality"):
@@ -209,18 +209,18 @@ async def test_tool_history_can_adapt_without_changing_stored_evidence() -> None
     output = _output_piece()
     for piece in (call, output):
         piece.original_value = piece.converted_value
-    target._memory.add_conversation_to_memory(
+    await target._memory.add_conversation_to_memory_async(
         conversation=Conversation(conversation_id="history", target_identifier=target.get_identifier())
     )
     for piece in (call, output):
-        target._memory.add_message_to_memory(request=piece.to_message())
+        await target._memory.add_message_to_memory_async(request=piece.to_message())
     request = MessagePiece(role="user", original_value="Continue.", conversation_id="history").to_message()
     with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=[]) as send:
         await target.send_prompt_async(message=request)
     normalized = send.call_args.kwargs["normalized_conversation"]
     assert len(normalized) == 1
     assert "[Function_call_output]" in normalized[0].get_piece().converted_value
-    stored = target._memory.get_conversation_messages(conversation_id="history")
+    stored = await target._memory.get_conversation_messages_async(conversation_id="history")
     assert stored[1].get_piece().role == "simulated_tool"
     assert stored[1].get_piece().converted_value == output.converted_value
     with pytest.raises(ValueError, match="input modality"):
@@ -307,7 +307,7 @@ def test_tool_preflight_does_not_send_normalize_or_load_history(target_type: typ
     with (
         patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send,
         patch.object(target, "_get_normalized_conversation_async", new_callable=AsyncMock) as normalize,
-        patch.object(target._memory, "get_conversation_messages") as load,
+        patch.object(target._memory, "get_conversation_messages_async", new_callable=AsyncMock) as load,
     ):
         target.validate_tool_history([])
         target.validate_tool_history(history)
