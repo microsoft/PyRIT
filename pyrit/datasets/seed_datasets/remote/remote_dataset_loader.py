@@ -61,6 +61,21 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         "txt": {"read": read_txt, "write": write_txt},
     }
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Reject public fetch overrides before provider registration.
+
+        Raises:
+            TypeError: If the subclass overrides fetch_dataset_async.
+        """
+        if cls.fetch_dataset_async is not _RemoteDatasetLoader.fetch_dataset_async:
+            raise TypeError(
+                f"{cls.__name__} must not override fetch_dataset_async. "
+                "Rename the implementation to _fetch_dataset_async and inherit "
+                "fetch_dataset_async so every seed receives REMOTE origin."
+            )
+        super().__init_subclass__(**kwargs)
+
     @final
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """

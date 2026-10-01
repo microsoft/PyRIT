@@ -52,6 +52,9 @@
 # the inherited `fetch_dataset_async`, which assigns `REMOTE` to every seed, including when
 # loading an explicit source file or a cached download. Local YAML loading assigns `LOCAL`.
 #
+# **Migration:** In existing remote loaders, rename the `fetch_dataset_async` implementation
+# to `_fetch_dataset_async`. Public overrides now raise `TypeError` when the class is defined.
+#
 # ### Example: DarkBench Remote Loader
 #
 # Below is a simplified version of the [`DarkBenchDataset`](../../../pyrit/datasets/seed_datasets/remote/darkbench_dataset.py) loader.
