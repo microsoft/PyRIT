@@ -8,7 +8,7 @@ import pytest
 
 from pyrit.converter import AnsiAttackConverter
 from pyrit.executor.promptgen.fuzzer import FuzzerResult, FuzzerResultPrinter
-from pyrit.memory import SQLiteMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import MessagePiece, Score, ScoreStatus
 
 # The printer's own colors are SGR sequences, so those are stripped before asserting - but only
@@ -21,6 +21,27 @@ def _assert_no_live_control_characters(printed: str, *, enable_colors: bool) -> 
     stripped = _OWN_COLORS.sub("", printed) if enable_colors else printed
     assert not _CONTROL_CHARACTERS.search(stripped)
     assert "\\x" in printed
+
+
+@pytest.mark.parametrize("conversation_ids", [[], ["jailbreak"]])
+async def test_result_string_does_not_access_memory_async(conversation_ids: list[str]) -> None:
+    result = FuzzerResult(
+        successful_templates=["template\x1b[2J"],
+        jailbreak_conversation_ids=conversation_ids,
+        total_queries=25,
+        templates_explored=10,
+    )
+    with patch.object(
+        CentralMemory, "get_memory_instance", side_effect=AssertionError("String conversion read memory")
+    ):
+        summary = str(result)
+
+    assert "Total Queries: 25" in summary
+    assert "Templates Explored: 10" in summary
+    assert "Successful Templates: 1" in summary
+    assert f"Jailbreak Conversations: {len(conversation_ids)}" in summary
+    assert "template\\x1b[2J" in summary
+    _assert_no_live_control_characters(summary, enable_colors=False)
 
 
 @pytest.mark.usefixtures("patch_central_database")

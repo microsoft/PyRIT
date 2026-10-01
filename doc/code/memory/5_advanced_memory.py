@@ -16,7 +16,7 @@
 # 2. **Identifier Filters** — structured filters that match against the JSON-backed identifier columns
 #    (target, converter, scorer, attack) stored alongside different memory entities, such as `MessagePiece`, `AttackResult`, etc.
 #    This notebook demonstrates the functionality with `MessagePiece` entities, but the concepts are similar for other memory entities.
-# 3. **Score Identifier Filters** — the same `IdentifierFilter` mechanism applied to `memory.get_scores()` for
+# 3. **Score Identifier Filters** — the same `IdentifierFilter` mechanism applied to `memory.get_scores_async()` for
 #    retrieving scores by scorer identity (class name, custom parameters, etc.).
 #
 # ## Part 1 — Memory Labels
@@ -237,12 +237,12 @@ for piece in labeled_and_filtered:
 # %% [markdown]
 # ## Part 3 — Filtering Scores by Scorer Identity
 #
-# `IdentifierFilter` also works with `memory.get_scores()`. Every `Score` stored in memory records the
+# `IdentifierFilter` also works with `memory.get_scores_async()`. Every `Score` stored in memory records the
 # **scorer's identifier** — a JSON object that contains the class name as well as any custom parameters
 # the scorer was initialized with.
 #
 # In this example we create two `SubStringScorer` instances with different substrings, score the
-# assistant responses from Part 1, and then use `identifier_filters` on `memory.get_scores()` to
+# assistant responses from Part 1, and then use `identifier_filters` on `memory.get_scores_async()` to
 # retrieve only the scores produced by a specific scorer.
 
 # %%
