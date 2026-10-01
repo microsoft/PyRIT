@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import TargetTable from './TargetTable'
-import type { TargetInstance } from '../../types'
+import type { TargetCapabilities, TargetInstance } from '../../types'
 
 jest.mock('./TargetTable.styles', () => ({
   useTargetTableStyles: () => new Proxy({}, { get: () => '' }),
@@ -12,6 +12,30 @@ jest.mock('./TargetTable.styles', () => ({
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
 )
+
+function makeCapabilities(inputs: string[], outputs: string[]): TargetCapabilities {
+  return {
+    supports_multi_turn: true,
+    supports_json_schema: false,
+    supports_json_output: false,
+    supports_system_prompt: false,
+    supported_input_modalities: inputs,
+    supported_output_modalities: outputs,
+  }
+}
+
+function makeModalityTarget(
+  name: string,
+  inputs: string[],
+  outputs: string[],
+  flags: Partial<TargetCapabilities> = {},
+): TargetInstance {
+  return makeTarget({
+    target_registry_name: name,
+    target_type: 'OpenAIChatTarget',
+    capabilities: { ...makeCapabilities(inputs, outputs), ...flags },
+  })
+}
 
 const sampleTargets: TargetInstance[] = [
   makeTarget({
@@ -53,6 +77,13 @@ const sampleTargets: TargetInstance[] = [
     model_name: null,
   }),
 ]
+
+/** Open a filter and toggle one of its choices, as a user would. */
+async function pickFilterOption(user: ReturnType<typeof userEvent.setup>, filterName: string, optionName: string) {
+  await user.click(screen.getByRole('combobox', { name: filterName }))
+  await user.click(await screen.findByRole('menuitemcheckbox', { name: optionName }))
+  await user.keyboard('{Escape}')
+}
 
 describe('TargetTable', () => {
   const defaultProps = {
@@ -209,7 +240,7 @@ describe('TargetTable', () => {
         <TargetTable {...defaultProps} defaultObjectiveTarget={sampleTargets[0]} />
       </TestWrapper>,
     )
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by type:' }), 'AzureImageTarget')
+    await pickFilterOption(user, 'Filter by type:', 'AzureImageTarget')
     expect(screen.queryByRole('row', { name: /openai_chat_gpt4/ })).not.toBeInTheDocument()
     const summary = screen.getByRole('region', { name: 'Target defaults' })
     const objective = within(summary).getByRole('combobox', { name: 'Default objective target' })
@@ -355,7 +386,8 @@ describe('TargetTable', () => {
     expect(modelText).toHaveStyle({ textDecoration: 'underline dotted' })
   })
 
-  it('should filter targets by type when filter is selected', () => {
+  it('should filter targets by type when filter is selected', async () => {
+    const user = userEvent.setup()
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
@@ -367,27 +399,25 @@ describe('TargetTable', () => {
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
 
     // Filter to OpenAIChatTarget
-    const select = screen.getByRole('combobox', { name: 'Filter by type:' })
-    fireEvent.change(select, { target: { value: 'OpenAIChatTarget' } })
+    await pickFilterOption(user, 'Filter by type:', 'OpenAIChatTarget')
 
     expect(screen.getByText('gpt-4')).toBeInTheDocument()
     expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
   })
 
-  it('should show all targets when filter is cleared', () => {
+  it('should show all targets when filter is cleared', async () => {
+    const user = userEvent.setup()
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
       </TestWrapper>
     )
 
-    const select = screen.getByRole('combobox', { name: 'Filter by type:' })
-
     // Filter then clear
-    fireEvent.change(select, { target: { value: 'OpenAIChatTarget' } })
+    await pickFilterOption(user, 'Filter by type:', 'OpenAIChatTarget')
     expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
 
-    fireEvent.change(select, { target: { value: '' } })
+    await pickFilterOption(user, 'Filter by type:', 'OpenAIChatTarget')
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
   })
 
@@ -398,7 +428,293 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    expect(screen.queryByText('Filter by type:')).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Filter by type:' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reset all filters' })).not.toBeInTheDocument()
+  })
+
+  it('should filter targets that include the selected input modality', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    await pickFilterOption(user, 'Filter by input:', 'Image')
+
+    expect(screen.getByRole('row', { name: /openai_chat_gpt4/ })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /azure_image_dalle/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /text_target_basic/ })).not.toBeInTheDocument()
+  })
+
+  it('should filter targets that include the selected output modality', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    await pickFilterOption(user, 'Filter by output:', 'Image')
+
+    expect(screen.getByRole('row', { name: /azure_image_dalle/ })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /openai_chat_gpt4/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /text_target_basic/ })).not.toBeInTheDocument()
+  })
+
+  it('should list modality options by display name in canonical order', async () => {
+    const user = userEvent.setup()
+    const targets = [
+      makeModalityTarget('first', ['tool_call', 'text', 'zeta_path'], ['text']),
+      makeModalityTarget('second', ['audio_path', 'image_path', 'alpha_path', 'text'], ['text']),
+    ]
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={targets} />
+      </TestWrapper>
+    )
+
+    await user.click(screen.getByRole('combobox', { name: 'Filter by input:' }))
+    const options = await screen.findAllByRole('menuitemcheckbox')
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Text', 'Image', 'Audio', 'Tool call', 'alpha_path', 'zeta_path',
+    ])
+  })
+
+  it('should combine the type, input, and output filters', async () => {
+    const user = userEvent.setup()
+    const targets = [
+      ...sampleTargets,
+      makeModalityTarget('openai_audio_chat', ['text', 'image_path'], ['audio_path']),
+    ]
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={targets} />
+      </TestWrapper>
+    )
+
+    await pickFilterOption(user, 'Filter by type:', 'OpenAIChatTarget')
+    await pickFilterOption(user, 'Filter by input:', 'Image')
+    expect(screen.getByRole('row', { name: /openai_chat_gpt4/ })).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /openai_audio_chat/ })).toBeInTheDocument()
+    // Options come from every target, not only the rows left by the other filters.
+    await user.click(screen.getByRole('combobox', { name: 'Filter by output:' }))
+    expect(await screen.findByRole('menuitemcheckbox', { name: 'Image' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+
+    await pickFilterOption(user, 'Filter by output:', 'Audio')
+    expect(screen.getByRole('row', { name: /openai_audio_chat/ })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /openai_chat_gpt4/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /azure_image_dalle/ })).not.toBeInTheDocument()
+  })
+
+  it('should say so when no target matches the filters', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+
+    await pickFilterOption(user, 'Filter by input:', 'Image')
+    await pickFilterOption(user, 'Filter by output:', 'Image')
+
+    expect(screen.getByRole('status')).toHaveTextContent('No targets match the selected filters.')
+    expect(screen.getByRole('table', { name: 'Target instances' })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /openai_chat_gpt4|azure_image_dalle|text_target_basic/ })).not.toBeInTheDocument()
+  })
+
+  it('should reset every filter at once', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+    const resetButton = screen.getByRole('button', { name: 'Reset all filters' })
+    expect(resetButton).toHaveAttribute('aria-disabled', 'true')
+
+    await pickFilterOption(user, 'Filter by type:', 'OpenAIChatTarget')
+    await pickFilterOption(user, 'Filter by input:', 'Image')
+    await pickFilterOption(user, 'Filter by output:', 'Image')
+    await pickFilterOption(user, 'Filter by capability:', 'JSON Schema')
+    expect(screen.getByRole('status')).toHaveTextContent('No targets match the selected filters.')
+
+    await user.click(resetButton)
+
+    expect(screen.getByRole('combobox', { name: 'Filter by type:' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Filter by output:' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Filter by capability:' })).toHaveValue('')
+    expect(screen.getAllByRole('row', { name: /openai_chat_gpt4|azure_image_dalle|text_target_basic/ })).toHaveLength(3)
+    expect(resetButton).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('should only show a modality filter that can narrow the targets', () => {
+    const targets = [
+      makeModalityTarget('first', ['text', 'image_path'], ['text']),
+      makeModalityTarget('second', ['text', 'image_path'], ['audio_path']),
+    ]
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={targets} />
+      </TestWrapper>
+    )
+
+    expect(screen.queryByRole('combobox', { name: 'Filter by input:' })).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by output:' })).toBeInTheDocument()
+  })
+
+  it('should match any checked input', async () => {
+    const user = userEvent.setup()
+    const targets = [
+      makeModalityTarget('image_chat', ['text', 'image_path'], ['text']),
+      makeModalityTarget('audio_chat', ['text', 'audio_path'], ['text']),
+      makeModalityTarget('text_chat', ['text'], ['text']),
+    ]
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={targets} />
+      </TestWrapper>
+    )
+
+    await pickFilterOption(user, 'Filter by input:', 'Image')
+    await pickFilterOption(user, 'Filter by input:', 'Audio')
+
+    expect(screen.getByRole('row', { name: /image_chat/ })).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /audio_chat/ })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /text_chat/ })).not.toBeInTheDocument()
+  })
+
+  it('should require every checked capability', async () => {
+    const user = userEvent.setup()
+    const targets = [
+      makeModalityTarget('schema_chat', ['text'], ['text'], { supports_json_schema: true, supports_system_prompt: true }),
+      makeModalityTarget('prompt_chat', ['text'], ['text'], { supports_system_prompt: true }),
+      makeModalityTarget('plain_chat', ['text'], ['text']),
+    ]
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={targets} />
+      </TestWrapper>
+    )
+
+    await pickFilterOption(user, 'Filter by capability:', 'System Prompt')
+    expect(screen.getByRole('row', { name: /prompt_chat/ })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /plain_chat/ })).not.toBeInTheDocument()
+
+    await pickFilterOption(user, 'Filter by capability:', 'JSON Schema')
+    expect(screen.getByRole('row', { name: /schema_chat/ })).toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /prompt_chat/ })).not.toBeInTheDocument()
+  })
+
+  it('should keep filters and expanded rows when the targets reload', async () => {
+    const user = userEvent.setup()
+    const roundRobin = makeTarget({
+      target_registry_name: 'rr_image',
+      target_type: 'RoundRobinTarget',
+      capabilities: makeCapabilities(['text', 'image_path'], ['text']),
+      target_specific_params: { weights: [1, 1] },
+      inner_targets: [
+        { target_registry_name: 'inner_a', target_type: 'OpenAIChatTarget', endpoint: 'https://a.example.test' },
+        { target_registry_name: 'inner_b', target_type: 'OpenAIChatTarget', endpoint: 'https://b.example.test' },
+      ],
+    })
+    const { rerender } = render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[roundRobin, sampleTargets[1]]} />
+      </TestWrapper>
+    )
+    await pickFilterOption(user, 'Filter by input:', 'Image')
+    await user.click(screen.getByRole('button', { name: 'Expand inner targets' }))
+
+    rerender(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[{ ...roundRobin }, { ...sampleTargets[1] }]} />
+      </TestWrapper>
+    )
+
+    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('Inputs: Image')
+    expect(screen.queryByRole('row', { name: /azure_image_dalle/ })).not.toBeInTheDocument()
+    expect(screen.getByText('#1 inner_a')).toBeInTheDocument()
+  })
+
+  it('should ignore a selection the reloaded targets no longer offer', async () => {
+    const user = userEvent.setup()
+    const imageChat = makeModalityTarget('image_chat', ['text', 'image_path'], ['text'])
+    const textChat = makeModalityTarget('text_chat', ['text'], ['text'])
+    const { rerender } = render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[imageChat, textChat]} />
+      </TestWrapper>
+    )
+    await pickFilterOption(user, 'Filter by input:', 'Image')
+    expect(screen.queryByRole('row', { name: /text_chat/ })).not.toBeInTheDocument()
+
+    rerender(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[textChat, makeModalityTarget('audio_chat', ['text', 'audio_path'], ['text'])]} />
+      </TestWrapper>
+    )
+
+    expect(screen.getByRole('row', { name: /text_chat/ })).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /audio_chat/ })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('should not bring back a selection when a later reload offers it again', async () => {
+    const user = userEvent.setup()
+    const imageChat = makeModalityTarget('image_chat', ['text', 'image_path'], ['text'])
+    const textChat = makeModalityTarget('text_chat', ['text'], ['text'])
+    const audioChat = makeModalityTarget('audio_chat', ['text', 'audio_path'], ['text'])
+    const { rerender } = render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[imageChat, textChat]} />
+      </TestWrapper>
+    )
+    await pickFilterOption(user, 'Filter by input:', 'Image')
+    const renderWith = (targets: TargetInstance[]) => {
+      rerender(
+        <TestWrapper>
+          <TargetTable {...defaultProps} targets={targets} />
+        </TestWrapper>
+      )
+    }
+
+    renderWith([textChat, audioChat])
+    renderWith([imageChat, textChat])
+
+    expect(screen.getByRole('combobox', { name: 'Filter by input:' })).toHaveValue('')
+    expect(screen.getByRole('row', { name: /text_chat/ })).toBeInTheDocument()
+  })
+
+  it('should keep the inner targets of a matching round robin target', async () => {
+    const user = userEvent.setup()
+    const roundRobin = makeTarget({
+      target_registry_name: 'rr_image',
+      target_type: 'RoundRobinTarget',
+      capabilities: makeCapabilities(['text', 'image_path'], ['text']),
+      target_specific_params: { weights: [1, 1] },
+      inner_targets: [
+        { target_registry_name: 'inner_a', target_type: 'OpenAIChatTarget', endpoint: 'https://a.example.test' },
+        { target_registry_name: 'inner_b', target_type: 'OpenAIChatTarget', endpoint: 'https://b.example.test' },
+      ],
+    })
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[roundRobin, sampleTargets[1]]} />
+      </TestWrapper>
+    )
+
+    await pickFilterOption(user, 'Filter by input:', 'Image')
+    await user.click(screen.getByRole('button', { name: 'Expand inner targets' }))
+
+    expect(screen.queryByRole('row', { name: /azure_image_dalle/ })).not.toBeInTheDocument()
+    expect(screen.getByText('#1 inner_a')).toBeInTheDocument()
+    expect(screen.getByText('#2 inner_b')).toBeInTheDocument()
   })
 
   it('should show expand button for RoundRobinTarget with inner targets', () => {

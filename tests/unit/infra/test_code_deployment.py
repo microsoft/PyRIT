@@ -445,7 +445,7 @@ wait_for_http_health https://copyrit.example.azurefd.net/api/health 31
 
     def _run_cancellation_rollback(
         self, *, removed: bool, signal: str
-    ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    ) -> tuple[subprocess.CompletedProcess[str], list[list[str]], list[int]]:
         environment_id = f"{RESOURCE_GROUP}/providers/Microsoft.App/managedEnvironments/copyrit-test-env"
         connection = json.dumps(
             [
@@ -488,7 +488,7 @@ az() {
     *) echo 'Unexpected Azure call' >&2; exit 97 ;;
   esac
 }
-sleep() { :; }
+sleep() { printf 'sleep:%s\\n' "$1" >&2; SECONDS=$((SECONDS + 3600)); }
 trap rollback_public_origin EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
@@ -501,12 +501,13 @@ kill -"$TEST_SIGNAL" $$
             for line in result.stderr.splitlines()
             if line.startswith("az:")
         ]
-        return result, calls
+        sleeps = [int(line.removeprefix("sleep:")) for line in result.stderr.splitlines() if line.startswith("sleep:")]
+        return result, calls, sleeps
 
     def test_cancellation_keeps_public_access_disabled_until_connection_removal(self) -> None:
         for signal, exit_code in (("TERM", 143), ("INT", 130)):
             with self.subTest(signal=signal):
-                result, calls = self._run_cancellation_rollback(removed=False, signal=signal)
+                result, calls, sleeps = self._run_cancellation_rollback(removed=False, signal=signal)
                 assert result.returncode == exit_code, result.stdout + result.stderr
                 assert "private endpoint connection deletion was not confirmed" in result.stdout
                 assert any(call[:3] == ["rest", "--method", "delete"] for call in calls)
@@ -514,13 +515,16 @@ kill -"$TEST_SIGNAL" $$
                 assert len(deployments) == 1
                 assert deployments[0][deployments[0].index("--name") + 1].endswith("-rollback-origin")
                 assert not any("disableContainerAppsPublicAccess=false" in call for call in calls)
+                assert result.stdout.count("Waiting for ACA private endpoint connection removal") == 1
+                assert sleeps == [15]
 
     def test_cancellation_rolls_back_only_infrastructure_after_connection_removal(self) -> None:
         for signal, exit_code in (("TERM", 143), ("INT", 130)):
             with self.subTest(signal=signal):
-                result, calls = self._run_cancellation_rollback(removed=True, signal=signal)
+                result, calls, sleeps = self._run_cancellation_rollback(removed=True, signal=signal)
                 assert result.returncode == exit_code, result.stdout + result.stderr
                 assert "Public ACA origin rollback completed" in result.stdout
+                assert sleeps == []
                 assert any(call[:3] == ["rest", "--method", "delete"] for call in calls)
                 deployments = [call for call in calls if call[:3] == ["deployment", "group", "create"]]
                 assert len(deployments) == 2

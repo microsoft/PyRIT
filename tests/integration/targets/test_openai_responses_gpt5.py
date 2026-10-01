@@ -65,7 +65,7 @@ async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
         original_value_data_type="text",
         conversation_id=conv_id,
     )
-    sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
+    (await sqlite_instance.add_message_to_memory_async(request=developer_piece.to_message()))
 
     user_piece = MessagePiece(
         role="user",
@@ -97,7 +97,7 @@ async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
         original_value_data_type="text",
         conversation_id=conv_id,
     )
-    sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
+    (await sqlite_instance.add_message_to_memory_async(request=developer_piece.to_message()))
 
     cat_schema = {
         "type": "object",
@@ -150,7 +150,7 @@ async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
         conversation_id=conv_id,
     )
 
-    sqlite_instance.add_message_to_memory(request=developer_piece.to_message())
+    (await sqlite_instance.add_message_to_memory_async(request=developer_piece.to_message()))
 
     prompt = "Create a JSON object that describes a mystical cat "
     prompt += "with the following properties: name, age, fur_rgb."
