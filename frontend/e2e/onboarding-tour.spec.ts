@@ -1,6 +1,63 @@
-import { expect, test } from "./_fixtures";
+import { expect, test, type Page } from "./_fixtures";
+
+import type { RegisteredScenario } from "../src/types";
 
 import { makeTarget } from "./_targets";
+
+const TOUR_SCENARIO: RegisteredScenario = {
+  scenario_name: "tour-scenario",
+  scenario_type: "TourScenario",
+  scenario_version: 1,
+  description: "Mock scenario for tour navigation.",
+  description_markdown: "Mock scenario for tour navigation.",
+  all_techniques: ["prompt_sending"],
+  aggregate_techniques: [],
+  aggregate_technique_expansions: {},
+  default_technique: "prompt_sending",
+  default_techniques: ["prompt_sending"],
+  technique_summaries: [
+    { name: "prompt_sending", description: null, tags: [] },
+  ],
+  default_datasets: [],
+  baseline_policy: "disabled",
+  include_baseline_by_default: false,
+  supported_parameters: [],
+  default_run_size: {
+    estimated_attack_count: null,
+    components: [],
+    datasets: [],
+    note: "Mock estimate only.",
+  },
+};
+
+/** Serves a one-scenario catalog so the detail route is reachable by click. */
+async function mockScenarioCatalog(page: Page): Promise<void> {
+  await page.route(/\/api\/scenarios\/catalog(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      json: {
+        items: [TOUR_SCENARIO],
+        pagination: {
+          limit: 200,
+          has_more: false,
+          next_cursor: null,
+          prev_cursor: null,
+        },
+      },
+    });
+  });
+  await page.route(
+    /\/api\/scenarios\/catalog\/[^/]+$/,
+    async (route) => {
+      await route.fulfill({ json: TOUR_SCENARIO });
+    }
+  );
+  await page.route(
+    /\/api\/scenarios\/catalog\/[^/]+\/estimate(?:\?.*)?$/,
+    async (route) => {
+      await route.fulfill({ json: TOUR_SCENARIO.default_run_size });
+    }
+  );
+}
 
 test.describe("Onboarding tour", () => {
   test("guides a user with no objective default through target selection", async ({
@@ -188,5 +245,53 @@ test.describe("Onboarding tour", () => {
       "Toggle converter panel"
     );
     await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
+  });
+
+  test("recovers the Scanner step when Next is pressed from a scenario detail route", async ({
+    page,
+  }) => {
+    await mockScenarioCatalog(page);
+
+    // Seed the history stack before starting the tour. The spotlight overlay
+    // swallows every click outside the current step's target, so once the tour
+    // is running the browser Back button is the only way onto another route.
+    await page.goto("/");
+    await page.getByRole("button", { name: "Scanner", exact: true }).click();
+    await expect(page).toHaveURL(/\/scanner$/);
+    await page
+      .getByRole("link", { name: TOUR_SCENARIO.scenario_name, exact: true })
+      .click();
+    await expect(page).toHaveURL(
+      new RegExp(`/scanner/${TOUR_SCENARIO.scenario_name}$`)
+    );
+    await page.getByRole("button", { name: "Home", exact: true }).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    await page.getByRole("button", { name: "Take a tour" }).click();
+
+    const dialog = page.getByRole("alertdialog");
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(page).toHaveURL(/\/chat$/);
+
+    // Walk back onto the Scanner detail route. The Scanner view owns both the
+    // catalog and the detail page, but only the catalog carries the anchor.
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await page.goBack();
+    await expect(page).toHaveURL(
+      new RegExp(`/scanner/${TOUR_SCENARIO.scenario_name}$`)
+    );
+    await expect(page.locator('[data-tour="scanner-catalog"]')).toHaveCount(0);
+
+    // `currentView` already equals `scenarios`, so the view-change effect never
+    // fires. The hook has to notice the missing anchor, return to the catalog,
+    // and advance after paint rather than stranding the tooltip.
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+
+    await expect(page).toHaveURL(/\/scanner$/);
+    await expect(page.locator('[data-tour="scanner-catalog"]')).toBeVisible();
+    await expect(dialog).toContainText("Scanner runs a whole campaign for you");
   });
 });
