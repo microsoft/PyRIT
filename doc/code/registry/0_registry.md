@@ -107,9 +107,7 @@ from pyrit.executor.attack import AttackConverterConfig
 from pyrit.registry import AttackRegistry, TargetRegistry
 
 # objective_target is an existing configured target.
-TargetRegistry.get_registry_singleton().instances.register(
-    objective_target, name="objective"
-)
+TargetRegistry.get_registry_singleton().instances.register(objective_target, name="objective")
 attack = AttackRegistry.get_registry_singleton().create_instance(
     "PromptSendingAttack",
     objective_target="objective",
