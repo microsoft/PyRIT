@@ -33,12 +33,18 @@ async def test_health_remains_schedulable_during_cold_target_types(compatibility
         async with AsyncClient(transport=transport, base_url="http://test", headers=compatibility_headers) as client:
             types_request = asyncio.create_task(client.get("/api/targets/types"))
             try:
-                assert await asyncio.to_thread(discovery_started.wait, 10)
-                health_response = await asyncio.wait_for(client.get("/api/health"), timeout=10)
-                assert health_response.status_code == 200
-                assert not discovery_finished.is_set()
-            finally:
-                discovery_release.set()
-                types_response = await asyncio.wait_for(types_request, timeout=10)
+                try:
+                    assert await asyncio.to_thread(discovery_started.wait, 10)
+                    health_response = await asyncio.wait_for(client.get("/api/health"), timeout=10)
+                    assert health_response.status_code == 200
+                    assert not discovery_finished.is_set()
+                finally:
+                    discovery_release.set()
+            except BaseException:
+                # Drain the request without replacing the original test failure.
+                types_request.cancel()
+                await asyncio.gather(types_request, return_exceptions=True)
+                raise
+            types_response = await asyncio.wait_for(types_request, timeout=10)
 
     assert types_response.status_code == 200
