@@ -2,16 +2,62 @@
 # Licensed under the MIT license.
 
 """
-Common response models for the PyRIT API.
+Common models for the PyRIT API.
 
-Includes pagination, error handling (RFC 7807), and shared base models.
+Includes pagination, error handling (RFC 7807), shared base models, and request limits.
 """
 
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 REGISTRY_INSTANCE_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+
+# Request limits. Prompt content (message pieces, system prompts, preview input) and free-form
+# values (metadata and parameter values) are only limited by the request body size, so long
+# prompts and base64 media keep working.
+MAX_IDENTIFIER_LENGTH = 256
+MAX_CURSOR_LENGTH = 1_024
+MAX_TEXT_LENGTH = 100_000
+MAX_ITEMS = 100
+MAX_LABEL_KEY_LENGTH = 128
+MAX_LABEL_VALUE_LENGTH = 1_024
+MAX_FILE_CONTENT_LENGTH = 1_048_576
+
+IdentifierStr = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
+CursorStr = Annotated[str, Field(max_length=MAX_CURSOR_LENGTH)]
+TextStr = Annotated[str, Field(max_length=MAX_TEXT_LENGTH)]
+LabelDict = Annotated[
+    dict[
+        Annotated[str, Field(max_length=MAX_LABEL_KEY_LENGTH)],
+        Annotated[str, Field(max_length=MAX_LABEL_VALUE_LENGTH)],
+    ],
+    Field(max_length=MAX_ITEMS),
+]
+
+
+def validate_label_filter(value: str) -> str:
+    """
+    Check that a label filter is ``key:value`` within the label key and value limits.
+
+    Returns:
+        str: The unchanged filter.
+
+    Raises:
+        ValueError: If the filter has no ``:`` separator or a part is too long.
+    """
+    key, separator, label_value = value.partition(":")
+    if not separator:
+        raise ValueError("Label filters must use the key:value format.")
+    if len(key.strip()) > MAX_LABEL_KEY_LENGTH or len(label_value.strip()) > MAX_LABEL_VALUE_LENGTH:
+        raise ValueError(
+            f"Label filter keys are limited to {MAX_LABEL_KEY_LENGTH} characters "
+            f"and values to {MAX_LABEL_VALUE_LENGTH} characters."
+        )
+    return value
+
+
+LabelFilterStr = Annotated[str, AfterValidator(validate_label_filter)]
 
 
 class PaginationInfo(BaseModel):

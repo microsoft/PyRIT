@@ -16,7 +16,7 @@ canonical models.
 from datetime import datetime
 from enum import Enum
 from math import prod
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field, computed_field, field_validator, model_validator
 
@@ -28,6 +28,29 @@ from pyrit.models.scenario_dataset_size_estimate import (
     IndeterminateDatasetSize,
     ScenarioDatasetSizeEstimate,
 )
+
+# Length and size limits for scenario run requests received over the REST API; the values
+# match the backend request limits in ``pyrit.backend.models.common``.
+_MAX_REQUEST_ITEMS = 100
+_MAX_REQUEST_NAME_LENGTH = 256
+_MAX_REQUEST_LABEL_KEY_LENGTH = 128
+_MAX_REQUEST_LABEL_VALUE_LENGTH = 1_024
+# Technique tokens can append converter modifiers (``technique:converter.<name>:...``).
+_MAX_REQUEST_TECHNIQUE_LENGTH = 4_096
+_RequestName = Annotated[str, Field(max_length=_MAX_REQUEST_NAME_LENGTH)]
+_RequestNames = Annotated[list[_RequestName], Field(max_length=_MAX_REQUEST_ITEMS)]
+_RequestTechniques = Annotated[
+    list[Annotated[str, Field(max_length=_MAX_REQUEST_TECHNIQUE_LENGTH)]], Field(max_length=_MAX_REQUEST_ITEMS)
+]
+_RequestFilters = Annotated[dict[_RequestName, _RequestNames], Field(max_length=_MAX_REQUEST_ITEMS)]
+_RequestParams = Annotated[dict[_RequestName, Any], Field(max_length=_MAX_REQUEST_ITEMS)]
+_RequestLabels = Annotated[
+    dict[
+        Annotated[str, Field(max_length=_MAX_REQUEST_LABEL_KEY_LENGTH)],
+        Annotated[str, Field(max_length=_MAX_REQUEST_LABEL_VALUE_LENGTH)],
+    ],
+    Field(max_length=_MAX_REQUEST_ITEMS),
+]
 
 # Authoritative set of dataset seed filters exposed over the run request surface. Each entry
 # is used verbatim as a ``MemoryInterface.get_seeds`` keyword argument, so a filter key IS the
@@ -359,23 +382,23 @@ class RegisteredScenario(BaseModel):
 class ScenarioRunSizeEstimateRequest(BaseModel):
     """Request-specific scenario run-size configuration."""
 
-    adversarial_target_name: str | None = Field(
+    adversarial_target_name: _RequestName | None = Field(
         None,
         min_length=1,
         description="Registered multi-turn target overriding only the adversarial fallback for this request",
     )
-    target_name: str | None = Field(
+    target_name: _RequestName | None = Field(
         None,
         description="Optional registered objective target used to resolve target-capability-dependent estimates",
     )
-    techniques: list[str] | None = Field(
+    techniques: _RequestTechniques | None = Field(
         None, description="Technique names to estimate (uses scenario default if omitted)"
     )
-    dataset_names: list[str] | None = Field(
+    dataset_names: _RequestNames | None = Field(
         None, description="Dataset names to estimate (uses scenario default if omitted)"
     )
     max_dataset_size: int | None = Field(None, ge=1, description="Maximum selected logical seed groups")
-    dataset_filters: dict[str, list[str]] | None = Field(
+    dataset_filters: _RequestFilters | None = Field(
         None,
         description="Dataset seed filters keyed by field. Accepted keys: harm_categories, data_types.",
     )
@@ -383,7 +406,7 @@ class ScenarioRunSizeEstimateRequest(BaseModel):
         None,
         description="Override the scenario baseline default; forbidden scenarios reject true",
     )
-    scenario_params: dict[str, Any] | None = Field(
+    scenario_params: _RequestParams | None = Field(
         None,
         description="Scenario-declared parameters such as Jailbreak template and attempt counts",
     )
@@ -403,20 +426,24 @@ class ScenarioRunSizeEstimateRequest(BaseModel):
 class RunScenarioRequest(BaseModel):
     """Request body for starting a scenario run."""
 
-    scenario_name: str = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
-    target_name: str = Field(..., description="Name of a registered target from the TargetRegistry")
-    adversarial_target_name: str | None = Field(
+    scenario_name: _RequestName = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
+    target_name: _RequestName = Field(..., description="Name of a registered target from the TargetRegistry")
+    adversarial_target_name: _RequestName | None = Field(
         None,
         min_length=1,
         description="Registered multi-turn target overriding only the adversarial fallback for this run",
     )
-    initializers: list[str] | None = Field(
+    initializers: _RequestNames | None = Field(
         None, description="Initializer names to run before scenario (e.g., ['target', 'load_default_datasets'])"
     )
-    techniques: list[str] | None = Field(None, description="Technique names to use (uses scenario default if omitted)")
-    dataset_names: list[str] | None = Field(None, description="Dataset names to use (uses scenario default if omitted)")
+    techniques: _RequestTechniques | None = Field(
+        None, description="Technique names to use (uses scenario default if omitted)"
+    )
+    dataset_names: _RequestNames | None = Field(
+        None, description="Dataset names to use (uses scenario default if omitted)"
+    )
     max_dataset_size: int | None = Field(None, ge=1, description="Maximum items per dataset")
-    dataset_filters: dict[str, list[str]] | None = Field(
+    dataset_filters: _RequestFilters | None = Field(
         None,
         description=(
             "Dataset seed filters keyed by field, applied before sampling. Accepted keys: harm_categories, data_types."
@@ -427,19 +454,20 @@ class RunScenarioRequest(BaseModel):
     include_baseline: bool | None = Field(
         None, description="Override the scenario baseline default; forbidden scenarios reject true"
     )
-    labels: dict[str, str] | None = Field(None, description="Labels to attach to memory entries")
-    scenario_params: dict[str, Any] | None = Field(
+    labels: _RequestLabels | None = Field(None, description="Labels to attach to memory entries")
+    scenario_params: _RequestParams | None = Field(
         None,
         description="Custom parameters for the scenario (passed to scenario.set_params_from_args). "
         "Keys are parameter names declared by the scenario's supported_parameters().",
     )
-    initializer_args: dict[str, dict[str, Any]] | None = Field(
+    initializer_args: dict[_RequestName, _RequestParams] | None = Field(
         None,
+        max_length=_MAX_REQUEST_ITEMS,
         description="Per-initializer arguments keyed by initializer name. "
         "Each value is a dict of args passed to that initializer's set_params_from_args(). "
         "Example: {'target': {'endpoint': 'https://...'}}.",
     )
-    scenario_result_id: str | None = Field(
+    scenario_result_id: _RequestName | None = Field(
         None,
         description="Optional ID of an existing ScenarioResult to resume. "
         "If provided, the scenario will resume from prior progress instead of starting fresh.",

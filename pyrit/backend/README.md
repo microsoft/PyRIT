@@ -61,6 +61,16 @@ Concurrent sends or `send=false` appends to the same conversation receive **409*
 exceeding the admission limit receives **429**. Neither response starts a send or appends
 a message. No background submission or status API is introduced.
 
+### Request Limits
+
+The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
+API requests with URLs over 8 KiB receive **414**. Identifiers, names, labels, filters,
+cursors, configuration files, and initializer scripts also have length or item limits,
+listed in the OpenAPI schema; values over a limit receive **422**. Prompt content (message
+pieces, system prompts, and converter preview input) and free-form values (prompt
+metadata, scenario and initializer arguments, and target and converter parameter values)
+are limited only by the body size, so long prompts and base64 media keep working.
+
 ## Strict Lockstep Compatibility
 
 The backend, CLI, and frontend bundle use one stamped identity:

@@ -15,7 +15,13 @@ from typing import Annotated, Any, Literal, cast
 from pydantic import BaseModel, Field, computed_field, field_serializer, model_validator
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models.common import (
+    MAX_ITEMS,
+    IdentifierStr,
+    LabelDict,
+    PaginationInfo,
+    TextStr,
+)
 from pyrit.models import (
     AttackResult,
     ChatMessageRole,
@@ -366,17 +372,19 @@ class MessagePieceRequest(BaseModel):
         None,
         description="Final converted value's data type. Defaults to data_type; requires converted_value.",
     )
-    applied_converter_ids: list[str] | None = Field(
+    applied_converter_ids: list[IdentifierStr] | None = Field(
         None,
+        max_length=MAX_ITEMS,
         description="Registry IDs of converters already applied, in execution order, including duplicates. "
         "Requires converted_value. Use an empty list for manual edits.",
     )
-    mime_type: str | None = Field(None, description="MIME type for media content")
-    prompt_metadata: dict[str, Any] | None = Field(
+    mime_type: IdentifierStr | None = Field(None, description="MIME type for media content")
+    prompt_metadata: dict[IdentifierStr, Any] | None = Field(
         None,
+        max_length=MAX_ITEMS,
         description="Metadata to attach to the piece (e.g., {'video_id': '...'} for remix mode).",
     )
-    original_prompt_id: str | None = Field(
+    original_prompt_id: IdentifierStr | None = Field(
         None,
         description="ID of the source piece when prepending from an existing conversation. "
         "Preserves lineage so the new piece traces back to the original.",
@@ -412,7 +420,7 @@ class _AttackAttributionInput(BaseModel):
 
     operator: str | None = Field(None, max_length=128, description="Operator responsible for the attack")
     operation: str | None = Field(None, max_length=128, description="Operation associated with the attack")
-    labels: dict[str, str] | None = Field(None, description="Arbitrary user-defined labels for filtering")
+    labels: LabelDict | None = Field(None, description="Arbitrary user-defined labels for filtering")
 
     @model_validator(mode="before")
     @classmethod
@@ -458,12 +466,14 @@ class CreateAttackRequest(_AttackAttributionInput):
     supplied in ``labels`` (typically the current operator's labels).
     """
 
-    name: str | None = Field(None, description="Attack name/label")
-    target_registry_name: str = Field(..., description="Target registry name to attack")
-    source_conversation_id: str | None = Field(
+    name: TextStr | None = Field(None, description="Attack name/label")
+    target_registry_name: IdentifierStr = Field(..., description="Target registry name to attack")
+    source_conversation_id: IdentifierStr | None = Field(
         None, description="Conversation to branch from (clone messages into the new attack)"
     )
-    cutoff_index: int | None = Field(None, description="Include messages up to and including this turn index (0-based)")
+    cutoff_index: int | None = Field(
+        None, ge=0, description="Include messages up to and including this turn index (0-based)"
+    )
     system_prompt: str | None = Field(
         None,
         description="System prompt lowered to a single system-role message at the front of the conversation. "
@@ -494,7 +504,7 @@ class UpdateAttackRequest(BaseModel):
         default=None,
         description="Updated attack outcome",
     )
-    objective: str | None = Field(default=None, description="Shared objective for all conversations in the attack")
+    objective: TextStr | None = Field(default=None, description="Shared objective for all conversations in the attack")
 
     @model_validator(mode="after")
     def _validate_update(self) -> "UpdateAttackRequest":
@@ -546,8 +556,10 @@ class CreateConversationRequest(BaseModel):
     the cutoff turn, preserving tracking relationships (original_prompt_id).
     """
 
-    source_conversation_id: str | None = Field(None, description="Conversation to branch from")
-    cutoff_index: int | None = Field(None, description="Include messages up to and including this turn index (0-based)")
+    source_conversation_id: IdentifierStr | None = Field(None, description="Conversation to branch from")
+    cutoff_index: int | None = Field(
+        None, ge=0, description="Include messages up to and including this turn index (0-based)"
+    )
 
 
 class CreateConversationResponse(BaseModel):
@@ -560,7 +572,7 @@ class CreateConversationResponse(BaseModel):
 class UpdateMainConversationRequest(BaseModel):
     """Request to update the main conversation of an attack result."""
 
-    conversation_id: str = Field(..., description="The conversation to promote to main")
+    conversation_id: IdentifierStr = Field(..., description="The conversation to promote to main")
 
 
 class UpdateMainConversationResponse(BaseModel):
@@ -579,19 +591,22 @@ class UpdateMainConversationResponse(BaseModel):
 class ConverterConfigurationRequest(BaseModel):
     """Registry-backed converter configuration for one ordered pipeline."""
 
-    converter_ids: list[str] = Field(
+    converter_ids: list[IdentifierStr] = Field(
         ...,
         min_length=1,
+        max_length=MAX_ITEMS,
         description="Converter instance IDs to apply in order.",
     )
     indexes_to_apply: list[Annotated[int, Field(ge=0)]] | None = Field(
         None,
         min_length=1,
+        max_length=MAX_ITEMS,
         description="Zero-based message piece indexes to which this pipeline applies. Defaults to all indexes.",
     )
     prompt_data_types_to_apply: list[PromptDataType] | None = Field(
         None,
         min_length=1,
+        max_length=MAX_ITEMS,
         description="Prompt data types to which this pipeline applies. Defaults to all data types.",
     )
 
@@ -611,25 +626,28 @@ class AddMessageRequest(BaseModel):
         default=True,
         description="If True, send to target and wait for response. If False, just store in memory.",
     )
-    target_registry_name: str | None = Field(
+    target_registry_name: IdentifierStr | None = Field(
         None,
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
-    converter_ids: list[str] | None = Field(
+    converter_ids: list[IdentifierStr] | None = Field(
         None,
+        max_length=MAX_ITEMS,
         description="Deprecated global request converter pipeline. Use request_converter_configurations instead.",
     )
     request_converter_configurations: list[ConverterConfigurationRequest] | None = Field(
         None,
         min_length=1,
+        max_length=MAX_ITEMS,
         description="Ordered registry-backed converter pipelines to apply to the request.",
     )
     response_converter_configurations: list[ConverterConfigurationRequest] | None = Field(
         None,
         min_length=1,
+        max_length=MAX_ITEMS,
         description="Ordered registry-backed converter pipelines to apply to the response.",
     )
-    target_conversation_id: str = Field(
+    target_conversation_id: IdentifierStr = Field(
         ...,
         description="The conversation_id to store and send messages under. "
         "Usually the attack's main conversation, but can be a related conversation.",

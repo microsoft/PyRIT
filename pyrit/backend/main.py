@@ -24,6 +24,7 @@ from pyrit import _compatibility
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
 from pyrit.backend.middleware.compatibility import CompatibilityAPI, CompatibilityMiddleware
+from pyrit.backend.middleware.request_size import RequestSizeLimitMiddleware
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import (
     attacks,
@@ -90,6 +91,9 @@ app = CompatibilityAPI(
 # Register RFC 7807 error handlers
 register_error_handlers(app)
 
+# Innermost so route handlers read the body directly through its size check; a BaseHTTPMiddleware
+# between them would turn the 413 raised while streaming into a body-parsing error.
+app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(RuntimeAdmissionMiddleware)
 
 # Microsoft Graph-backed authentication (PKCE — no client secrets needed)
