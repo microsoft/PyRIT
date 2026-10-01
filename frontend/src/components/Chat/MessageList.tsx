@@ -811,13 +811,13 @@ export default function MessageList({
                         >Copy conversation</Button>
                       </MenuTrigger>
                       <MenuPopover><MenuList>
-                        <MenuItem onClick={() => onCopyToInput(index)} title="Copy this message to the prompt box">
+                        <MenuItem className={styles.copyMenuItem} onClick={() => onCopyToInput(index)} title="Copy this message to the prompt box">
                           This conversation
                         </MenuItem>
-                        <MenuItem disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(newConversationDisabledReason)}
+                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(newConversationDisabledReason)}
                           title={newConversationDisabledReason ?? 'Copy the conversation through this message into the same attack'}
                           onClick={() => onCopyToNewConversation?.(index)}>New conversation</MenuItem>
-                        <MenuItem disabled={!onCopyToNewAttack || copyConversationDisabled}
+                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || copyConversationDisabled}
                           title="Copy the conversation through this message into a new attack"
                           onClick={() => onCopyToNewAttack?.(index)}>New attack</MenuItem>
                       </MenuList></MenuPopover>

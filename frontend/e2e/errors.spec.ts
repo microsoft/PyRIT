@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Route } from "./_fixtures";
-import type { BackendMessage } from "@/types";
+import type { BackendMessage, TargetInfo } from "@/types";
 import { makeAddMessageResponse } from "./_attacks";
 import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
@@ -9,6 +9,12 @@ import { makeTarget } from "./_targets";
 // ---------------------------------------------------------------------------
 
 const MOCK_CONV_ID = "err-conv-001";
+const MOCK_ATTACK_TARGET: TargetInfo = {
+  target_type: "OpenAIChatTarget",
+  identifier_hash: "mock-target-hash",
+  endpoint: "https://mock.endpoint.com",
+  model_name: "gpt-4o-mock",
+};
 
 /** Standard mock for a successful first-message round-trip (create + send). */
 function buildSuccessMessageMock(userText: string) {
@@ -49,7 +55,7 @@ function buildSuccessMessageMock(userText: string) {
     response_error: "none",
     request_turn_number: 0,
     response_turn_number: 1,
-  });
+  }, { target: MOCK_ATTACK_TARGET });
 }
 
 function buildProcessingFailureMock(userText: string) {
@@ -91,7 +97,7 @@ function buildProcessingFailureMock(userText: string) {
     response_error: "processing",
     request_turn_number: 2,
     response_turn_number: 3,
-  });
+  }, { target: MOCK_ATTACK_TARGET });
 }
 
 /**

@@ -256,14 +256,9 @@ test.describe("Chat processing recovery @seeded", () => {
       expect(historyResponse.ok()).toBeTruthy();
       const history: ConversationMessagesResponse = await historyResponse.json();
       expect(history.messages).toHaveLength(keepSafePrefix ? 2 : 0);
+      expect(history.target_response_status).toBeNull();
       if (keepSafePrefix) {
-        expect(history.target_response_status).toEqual({
-          response_error: "none",
-          request_turn_number: 0,
-          response_turn_number: 1,
-        });
-      } else {
-        expect(history.target_response_status).toBeNull();
+        expect(history.messages.map((message) => message.role)).toEqual(["user", "simulated_assistant"]);
       }
       expect(localTarget.requestBodies).toHaveLength(keepSafePrefix ? 3 : 2);
 

@@ -202,6 +202,29 @@ describe('ObjectiveHeader', () => {
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith(''))
   })
 
+  it('remeasures overflow when a loaded objective becomes editable', () => {
+    mockOverflow(200, 200)
+    const objective = 'A long loaded objective'
+    const { rerender } = render(<TestWrapper><ObjectiveHeader objective={objective} /></TestWrapper>)
+    expect(screen.queryByRole('button', { name: 'Show more of the objective' })).not.toBeInTheDocument()
+
+    mockOverflow(1000, 200)
+    rerender(<TestWrapper><ObjectiveHeader objective={objective} canAdd onAdd={jest.fn()} /></TestWrapper>)
+
+    expect(screen.getByRole('button', { name: 'Show more of the objective' })).toBeInTheDocument()
+  })
+
+  it('remeasures overflow after canceling objective editing', async () => {
+    const user = userEvent.setup()
+    mockOverflow(200, 200)
+    render(<TestWrapper><ObjectiveHeader objective="Existing goal" canAdd onAdd={jest.fn()} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Edit objective' }))
+    mockOverflow(1000, 200)
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.getByRole('button', { name: 'Show more of the objective' })).toBeInTheDocument()
+  })
+
   it('renders a collapsed toggle when the objective overflows', () => {
     mockOverflow(1000, 200)
     render(

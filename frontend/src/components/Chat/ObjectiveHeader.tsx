@@ -100,7 +100,7 @@ export default function ObjectiveHeader({
     const observer = new ResizeObserver(measure)
     observer.observe(content)
     return () => observer.disconnect()
-  }, [objective, expanded])
+  }, [objective, expanded, isEditing, ObjectiveContent])
 
   const handleSave = async (): Promise<void> => {
     const trimmedObjective = draft.trim()
