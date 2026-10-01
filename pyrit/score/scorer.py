@@ -9,7 +9,7 @@ import logging
 import uuid
 from abc import abstractmethod
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
@@ -328,7 +328,8 @@ class Scorer(Identifiable, abc.ABC):
         Return the chat target used by this scorer, or None if it doesn't use one.
 
         Subclasses that wrap other scorers (e.g. inverters, composites) should
-        override to delegate to their inner scorer(s).
+        override to delegate to their inner scorer(s). Batch scoring and evaluation
+        use this target to validate rate-limit settings.
 
         Returns:
             PromptTarget | None: The chat target, or None if not applicable.
@@ -1200,11 +1201,10 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         # Some scorers do not have an associated prompt target; batch helper validates RPM only when present
-        prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=task_func,
             task_arguments=["scorable", "expectation"],
-            prompt_target=cast("PromptTarget", prompt_target),
+            prompt_target=self.get_chat_target(),
             batch_size=batch_size,
             items_to_batch=[list(scorables), resolved_expectations],
             **task_kwargs,
@@ -1237,11 +1237,10 @@ class Scorer(Identifiable, abc.ABC):
         if len(image_paths) == 0:
             return []
 
-        prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=self.score_image_async,
             task_arguments=["image_path", "objective"] if objectives is not None else ["image_path"],
-            prompt_target=prompt_target,
+            prompt_target=self.get_chat_target(),
             batch_size=batch_size,
             items_to_batch=[image_paths, objectives] if objectives is not None else [image_paths],
         )

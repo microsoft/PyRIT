@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pyrit.models import Message
-    from pyrit.prompt_target import PromptTarget
     from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
@@ -473,7 +472,7 @@ class ScorerEvaluator(abc.ABC):
         results = await batch_task_async(
             task_func=self.scorer.score_async,
             task_arguments=["scorable", "expectation"],
-            prompt_target=cast("PromptTarget", getattr(self.scorer, "_prompt_target", None)),
+            prompt_target=self.scorer.get_chat_target(),
             batch_size=max_concurrency,
             items_to_batch=[
                 [MessageScorable.from_message(response) for response in responses],
