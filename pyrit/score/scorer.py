@@ -9,7 +9,7 @@ import logging
 import uuid
 from abc import abstractmethod
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
@@ -157,9 +157,7 @@ class Scorer(Identifiable, abc.ABC):
     evaluation_file_mapping: ScorerEvalDatasetFiles | None = None
 
     #: Capability requirements placed on the scorer's chat target (if any).
-    #: Subclasses that use a chat target should override this and pass the
-    #: target to ``super().__init__(chat_target=...)`` so the base class can
-    #: validate it.
+    #: Concrete target-backed scorers validate these through their target collaborator.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     #: The single required criterion for a leaf, or None for constructor-configured scoring.
@@ -206,8 +204,8 @@ class Scorer(Identifiable, abc.ABC):
         Initialize the Scorer.
 
         Args:
-            chat_target (PromptTarget | None): Chat target used by the scorer, if any. When
-                provided, it is validated against ``TARGET_REQUIREMENTS``.
+            chat_target (PromptTarget | None): Deprecated validation-only compatibility parameter,
+                removed in 1.4.0. Does not store a target or create a judge.
             validator (ScorerPromptValidator | None): Deprecated. Message validation moved to
                 ``MessageScorer``; a value passed here is kept so pre-2.0 subclasses keep working.
         """
@@ -220,6 +218,11 @@ class Scorer(Identifiable, abc.ABC):
             if getattr(self, "_validator", None) is None:
                 self._validator = validator
         if chat_target is not None:
+            print_deprecation_message(
+                old_item="Scorer.__init__(chat_target=...)",
+                new_item="TargetJudge(target=..., requirements=...)",
+                removed_in="1.4.0",
+            )
             type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
 
     @property
@@ -325,7 +328,8 @@ class Scorer(Identifiable, abc.ABC):
         Return the chat target used by this scorer, or None if it doesn't use one.
 
         Subclasses that wrap other scorers (e.g. inverters, composites) should
-        override to delegate to their inner scorer(s).
+        override to delegate to their inner scorer(s). Batch scoring and evaluation
+        use this target to validate rate-limit settings.
 
         Returns:
             PromptTarget | None: The chat target, or None if not applicable.
@@ -1197,11 +1201,10 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         # Some scorers do not have an associated prompt target; batch helper validates RPM only when present
-        prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=task_func,
             task_arguments=["scorable", "expectation"],
-            prompt_target=cast("PromptTarget", prompt_target),
+            prompt_target=self.get_chat_target(),
             batch_size=batch_size,
             items_to_batch=[list(scorables), resolved_expectations],
             **task_kwargs,
@@ -1234,11 +1237,10 @@ class Scorer(Identifiable, abc.ABC):
         if len(image_paths) == 0:
             return []
 
-        prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=self.score_image_async,
             task_arguments=["image_path", "objective"] if objectives is not None else ["image_path"],
-            prompt_target=prompt_target,
+            prompt_target=self.get_chat_target(),
             batch_size=batch_size,
             items_to_batch=[image_paths, objectives] if objectives is not None else [image_paths],
         )

@@ -9,8 +9,8 @@ from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.llm_scoring import (
     _format_string_references_message_piece,
     _parse_judgment_observation,
-    _run_llm_scoring_async,
 )
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -106,9 +106,9 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
             score_aggregator=score_aggregator,
-            chat_target=chat_target,
         )
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
         if not system_prompt_format_string:
             raise ValueError("system_prompt_format_string must be provided and non-empty.")
         self._system_prompt_format_string = system_prompt_format_string
@@ -143,17 +143,16 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Score a single message piece using the configured prompts.
-
-        Args:
-            message_piece (MessagePiece): The piece to score.
-            objective (str, optional): Context objective for the scoring.
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: A list with a single True/False score.
+            list[Score]: The scorer's verdict.
         """
+        objective = expectation.objective if expectation else None
         original_prompt = message_piece.converted_value
 
         # Render system prompt and user prompt
@@ -171,19 +170,23 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
                 message_piece=message_piece,
             )
 
-        unvalidated = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=system_prompt,
+        unvalidated = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=user_prompt,
-            data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            judgment_replay_identifier=self._get_judgment_replay_identifier(),
-            category=self._score_category,
-            requires_message_piece_evidence=(
-                _format_string_references_message_piece(self._system_prompt_format_string)
-                or _format_string_references_message_piece(self._prompt_format_string)
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=system_prompt,
+                    value=user_prompt,
+                    data_type=message_piece.converted_value_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    category=self._score_category,
+                    requires_message_piece_evidence=_format_string_references_message_piece(
+                        self._system_prompt_format_string
+                    )
+                    or _format_string_references_message_piece(self._prompt_format_string),
+                )
             ),
         )
 

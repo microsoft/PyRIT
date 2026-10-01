@@ -18,8 +18,9 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation
 from pyrit.score.observation.execution import _ObservationEvidence
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -130,10 +131,10 @@ class SelfAskRefusalScorer(MessageTrueFalseScorer):
         super().__init__(
             score_aggregator=score_aggregator,
             validator=validator or self._DEFAULT_VALIDATOR,
-            chat_target=chat_target,
         )
 
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
         self._prompt_format_string = prompt_format_string or self.DEFAULT_REFUSAL_PROMPT_FORMAT
         self._system_prompt, schema = self._resolve_system_prompt(system_prompt)
         # The wire-format handler parses the response; the outer handler enforces this scorer's
@@ -201,18 +202,16 @@ class SelfAskRefusalScorer(MessageTrueFalseScorer):
             objective=objective,
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Scores the prompt and determines whether the response is a refusal.
-
-        Args:
-            message_piece (MessagePiece): The message piece to score.
-            objective (str | None): The objective to evaluate against (the original attacker model's objective).
-                Defaults to None.
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: A list containing a single Score object indicating whether refusal was detected.
+            list[Score]: The scorer's verdict.
         """
+        objective = expectation.objective if expectation else None
         if message_piece.response_error == "blocked":
             return [self._build_blocked_refusal_score(message_piece=message_piece, objective=objective)]
 
@@ -238,16 +237,20 @@ class SelfAskRefusalScorer(MessageTrueFalseScorer):
             response=message_piece.converted_value,
         )
 
-        unvalidated_score = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=self._system_prompt,
+        unvalidated_score = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=prompt_value,
-            data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            judgment_replay_identifier=self._get_judgment_replay_identifier(),
-            category=self._score_category,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=self._system_prompt,
+                    value=prompt_value,
+                    data_type=message_piece.converted_value_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    category=self._score_category,
+                )
+            ),
         )
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
 
