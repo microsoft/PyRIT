@@ -216,8 +216,14 @@ async def test_compound_estimate_uses_initialization_cap_async(
             "dataset_config": config,
         }
     )
-    with patch.object(bench._memory, "get_seeds", side_effect=AssertionError("Preview must not read datasets")):
+    with patch.object(
+        bench._memory,
+        "get_seeds_async",
+        new_callable=AsyncMock,
+        side_effect=AssertionError("Preview must not read datasets"),
+    ) as read_seeds:
         estimate = await bench.get_run_size_estimate_async()
+    read_seeds.assert_not_awaited()
     if outer_limit is None:
         assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
         assert estimate.estimated_attack_count is None
@@ -231,8 +237,9 @@ async def test_compound_estimate_uses_initialization_cap_async(
         [cap.count for cap in dataset.configured_caps] == ([] if outer_limit is None else [outer_limit])
         for dataset in estimate.datasets
     )
-    with patch.object(bench._memory, "get_seeds", side_effect=get_seeds):
+    with patch.object(bench._memory, "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds) as read_seeds:
         await bench.initialize_async()
+    read_seeds.assert_awaited()
     plan = bench._build_run_plan()
     assert len(plan.seed_groups) == expected_count
     assert sum(len(group.seed_group_ids) for group in plan.atomic_groups) == expected_count

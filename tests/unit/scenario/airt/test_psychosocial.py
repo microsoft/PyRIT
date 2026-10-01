@@ -161,8 +161,14 @@ async def test_compound_estimate_uses_initialization_cap_async(
     per_harm_count = outer_limit if outer_limit is not None else 6
     expected_count = per_harm_count * harm_count * (1 + include_baseline)
     memory = CentralMemory.get_memory_instance()
-    with patch.object(memory, "get_seeds", side_effect=AssertionError("Preview must not read datasets")):
+    with patch.object(
+        memory,
+        "get_seeds_async",
+        new_callable=AsyncMock,
+        side_effect=AssertionError("Preview must not read datasets"),
+    ) as read_seeds:
         estimate = await scenario.get_run_size_estimate_async()
+    read_seeds.assert_not_awaited()
 
     if outer_limit is None:
         assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
@@ -176,8 +182,9 @@ async def test_compound_estimate_uses_initialization_cap_async(
         assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
         assert estimate.estimated_attack_count == expected_count
 
-    with patch.object(memory, "get_seeds", side_effect=get_seeds):
+    with patch.object(memory, "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds) as read_seeds:
         await scenario.initialize_async()
+    read_seeds.assert_awaited()
     plan = scenario._build_run_plan()
     assert len(plan.seed_groups) == per_harm_count * harm_count
     assert sum(len(group.seed_group_ids) for group in plan.atomic_groups) == expected_count
@@ -571,8 +578,11 @@ class TestPsychosocialCrossProduct:
                 "dataset_config": DatasetAttackConfiguration(dataset_names=["ignored"], max_dataset_size=None),
             }
         )
-        with patch.object(CentralMemory.get_memory_instance(), "get_seeds", side_effect=get_seeds):
+        with patch.object(
+            CentralMemory.get_memory_instance(), "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds
+        ) as read_seeds:
             await scenario.initialize_async()
+        read_seeds.assert_awaited()
 
         assert scenario._dataset_config.max_dataset_size is None
         assert len(scenario._atomic_attacks) == 4
