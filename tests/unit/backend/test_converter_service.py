@@ -38,6 +38,14 @@ from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
 
+_BLOB_RESULTS_ROOT = "https://account.blob.core.windows.net/results"
+_STORED_BLOB_IMAGE = f"{_BLOB_RESULTS_ROOT}/prompt-memory-entries/images/image.png"
+
+
+def _results_root(root: str):
+    return patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock(results_path=root))
+
+
 _TOKEN_BIJECTION_VOCAB = (
     "cat",
     "dog",
@@ -600,10 +608,11 @@ class TestPersistDataUriParams:
     async def test_create_with_path_or_str_url(
         self, upload_service: ConverterService, converter_type: str, parameter_name: str, extension: str
     ) -> None:
-        url = f"https://account.blob.core.windows.net/container/input.{extension}"
-        response = await upload_service.create_converter_async(
-            request=CreateConverterRequest(name="remote", type=converter_type, params={parameter_name: url})
-        )
+        url = f"{_BLOB_RESULTS_ROOT}/prompt-memory-entries/inputs/input.{extension}"
+        with _results_root(_BLOB_RESULTS_ROOT):
+            response = await upload_service.create_converter_async(
+                request=CreateConverterRequest(name="remote", type=converter_type, params={parameter_name: url})
+            )
 
         entry = upload_service._registry.instances.get_entry(response.converter_id)
         assert entry is not None
@@ -611,6 +620,24 @@ class TestPersistDataUriParams:
         assert entry.metadata["owned_artifact_paths"] == []
         assert list(upload_service._upload_path.iterdir()) == []
         assert await upload_service.delete_converter_async(converter_id=response.converter_id)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://account.blob.core.windows.net/container/input.mp4",
+            f"{_BLOB_RESULTS_ROOT}/private/input.mp4",
+            f"{_BLOB_RESULTS_ROOT}/prompt-memory-entries/inputs/..\\..\\private/input.mp4",
+            f"{_BLOB_RESULTS_ROOT}%5Cprompt-memory-entries/private/input.mp4",
+        ],
+    )
+    async def test_path_or_str_url_outside_results_is_rejected(
+        self, upload_service: ConverterService, url: str
+    ) -> None:
+        with _results_root(_BLOB_RESULTS_ROOT), pytest.raises(ValueError, match="result storage"):
+            await upload_service.create_converter_async(
+                request=CreateConverterRequest(name="remote", type="AddImageVideoConverter", params={"video_path": url})
+            )
+        assert upload_service._registry.instances.get_entry("remote") is None
 
     @pytest.mark.parametrize("value", [r"C:\server\input.mp4", "input.mp4", "https://example.org/input.mp4", 123])
     async def test_path_or_str_rest_rejects_non_upload_non_blob_values(
@@ -914,30 +941,59 @@ class TestPreviewConversion:
         assert len(result.steps) == 1
         assert result.steps[0].converter_id == "conv-1"
 
-    @pytest.mark.parametrize(
-        ("value", "resolved_value"),
-        [
-            ("https://example.test/image.png", "https://example.test/image.png"),
-            ("/api/media?path=%2Ftmp%2Fimage.png", "/tmp/image.png"),
-        ],
-    )
-    async def test_preview_conversion_resolves_reference_without_persistence(
-        self, value: str, resolved_value: str
-    ) -> None:
-        """Remote and local media references bypass serializer persistence."""
+    async def test_preview_conversion_keeps_stored_blob_url_without_persistence(self) -> None:
+        """Blob URLs inside the results container bypass serializer persistence."""
         service = ConverterService()
         request = ConverterPreviewRequest(
-            original_value=value,
+            original_value=_STORED_BLOB_IMAGE,
             original_value_data_type="image_path",
             converter_ids=[],
         )
 
-        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as factory:
+        with (
+            _results_root(_BLOB_RESULTS_ROOT),
+            patch("pyrit.backend.services.converter_service.data_serializer_factory") as factory,
+        ):
             result = await service.preview_conversion_async(request=request)
 
-        assert result.original_value == value
-        assert result.converted_value == resolved_value
+        assert result.original_value == _STORED_BLOB_IMAGE
+        assert result.converted_value == _STORED_BLOB_IMAGE
         factory.assert_not_called()
+
+    async def test_preview_conversion_resolves_media_reference_without_persistence(self, tmp_path: Path) -> None:
+        """``/api/media`` references inside the results directory bypass serializer persistence."""
+        service = ConverterService()
+        stored_path = (tmp_path / "prompt-memory-entries" / "image.png").resolve()
+        request = ConverterPreviewRequest(
+            original_value=f"/api/media?path={stored_path}",
+            original_value_data_type="image_path",
+            converter_ids=[],
+        )
+
+        with (
+            _results_root(str(tmp_path)),
+            patch("pyrit.backend.services.converter_service.data_serializer_factory") as factory,
+        ):
+            result = await service.preview_conversion_async(request=request)
+
+        assert result.converted_value == str(stored_path)
+        factory.assert_not_called()
+
+    @pytest.mark.parametrize("value", ["https://example.test/image.png", "/api/media?path=/etc/hostname"])
+    async def test_preview_conversion_rejects_media_outside_results(self, tmp_path: Path, value: str) -> None:
+        """Media values must point into this server's media storage."""
+        service = ConverterService()
+        request = ConverterPreviewRequest(original_value=value, original_value_data_type="image_path", converter_ids=[])
+
+        with _results_root(str(tmp_path)), pytest.raises(ValueError, match="result storage|results directory"):
+            await service.preview_conversion_async(request=request)
+
+    def test_preview_request_rejects_url_input(self) -> None:
+        """Preview never downloads caller-supplied URLs."""
+        with pytest.raises(ValidationError, match="URL input is not supported"):
+            ConverterPreviewRequest(
+                original_value="https://example.test/image.png", original_value_data_type="url", converter_ids=[]
+            )
 
     async def test_preview_conversion_chains_multiple_converters(self) -> None:
         """Test that preview chains multiple converters."""
@@ -977,7 +1033,7 @@ class TestPreviewConversion:
         [
             (" source \n", "text", "", "text", " transformed \n", "text"),
             (" source \n", "text", "generated.png", "image_path", "edited.png", "image_path"),
-            ("https://example.test/image.png", "image_path", "converted.wav", "audio_path", "caption", "text"),
+            (_STORED_BLOB_IMAGE, "image_path", "converted.wav", "audio_path", "caption", "text"),
         ],
     )
     async def test_preview_uses_normalizer_without_sending_or_storing_async(
@@ -1004,6 +1060,7 @@ class TestPreviewConversion:
         )
 
         with (
+            _results_root(_BLOB_RESULTS_ROOT),
             patch("pyrit.backend.services.converter_service.PromptNormalizer", return_value=normalizer),
             patch.object(normalizer, "convert_values_async", wraps=normalizer.convert_values_async) as convert,
             patch.object(normalizer, "send_prompt_async", new_callable=AsyncMock) as send,
@@ -1105,11 +1162,14 @@ class TestPreviewConversion:
         instance = Base64Converter()
         upload_service._registry.instances.register(instance, name="media")
         request = ConverterPreviewRequest(
-            original_value="https://example.test/image.png",
+            original_value=_STORED_BLOB_IMAGE,
             original_value_data_type="image_path",
             converter_ids=["media"],
         )
-        with patch.object(instance, "convert_async", new_callable=AsyncMock) as convert:
+        with (
+            _results_root(_BLOB_RESULTS_ROOT),
+            patch.object(instance, "convert_async", new_callable=AsyncMock) as convert,
+        ):
             convert.return_value = converter.ConverterResult(output_text="converted.wav", output_type="audio_path")
             result = await upload_service.preview_conversion_async(request=request)
         convert.assert_awaited_once_with(prompt=request.original_value, input_type="image_path")
@@ -1254,9 +1314,10 @@ class TestPreviewConversion:
             await service.preview_conversion_async(request=request)
 
     async def test_preview_conversion_preserves_existing_file(self, tmp_path: Path) -> None:
-        """Existing local media paths pass through without being persisted again."""
+        """Existing media files in the results directory pass through without being persisted again."""
         service = ConverterService()
-        media_path = tmp_path / "input.wav"
+        media_path = tmp_path / "prompt-memory-entries" / "audio" / "input.wav"
+        media_path.parent.mkdir(parents=True)
         media_path.write_bytes(b"RIFF")
         request = ConverterPreviewRequest(
             original_value=str(media_path),
@@ -1264,11 +1325,14 @@ class TestPreviewConversion:
             converter_ids=[],
         )
 
-        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory:
+        with (
+            _results_root(str(tmp_path)),
+            patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory,
+        ):
             result = await service.preview_conversion_async(request=request)
 
         mock_factory.assert_not_called()
-        assert result.converted_value == str(media_path)
+        assert result.converted_value == str(media_path.resolve())
 
 
 class TestGetConverterObjectsForIds:

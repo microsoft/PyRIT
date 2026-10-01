@@ -9,7 +9,7 @@ This module defines the Instance models and preview functionality.
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from pyrit.backend.models.common import REGISTRY_INSTANCE_NAME_PATTERN
 from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
@@ -118,6 +118,22 @@ class ConverterPreviewRequest(BaseModel):
     original_value: str = Field(..., description="Text to convert")
     original_value_data_type: PromptDataType = Field(default="text", description="Data type of original value")
     converter_ids: list[str] = Field(..., description="Converter instance IDs to apply")
+
+    @field_validator("original_value_data_type")
+    @classmethod
+    def _reject_url_input(cls, value: PromptDataType) -> PromptDataType:
+        """
+        Reject URL input so a preview never makes the server download a caller-supplied URL.
+
+        Returns:
+            PromptDataType: The validated data type.
+
+        Raises:
+            ValueError: If the data type is ``url``.
+        """
+        if value == "url":
+            raise ValueError("URL input is not supported; upload the file content instead")
+        return value
 
 
 class ConverterPreviewResponse(BaseModel):

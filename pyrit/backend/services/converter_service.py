@@ -37,7 +37,7 @@ from pyrit.backend.models.converters import (
     CreateConverterRequest,
     PreviewStep,
 )
-from pyrit.backend.services.media_persistence import persist_media_value_async
+from pyrit.backend.services.media_persistence import persist_media_value_async, require_managed_blob_url
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
 from pyrit.models import MessagePiece, PromptDataType
@@ -284,8 +284,9 @@ class ConverterService:
         directory this service owns, and the client never names a server path. Every
         ``Path`` parameter is handled the same way, so a converter opts in simply by
         declaring the type; there is no per-converter or per-parameter table.
-        ``Path | str`` parameters also accept Azure Blob URLs, which pass through
-        unchanged. Their data-URI uploads use the same local storage.
+        ``Path | str`` parameters also accept Azure Blob URLs inside this server's
+        result storage, which pass through unchanged. Their data-URI uploads use the
+        same local storage.
 
         Inputs remain local until converter deletion or backend shutdown, even with
         Azure-backed memory. Converter outputs still use the configured result storage.
@@ -303,7 +304,8 @@ class ConverterService:
                 set of request-created files owned by the future registry entry.
 
         Raises:
-            ValueError: If a ``Path`` value is not a valid data URI.
+            ValueError: If a ``Path`` value is not a valid data URI, or a blob URL
+                points outside this server's result storage.
         """
         metadata = self._registry.get_registered_class_metadata(converter_type)
         path_params = (
@@ -327,6 +329,7 @@ class ConverterService:
                 parameter = path_params[name]
                 if not isinstance(value, str) or not value.startswith("data:"):
                     if parameter.is_path_or_str and isinstance(value, str) and is_azure_blob_uri(value):
+                        require_managed_blob_url(value)
                         continue
                     alternative = " or supplied as an Azure Blob URL" if parameter.is_path_or_str else ""
                     raise ValueError(f"Path parameter '{name}' must be uploaded as a data URI{alternative}")

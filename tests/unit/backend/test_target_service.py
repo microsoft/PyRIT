@@ -373,6 +373,27 @@ class TestCreateTarget:
         with pytest.raises(ValueError, match="not found"):
             await service.create_target_async(request=request)
 
+    @pytest.mark.parametrize(
+        ("target_type", "params"),
+        [
+            ("HTTPXAPITarget", {"http_url": "http://localhost:8080/upload"}),
+            ("HuggingFaceChatTarget", {"model_id": "example/model"}),
+        ],
+    )
+    async def test_create_target_rejects_types_using_host_resources(
+        self, sqlite_instance, target_type: str, params: dict[str, str]
+    ) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(name="host-target", type=target_type, params=params)
+
+        with (
+            patch.object(service._registry, "create_named_instance") as create,
+            pytest.raises(ValueError, match="cannot be created through the API"),
+        ):
+            await service.create_target_async(request=request)
+
+        create.assert_not_called()
+
     async def test_create_target_success(self, sqlite_instance) -> None:
         """Test successful target creation."""
         service = TargetService()

@@ -219,10 +219,9 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  
     try:
         return await service.create_attack_async(request=request)
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        ) from e
+        error_msg = str(e)
+        error_status = status.HTTP_404_NOT_FOUND if "not found" in error_msg.lower() else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=error_status, detail=error_msg) from e
 
 
 @router.get(

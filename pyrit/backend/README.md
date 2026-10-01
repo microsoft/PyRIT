@@ -126,3 +126,33 @@ Environment variables:
 - `PYRIT_API_HOST` - Host to bind to (default: localhost)
 - `PYRIT_API_PORT` - Port to listen on (default: 8000)
 - `PYRIT_API_RELOAD` - Enable auto-reload (default: false)
+
+## Input Validation
+
+The backend is the part of PyRIT that accepts requests from other machines, so it checks
+request values before using them:
+
+- Media values in messages, previews, and prepended conversations, and file parameters of
+  converters, must be uploaded content or point into this server's media storage: the
+  `prompt-memory-entries` and `seed-prompt-entries` folders under the memory results path.
+  Blob URLs are accepted only when results are stored in Azure Blob Storage, and only
+  inside those folders of the configured results container. Other file paths and URLs
+  are rejected.
+- The backend only reads media URLs inside this server's result storage. Converter
+  previews and sent messages reject `url` pieces; stored history may still contain them.
+- Target types that read local files or load model code (`HTTPXAPITarget`,
+  `HuggingFaceChatTarget`) cannot be created through the API. Register them in Python or
+  with an initializer, where the operator controls their settings; for example, set
+  `HTTPXAPITarget(allowed_upload_directory=...)` so uploads stay inside one folder.
+
+Intentional exceptions:
+
+- Target endpoints, raw HTTP requests, and their redirects are chosen by the operator and
+  are not restricted. Limit outbound network access in the deployment instead.
+- Prompt content is not filtered. It is adversarial test data by design.
+- Any file type can be stored as a payload. `GET /api/media` only renders known image,
+  audio, and video types inline; everything else downloads as a file.
+- `GET /api/media` does not require authentication so the browser can load media. It only
+  serves files from the media folders above.
+- Custom initializer scripts are trusted Python. Uploading them requires an administrator
+  and `allow_custom_initializers: true`.
