@@ -1,4 +1,4 @@
-import React, { useState, useMemo, forwardRef, useId } from 'react'
+import React, { useState, useMemo, forwardRef } from 'react'
 import {
   Table,
   TableHeader,
@@ -11,7 +11,6 @@ import {
   Divider,
   Text,
   Tooltip,
-  Select,
 } from '@fluentui/react-components'
 import {
   CheckmarkCircleFilled,
@@ -31,6 +30,18 @@ import {
 } from '@fluentui/react-icons'
 import type { TargetInstance } from '../../types'
 import { sameTarget, targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
+import {
+  CAPABILITY_COLUMNS,
+  DEFAULT_TARGET_FILTERS,
+  MODALITY_LABELS,
+  activeTargetFilters,
+  getTargetFilterOptions,
+  isSameTargetFilters,
+  orderModalities,
+  targetMatchesFilters,
+  type TargetFilters,
+} from './targetFilters'
+import TargetFiltersBar from './TargetFiltersBar'
 import { useTargetTableStyles } from './TargetTable.styles'
 import TargetSelect from './TargetSelect'
 
@@ -59,16 +70,6 @@ function formatParams(params?: Record<string, unknown> | null): string {
   return parts.join('\n')
 }
 
-/** Capability column definitions with tooltip descriptions. */
-const CAPABILITY_COLUMNS = [
-  { key: 'supports_multi_turn', label: 'Multi-turn', tooltip: 'Supports multi-turn conversations' },
-  { key: 'supports_multi_message_pieces', label: 'Multi-piece', tooltip: 'Supports multiple message pieces in a single request' },
-  { key: 'supports_json_schema', label: 'JSON Schema', tooltip: 'Supports constraining output to a JSON schema' },
-  { key: 'supports_json_output', label: 'JSON Output', tooltip: 'Supports JSON output format' },
-  { key: 'supports_editable_history', label: 'Edit History', tooltip: 'Allows attack history to be modified' },
-  { key: 'supports_system_prompt', label: 'System Prompt', tooltip: 'Supports system prompts' },
-] as const
-
 const COLUMN_TOOLTIPS = {
   registryName: 'Unique name used to identify this configured target',
   type: 'Target class implementation',
@@ -92,35 +93,21 @@ const FunctionCallOutputIcon = forwardRef<HTMLSpanElement, React.HTMLAttributes<
   }
 )
 
-/** Modality → (icon, label) for input/output column rendering. The renderer accepts
+/** Modality → icon for input/output column rendering. The icon accepts
  *  arbitrary props so Tooltip can inject event handlers / ARIA attributes. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const MODALITY_RENDERERS: Record<string, { Icon: React.ComponentType<any>; label: string }> = {
-  text: { Icon: TextTRegular, label: 'Text' },
-  image_path: { Icon: ImageRegular, label: 'Image' },
-  audio_path: { Icon: MicRegular, label: 'Audio' },
-  video_path: { Icon: VideoRegular, label: 'Video' },
-  reasoning: { Icon: LightbulbRegular, label: 'Reasoning' },
-  function_call: { Icon: MathFormulaRegular, label: 'Function call' },
-  function_call_output: { Icon: FunctionCallOutputIcon, label: 'Function call output' },
-  tool_call: { Icon: WrenchRegular, label: 'Tool call' },
-  binary_path: { Icon: DocumentRegular, label: 'Binary' },
-  url: { Icon: LinkRegular, label: 'URL' },
+const MODALITY_ICONS: Record<string, React.ComponentType<any>> = {
+  text: TextTRegular,
+  image_path: ImageRegular,
+  audio_path: MicRegular,
+  video_path: VideoRegular,
+  reasoning: LightbulbRegular,
+  function_call: MathFormulaRegular,
+  function_call_output: FunctionCallOutputIcon,
+  tool_call: WrenchRegular,
+  binary_path: DocumentRegular,
+  url: LinkRegular,
 }
-
-/** Canonical display order for modality icons; unknown values are appended last. */
-const MODALITY_ORDER: readonly string[] = [
-  'text',
-  'image_path',
-  'audio_path',
-  'video_path',
-  'reasoning',
-  'function_call',
-  'function_call_output',
-  'tool_call',
-  'binary_path',
-  'url',
-]
 
 /** Render a row of modality icons; falls back to "—" when empty. */
 function ModalityCell({ modalities }: { modalities: string[] | undefined }) {
@@ -128,15 +115,12 @@ function ModalityCell({ modalities }: { modalities: string[] | undefined }) {
   if (!modalities || modalities.length === 0) {
     return <Text size={200}>—</Text>
   }
-  const ordered = MODALITY_ORDER.filter((m) => modalities.includes(m))
-  const extras = modalities.filter((m) => !MODALITY_ORDER.includes(m))
-  const sorted = [...ordered, ...extras]
+  const sorted = orderModalities(modalities)
   return (
     <div className={styles.modalityRow}>
       {sorted.map((modality) => {
-        const renderer = MODALITY_RENDERERS[modality]
-        const label = renderer?.label ?? modality
-        const Icon = renderer?.Icon ?? DocumentRegular
+        const label = MODALITY_LABELS[modality] ?? modality
+        const Icon = MODALITY_ICONS[modality] ?? DocumentRegular
         return (
           <Tooltip key={modality} content={label} relationship="label">
             <Icon className={styles.modalityIcon} />
@@ -251,8 +235,7 @@ export default function TargetTable({
   onSetDefaultAdversarialTarget,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
-  const typeFilterId = useId()
-  const [typeFilter, setTypeFilter] = useState('')
+  const [filters, setFilters] = useState<TargetFilters>(DEFAULT_TARGET_FILTERS)
   // Tracks which RoundRobinTarget rows are expanded to show inner targets.
   // We use a Set of target_registry_name strings — when a name is in the set,
   // that row's sub-rows are visible.
@@ -273,15 +256,18 @@ export default function TargetTable({
   const hasInnerTargets = (target: TargetInstance): boolean =>
     (target.inner_targets ?? []).length > 0
 
-  const targetTypes = useMemo(
-    () => Array.from(new Set(targets.map(t => targetType(t)))).sort(),
-    [targets],
-  )
-
+  const filterOptions = useMemo(() => getTargetFilterOptions(targets), [targets])
+  const activeFilters = useMemo(() => activeTargetFilters(filters, filterOptions), [filters, filterOptions])
+  // A reload can remove a selected choice. Forget it (adjusting state during render, as
+  // ChatWindow does) so it cannot come back on a later reload; other selections stay.
+  if (!isSameTargetFilters(activeFilters, filters)) {
+    setFilters(activeFilters)
+  }
   const filteredTargets = useMemo(
-    () => typeFilter ? targets.filter(t => targetType(t) === typeFilter) : targets,
-    [targets, typeFilter],
+    () => targets.filter((target: TargetInstance) => targetMatchesFilters(target, activeFilters)),
+    [targets, activeFilters],
   )
+  const noTargetsMatch = targets.length > 0 && filteredTargets.length === 0
 
   const isDefaultObjective = (target: TargetInstance): boolean =>
     sameTarget(defaultObjectiveTarget, target)
@@ -307,24 +293,7 @@ export default function TargetTable({
         />
       </section>
       <Divider appearance="strong" className={styles.defaultsDivider} />
-      {targetTypes.length > 1 && (
-        <div className={styles.filterRow}>
-          <label htmlFor={typeFilterId}>
-            <Text size={200}>Filter by type:</Text>
-          </label>
-          <Select
-            id={typeFilterId}
-            className={styles.filterSelect}
-            value={typeFilter}
-            onChange={(_, data) => setTypeFilter(data.value)}
-          >
-            <option value="">All types</option>
-            {targetTypes.map(t => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </Select>
-        </div>
-      )}
+      <TargetFiltersBar filters={activeFilters} options={filterOptions} onFiltersChange={setFilters} />
 
       <Table aria-label="Target instances" className={styles.table}>
         <TableHeader className={styles.stickyHeader}>
@@ -453,6 +422,15 @@ export default function TargetTable({
           })}
         </TableBody>
       </Table>
+      {/* Stays mounted so screen readers announce the message when filtering hides every row. */}
+      <div role="status">
+        {noTargetsMatch && (
+          <div className={styles.noMatchState} data-testid="target-table-no-match">
+            <Text size={400}>No targets match the selected filters.</Text>
+            <Text size={200}>Try adjusting your filters.</Text>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -211,7 +211,11 @@ print(f"[threshold] independent -> {original.get_value()}")
 # Multiple child results are rejected rather than paired by position or discarded.
 # Aggregate them explicitly before using fallback if a single aggregate is meaningful.
 #
-# Only the root score is persisted. The wrapper creates a new score without modifying
+# The root call persists its result and the returned results of nested scorers in one transaction.
+# This does not retain temporary scores used only within a scorer's internal aggregation.
+# It returns only its own result. Default memory queries exclude intermediate scores;
+# use `include_intermediate=True` to include them, or retrieve a score by its ID.
+# No parent-child score links are stored. The wrapper creates a new score without modifying
 # either child result and retains their observation links. Metadata records `resolved_by`
 # as `"primary"` or `"fallback"`. Child metadata keys are prefixed with `primary.` and
 # `fallback.`, so duplicate keys and nested fallback details are not overwritten.
@@ -249,7 +253,7 @@ turns = [
     MessagePiece(role="assistant", original_value="Okay, yes I am AI.", conversation_id=conversation_id).to_message(),
 ]
 for turn in turns:
-    memory.add_message_to_memory(request=turn)
+    (await memory.add_message_to_memory_async(request=turn))
 
 persona_breach_scorer = SubStringScorer(substring="I am AI", categories=["persona_breach"])
 conversation_scorer = create_conversation_scorer(scorer=persona_breach_scorer)

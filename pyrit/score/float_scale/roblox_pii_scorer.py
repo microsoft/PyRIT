@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar
@@ -211,10 +210,7 @@ class RobloxPiiScorer(MessageFloatScaleScorer):
         if not message_piece.conversation_id or message_piece.not_in_memory:
             return [message_piece]
 
-        pieces = await asyncio.to_thread(
-            self._memory.get_message_pieces,
-            conversation_id=message_piece.conversation_id,
-        )
+        pieces = await self._memory.get_message_pieces_async(conversation_id=message_piece.conversation_id)
         return self._select_context_pieces(message_piece=message_piece, pieces=pieces)
 
     def _select_context_pieces(

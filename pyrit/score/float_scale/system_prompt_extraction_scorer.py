@@ -32,6 +32,7 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
     a true/false objective score.
     """
 
+    _REQUIRES_CONVERSATION_HISTORY = True
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"], supported_roles=["assistant"]
     )
@@ -93,7 +94,7 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
             },
         )
 
-    def _get_system_prompt(self, conversation_id: str | None) -> str | None:
+    async def _get_system_prompt_async(self, conversation_id: str | None) -> str | None:
         """
         Read the known system prompt from the scored conversation's prepended system message.
 
@@ -107,7 +108,7 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
             return None
 
         memory = CentralMemory.get_memory_instance()
-        messages = memory.get_conversation_messages(conversation_id=conversation_id)
+        messages = await memory.get_conversation_messages_async(conversation_id=conversation_id)
         for message in messages:
             if message.api_role == "system":
                 return message.get_value()
@@ -161,7 +162,7 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
             list[Score]: A single float_scale Score in [0, 1] measuring system-prompt leakage.
         """
         response = message_piece.converted_value
-        system_prompt = self._get_system_prompt(message_piece.conversation_id)
+        system_prompt = await self._get_system_prompt_async(message_piece.conversation_id)
 
         if not system_prompt:
             overlap = 0.0

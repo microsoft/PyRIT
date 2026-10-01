@@ -22,7 +22,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from unit.mocks import get_mock_scorer_identifier
+from unit.mocks import get_mock_prompt_normalizer, get_mock_scorer_identifier
 
 from pyrit.converter import Base64Converter, Converter, ConverterResult
 from pyrit.executor.attack import ConversationManager, ConversationState
@@ -101,7 +101,7 @@ def attack_identifier() -> ComponentIdentifier:
 @pytest.fixture
 def mock_prompt_normalizer() -> MagicMock:
     """Create a mock prompt normalizer for testing."""
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.convert_values_async = AsyncMock()
     return normalizer
 
@@ -110,7 +110,7 @@ def mock_prompt_normalizer() -> MagicMock:
 def mock_chat_target() -> MagicMock:
     """Create a mock chat target for testing."""
     target = MagicMock(spec=PromptTarget)
-    target.set_system_prompt = MagicMock()
+    target.set_system_prompt_async = AsyncMock()
     target.get_identifier.return_value = _mock_target_id("MockChatTarget")
     target.capabilities.supports_multi_turn = True
     target.capabilities.supports_editable_history = True
@@ -530,16 +530,18 @@ class TestConversationManagerInitialization:
 class TestConversationRetrieval:
     """Tests for conversation retrieval methods."""
 
-    def test_get_conversation_returns_empty_list_when_no_messages(self, attack_identifier: ComponentIdentifier) -> None:
+    async def test_get_conversation_returns_empty_list_when_no_messages(
+        self, attack_identifier: ComponentIdentifier
+    ) -> None:
         """Test get_conversation returns empty list for non-existent conversation."""
         manager = ConversationManager()
         conversation_id = str(uuid.uuid4())
 
-        result = manager.get_conversation(conversation_id)
+        result = await manager.get_conversation_async(conversation_id)
 
         assert result == []
 
-    def test_get_conversation_returns_messages_in_order(
+    async def test_get_conversation_returns_messages_in_order(
         self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_conversation returns messages in order."""
@@ -550,24 +552,26 @@ class TestConversationRetrieval:
         for msg in sample_conversation:
             for piece in msg.message_pieces:
                 piece.conversation_id = conversation_id
-            manager._memory.add_message_to_memory(request=msg)
+            (await manager._memory.add_message_to_memory_async(request=msg))
 
-        result = manager.get_conversation(conversation_id)
+        result = await manager.get_conversation_async(conversation_id)
 
         assert len(result) == 2
         assert result[0].message_pieces[0].api_role == "user"
         assert result[1].message_pieces[0].api_role == "assistant"
 
-    def test_get_last_message_returns_none_for_empty_conversation(self, attack_identifier: ComponentIdentifier) -> None:
+    async def test_get_last_message_returns_none_for_empty_conversation(
+        self, attack_identifier: ComponentIdentifier
+    ) -> None:
         """Test get_last_message returns None for empty conversation."""
         manager = ConversationManager()
         conversation_id = str(uuid.uuid4())
 
-        result = manager.get_last_message(conversation_id=conversation_id)
+        result = await manager.get_last_message_async(conversation_id=conversation_id)
 
         assert result is None
 
-    def test_get_last_message_returns_last_piece(
+    async def test_get_last_message_returns_last_piece(
         self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_last_message returns the most recent message."""
@@ -578,14 +582,14 @@ class TestConversationRetrieval:
         for msg in sample_conversation:
             for piece in msg.message_pieces:
                 piece.conversation_id = conversation_id
-            manager._memory.add_message_to_memory(request=msg)
+            (await manager._memory.add_message_to_memory_async(request=msg))
 
-        result = manager.get_last_message(conversation_id=conversation_id)
+        result = await manager.get_last_message_async(conversation_id=conversation_id)
 
         assert result is not None
         assert result.api_role == "assistant"
 
-    def test_get_last_message_with_role_filter(
+    async def test_get_last_message_with_role_filter(
         self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_last_message with role filter returns correct message."""
@@ -596,15 +600,15 @@ class TestConversationRetrieval:
         for msg in sample_conversation:
             for piece in msg.message_pieces:
                 piece.conversation_id = conversation_id
-            manager._memory.add_message_to_memory(request=msg)
+            (await manager._memory.add_message_to_memory_async(request=msg))
 
         # Get last user message
-        result = manager.get_last_message(conversation_id=conversation_id, role="user")
+        result = await manager.get_last_message_async(conversation_id=conversation_id, role="user")
 
         assert result is not None
         assert result.api_role == "user"
 
-    def test_get_last_message_with_role_filter_returns_none_when_no_match(
+    async def test_get_last_message_with_role_filter_returns_none_when_no_match(
         self, attack_identifier: ComponentIdentifier, sample_conversation: list[Message]
     ) -> None:
         """Test get_last_message returns None when no message matches role filter."""
@@ -615,10 +619,10 @@ class TestConversationRetrieval:
         for msg in sample_conversation:
             for piece in msg.message_pieces:
                 piece.conversation_id = conversation_id
-            manager._memory.add_message_to_memory(request=msg)
+            (await manager._memory.add_message_to_memory_async(request=msg))
 
         # Try to get system message when none exists
-        result = manager.get_last_message(conversation_id=conversation_id, role="system")
+        result = await manager.get_last_message_async(conversation_id=conversation_id, role="system")
 
         assert result is None
 
@@ -632,7 +636,7 @@ class TestConversationRetrieval:
 class TestSystemPromptHandling:
     """Tests for system prompt functionality."""
 
-    def test_set_system_prompt_with_chat_target(
+    async def test_set_system_prompt_with_chat_target(
         self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
     ) -> None:
         """Test set_system_prompt calls target's set_system_prompt method."""
@@ -640,13 +644,15 @@ class TestSystemPromptHandling:
         conversation_id = str(uuid.uuid4())
         system_prompt = "You are a helpful assistant"
 
-        manager.set_system_prompt(
-            target=mock_chat_target,
-            conversation_id=conversation_id,
-            system_prompt=system_prompt,
+        (
+            await manager.set_system_prompt_async(
+                target=mock_chat_target,
+                conversation_id=conversation_id,
+                system_prompt=system_prompt,
+            )
         )
 
-        mock_chat_target.set_system_prompt.assert_called_once_with(
+        mock_chat_target.set_system_prompt_async.assert_called_once_with(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
         )
@@ -744,7 +750,7 @@ class TestInitializeContext:
         )
 
         # Verify messages were added to memory
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         assert len(stored) == 2
 
     async def test_converts_assistant_to_simulated_assistant(
@@ -765,7 +771,7 @@ class TestInitializeContext:
             conversation_id=conversation_id,
         )
 
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         assert len(stored) == 1
         # Should be stored as simulated_assistant but api_role is still assistant
         assert stored[0].get_piece().role == "simulated_assistant"
@@ -788,7 +794,7 @@ class TestInitializeContext:
             conversation_id=conversation_id,
         )
 
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         assert len(stored) == 2
         assert [message.api_role for message in stored] == ["user", "assistant"]
         assert stored[1].get_piece().role == "simulated_assistant"
@@ -842,7 +848,7 @@ class TestInitializeContext:
 
         assert context.prepended_history_send_context is not None
         assert context.prepended_history_send_context.conversation_id == conversation_id
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         assert len(stored) == len(sample_conversation)
         assert context.prepended_history_send_context.seed_message_ids == tuple(
             message.get_piece().id for message in stored
@@ -911,7 +917,7 @@ class TestInitializeContext:
         # the pieces under the target conversation_id, keeping ``original_prompt_id``
         # set to the input id (which is what ScoreEntry.prompt_request_response_id
         # points at), so the per-conversation score lookup resolves them.
-        manager._memory.add_message_pieces_to_memory(message_pieces=[piece1, piece2])
+        (await manager._memory.add_message_pieces_to_memory_async(message_pieces=[piece1, piece2]))
         score1 = Score(
             score_type="true_false",
             score_value="false",
@@ -932,7 +938,7 @@ class TestInitializeContext:
             message_piece_id=str(piece2.id),
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
-        manager._memory.add_scores_to_memory(scores=[score1, score2])
+        (await manager._memory.add_scores_to_memory_async(scores=[score1, score2]))
 
         multipart_response = Message(message_pieces=[piece1, piece2])
         context.prepended_conversation = [
@@ -973,7 +979,7 @@ class TestInitializeContext:
             original_value="final reply",
             conversation_id=str(uuid.uuid4()),
         )
-        manager._memory.add_message_pieces_to_memory(message_pieces=[early_piece, final_piece])
+        (await manager._memory.add_message_pieces_to_memory_async(message_pieces=[early_piece, final_piece]))
 
         def _false_score(piece: MessagePiece, rationale: str) -> Score:
             return Score(
@@ -989,7 +995,7 @@ class TestInitializeContext:
 
         early_score = _false_score(early_piece, "early")
         final_score = _false_score(final_piece, "final")
-        manager._memory.add_scores_to_memory(scores=[early_score, final_score])
+        (await manager._memory.add_scores_to_memory_async(scores=[early_score, final_score]))
 
         context.prepended_conversation = [
             Message.from_prompt(prompt="first ask", role="user"),
@@ -1041,7 +1047,7 @@ class TestInitializeContext:
         # existence check. initialize_context_async will duplicate them under
         # the target conversation_id, preserving ``original_prompt_id`` so the
         # score lookup resolves the staged scores.
-        manager._memory.add_message_pieces_to_memory(message_pieces=[piece_with_true, piece_with_false])
+        (await manager._memory.add_message_pieces_to_memory_async(message_pieces=[piece_with_true, piece_with_false]))
 
         # Create a score with true value - should be ignored
         true_score = Score(
@@ -1067,7 +1073,7 @@ class TestInitializeContext:
             scorer_class_identifier=get_mock_scorer_identifier(),
         )
 
-        manager._memory.add_scores_to_memory(scores=[true_score, false_score])
+        (await manager._memory.add_scores_to_memory_async(scores=[true_score, false_score]))
 
         # Test with true score only - should get no scores
         context.prepended_conversation = [
@@ -1134,7 +1140,7 @@ class TestPrependedConversationConfigSettings:
             request_converters=converter_config,
         )
 
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         encoded_user = base64.b64encode(b"Hello, how are you?").decode()
         assert stored[0].get_piece().converted_value == encoded_user
         assert stored[1].get_piece().converted_value == "I'm doing well, thank you!"
@@ -1162,7 +1168,7 @@ class TestPrependedConversationConfigSettings:
             prepended_conversation_config=config,
         )
 
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         encoded_assistant = base64.b64encode(b"I'm doing well, thank you!").decode()
         assert stored[0].get_piece().converted_value == "Hello, how are you?"
         assert stored[1].get_piece().converted_value == encoded_assistant
@@ -1242,7 +1248,7 @@ class TestPrependedConversationConfigSettings:
                 prepended_conversation_config=config,
             )
 
-        assert manager.get_conversation(conversation_id) == []
+        assert (await manager.get_conversation_async(conversation_id)) == []
 
     async def test_non_persisted_prepended_message_is_not_counted_in_context(
         self,
@@ -1266,7 +1272,7 @@ class TestPrependedConversationConfigSettings:
             conversation_id=conversation_id,
         )
 
-        assert manager.get_conversation(conversation_id) == []
+        assert (await manager.get_conversation_async(conversation_id)) == []
 
     async def test_non_persisted_piece_does_not_constrain_flattening(
         self,
@@ -1309,7 +1315,7 @@ class TestPrependedConversationConfigSettings:
             ],
         )
 
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         assert len(stored) == 1
         assert [piece.converted_value for piece in stored[0].message_pieces] == ["persisted"]
 
@@ -1354,7 +1360,7 @@ class TestPrependedConversationConfigSettings:
             request_converters=converter_config,
         )
 
-        stored_pieces = manager.get_conversation(conversation_id)[0].message_pieces
+        stored_pieces = (await manager.get_conversation_async(conversation_id))[0].message_pieces
         assert stored_pieces[0].converted_value == base64.b64encode(b"first piece").decode()
         assert stored_pieces[1].converted_value == "second piece"
 
@@ -1369,7 +1375,7 @@ class TestPrependedConversationConfigSettings:
         sample_conversation: list[Message],
     ) -> None:
         """Test that converters are applied only to user history by default."""
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
@@ -1394,7 +1400,7 @@ class TestPrependedConversationConfigSettings:
         sample_conversation: list[Message],
     ) -> None:
         """Test that converters are applied only to user role when configured."""
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
@@ -1422,7 +1428,7 @@ class TestPrependedConversationConfigSettings:
         sample_conversation: list[Message],
     ) -> None:
         """Test that converters are applied only to assistant role when configured."""
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
@@ -1450,7 +1456,7 @@ class TestPrependedConversationConfigSettings:
         sample_conversation: list[Message],
     ) -> None:
         """Test that empty roles list means no converters applied to any role."""
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.convert_values_async = AsyncMock()
         manager = ConversationManager(prompt_normalizer=mock_normalizer)
         conversation_id = str(uuid.uuid4())
@@ -1541,7 +1547,7 @@ class TestPrependedConversationConfigSettings:
         )
 
         # Should succeed and add to memory
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         assert len(stored) == 2
         assert state.turn_count == 1
 
@@ -1612,7 +1618,7 @@ class TestAddPrependedConversationToMemory:
             conversation_id=conversation_id,
         )
 
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         assert len(stored) == 2
         assert turn_count == 1  # One assistant message
 
@@ -1630,7 +1636,7 @@ class TestAddPrependedConversationToMemory:
             conversation_id=conversation_id,
         )
 
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         for msg in stored:
             for piece in msg.message_pieces:
                 assert piece.conversation_id == conversation_id
@@ -1779,7 +1785,7 @@ class TestEdgeCasesAndErrorHandling:
             conversation_id=conversation_id,
         )
 
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         assert len(stored) == 1
         processed_piece = stored[0].message_pieces[0]
         assert processed_piece.prompt_metadata == {
@@ -1810,7 +1816,7 @@ class TestEdgeCasesAndErrorHandling:
             conversation_id=conversation_id,
         )
 
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         assert len(stored) == 1
         stored_piece = stored[0].get_piece()
         assert stored_piece.original_value == "Original message"
@@ -1838,7 +1844,7 @@ class TestEdgeCasesAndErrorHandling:
             conversation_id=conversation_id,
         )
 
-        stored = manager.get_conversation(conversation_id)
+        stored = await manager.get_conversation_async(conversation_id)
         # Both system and user messages should be stored
         assert len(stored) == 2
         assert stored[0].get_piece().api_role == "system"
