@@ -9,11 +9,8 @@ from collections import OrderedDict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from threading import Lock
 from typing import Literal
 
-from pyrit.common.async_compatibility import legacy_sync_override
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor
 from pyrit.memory.memory_interface import MemoryInterface
@@ -169,7 +166,7 @@ class ScenarioPlanLookup:
 
 
 class ScenarioProgressReadModel:
-    """Hydrate, map, cache, and summarize persisted scenario progress."""
+    """Hydrate, map, cache, and summarize persisted progress with one event-loop-owned async refresh lock."""
 
     _CACHE_MAX_RUNS = 32
     _STORAGE_PAGE_SIZE = 500
@@ -178,52 +175,8 @@ class ScenarioProgressReadModel:
         """Initialize a read model over the scenario-result store."""
         self._memory = memory
         self._cache: OrderedDict[str, _ProgressCacheEntry] = OrderedDict()
-        self._cache_lock = Lock()
+        self._cache_lock = asyncio.Lock()
 
-    def get_snapshot(
-        self,
-        *,
-        scenario_result_id: str,
-        plan: ScenarioRunPlan | None,
-        plan_complete: bool,
-        active_group_ids: Sequence[str],
-        terminal: bool,
-        objective_scorer_identifier: ComponentIdentifier | None,
-    ) -> ScenarioProgressSnapshot:
-        """
-        Refresh and return the mapped progress state for one run.
-
-        Args:
-            scenario_result_id (str): Persisted scenario run ID.
-            plan (ScenarioRunPlan | None): Saved run plan, if available.
-            plan_complete (bool): Whether the plan includes all work.
-            active_group_ids (Sequence[str]): Groups that are running.
-            terminal (bool): Whether the run has stopped.
-            objective_scorer_identifier (ComponentIdentifier | None): Objective scorer identity.
-
-        Returns:
-            ScenarioProgressSnapshot: Deltas, mapped results, summary, and effective plan.
-        """
-        print_deprecation_message(
-            old_item="ScenarioProgressReadModel.get_snapshot",
-            new_item="ScenarioProgressReadModel.get_snapshot_async",
-            removed_in="1.4.0",
-        )
-        with self._cache_lock:
-            entry = self._get_cache_entry(scenario_result_id=scenario_result_id, plan=plan, terminal=terminal)
-            first_new_index = len(entry.results)
-            self._hydrate_new_deltas(scenario_result_id=scenario_result_id, entry=entry)
-            return self._build_snapshot(
-                entry=entry,
-                first_new_index=first_new_index,
-                plan=plan,
-                plan_complete=plan_complete,
-                active_group_ids=active_group_ids,
-                terminal=terminal,
-                objective_scorer_identifier=objective_scorer_identifier,
-            )
-
-    @legacy_sync_override(lambda: ScenarioProgressReadModel.get_snapshot)
     async def get_snapshot_async(
         self,
         *,
@@ -248,9 +201,7 @@ class ScenarioProgressReadModel:
         Returns:
             ScenarioProgressSnapshot: Deltas, mapped results, summary, and effective plan.
         """
-        while not self._cache_lock.acquire(blocking=False):
-            await asyncio.sleep(0.01)
-        try:
+        async with self._cache_lock:
             entry = self._get_cache_entry(scenario_result_id=scenario_result_id, plan=plan, terminal=terminal)
             first_new_index = len(entry.results)
             await self._hydrate_new_deltas_async(scenario_result_id=scenario_result_id, entry=entry)
@@ -263,8 +214,6 @@ class ScenarioProgressReadModel:
                 terminal=terminal,
                 objective_scorer_identifier=objective_scorer_identifier,
             )
-        finally:
-            self._cache_lock.release()
 
     def _get_cache_entry(
         self, *, scenario_result_id: str, plan: ScenarioRunPlan | None, terminal: bool
@@ -334,26 +283,6 @@ class ScenarioProgressReadModel:
             summary=entry.summary,
             plan=summary_plan,
         )
-
-    def _hydrate_new_deltas(self, *, scenario_result_id: str, entry: _ProgressCacheEntry) -> None:
-        """Hydrate every persisted delta after the cached keyset cursor."""
-        while True:
-            page, has_more = self._memory.get_scenario_attack_result_deltas(
-                scenario_result_id=scenario_result_id,
-                cursor=entry.cursor,
-                limit=self._STORAGE_PAGE_SIZE,
-            )
-            entry.deltas.extend(page)
-            if page:
-                last = page[-1]
-                entry.cursor = AttackResultKeysetCursor(
-                    timestamp=last.timestamp,
-                    attack_result_id=last.attack_result_id,
-                )
-            if not has_more:
-                return
-            if not page:
-                raise RuntimeError("Scenario progress storage returned an empty page with has_more=True.")
 
     async def _hydrate_new_deltas_async(self, *, scenario_result_id: str, entry: _ProgressCacheEntry) -> None:
         """Hydrate every persisted delta after the cached keyset cursor."""
