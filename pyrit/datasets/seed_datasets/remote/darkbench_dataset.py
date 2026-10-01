@@ -53,7 +53,7 @@ class _DarkBenchDataset(_RemoteDatasetLoader):
         return "dark_bench"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch DarkBench dataset from HuggingFace and return as SeedDataset.
 

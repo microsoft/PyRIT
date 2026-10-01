@@ -13,6 +13,7 @@ export default function RegistryLayout() {
     <div className={styles.root}>
       <TabList
         className={styles.tabs}
+        data-tour="registry-tabs"
         selectedValue={selectedTab}
         onTabSelect={(_, data) => navigate(`/registry/${String(data.value)}`)}
         aria-label="Registry sections"
