@@ -137,7 +137,7 @@ async def test_reload_changed_and_removed_scripts_preserves_memory_and_history(
     message = Message(
         message_pieces=[MessagePiece(role="user", original_value="history", conversation_id=str(uuid.uuid4()))]
     )
-    sqlite_instance.add_message_to_memory(request=message)
+    await sqlite_instance.add_message_to_memory_async(request=message)
     source = tmp_path / "scripts"
     source.mkdir()
     script = source / "custom.py"
@@ -183,7 +183,7 @@ class CustomInitializer(PyRITInitializer):
             await config.preflight_reinitialization_async(environment_values={})
         assert TargetRegistry.get_registry_singleton().instances.get("second") is not None
         assert CentralMemory.get_memory_instance() is sqlite_instance
-        assert sqlite_instance.get_message_pieces(conversation_id=message.message_pieces[0].conversation_id)
+        assert await sqlite_instance.get_message_pieces_async(conversation_id=message.message_pieces[0].conversation_id)
     finally:
         reset_setup_registries()
 

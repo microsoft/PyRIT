@@ -82,6 +82,22 @@ def _ids(scenario: LatentInjection) -> dict[str, list[str]]:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestLatentDefaults:
+    @pytest.mark.parametrize(
+        ("kwargs", "expected_cap"),
+        [({}, 92), ({"max_dataset_size": None}, None), ({"max_dataset_size": 23}, 23)],
+    )
+    async def test_configuration_defaults_resolve_with_family_coverage_async(
+        self, *, kwargs: dict[str, int | None], expected_cap: int | None
+    ) -> None:
+        config = _config(**kwargs)
+        groups = await config.get_attack_seed_groups_async()
+        assert config.max_dataset_size == expected_cap
+        assert len(config.coverage_keys) == 23
+        assert {config._coverage_key(group) for group in groups} == set(config.coverage_keys)
+        full = await config.get_attack_seed_groups_async(apply_sampling=False)
+        assert len(groups) == (min(expected_cap, len(full)) if expected_cap is not None else len(full))
+        assert len(full) > 92
+
     async def test_default_population_budget_and_estimate_async(self) -> None:
         scenario = LatentInjection()
         await _initialize_async(scenario)
@@ -96,7 +112,7 @@ class TestLatentDefaults:
         assert {parameter.name for parameter in scenario.additional_parameters()} == {"families"}
 
     async def test_all_families_and_separators_async(self) -> None:
-        config = _config(families=LatentInjectionDatasetConfiguration.FAMILIES)
+        config = _config(families=LatentInjectionDatasetConfiguration.FAMILIES, max_dataset_size=None)
         scenario = LatentInjection(harm_scorer=SubStringScorer(substring="harm"))
         await _initialize_async(scenario, dataset_config=config, scenario_techniques=[LatentInjectionTechnique.ALL])
         assert {key[0] for key in config.coverage_keys} == set(config.FAMILIES)
@@ -172,11 +188,13 @@ class TestLatentPopulation:
             assert "document" not in group.objective.value
             assert len(group.objective.value) < 180
 
-    @pytest.mark.parametrize("cap", [-1, 0, 3])
-    async def test_runtime_budget_is_validated_without_sampling_async(self, cap: int) -> None:
+    @pytest.mark.parametrize(
+        ("cap", "message"), [(-1, "positive integer"), (0, "positive integer"), (3, "family/trigger pairs")]
+    )
+    async def test_runtime_budget_is_validated_without_sampling_async(self, cap: int, message: str) -> None:
         config = _config(families=["whois", "resume"])
         config.max_dataset_size = cap
-        with pytest.raises(DatasetConstraintError, match="family/trigger pairs"):
+        with pytest.raises(DatasetConstraintError, match=message):
             await config.get_attack_seed_groups_async(apply_sampling=False)
 
     async def test_filters_validators_and_config_identity_async(self, seeded_memory_async: MemoryInterface) -> None:

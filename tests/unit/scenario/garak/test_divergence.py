@@ -124,7 +124,7 @@ class TestDivergence:
         await _initialize_async(
             scenario=scenario,
             corpus=corpus,
-            config=DivergenceDatasetConfiguration(dataset_names=["garak_divergence"]),
+            config=DivergenceDatasetConfiguration(dataset_names=["garak_divergence"], max_dataset_size=None),
             techniques=techniques,
         )
         assert len(_groups(scenario)) == 36
@@ -266,7 +266,7 @@ class TestDivergence:
             scenario=scenario,
             corpus=corpus,
             target=target,
-            config=DivergenceDatasetConfiguration(dataset_names=["garak_divergence"]),
+            config=DivergenceDatasetConfiguration(dataset_names=["garak_divergence"], max_dataset_size=None),
         )
         word_by_prompt = {seed.value: seed.metadata["repeat_word"] for seed in corpus}
 

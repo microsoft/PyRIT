@@ -32,5 +32,6 @@ dist-ssr/
 
 # Testing
 coverage/
+blob-report/
 playwright-report/
 test-results/

@@ -62,7 +62,7 @@ class TestDoctorInitialization:
     def test_init_basic(self, mock_objective_scorer):
         scenario = Doctor(objective_scorer=mock_objective_scorer)
         assert scenario.name == "Doctor"
-        assert scenario.VERSION == 1
+        assert scenario.VERSION == 2
 
     def test_init_with_custom_scorer(self, mock_objective_scorer):
         scenario = Doctor(objective_scorer=mock_objective_scorer)

@@ -258,10 +258,10 @@ async def test_remove_seeds_by_harm_categories_matches_whole_elements(sqlite_ins
     ]
     await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts, added_by="test")
 
-    assert sqlite_instance.remove_seeds_from_memory(harm_categories=["hate"]) == 1
-    assert sqlite_instance.remove_seeds_from_memory(harm_categories=["self_harm"]) == 0
+    assert await sqlite_instance.remove_seeds_from_memory_async(harm_categories=["hate"]) == 1
+    assert await sqlite_instance.remove_seeds_from_memory_async(harm_categories=["self_harm"]) == 0
 
-    remaining = sorted(seed.value for seed in sqlite_instance.get_seeds())
+    remaining = sorted(seed.value for seed in await sqlite_instance.get_seeds_async())
     assert remaining == ["inner_substring", "longer_label", "wildcard"]
 
 
@@ -272,7 +272,7 @@ async def test_remove_seeds_by_list_filters_is_case_insensitive(sqlite_instance:
     ]
     await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts, added_by="test")
 
-    assert sqlite_instance.remove_seeds_from_memory(harm_categories=["violence"]) == 1
+    assert await sqlite_instance.remove_seeds_from_memory_async(harm_categories=["violence"]) == 1
 
 
 async def test_remove_seeds_by_groups_authors_parameters_match_whole_elements(sqlite_instance: MemoryInterface):
@@ -282,9 +282,11 @@ async def test_remove_seeds_by_groups_authors_parameters_match_whole_elements(sq
     ]
     await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts, added_by="test")
 
-    assert sqlite_instance.remove_seeds_from_memory(groups=["team"], authors=["Ann"], parameters=["goal"]) == 1
+    assert (
+        await sqlite_instance.remove_seeds_from_memory_async(groups=["team"], authors=["Ann"], parameters=["goal"]) == 1
+    )
 
-    remaining = sqlite_instance.get_seeds()
+    remaining = await sqlite_instance.get_seeds_async()
     assert [seed.value for seed in remaining] == ["p2"]
 
 
@@ -295,7 +297,7 @@ async def test_remove_seeds_by_harm_categories_substring_when_not_exact(sqlite_i
     ]
     await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts, added_by="test")
 
-    assert sqlite_instance.remove_seeds_from_memory(harm_categories=["hate"], exact=False) == 2
+    assert await sqlite_instance.remove_seeds_from_memory_async(harm_categories=["hate"], exact=False) == 2
 
 
 async def test_remove_seeds_multi_filter_narrowing(sqlite_instance: MemoryInterface):
@@ -385,9 +387,9 @@ async def test_remove_seed_groups_by_harm_categories_matches_whole_elements(sqli
     )
     await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[hate_group, speech_group], added_by="test")
 
-    assert sqlite_instance.remove_seed_groups_from_memory(harm_categories=["hate"]) == 1
+    assert await sqlite_instance.remove_seed_groups_from_memory_async(harm_categories=["hate"]) == 1
 
-    remaining = sqlite_instance.get_seeds()
+    remaining = await sqlite_instance.get_seeds_async()
     assert [seed.value for seed in remaining] == ["hate_speech"]
 
 

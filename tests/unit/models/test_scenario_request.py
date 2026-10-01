@@ -52,7 +52,7 @@ class TestExposedDatasetFilters:
 
         from pyrit.memory.memory_interface import MemoryInterface
 
-        hints = typing.get_type_hints(MemoryInterface.get_seeds)
+        hints = typing.get_type_hints(MemoryInterface.get_seeds_async)
 
         def _allows_sequence(annotation: object) -> bool:
             for candidate in (annotation, *typing.get_args(annotation)):
@@ -62,5 +62,5 @@ class TestExposedDatasetFilters:
             return False
 
         for name in DATASET_FILTERS:
-            assert name in hints, f"'{name}' is not a MemoryInterface.get_seeds parameter"
+            assert name in hints, f"'{name}' is not a MemoryInterface.get_seeds_async parameter"
             assert _allows_sequence(hints[name]), f"'{name}' must be a Sequence-typed get_seeds parameter"

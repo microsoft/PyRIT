@@ -23,6 +23,9 @@ const TOUR_SCENARIO: RegisteredScenario = {
   include_baseline_by_default: false,
   supported_parameters: [],
   default_run_size: {
+    status: "unavailable",
+    dataset_size: { kind: "indeterminate", detail: "Mock estimate only." },
+    dataset_limit: { state: "scenario_default" },
     estimated_attack_count: null,
     components: [],
     datasets: [],

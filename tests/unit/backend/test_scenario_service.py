@@ -148,6 +148,68 @@ def test_catalog_preserves_adversarial_default_usage(uses_default: bool) -> None
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAdversarialEstimateScope:
+    @pytest.mark.parametrize(
+        ("scenario_name", "estimate_request", "message"),
+        [
+            (
+                "garak.prompt_inject",
+                ScenarioRunSizeEstimateRequest(max_dataset_size=1),
+                "must be at least the number of goal_texts",
+            ),
+            (
+                "garak.exploitation",
+                ScenarioRunSizeEstimateRequest(scenario_params={"prompt_cap": 0}),
+                "prompt_cap must be greater than zero",
+            ),
+        ],
+    )
+    async def test_configured_preview_rejects_impossible_parameters_without_dataset_reads_async(
+        self, *, scenario_name: str, estimate_request: ScenarioRunSizeEstimateRequest, message: str
+    ) -> None:
+        registry = ScenarioRegistry()
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(
+                DatasetAttackConfiguration,
+                "_collect_named_seeds_async",
+                side_effect=AssertionError("Preview queried datasets"),
+            ),
+        ):
+            service = ScenarioService()
+            with pytest.raises(ValueError, match=message):
+                await service.estimate_scenario_run_size_async(scenario_name=scenario_name, request=estimate_request)
+
+    async def test_default_and_configured_previews_do_not_load_datasets_async(self) -> None:
+        registry = ScenarioRegistry()
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(
+                DatasetAttackConfiguration,
+                "_collect_named_seeds_async",
+                side_effect=AssertionError("Preview queried datasets"),
+            ),
+        ):
+            scenario = registry.create_instance("garak.api_key")
+            service = ScenarioService()
+            with patch.object(registry, "create_instance", return_value=scenario):
+                default = await service._get_default_run_size_estimate_async(
+                    metadata=_make_scenario_metadata(registry_name="garak.api_key"),
+                )
+            configured = await service.estimate_scenario_run_size_async(
+                scenario_name="garak.api_key",
+                request=ScenarioRunSizeEstimateRequest(max_dataset_size=7),
+            )
+        assert default.estimated_attack_count == 20
+        assert configured is not None
+        assert configured.estimated_attack_count == 7
+        assert configured.model_dump(mode="json")["status"] == "approximate"
+        payload = configured.model_dump(mode="json")
+        assert payload["dataset_size"] == {"kind": "bounded", "value": 7}
+        assert payload["dataset_limit"] == {"state": "value", "value": 7}
+        assert "configured_dataset_size" not in payload
+        assert ScenarioRunSizeEstimate.model_validate(payload) == configured
+        assert all(dataset.logical_seed_group_count is None for dataset in configured.datasets)
+
     async def test_cold_registry_estimate_uses_selected_target_without_global_fallback_async(self) -> None:
         registry = ScenarioRegistry()
         selected = MockPromptTarget()
