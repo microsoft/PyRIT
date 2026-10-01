@@ -1,9 +1,27 @@
 import type { ConversationDraftMessage, TargetCapabilities } from '@/types'
 import { makeTarget } from '@/test-utils/targetFixtures'
 
-import { draftConverterInputs, draftToolTypes, editorTargetDisabledReason, serializeDraft, unansweredToolCallId, validateDraft } from './conversationDraft'
+import { draftConverterInputs, draftToolTypes, editorTargetDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft } from './conversationDraft'
 
 describe('conversation drafts', () => {
+  it.each([
+    ['assistant', 'simulated_assistant'],
+    ['tool', 'simulated_tool'],
+    ['simulated_tool', 'simulated_tool'],
+  ])('keeps %s response provenance synthetic in saved drafts', async (role, expectedRole) => {
+    const draft = toConversationDraft([{
+      role, turn_number: 0, created_at: '2026-01-01T00:00:00Z',
+      message_pieces: [{
+        id: 'source-piece', original_value_data_type: 'text', converted_value_data_type: 'text',
+        original_value: 'Recorded response', converted_value: 'Recorded response', scores: [], response_error: 'none',
+      }],
+    }])
+    expect(draft[0].role).toBe(expectedRole)
+    const saved = await serializeDraft(draft)
+    expect(saved[0].role).toBe(expectedRole)
+    expect(saved[0].pieces[0].source_piece_id).toBe('source-piece')
+  })
+
   it('omits converter provenance after editing or clearing the converted value', async () => {
     const payload = await serializeDraft([{
       id: 'edited', role: 'user', pieces: [{
@@ -20,7 +38,7 @@ describe('conversation drafts', () => {
       original_value: JSON.stringify({ id: 'call-1', function: { name: 'lookup', arguments: '{}' } }),
     }],
   }, {
-    id: 'output', role: 'tool', pieces: [{
+    id: 'output', role: 'simulated_tool', pieces: [{
       draftId: 'response', data_type: 'function_call_output',
       original_value: JSON.stringify({ call_id: 'call-1', output: 'answer' }),
     }],

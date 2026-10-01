@@ -1253,6 +1253,57 @@ describe("ChatWindow Integration", () => {
     });
   });
 
+  it("keeps a cleared objective empty after the first send and when opening the editor", async () => {
+    const user = userEvent.setup();
+    mockedMapper.buildMessagePieces.mockResolvedValue([
+      { data_type: "text", original_value: "Hello" },
+    ]);
+    mockedAttacksApi.createAttack.mockResolvedValue({
+      attack_result_id: "ar-objective",
+      conversation_id: "conv-objective",
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    mockedAttacksApi.addMessage.mockResolvedValue(makeTextResponse("Hello back!") as never);
+    mockedAttacksApi.updateAttack.mockResolvedValue({
+      attack_result_id: "ar-objective", objective: "",
+    } as Awaited<ReturnType<typeof attacksApi.updateAttack>>);
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    function ObjectiveHarness() {
+      const [attackId, setAttackId] = useState<string | null>(null);
+      const [savedObjective, setSavedObjective] = useState("");
+      return <ChatWindow {...defaultProps} attackResultId={attackId}
+        conversationId={attackId ? "conv-objective" : null}
+        activeConversationId={attackId ? "conv-objective" : null}
+        objective={savedObjective} onObjectiveChange={setSavedObjective}
+        onConversationCreated={(id, _conversationId, value) => {
+          setAttackId(id);
+          setSavedObjective(value ?? "");
+        }} />;
+    }
+    const router = createMemoryRouter([{ path: "/", element: <ObjectiveHarness /> }]);
+    render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+      <RouterProvider router={router} />
+    </UserPreferencesProvider></FluentProvider>);
+
+    await user.click(screen.getByRole("button", { name: /add objective/i }));
+    await user.type(screen.getByRole("textbox", { name: /attack objective/i }), "Old draft objective");
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+    await waitFor(() => expect(mockedAttacksApi.addMessage).toHaveBeenCalled());
+    await user.click(await screen.findByRole("button", { name: /edit objective/i }));
+    await user.clear(screen.getByRole("textbox", { name: /attack objective/i }));
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(await screen.findByRole("button", { name: /add objective/i })).toBeInTheDocument();
+    expect(screen.queryByText("Old draft objective")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
+    await screen.findByRole("button", { name: "Convert Conversation" });
+    await user.click(screen.getByRole("button", { name: /add objective/i }));
+    expect(screen.getByRole("textbox", { name: /attack objective/i })).toHaveValue("");
+  });
+
   it("should allow adding an objective after messages have been sent", async () => {
     mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
     mockedMapper.backendMessagesToFrontend.mockReturnValue(mockMessages);

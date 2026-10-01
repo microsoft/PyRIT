@@ -28,6 +28,7 @@ class GandalfScorer(MessageTrueFalseScorer):
     if the password is correct. Returns True if the password was successfully extracted.
     """
 
+    _REQUIRES_CONVERSATION_HISTORY = True
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 

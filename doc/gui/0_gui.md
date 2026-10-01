@@ -177,12 +177,13 @@ the prompt area for text and attachments. The role selector is inside each promp
 Use the small **Insert message** control between messages and the **X** at the
 upper-right corner to delete a message. The attachment menu also provides text
 pieces and tool calls or responses. New messages offer `system`, `developer`, `user`, and
-`simulated_assistant` roles. Existing `developer` and `tool` messages keep their
-roles. Model replies become `simulated_assistant` context.
+`simulated_assistant` roles. Model replies become `simulated_assistant` context.
+Tool results become `simulated_tool` context. Saved and copied history is marked
+as simulated input, not evidence of a new model response or tool execution.
 
 Add a tool call to a `simulated_assistant` message from its content menu. Enter
 the call ID, name, and JSON arguments. **Add tool response** inserts a separate
-`tool` message after it and copies the call ID. A response needs a preceding,
+`simulated_tool` message after it and copies the call ID. A response needs a preceding,
 unanswered call. Tool content is stored, not executed.
 
 During editing, targets without editable history are disabled. If the draft
@@ -216,6 +217,8 @@ The objective is shared by all conversations in an attack. Changing it outside
 conversation editing, or saving a changed objective to **Same attack**, resets the
 outcome to Undetermined and clears the current score links. Old scores stay in
 history. Saving to **New attack** does not change the source objective or scores.
+Unchanged message copies share their source scores. Changed content or roles get
+separate score identities, so scoring an edit does not change the source scores.
 You can also clear an existing objective. A message-only save to **Same attack**
 keeps the current shared objective, even if another edit changed it while your
 draft was open. Explicit objective changes still check for conflicting edits.
@@ -419,7 +422,55 @@ The **Configuration** page provides administrator-only editing for the files and
 - **Initializers** shows the read-only startup sequence from the active `.pyrit_conf`, in run order, along with the catalog of registered initializers.
 - **Custom Initializers** registers or removes Python initializer scripts. This tab requires `allow_custom_initializers: true`; scripts are stored in the configured local directory or Azure Blob container and must define a concrete `PyRITInitializer` subclass.
 
-Use **Reload** to discard local edits and fetch the latest source content. Saved configuration and environment changes take effect after restarting PyRIT. Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
+Use **Reload file** to fetch the latest source content; unsaved edits require explicit discard confirmation.
+**Save** only persists a source. **Reinitialize PyRIT** separately applies saved configuration, environment sources,
+and stored initializer scripts for every user of this backend. Save or discard editor changes first.
+Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
+
+### Reinitializing without a process restart
+
+Set `enable_live_reinitialization: true` in the saved `.pyrit_conf` to enable this administrator action. This setting
+is an explicit operator acknowledgement that the deployment has **one backend process and one replica**.
+It is disabled when `WEB_CONCURRENCY`, `UVICORN_WORKERS`, `PYRIT_API_WORKERS`, or `PYRIT_REPLICAS` specifies anything
+other than `1`. Do not use it behind a multi-worker server or across multiple replicas; it is not a distributed
+configuration update. External scaling settings cannot be discovered from within a process.
+
+Before replacement, PyRIT validates the saved configuration, environment sources, scripts, initializer parameters,
+and required environment values. Custom initializer scripts are trusted code. Importing a script or constructing its
+initializer can have side effects during validation.
+
+Reinitialization resets setup-owned component registries and recreates backend services. Components created only
+through the GUI must be recreated. The same memory object and persisted history are retained, including an in-memory
+database. Changing the memory type, Azure SQL connection, or Azure results storage configuration requires a backend
+restart and is rejected before replacement.
+
+Live apply does not stop or drain work. It rejects the request if a scenario, preparation, send, estimate, or other
+runtime operation is active. Wait for the work to finish, or cancel it with its existing control, and then retry.
+When the runtime is idle, PyRIT closes admission and checks again before it changes runtime state. This second check
+prevents newly admitted work from overlapping replacement.
+
+Operation status survives a browser disconnect or navigation; other connected clients detect runtime generation
+changes and refresh catalogs without discarding chat or configuration drafts.
+
+If validation fails, PyRIT does not change the live runtime. Repair the saved source and retry. If startup fails, or
+if live initialization fails after replacement starts, runtime operations stay unavailable until you restart the
+backend. The administration UI stays available for configuration repair. Authentication and authorization retain
+their process-start settings; reinitialization does not recreate them.
+
+Selected environment assignments replace existing process values, **including deployment-provided values**.
+Omitted variables remain unchanged; empty assignments set an empty value. Key Vault source selection and
+`.env.local` priority are preserved, and interpolation uses the new selected values. Ordinary library initialization
+keeps its existing precedence; replacement is an explicit reinitialization option. There is no rollback of
+environment assignments, initializer side effects, memory writes, or external actions if initialization fails.
+Listener and authentication settings remain process-start-only. This does not run a process supervisor, restart a
+container, or make local source files durable when a container is replaced.
+
+API clients can use administrator-only `GET /api/config/runtime`, `POST /api/config/runtime/apply`
+(`version`). Obtain the configuration version and opt-in state from `GET /api/config`. A newly admitted operation
+returns HTTP 202 and is tracked in status. Outcomes distinguish busy, unsupported, version-conflict,
+invalid-configuration, and restart-required. Authenticated non-admin clients can read readiness and generation only
+at `GET /api/runtime`.
+`GET /api/health` reports server responsiveness, not runtime readiness.
 
 ---
 

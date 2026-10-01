@@ -5,6 +5,7 @@ import { Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-com
 import { Joyride } from 'react-joyride'
 import { ThemeProvider, useTheme } from './hooks/useTheme'
 import { UserPreferencesProvider, useUserPreferences } from './hooks/useUserPreferences'
+import { RuntimeBanner, RuntimeProvider, useRuntime } from '@/hooks/useRuntime'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
@@ -119,6 +120,7 @@ interface LoadedAttack {
   id: string
   loadSequence: number
   targetSource: 'persisted' | 'created'
+  targetGeneration?: string
   mainConversationId: string | null
   labels: Record<string, string> | null
   operator: string | null
@@ -157,6 +159,7 @@ function ConnectionBannerContainer() {
 }
 
 function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
+  const { generation } = useRuntime()
   const navigate = useNavigate()
   const [isNavigatingToCreatedAttack, startCreatedAttackTransition] = useTransition()
   const location = useLocation()
@@ -206,7 +209,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [generation])
 
   const [defaultLabels, setDefaultLabels] = useState<Record<string, string>>(DEFAULT_GLOBAL_LABELS)
   const globalLabels = useMemo<Record<string, string>>(() => Object.fromEntries(
@@ -413,10 +416,14 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     attackTargetSource: readyAttack?.targetSource ?? 'persisted',
     createdTarget: readyAttack?.createdTarget,
     targetUnbound: readyAttack?.targetUnbound,
+    createdTargetGeneration: readyAttack?.targetGeneration,
   })
-  const [unboundTarget, setUnboundTarget] = useState<{ attackId: string; target: TargetInstance | null } | null>(null)
+  const [unboundTarget, setUnboundTarget] = useState<{ attackId: string; target: TargetReference | null } | null>(null)
+  const selectedUnboundTarget = !registry.loading && !registry.error
+    && unboundTarget?.attackId === routeAttackId && unboundTarget?.target
+    ? resolveTargetReference(unboundTarget.target, registry.targets) : null
   const activeTarget = targetResolutionStatus === 'unbound'
-    ? (unboundTarget?.attackId === routeAttackId ? unboundTarget.target : null)
+    ? selectedUnboundTarget
     : routeAttackId ? resolvedChatTarget : draftTarget
   const activeConversationId = readyAttack
     ? routeConversationId ?? readyAttack.mainConversationId
@@ -477,6 +484,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       id: arId,
       loadSequence,
       targetSource: 'created',
+      targetGeneration: generation,
       mainConversationId: convId,
       // New attack uses the current user's labels, so it is never operator-locked.
       labels: null,
@@ -498,7 +506,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     startCreatedAttackTransition(() => {
       navigate(attackRoutePath(arId), { replace: routeAttackId === null })
     })
-  }, [activeTarget, routeAttackId, navigate, startCreatedAttackTransition])
+  }, [activeTarget, generation, routeAttackId, navigate, startCreatedAttackTransition])
 
   const handleObjectiveChange = useCallback((objective: string) => {
     setLoadedAttack((current) => current ? { ...current, objective } : current)
@@ -565,7 +573,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       targetsError={registry.error}
       onRefreshTargets={registry.refresh}
       onSelectTarget={(target: TargetInstance | null) => {
-        if (readyAttack?.targetUnbound) setUnboundTarget({ attackId: readyAttack.id, target })
+        if (readyAttack?.targetUnbound) {
+          setUnboundTarget({ attackId: readyAttack.id, target: target ? targetReference(target) : null })
+        }
         else setDraftSession((current) => ({ ...current, target: target ? targetReference(target) : null }))
       }}
       defaultBranchTarget={targetDefaults.objectiveTarget}
@@ -765,11 +775,14 @@ function App() {
     : authConfig.clientId ? null : 'local'
   const operatorAlias = account?.username ? account.username.split('@')[0].toLowerCase() : null
   return (
-    <UserPreferencesProvider key={accountKey ?? 'account-loading'} accountKey={accountKey}>
-      <ThemeProvider>
-        <AppContent operatorAlias={operatorAlias} />
-      </ThemeProvider>
-    </UserPreferencesProvider>
+    <RuntimeProvider>
+      <RuntimeBanner />
+      <UserPreferencesProvider key={accountKey ?? 'account-loading'} accountKey={accountKey}>
+        <ThemeProvider>
+          <AppContent operatorAlias={operatorAlias} />
+        </ThemeProvider>
+      </UserPreferencesProvider>
+    </RuntimeProvider>
   )
 }
 

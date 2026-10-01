@@ -8,6 +8,9 @@ Thread-safe operations for appending entries.
 
 import json
 import logging
+import os
+import secrets
+import stat
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -330,6 +333,130 @@ def _append_jsonl_entry(file_path: Path, lock: threading.Lock, entry: dict[str, 
             raise
 
 
+def _read_registry_lines(file_path: Path) -> list[tuple[str, dict[str, Any] | None]]:
+    """
+    Load a registry as (raw line, parsed entry) pairs, keeping unparseable lines.
+
+    Unlike ``_load_jsonl``, which is a lookup helper that may ignore what it cannot
+    read, this is the source of truth for a rewrite: every line in the file has to be
+    accounted for, so a line that is not valid JSON is returned with ``None`` and the
+    caller decides what to do with it. Read errors propagate instead of yielding a
+    short list, because a rewrite built from a partial read would delete the rest of
+    the registry.
+
+    Args:
+        file_path (Path): Path to the JSONL file.
+
+    Returns:
+        list[tuple[str, dict[str, Any] | None]]: One pair per line, with the raw line
+            (including its original whitespace and line ending) and the parsed entry
+            (or ``None`` when the line is not a JSON object). Empty when the file
+            does not exist.
+
+    Raises:
+        OSError: If the file exists but cannot be read.
+        UnicodeDecodeError: If the file is not valid UTF-8.
+    """
+    if not file_path.exists():
+        logger.debug(f"Registry file not found: {file_path}")
+        return []
+
+    lines: list[tuple[str, dict[str, Any] | None]] = []
+    with open(file_path, encoding="utf-8", newline="") as f:
+        for line_num, raw_line in enumerate(f, 1):
+            stripped = raw_line.strip()
+            if not stripped:
+                lines.append((raw_line, None))
+                continue
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Invalid JSON at line {line_num} in {file_path}: {e}")
+                lines.append((raw_line, None))
+                continue
+            lines.append((raw_line, parsed if isinstance(parsed, dict) else None))
+    return lines
+
+
+def _create_staging_file(file_path: Path, mode: int = 0o666) -> tuple[Path, int]:
+    """
+    Create an exclusive staging file whose requested mode is filtered by the process umask.
+
+    Returns:
+        tuple[Path, int]: The staging path and its open file descriptor.
+
+    Raises:
+        FileExistsError: If no unique staging name could be created.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    for _ in range(100):
+        temp_path = file_path.with_name(f"{file_path.name}.tmp-{secrets.token_hex(8)}")
+        try:
+            return temp_path, os.open(temp_path, flags, mode)
+        except FileExistsError:
+            continue
+    raise FileExistsError(f"Could not create a unique staging file next to {file_path}")
+
+
+def _cleanup_staging_file(temp_path: Path) -> None:
+    """Remove a staging file without masking an earlier write/replace error."""
+    try:
+        temp_path.unlink(missing_ok=True)
+    except PermissionError:
+        try:
+            # Windows refuses to unlink a read-only file. Make only this disposable
+            # staging file writable; the registry's permissions remain untouched.
+            temp_path.chmod(stat.S_IREAD | stat.S_IWRITE)
+            temp_path.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            logger.warning("Failed to clean up staging file %s: %s", temp_path, cleanup_error)
+    except OSError as cleanup_error:
+        logger.warning("Failed to clean up staging file %s: %s", temp_path, cleanup_error)
+
+
+def _rewrite_jsonl_atomically(file_path: Path, lines: list[str]) -> None:
+    """
+    Replace a registry file's contents in one step that readers either see whole.
+
+    Args:
+        file_path (Path): Path to the JSONL file to rewrite.
+        lines (list[str]): Raw lines to write, including their original line endings.
+
+    Raises:
+        OSError: If the file cannot be written or moved into place.
+    """
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_mode = stat.S_IMODE(file_path.stat().st_mode) if file_path.exists() else None
+
+    # O_EXCL prevents independent writers from sharing a staging path. Create
+    # staging files for existing registries privately from the start; changing
+    # permissions after creation cannot protect readers that already opened it.
+    # New registries use 0666 so the OS applies the current umask as before.
+    creation_mode = 0o600 if existing_mode is not None else 0o666
+    temp_path, temp_fd = _create_staging_file(file_path, mode=creation_mode)
+    try:
+        if existing_mode is not None and hasattr(os, "fchmod"):
+            # Apply the registry's permissions before copying its contents so a
+            # private registry never has a more readable staging copy.
+            os.fchmod(temp_fd, existing_mode)
+
+        with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as temp_file:
+            temp_fd = -1
+            for line in lines:
+                temp_file.write(line)
+
+        if existing_mode is not None:
+            # Writing can clear special permission bits, so restore the final mode.
+            os.chmod(temp_path, existing_mode)
+        # The staging file is closed before replace for platforms that cannot replace
+        # an open file.
+        os.replace(temp_path, file_path)
+    finally:
+        if temp_fd >= 0:
+            os.close(temp_fd)
+        _cleanup_staging_file(temp_path)
+
+
 def replace_evaluation_results(
     *,
     file_path: Path,
@@ -344,11 +471,18 @@ def replace_evaluation_results(
     and adds the new entry. Only one entry per eval_hash is maintained in the registry,
     ensuring we always track the highest-fidelity evaluation.
 
+    Lines that could not be parsed are kept verbatim rather than dropped: a corrupt line
+    is not an entry this call is allowed to delete, and pre-computed metrics for other
+    scorers cost hours of model calls to regenerate.
+
     Args:
         file_path (Path): The full path to the JSONL file.
         scorer_identifier (ComponentIdentifier): The scorer's configuration identifier.
         eval_hash (str): The pre-computed evaluation hash for grouping.
         metrics (ScorerMetrics): The computed metrics (ObjectiveScorerMetrics or HarmScorerMetrics).
+
+    Raises:
+        OSError: If the registry exists but cannot be read, written, or moved into place.
     """
     # Get or create lock for this file path
     file_path_str = str(file_path)
@@ -361,29 +495,31 @@ def replace_evaluation_results(
     new_entry["metrics"] = _metrics_to_registry_dict(metrics)
 
     with _file_write_locks[file_path_str]:
-        try:
-            # Load existing entries
-            existing_entries = _load_jsonl(file_path)
+        # Load existing entries, keeping track of which lines could not be parsed
+        existing_lines = _read_registry_lines(file_path)
 
-            # Filter out entries with the same hash
-            filtered_entries = [e for e in existing_entries if e.get("eval_hash") != eval_hash]
+        # Keep every line that is not the entry being replaced, including unparseable ones
+        preserved = [raw for raw, parsed in existing_lines if parsed is None or parsed.get("eval_hash") != eval_hash]
 
-            # Add the new entry
-            filtered_entries.append(new_entry)
+        # Keep the registry's existing line-ending style and only add a separator when
+        # the final preserved line did not have one.
+        line_ending = next(
+            (ending for raw in reversed(preserved) for ending in ("\r\n", "\n", "\r") if raw.endswith(ending)),
+            "\n",
+        )
+        output_lines = [*preserved]
+        if output_lines and not output_lines[-1].endswith(("\n", "\r")):
+            output_lines[-1] += line_ending
+        output_lines.append(json.dumps(new_entry) + line_ending)
 
-            # Rewrite the file atomically
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(file_path, "w", encoding="utf-8") as f:
-                for entry in filtered_entries:
-                    f.write(json.dumps(entry) + "\n")
+        # Rewrite the file with the surviving lines plus the new entry
+        _rewrite_jsonl_atomically(file_path, output_lines)
 
-            replaced = len(existing_entries) != len(filtered_entries)
-            action = "Replaced" if replaced else "Added"
-            logger.info(
-                f"{action} metrics for {scorer_identifier.class_name}"
-                f" (eval_hash={eval_hash[:8]}...) in {file_path.name}"
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to replace entry in registry {file_path}: {e}")
-            raise
+        replaced = len(preserved) != len(existing_lines)
+        action = "Replaced" if replaced else "Added"
+        dropped = sum(1 for _, parsed in existing_lines if parsed is None)
+        if dropped:
+            action += f" (kept {dropped} unparseable line(s) verbatim)"
+        logger.info(
+            f"{action} metrics for {scorer_identifier.class_name} (eval_hash={eval_hash[:8]}...) in {file_path.name}"
+        )

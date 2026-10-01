@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Button, MessageBar, MessageBarBody, Spinner, Text } from '@fluentui/react-components'
 import { ArrowSyncRegular } from '@fluentui/react-icons'
 
+import { useRuntime } from '@/hooks/useRuntime'
 import { initializersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { InitializerSettingsResponse, RegisteredInitializer } from '@/types'
@@ -22,6 +23,7 @@ const EMPTY_SETTINGS: InitializerSettingsResponse = {
 }
 
 export default function Initializers() {
+  const { generation } = useRuntime()
   const styles = useInitializersStyles()
   const [settings, setSettings] = useState<InitializerSettingsResponse>(EMPTY_SETTINGS)
   const [registeredInitializers, setRegisteredInitializers] = useState<RegisteredInitializer[]>([])
@@ -71,7 +73,7 @@ export default function Initializers() {
     return () => {
       cancelled = true
     }
-  }, [refetchCount])
+  }, [refetchCount, generation])
 
   const refreshSettings = (): void => {
     setLoading(true)

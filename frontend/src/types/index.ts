@@ -131,7 +131,7 @@ export interface MessageMediaDisplayPiece {
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
 export interface Message {
-  role: 'user' | 'assistant' | 'simulated_assistant' | 'system' | 'tool' | 'developer'
+  role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system' | 'developer'
   content: string
   timestamp: string
   /**
@@ -182,6 +182,7 @@ export interface ConfigurationFileContent {
   content: string
   source: string
   version: string
+  live_reinitialization_enabled: boolean
 }
 
 export interface UpdateConfigurationFileRequest {
@@ -486,7 +487,7 @@ export interface UpdateAttackRequest {
   expected_objective?: string
 }
 
-export type ConversationDraftRole = 'system' | 'user' | 'simulated_assistant' | 'tool' | 'developer'
+export type ConversationDraftRole = 'system' | 'user' | 'simulated_assistant' | 'simulated_tool' | 'developer'
 
 export interface ConversationDraftPiece extends MessagePieceRequest {
   readonly draftId: string
@@ -1180,4 +1181,19 @@ export interface ScenarioRunProgress {
   next_cursor?: string | null
   has_more: boolean
   plan_complete: boolean
+}
+export interface RuntimeReadiness {
+  ready: boolean
+  state: string
+  generation: string
+}
+
+export interface RuntimeStatus {
+  state: string
+  generation: string
+  version: string | null
+  enabled: boolean
+  applying: boolean
+  outcome: string
+  message: string
 }

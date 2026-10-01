@@ -352,7 +352,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     }
   }
 
-  const role = ['simulated_assistant', 'assistant', 'system', 'tool', 'developer'].includes(msg.role)
+  const role = ['simulated_assistant', 'assistant', 'tool', 'simulated_tool', 'system', 'developer'].includes(msg.role)
     ? msg.role
     : 'user'
 

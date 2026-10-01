@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
-import { buildAppliedConversions } from '@/utils/conversionResults'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { buildAppliedConversions } from '@/utils/conversionResults'
 import { buildConverterInputs } from '@/components/Chat/converterTypes'
+import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
@@ -23,6 +24,7 @@ interface VersionedInput extends ConverterInputPiece {
 
 interface ConversionState {
   scopeKey?: string
+  generation: string
   sourceInputs: ConverterInputPiece[]
   inputs: VersionedInput[]
   nextRevision: number
@@ -159,7 +161,9 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
 }
 
 export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: string): ChatConverterController {
+  const { generation } = useRuntime()
   const [state, setState] = useState<ConversionState>(() => ({
+    generation,
     sourceInputs: inputs,
     scopeKey,
     inputs: inputs.map((input: ConverterInputPiece) => ({ ...input, revision: 0 })),
@@ -178,10 +182,31 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
 
   if (state.scopeKey !== scopeKey) {
     setState({
-      ...reconcileInputs(state, inputs), scopeKey, stageResults: {}, errors: {}, applied: {},
-      workingInputs: {}, runId: -1, isConverting: false,
+      ...reconcileInputs(state, inputs), scopeKey, generation, stageResults: {}, errors: {}, applied: {},
+      workingInputs: {}, runId: state.runId + 1, isConverting: false,
     })
-  } else if (state.sourceInputs !== inputs) setState(reconcileInputs(state, inputs))
+  } else if (state.generation !== generation) {
+    // A runtime generation change invalidates every generated result. Working
+    // edits follow the same rule reconcileInputs applies: they survive only
+    // when their underlying piece is unchanged, so a stale edit can never be
+    // applied to text the user swapped in with the new generation.
+    const next = reconcileInputs(state, inputs)
+    setState({
+      ...next,
+      generation,
+      stageResults: {},
+      errors: {},
+      applied: {},
+      runId: state.runId + 1,
+      isConverting: false,
+    })
+  } else if (state.sourceInputs !== inputs) {
+    setState(reconcileInputs(state, inputs))
+  }
+
+  useEffect(() => {
+    activeRun.current = null
+  }, [generation, scopeKey])
 
   const setPipeline = useCallback((
     pieceType: string,

@@ -470,6 +470,9 @@ class _TreeOfAttacksNode:
         self._prepended_history_send_context: PrependedHistorySendContext | None = None
         # Context from prepended conversation (for adversarial chat system prompt)
         self._conversation_context: str | None = None
+        # Number of prepended messages persisted in the objective target conversation. They are
+        # history, not attack turns, so they do not count when deciding whether this is the first turn.
+        self._prepended_message_count = 0
 
         # Initial prompt for first turn (bypasses adversarial chat generation)
         # This supports multimodal messages
@@ -529,6 +532,7 @@ class _TreeOfAttacksNode:
         persisted_messages = list(
             self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
         )
+        self._prepended_message_count = len(persisted_messages)
         self._prepended_history_send_context = conversation_manager.create_prepended_history_send_context(
             target=self._objective_target,
             conversation_id=self.objective_target_conversation_id,
@@ -1021,6 +1025,7 @@ class _TreeOfAttacksNode:
 
         # Copy conversation context for adversarial chat system prompt
         duplicate_node._conversation_context = self._conversation_context
+        duplicate_node._prepended_message_count = self._prepended_message_count
         duplicate_node.last_response = copy.deepcopy(self.last_response)
 
         # Copy visualization position so the clone starts from the same tree position
@@ -1210,14 +1215,15 @@ class _TreeOfAttacksNode:
         Check if this is the first turn of the conversation.
 
         This method determines whether the node is executing its initial attack turn by
-        examining the objective target conversation history.
+        examining the objective target conversation history. Prepended messages are history
+        rather than attack turns, so they are not counted.
 
         Returns:
-            bool: True if no messages exist in the objective target conversation (first turn),
-                False if the conversation already contains messages (subsequent turns).
+            bool: True if the objective target conversation contains no messages beyond the
+                prepended conversation (first turn), False otherwise (subsequent turns).
         """
         target_messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
-        return not target_messages
+        return len(target_messages) <= self._prepended_message_count
 
     async def _generate_first_turn_prompt_async(self, objective: str) -> str:
         """
@@ -1768,6 +1774,23 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             target=adversarial_chat,
             system_prompt=self._adversarial_chat_system_seed_prompt,
             first_message=None,
+        )
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the TAP identifier with its behavioral search configuration.
+
+        Returns:
+            ComponentIdentifier: The TAP identifier.
+        """
+        return self._create_identifier(
+            params={
+                "tree_width": self._configuration.tree_width,
+                "tree_depth": self._configuration.tree_depth,
+                "branching_factor": self._configuration.branching_factor,
+                "on_topic_checking_enabled": self._configuration.on_topic_checking_enabled,
+                "desired_response_prefix": self._configuration.desired_response_prefix,
+            }
         )
 
     def _validate_context(self, *, context: TAPAttackContext) -> None:

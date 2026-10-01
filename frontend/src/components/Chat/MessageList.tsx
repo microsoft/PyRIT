@@ -605,9 +605,10 @@ export default function MessageList({
     <div className={styles.root} data-testid="message-list">
       {messages.map((message, index) => {
         const isUser = message.role === 'user'
-        const isSimulated = message.role === 'simulated_assistant'
+        const isSimulated = message.role === 'simulated_assistant' || message.role === 'simulated_tool'
         const timestamp = new Date(message.timestamp).toLocaleTimeString()
-        const avatarName = isUser ? 'User' : isSimulated ? 'Simulated'
+        const avatarName = message.role === 'simulated_tool' ? 'Simulated Tool'
+          : isUser ? 'User' : isSimulated ? 'Simulated'
           : message.role === 'system' ? 'System' : message.role === 'tool' ? 'Tool'
             : message.role === 'developer' ? 'Developer' : 'Assistant'
         const canRecoverProcessingError = message.error?.type === 'processing'

@@ -6,7 +6,7 @@ import { generateClientId } from './clientId'
 import { dataTypeToAttachmentType, fileToBase64, mimeTypeToDataType } from './messageMapper'
 import { buildMediaUrl, isPathDataType } from './media'
 
-export const DRAFT_ROLES: ConversationDraftRole[] = ['system', 'user', 'simulated_assistant', 'tool', 'developer']
+export const DRAFT_ROLES: ConversationDraftRole[] = ['system', 'user', 'simulated_assistant', 'simulated_tool', 'developer']
 export const NEW_MESSAGE_ROLES: ConversationDraftRole[] = ['system', 'developer', 'user', 'simulated_assistant']
 const TOOL_DATA_TYPES = ['function_call', 'function_call_output', 'tool_call']
 
@@ -68,7 +68,7 @@ export function validateDraft(messages: ConversationDraftMessage[]): string | nu
         if (!value || typeof value !== 'object' || Array.isArray(value)) return `${prefix}Tool content must be a JSON object.`
         const data = value as Record<string, unknown>
         if (type === 'function_call_output') {
-          if (message.role !== 'tool') return `${prefix}A tool response needs the tool role.`
+          if (message.role !== 'simulated_tool') return `${prefix}A tool response needs the simulated_tool role.`
           if (typeof data.call_id !== 'string' || !calls.has(data.call_id) || responses.has(data.call_id)) {
             return `${prefix}A tool response needs one preceding, unanswered call with the same call ID.`
           }
@@ -99,7 +99,8 @@ export function validateDraft(messages: ConversationDraftMessage[]): string | nu
 
 export function toConversationDraft(messages: BackendMessage[]): ConversationDraftMessage[] {
   return messages.map((message: BackendMessage): ConversationDraftMessage => {
-    const role = message.role === 'assistant' ? 'simulated_assistant' : message.role
+    const role = message.role === 'assistant' ? 'simulated_assistant'
+      : message.role === 'tool' ? 'simulated_tool' : message.role
     if (!DRAFT_ROLES.some((candidate: string) => candidate === role)) {
       throw new Error(`Cannot edit unsupported role: ${role}`)
     }

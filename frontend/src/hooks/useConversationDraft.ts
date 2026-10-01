@@ -113,7 +113,7 @@ export function useConversationDraft() {
         if (!callId) return messages
         piece.original_value = JSON.stringify({ type: 'function_call_output', call_id: callId, output: '' })
         const index = messages.findIndex((message: ConversationDraftMessage) => message.id === messageId)
-        return [...messages.slice(0, index + 1), { id: generateClientId(), role: 'tool', pieces: [piece] }, ...messages.slice(index + 1)]
+        return [...messages.slice(0, index + 1), { id: generateClientId(), role: 'simulated_tool', pieces: [piece] }, ...messages.slice(index + 1)]
       }
       return messages.map((message: ConversationDraftMessage) => message.id === messageId
         ? { ...message, pieces: [...message.pieces, piece] } : message)

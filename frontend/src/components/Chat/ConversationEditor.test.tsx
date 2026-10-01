@@ -159,7 +159,7 @@ describe('ConversationEditor', () => {
     await user.click(within(assistant).getAllByRole('button', { name: 'Add content' })[0])
     await user.click(screen.getByRole('menuitem', { name: 'Add tool response' }))
     const response = screen.getByRole('region', { name: 'Message 3' })
-    expect(within(response).getByRole('combobox')).toHaveValue('tool')
+    expect(within(response).getByRole('combobox')).toHaveValue('simulated_tool')
     expect(within(response).getByRole('textbox', { name: 'call_id' })).toHaveValue('call-1')
     await user.type(within(response).getByRole('textbox', { name: 'output' }), 'answer')
     await user.click(within(assistant).getAllByRole('button', { name: 'Add content' })[0])
@@ -192,7 +192,7 @@ describe('ConversationEditor', () => {
     expect(screen.getByRole('combobox', { name: 'Role for message 1' })).toHaveValue('developer')
     await user.click(within(screen.getByRole('region', { name: 'Message 2' })).getByRole('button', { name: 'Add content' }))
     await user.click(screen.getByRole('menuitem', { name: 'Add tool response' }))
-    expect(screen.getByRole('combobox', { name: 'Role for message 3' })).toHaveValue('tool')
+    expect(screen.getByRole('combobox', { name: 'Role for message 3' })).toHaveValue('simulated_tool')
     expect(screen.getByRole('button', { name: 'Save conversation' })).toBeEnabled()
   })
 

@@ -606,8 +606,8 @@ class SaveConversationRequest(_AttackAttributionInput):
         if self.objective is not None:
             self.objective = self.objective.strip()
         for message in self.messages:
-            if message.role not in ("system", "user", "simulated_assistant", "tool", "developer"):
-                raise ValueError("Draft replies must use the simulated_assistant role")
+            if message.role not in ("system", "user", "simulated_assistant", "simulated_tool", "developer"):
+                raise ValueError("Draft replies must use simulated_assistant or simulated_tool roles")
         return self
 
 

@@ -45,6 +45,7 @@ dependencies = [
     "fastapi>=0.133.0",
     "httpx[http2]>=0.27.2",
     "jinja2>=3.1.6",
+    "mcp>=1.26,<2",
     "numpy>=1.26.0; python_version < '3.14'",
     "numpy>=2.3.0; python_version >= '3.14'",
     "openai>=2.2.0",
@@ -93,6 +94,7 @@ dev = [
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.6.1",
     "respx>=0.22.0",
+    "sse-starlette>=3.0.0",
     "ruff>=0.14.4",
     "types-aiofiles>=24.1.0",
     "types-PyYAML>=6.0.12.20250516",
@@ -135,8 +137,13 @@ litellm = [
     "litellm>=1.84.0",
 ]
 
+a2a = [
+    "a2a-sdk>=1.1.5,<2",
+]
+
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
+    "a2a-sdk>=1.1.5,<2",
     "accelerate>=1.7.0",
     "azure-ai-ml>=1.32.0",
     "azure-cognitiveservices-speech>=1.44.0",
@@ -277,7 +284,8 @@ constraint-dependencies = [
 
 [build-system]
 requires = ["setuptools>=64.0.0", "wheel>=0.46.2"]
-build-backend = "setuptools.build_meta"
+build-backend = "build_scripts.build_backend"
+backend-path = ["."]
 
 [tool.setuptools.packages.find]
 include = ["pyrit", "pyrit.*"]
@@ -294,6 +302,7 @@ license-files = [
 
 [tool.setuptools.package-data]
 pyrit = [
+    "_compatibility.json",
     "backend/frontend/**/*",
     "memory/alembic/**/*",
     "memory/alembic.ini",

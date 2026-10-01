@@ -39,6 +39,7 @@ import { useConversationSave } from '@/hooks/useConversationSave'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
+import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import {
   basenameFromValue,
@@ -276,6 +277,7 @@ export default function ChatWindow({
   const restoreFocusSourceAttributes = useRestoreFocusSource()
   const [messages, setMessages] = useState<Message[]>([])
   const [pendingObjective, setPendingObjective] = useState('')
+  const currentObjective = attackResultId ? objective : pendingObjective
   const editor = useConversationDraft()
   const { draft: editDraft, discard: discardEditor, changeObjective: setEditorObjective } = editor
   const editorTarget = editDraft?.target ?? null
@@ -303,6 +305,7 @@ export default function ChatWindow({
   const isExportingRef = useRef(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
+  const runtime = useRuntime()
   // Conversation-wide preference for rendering message text as Markdown.
   const { preferences, updatePreferences } = useUserPreferences()
   const globalMarkdown = preferences.chatMarkdown
@@ -568,7 +571,8 @@ export default function ChatWindow({
     attachments: MessageAttachment[],
   ): Promise<ChatSendOutcome> => {
     if (
-      !activeTarget
+      !runtime.ready
+      || !activeTarget
       || editDraft !== null
       || isLoadingAttack
       || isLoadingMessages
@@ -986,7 +990,7 @@ export default function ChatWindow({
     if (
       !attackResultId
       || !lastResponseMessagePieceId
-      || !(objective || pendingObjective).trim()
+      || !currentObjective.trim()
       || isScoreLocked
     ) {
       return
@@ -1009,9 +1013,8 @@ export default function ChatWindow({
     isScoreLocked,
     lastResponseMessagePieceId,
     loadConversation,
-    objective,
     onHumanScoreChange,
-    pendingObjective,
+    currentObjective,
   ])
 
   const handleHumanScoreRemove = useCallback(async (): Promise<void> => {
@@ -1059,8 +1062,8 @@ export default function ChatWindow({
       if (sourceId !== viewedConvRef.current) return
       const sourceMessages = source?.messages ?? []
       editor.begin({
-        messages: toConversationDraft(sourceMessages), objective: objective || pendingObjective,
-        initialObjective: objective || pendingObjective, sourceConversationId: sourceId,
+        messages: toConversationDraft(sourceMessages), objective: currentObjective,
+        initialObjective: currentObjective, sourceConversationId: sourceId,
         sourceAttackId: attackResultId, target, labels,
       })
       setIsConverterPanelOpen(false)
@@ -1310,7 +1313,7 @@ export default function ChatWindow({
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         <ObjectiveHeader
           key={`${attackResultId ?? 'new'}-${editDraft === null ? 'saved' : 'draft'}`}
-          objective={editDraft === null ? objective || pendingObjective : editorObjective}
+          objective={editDraft === null ? currentObjective : editorObjective}
           draftMode={editDraft !== null}
           outcome={outcome}
           automatedScore={automatedScore}
@@ -1320,7 +1323,7 @@ export default function ChatWindow({
             &&
             Boolean(attackResultId)
             && Boolean(lastResponseMessagePieceId)
-            && Boolean((objective || pendingObjective).trim())
+            && Boolean(currentObjective.trim())
             && !isScoreLocked
           }
           canRemoveHumanScore={
@@ -1383,7 +1386,8 @@ export default function ChatWindow({
           systemPrompt={systemPrompt}
           onSystemPromptChange={setSystemPrompt}
           disabled={
-            isSending
+            !runtime.ready
+            || isSending
             || editDraft !== null
             || !activeTarget
             || isLoadingAttack

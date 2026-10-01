@@ -39,7 +39,8 @@ from pyrit.models import (
 
 @pytest.fixture
 def file_memory(*, sqlite_instance: SQLiteMemory, tmp_path: Path) -> Generator[SQLiteMemory, None, None]:
-    engine = create_engine(URL.create("sqlite", database=str(tmp_path / "branching.db")))
+    # Concurrent writers can exceed SQLite's default five-second lock wait on busy CI runners.
+    engine = create_engine(URL.create("sqlite", database=str(tmp_path / "branching.db")), connect_args={"timeout": 30})
     try:
         Base.metadata.create_all(engine)
         with (
@@ -72,6 +73,14 @@ def _copy(
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAtomicConversationBranching:
+    def test_history_snapshot_locks_sql_server_rows_and_ranges(self) -> None:
+        session = MagicMock(spec=Session)
+        session.execute.return_value.scalars.return_value = []
+        MemoryInterface._check_conversation_history(session=session, expected={str(uuid.uuid4()): []})
+        statement = session.execute.call_args.args[0]
+        assert "WITH (UPDLOCK, HOLDLOCK)" in str(statement.compile(dialect=mssql.dialect()))
+        assert "UPDLOCK" not in str(statement.compile(dialect=sqlite.dialect()))
+
     def test_copied_pieces_keep_all_lineage_metadata_order_and_identifier_links(
         self, sqlite_instance: SQLiteMemory
     ) -> None:
@@ -316,7 +325,7 @@ class TestAtomicConversationBranching:
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = [executor.submit(register, conversation=branch) for branch in branches]
             futures += [executor.submit(promote, conversation_id=branch.conversation_id) for branch in initial]
-            assert all(future.result(timeout=15) for future in futures)
+            assert all(future.result(timeout=60) for future in futures)
         current = file_memory.get_attack_results(attack_result_ids=[attack.attack_result_id])[0]
         assert current.get_active_conversation_ids() == {
             source.conversation_id,
