@@ -114,7 +114,7 @@ async def test_openai_chat_target_calls_normalize_async():
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     mock_completion = _create_mock_chat_completion("world")
@@ -143,7 +143,7 @@ async def test_openai_chat_target_sends_normalized_to_construct_request():
     adapted_msg = _make_message(role="user", content="adapted")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     mock_completion = _create_mock_chat_completion("response")
@@ -196,7 +196,7 @@ async def test_openai_chat_target_memory_not_mutated():
     memory_conversation: MutableSequence[Message] = [system_msg]
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = memory_conversation
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=memory_conversation)
     target._memory = mock_memory
 
     mock_completion = _create_mock_chat_completion("response")
@@ -225,7 +225,7 @@ async def test_openai_response_target_calls_normalize_async():
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     # Mock the API to return a simple response (no tool calls)
@@ -276,7 +276,7 @@ async def test_azure_ml_target_calls_normalize_async():
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     with (
@@ -301,7 +301,7 @@ async def test_azure_ml_target_sends_normalized_to_complete_chat():
     adapted_msg = _make_message(role="user", content="adapted")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     with (
@@ -343,7 +343,7 @@ async def test_azure_ml_target_memory_not_mutated():
     memory_conversation: MutableSequence[Message] = [system_msg]
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = memory_conversation
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=memory_conversation)
     target._memory = mock_memory
 
     with patch.object(target, "_complete_chat_async", new_callable=AsyncMock, return_value="response"):
@@ -380,7 +380,7 @@ async def test_azure_ml_system_squash_via_configuration_pipeline():
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [system_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[system_msg])
     target._memory = mock_memory
 
     with patch.object(target, "_complete_chat_async", new_callable=AsyncMock, return_value="response") as mock_chat:
@@ -413,12 +413,12 @@ async def test_get_normalized_conversation_fetches_history_and_appends_message()
     user_msg = _make_message(role="user", content="new question")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [history_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[history_msg])
     target._memory = mock_memory
 
     result = await target._get_normalized_conversation_async(message=user_msg)
 
-    mock_memory.get_conversation_messages.assert_called_once_with(conversation_id="conv1")
+    mock_memory.get_conversation_messages_async.assert_called_once_with(conversation_id="conv1")
     assert len(result) == 2
     assert result[0].get_value() == "previous answer"
     assert result[1].get_value() == "new question"
@@ -436,7 +436,7 @@ async def test_get_normalized_conversation_empty_history():
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     result = await target._get_normalized_conversation_async(message=user_msg)
@@ -459,7 +459,7 @@ async def test_get_normalized_conversation_does_not_mutate_memory():
 
     memory_list: MutableSequence[Message] = [history_msg]
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = memory_list
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=memory_list)
     target._memory = mock_memory
 
     await target._get_normalized_conversation_async(message=user_msg)
@@ -495,7 +495,7 @@ async def test_get_normalized_conversation_runs_pipeline():
     user_msg = _make_message(role="user", content="hi")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [system_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[system_msg])
     target._memory = mock_memory
 
     result = await target._get_normalized_conversation_async(message=user_msg)
@@ -521,7 +521,7 @@ async def test_get_normalized_conversation_passthrough_when_no_adaptation_needed
     user_msg = _make_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [system_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[system_msg])
     target._memory = mock_memory
 
     result = await target._get_normalized_conversation_async(message=user_msg)
@@ -555,7 +555,7 @@ async def test_non_editable_target_adapts_prepended_history_without_mutating_mem
     memory_messages: MutableSequence[Message] = [prepended_user, prepended_assistant]
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = memory_messages
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=memory_messages)
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(prepended_messages=list(memory_messages))
     normalizer_overrides = _make_normalizer_overrides(send_context=target_context)
@@ -600,7 +600,7 @@ async def test_non_editable_target_preserves_system_history_and_multimodal_live_
         ]
     )
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [system_message]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[system_message])
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(prepended_messages=[system_message])
     normalizer_overrides = _make_normalizer_overrides(send_context=target_context)
@@ -637,7 +637,7 @@ async def test_editable_history_override_runs_before_system_prompt_adaptation():
     prepended = _make_message(role="system", content="system")
     live_request = _make_message(role="user", content="live")
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(
         prepended_messages=[prepended],
@@ -690,7 +690,7 @@ async def test_first_turn_normalization_preserves_live_multimodal_piece_order():
     )
     mock_memory = MagicMock(spec=MemoryInterface)
     prepended = _make_message(role="user", content="prepended")
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(prepended_messages=[prepended])
     normalizer_overrides = _make_normalizer_overrides(send_context=target_context)
@@ -743,7 +743,7 @@ async def test_history_squash_does_not_restore_adapted_json_schema_metadata():
         ]
     )
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(prepended_messages=[prepended])
 
@@ -775,7 +775,7 @@ async def test_custom_normalizer_output_metadata_is_authoritative():
     normalizer = MagicMock(spec=MessageListNormalizer)
     normalizer.normalize_async = AsyncMock(return_value=[replacement])
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     result = await target._get_normalized_conversation_async(
@@ -802,10 +802,12 @@ async def test_prepended_history_adapter_is_used_only_when_explicitly_passed():
     second_live = _make_message(role="user", content="second live")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.side_effect = [
-        [prepended],
-        [prepended, prior_live, prior_response],
-    ]
+    mock_memory.get_conversation_messages_async = AsyncMock(
+        side_effect=[
+            [prepended],
+            [prepended, prior_live, prior_response],
+        ]
+    )
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(
         prepended_messages=[prepended],
@@ -840,10 +842,12 @@ async def test_non_editable_multi_turn_target_retains_history_after_response():
     second_live = _make_message(role="user", content="second live")
     prior_response = _make_message(role="assistant", content="first response")
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.side_effect = [
-        [prepended],
-        [prepended, first_live, prior_response],
-    ]
+    mock_memory.get_conversation_messages_async = AsyncMock(
+        side_effect=[
+            [prepended],
+            [prepended, first_live, prior_response],
+        ]
+    )
     target._memory = mock_memory
     target._send_prompt_to_target_async = AsyncMock(  # type: ignore[method-assign]
         return_value=[_make_message(role="assistant", content="response")]
@@ -883,10 +887,12 @@ async def test_stateless_target_replays_only_seed_and_current_request():
     first_response = _make_message(role="assistant", content="first response")
     second_live = _make_message(role="user", content="second live")
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.side_effect = [
-        [prepended],
-        [prepended, first_live, first_response],
-    ]
+    mock_memory.get_conversation_messages_async = AsyncMock(
+        side_effect=[
+            [prepended],
+            [prepended, first_live, first_response],
+        ]
+    )
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(prepended_messages=[prepended])
 
@@ -918,10 +924,12 @@ async def test_stateful_target_consumes_seed_after_provider_outcome(response_err
     provider_response.get_piece().response_error = response_error
     second_live = _make_message(role="user", content="second live")
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.side_effect = [
-        [prepended],
-        [prepended, first_live, provider_response],
-    ]
+    mock_memory.get_conversation_messages_async = AsyncMock(
+        side_effect=[
+            [prepended],
+            [prepended, first_live, provider_response],
+        ]
+    )
     target._memory = mock_memory
     target._send_prompt_to_target_async = AsyncMock(  # type: ignore[method-assign]
         side_effect=[[provider_response], [_make_message(role="assistant", content="second response")]]
@@ -953,7 +961,7 @@ async def test_non_editable_target_uses_custom_prepended_formatter():
     target._configuration = TargetConfiguration(capabilities=TargetCapabilities())
     mock_memory = MagicMock(spec=MemoryInterface)
     prepended = _make_message(role="user", content="prepended")
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     formatter = MagicMock(spec=MessageStringNormalizer)
     formatter.normalize_string_async = AsyncMock(return_value="CUSTOM HISTORY")
@@ -984,7 +992,7 @@ async def test_non_editable_target_rejects_non_text_converted_prepended_history(
         ComponentIdentifier(class_name="ImageConverter", class_module="tests")
     ]
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(prepended_messages=[prepended])
     normalizer_overrides = _make_normalizer_overrides(send_context=target_context)
@@ -1014,7 +1022,7 @@ async def test_non_editable_target_rejects_same_modality_non_text_conversion():
         ]
     )
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(prepended_messages=[prepended])
     normalizer_overrides = _make_normalizer_overrides(send_context=target_context)
@@ -1045,7 +1053,7 @@ async def test_non_editable_target_allows_preexisting_non_text_history_with_conv
         ]
     )
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(prepended_messages=[prepended])
     normalizer_overrides = _make_normalizer_overrides(send_context=target_context)
@@ -1078,7 +1086,7 @@ async def test_non_editable_target_warns_when_non_text_history_becomes_a_placeho
         ]
     )
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(prepended_messages=[prepended])
 
@@ -1099,7 +1107,7 @@ async def test_target_normalization_failure_can_be_retried():
     target._configuration = TargetConfiguration(capabilities=TargetCapabilities())
     mock_memory = MagicMock(spec=MemoryInterface)
     prepended = _make_message(role="user", content="prepended")
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     formatter = MagicMock(spec=MessageStringNormalizer)
     formatter.normalize_string_async = AsyncMock(side_effect=[ValueError("format failed"), "formatted request"])
@@ -1158,7 +1166,9 @@ async def test_prompt_normalizer_retry_excludes_persisted_processing_exchange():
         "successful response",
         "retry",
     ]
-    persisted = list(CentralMemory.get_memory_instance().get_conversation_messages(conversation_id=conversation_id))
+    persisted = list(
+        await CentralMemory.get_memory_instance().get_conversation_messages_async(conversation_id=conversation_id)
+    )
     processing_index = next(
         index for index, message in enumerate(persisted) if message.get_piece().response_error == "processing"
     )
@@ -1230,7 +1240,7 @@ async def test_target_normalization_cancellation_propagates():
     target._configuration = TargetConfiguration(capabilities=TargetCapabilities())
     mock_memory = MagicMock(spec=MemoryInterface)
     prepended = _make_message(role="user", content="prepended")
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     formatter = MagicMock(spec=MessageStringNormalizer)
     formatter.normalize_string_async = AsyncMock(side_effect=asyncio.CancelledError())
@@ -1256,7 +1266,7 @@ async def test_rate_limit_cancellation_retains_stateful_seed_after_target_invoca
     target._configuration = TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True))
     mock_memory = MagicMock(spec=MemoryInterface)
     prepended = _make_message(role="user", content="prepended")
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     target_context = _make_prepended_history_send_context(
         prepended_messages=[prepended],
@@ -1292,7 +1302,7 @@ async def test_target_failure_retains_stateful_seed_after_normalization():
     target._configuration = TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True))
     mock_memory = MagicMock(spec=MemoryInterface)
     prepended = _make_message(role="user", content="prepended")
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     target._send_prompt_to_target_async = AsyncMock(side_effect=RuntimeError("provider failed"))  # type: ignore[method-assign]
     target_context = _make_prepended_history_send_context(
@@ -1319,10 +1329,12 @@ async def test_target_cancellation_retains_stateful_seed_and_releases_context():
     first_live = _make_message(role="user", content="first live")
     second_live = _make_message(role="user", content="second live")
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.side_effect = [
-        [prepended],
-        [prepended, first_live],
-    ]
+    mock_memory.get_conversation_messages_async = AsyncMock(
+        side_effect=[
+            [prepended],
+            [prepended, first_live],
+        ]
+    )
     target._memory = mock_memory
     target_started = asyncio.Event()
     target_release = asyncio.Event()
@@ -1372,7 +1384,7 @@ async def test_concurrent_sends_with_one_context_are_rejected():
     target._configuration = TargetConfiguration(capabilities=TargetCapabilities())
     mock_memory = MagicMock(spec=MemoryInterface)
     prepended = _make_message(role="user", content="prepended")
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     started = asyncio.Event()
     release = asyncio.Event()
@@ -1418,7 +1430,7 @@ async def test_tokenizer_formatter_receives_live_request_before_generation_promp
     target._configuration = TargetConfiguration(capabilities=TargetCapabilities())
     mock_memory = MagicMock(spec=MemoryInterface)
     prepended = _make_message(role="user", content="prepended")
-    mock_memory.get_conversation_messages.return_value = [prepended]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[prepended])
     target._memory = mock_memory
     tokenizer = MagicMock()
     tokenizer.apply_chat_template.return_value = "TOKENIZED REQUEST"

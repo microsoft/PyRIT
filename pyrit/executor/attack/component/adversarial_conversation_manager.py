@@ -624,7 +624,7 @@ class _AdversarialConversationManager:
         """The single response JSON schema every reply is validated against."""
         return self._response_json_schema
 
-    def set_adversarial_system_prompt(self, **extra_render_values: object) -> None:
+    async def set_adversarial_system_prompt_async(self, **extra_render_values: object) -> None:
         """
         Render and set the adversarial system prompt on this manager's conversation.
 
@@ -649,9 +649,10 @@ class _AdversarialConversationManager:
         )
         if not rendered:
             raise ValueError("Adversarial chat system prompt must be defined")
-        self._adversarial_target.set_system_prompt(
-            system_prompt=rendered,
-            conversation_id=self._conversation_id,
+        (
+            await self._adversarial_target.set_system_prompt_async(
+                system_prompt=rendered, conversation_id=self._conversation_id
+            )
         )
 
     def _render_first_message(self) -> str:

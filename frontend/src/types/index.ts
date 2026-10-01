@@ -167,6 +167,12 @@ export interface ChatSendOutcome {
   clearDraft: boolean
 }
 
+/** A filter choice: the value it selects and the text shown for it. */
+export interface FilterOption {
+  value: string
+  label: string
+}
+
 // ============================================================================
 // Backend DTO Types (mirror pyrit/backend/models)
 // ============================================================================

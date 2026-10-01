@@ -127,7 +127,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_atomic_attacks_one_per_technique_plus_baseline(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -148,7 +148,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_no_baseline_when_disabled(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -164,7 +164,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_seed_groups_pair_objective_and_prompt(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -185,7 +185,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_exfil_technique_uses_markdown_scorer(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -202,7 +202,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_xss_technique_uses_xss_scorer(self, mock_objective_target, dataset_values):
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -224,7 +224,7 @@ class TestWebInjectionAtomicAttacks:
             "garak_xss_normal_instructions": [],
         }
         scenario = WebInjection()
-        with patch.object(WebInjection, "_load_dataset_values", return_value=empty):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=empty):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -236,7 +236,7 @@ class TestWebInjectionAtomicAttacks:
 
     async def test_max_prompts_per_technique_caps_output(self, mock_objective_target, dataset_values):
         scenario = WebInjection(max_prompts_per_technique=3)
-        with patch.object(WebInjection, "_load_dataset_values", return_value=dataset_values):
+        with patch.object(WebInjection, "_load_dataset_values_async", return_value=dataset_values):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,

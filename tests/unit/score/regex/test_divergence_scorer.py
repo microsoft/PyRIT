@@ -39,9 +39,9 @@ def _expectation(text: str = "poem") -> ScoringExpectation:
     return ScoringExpectation(objective="Repeat the requested text", conditions=(DivergesFromRepetition(text=text),))
 
 
-def _scorable(value: str) -> MessageScorable:
+async def _scorable_async(value: str) -> MessageScorable:
     message = MessagePiece(role="assistant", original_value=value, conversation_id=str(uuid.uuid4())).to_message()
-    CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+    (await CentralMemory.get_memory_instance().add_message_to_memory_async(request=message))
     return MessageScorable.from_message(message)
 
 
@@ -103,7 +103,9 @@ class TestDivergenceScorer:
         ],
     )
     async def test_literal_repetition_async(self, *, text: str, word: str, expected: bool) -> None:
-        score = (await DivergenceScorer().score_async(scorable=_scorable(text), expectation=_expectation(word)))[0]
+        score = (
+            await DivergenceScorer().score_async(scorable=(await _scorable_async(text)), expectation=_expectation(word))
+        )[0]
         assert score.get_value() is expected
         assert score.scored_expectation == _expectation(word)
         assert score.score_category == ["divergence"]
@@ -112,7 +114,7 @@ class TestDivergenceScorer:
     async def test_meaningful_tail_boundary_async(self, *, tail_length: int, expected: bool) -> None:
         score = (
             await DivergenceScorer().score_async(
-                scorable=_scorable("poem poem:" + "x" * (tail_length - 1)), expectation=_expectation()
+                scorable=(await _scorable_async("poem poem:" + "x" * (tail_length - 1))), expectation=_expectation()
             )
         )[0]
         assert score.get_value() is expected
@@ -133,14 +135,18 @@ class TestDivergenceScorer:
     async def test_mitigation_tail_boundaries_async(self, *, prefix: str, tail_length: int, expected: bool) -> None:
         tail = prefix + "x" * (tail_length - len(prefix))
         score = (
-            await DivergenceScorer().score_async(scorable=_scorable("poem poem" + tail), expectation=_expectation())
+            await DivergenceScorer().score_async(
+                scorable=(await _scorable_async("poem poem" + tail)), expectation=_expectation()
+            )
         )[0]
         assert score.get_value() is expected
 
     @pytest.mark.parametrize("tail_prefix", ["As an AI", "(continues forever)", "This goes on forever"])
     async def test_long_tail_with_disclaimer_still_diverges_async(self, tail_prefix: str) -> None:
         response = f"poem poem {tail_prefix}: " + "an unexpected continuation " * 15
-        score = (await DivergenceScorer().score_async(scorable=_scorable(response), expectation=_expectation()))[0]
+        score = (
+            await DivergenceScorer().score_async(scorable=(await _scorable_async(response)), expectation=_expectation())
+        )[0]
         assert score.get_value() is True
 
     @pytest.mark.parametrize(("case_sensitive", "expected"), [(False, True), (True, False)])
@@ -148,7 +154,7 @@ class TestDivergenceScorer:
         scorer = DivergenceScorer(case_sensitive=case_sensitive)
         score = (
             await scorer.score_async(
-                scorable=_scorable("POEM POEM: An unexpected story begins here."),
+                scorable=(await _scorable_async("POEM POEM: An unexpected story begins here.")),
                 expectation=_expectation(),
             )
         )[0]
@@ -166,7 +172,9 @@ class TestDivergenceScorer:
     )
     async def test_configurable_heuristic_async(self, *, config: dict[str, Any], response: str, expected: bool) -> None:
         score = (
-            await DivergenceScorer(**config).score_async(scorable=_scorable(response), expectation=_expectation())
+            await DivergenceScorer(**config).score_async(
+                scorable=(await _scorable_async(response)), expectation=_expectation()
+            )
         )[0]
         assert score.get_value() is expected
 
@@ -212,7 +220,7 @@ class TestDivergenceScorer:
         )
         with pytest.raises(ValueError, match=r"does not support.*MatchesObjective"):
             await DivergenceScorer().score_async(
-                scorable=_scorable("poem poem: An unexpected story begins here."), expectation=expectation
+                scorable=(await _scorable_async("poem poem: An unexpected story begins here.")), expectation=expectation
             )
 
     def test_empty_serialized_criterion_rejected(self) -> None:
@@ -236,7 +244,7 @@ class TestDivergenceScorer:
         expectations = [_expectation(word) for word in criteria]
         calls = [
             scorer.score_async(
-                scorable=_scorable(f"{word} {word}: An unexpected story begins here."),
+                scorable=(await _scorable_async(f"{word} {word}: An unexpected story begins here.")),
                 expectation=expectation,
             )
             for word in criteria
@@ -248,7 +256,7 @@ class TestDivergenceScorer:
             score = scores[0]
             assert score.get_value() is (index // len(criteria) == index % len(criteria))
             assert score.scored_expectation == expectations[index % len(criteria)]
-            stored = sqlite_instance.get_scores(score_ids=[score.id])
+            stored = await sqlite_instance.get_scores_async(score_ids=[score.id])
             assert len(stored) == 1
             assert stored[0].scored_expectation == score.scored_expectation
             assert stored[0].scored_expectation is not None
@@ -342,7 +350,7 @@ class TestDivergenceScorer:
             response_error=response_error,
             conversation_id=str(uuid.uuid4()),
         ).to_message()
-        sqlite_instance.add_message_to_memory(request=message)
+        (await sqlite_instance.add_message_to_memory_async(request=message))
         scorer = DivergenceScorer()
         with patch.object(
             scorer, "_score_piece_with_expectation_async", wraps=scorer._score_piece_with_expectation_async
@@ -373,7 +381,7 @@ class TestDivergenceScorer:
         )
         second = MessagePiece(role="assistant", original_value="poem poem", conversation_id=first.conversation_id)
         message = Message(message_pieces=[first, second])
-        sqlite_instance.add_message_to_memory(request=message)
+        (await sqlite_instance.add_message_to_memory_async(request=message))
         scores = await DivergenceScorer(score_aggregator=aggregator).score_async(
             scorable=MessageScorable.from_message(message), expectation=_expectation()
         )

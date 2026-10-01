@@ -5,10 +5,11 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import store_message
+from unit.mocks import store_message_async
 
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, ContentScorable, Message, MessagePiece, Score
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, MessageScorable
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -125,7 +126,7 @@ async def test_float_scale_threshold_scorer_adds_to_memory(threshold, score_valu
         assert binary_score.score_type == "true_false"
         assert binary_score.score_value_description == "A mock description"
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()
 
 
 async def test_float_scale_threshold_scorer_returns_single_score_with_multi_category_scorer():
@@ -198,8 +199,8 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
         assert binary_score.score_type == "true_false"
 
         # Verify memory was called once with a single score
-        memory.add_scores_to_memory.assert_called_once()
-        added_scores = memory.add_scores_to_memory.call_args[1]["scores"]
+        memory.add_scores_to_memory_async.assert_called_once()
+        added_scores = memory.add_scores_to_memory_async.call_args[1]["scores"]
         assert len(added_scores) == 1
 
 
@@ -300,7 +301,7 @@ async def test_float_scale_threshold_scorer_propagates_empty_scores():
         result_scores = await float_scale_threshold_scorer.score_text_async(text="mock example")
 
         assert result_scores == []
-        memory.add_scores_to_memory.assert_not_called()
+        memory.add_scores_to_memory_async.assert_not_called()
 
 
 async def test_float_scale_threshold_scorer_bypasses_raise_on_empty_aggregator():
@@ -326,12 +327,12 @@ async def test_float_scale_threshold_scorer_bypasses_raise_on_empty_aggregator()
         result_scores = await float_scale_threshold_scorer.score_text_async(text="mock example")
 
         assert result_scores == []
-        memory.add_scores_to_memory.assert_not_called()
+        memory.add_scores_to_memory_async.assert_not_called()
 
 
 def test_get_chat_target_delegates_to_wrapped_scorer():
     """get_chat_target returns the chat target from the wrapped scorer."""
-    mock_target = MagicMock()
+    mock_target = MagicMock(spec=PromptTarget)
     scorer = MagicMock()
     scorer.get_chat_target.return_value = mock_target
     scorer.get_identifier = MagicMock(return_value=ComponentIdentifier(class_name="Mock", class_module="test"))
@@ -393,7 +394,9 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     )
     blocked_message = Message(message_pieces=[blocked_piece])
 
-    scores = await threshold_scorer.score_async(scorable=MessageScorable.from_message(store_message(blocked_message)))
+    scores = await threshold_scorer.score_async(
+        scorable=MessageScorable.from_message(await store_message_async(blocked_message))
+    )
 
     assert len(scores) == 1
     binary_score = scores[0]
@@ -402,9 +405,9 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     assert "Normalized scale score: 0.0" in binary_score.score_rationale
 
     memory = CentralMemory.get_memory_instance()
-    persisted_scores = memory.get_scores(score_type="true_false")
+    persisted_scores = await memory.get_scores_async(score_type="true_false")
     assert len(persisted_scores) == 1
-    assert memory.get_scores(score_type="float_scale") == []
+    assert (await memory.get_scores_async(score_type="float_scale")) == []
 
 
 @pytest.mark.parametrize("threshold", [float("nan"), float("inf"), float("-inf"), 0.0, -0.5, 1.5])

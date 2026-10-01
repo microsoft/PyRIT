@@ -619,7 +619,7 @@ class WebSocketCopilotTarget(PromptTarget):
                         f"Detected MIME type: {mime_type}."
                     )
 
-    def _is_start_of_session(self, *, conversation_id: str) -> bool:
+    async def _is_start_of_session_async(self, *, conversation_id: str) -> bool:
         """
         Determine if this is the first message in a PyRIT conversation.
 
@@ -632,7 +632,7 @@ class WebSocketCopilotTarget(PromptTarget):
         Returns:
             bool: True if no prior messages exist in this conversation, False otherwise.
         """
-        conversation_history = self._memory.get_conversation_messages(conversation_id=conversation_id)
+        conversation_history = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
         return len(conversation_history) == 0
 
     def _generate_consistent_copilot_ids(self, *, pyrit_conversation_id: str) -> tuple[str, str]:
@@ -684,7 +684,7 @@ class WebSocketCopilotTarget(PromptTarget):
         pyrit_conversation_id = message.message_pieces[0].conversation_id
         if not pyrit_conversation_id:
             raise ValueError("WebSocketCopilotTarget requires a conversation_id on the message being sent.")
-        is_start_of_session = self._is_start_of_session(conversation_id=pyrit_conversation_id)
+        is_start_of_session = await self._is_start_of_session_async(conversation_id=pyrit_conversation_id)
 
         session_id, copilot_conversation_id = self._generate_consistent_copilot_ids(
             pyrit_conversation_id=pyrit_conversation_id

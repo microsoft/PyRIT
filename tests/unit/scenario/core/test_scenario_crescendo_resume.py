@@ -314,8 +314,8 @@ async def test_crescendo_scenario_retry_and_resume_use_real_components_without_s
         patch("asyncio.sleep", new_callable=AsyncMock) as sleep_mock,
         patch.object(
             memory,
-            "update_scenario_run_state",
-            wraps=memory.update_scenario_run_state,
+            "update_scenario_run_state_async",
+            wraps=memory.update_scenario_run_state_async,
         ) as update_state,
     ):
         await first_scenario.initialize_async()
@@ -324,7 +324,7 @@ async def test_crescendo_scenario_retry_and_resume_use_real_components_without_s
 
         scenario_result_id = first_scenario._scenario_result_id
         assert scenario_result_id is not None
-        failed_result = memory.get_scenario_results(scenario_result_ids=[scenario_result_id])[0]
+        failed_result = (await memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id]))[0]
         assert failed_result.scenario_run_state == ScenarioRunState.FAILED
         assert failed_result.number_tries == 2
         assert [result.outcome for result in failed_result.attack_results[_ATOMIC_ATTACK_NAME]] == [
@@ -375,7 +375,7 @@ async def test_crescendo_scenario_retry_and_resume_use_real_components_without_s
     assert recovered_result.last_score.objective == _OBJECTIVE_B
     assert recovered_result.last_score.message_piece_id == recovered_result.last_response.id
 
-    timeout_messages = memory.get_conversation_messages(conversation_id=timeout_result.conversation_id)
+    timeout_messages = await memory.get_conversation_messages_async(conversation_id=timeout_result.conversation_id)
     assert [message.api_role for message in timeout_messages] == ["user", "assistant"]
     assert timeout_messages[0].get_value() == "B timeout prompt"
     assert timeout_messages[1].get_piece().response_error == "processing"
@@ -385,8 +385,10 @@ async def test_crescendo_scenario_retry_and_resume_use_real_components_without_s
     adversarial_conversations = recovered_result.get_conversations_by_type(ConversationType.ADVERSARIAL)
     assert len(pruned_conversations) == 1
     assert len(adversarial_conversations) == 1
-    pruned_messages = memory.get_conversation_messages(conversation_id=pruned_conversations[0].conversation_id)
-    recovered_messages = memory.get_conversation_messages(conversation_id=recovered_result.conversation_id)
+    pruned_messages = await memory.get_conversation_messages_async(
+        conversation_id=pruned_conversations[0].conversation_id
+    )
+    recovered_messages = await memory.get_conversation_messages_async(conversation_id=recovered_result.conversation_id)
     assert [message.get_value() for message in pruned_messages] == ["B refused prompt", _REFUSAL]
     assert [message.get_value() for message in recovered_messages] == ["B recovery prompt", "RECOVERED B"]
 
@@ -398,7 +400,7 @@ async def test_crescendo_scenario_retry_and_resume_use_real_components_without_s
     assert malformed_conversation is not None
     assert len(malformed_conversation.retries) == 1
     assert malformed_conversation.retries[0].reason == ConversationRetryReason.JSON_PARSING
-    malformed_messages = memory.get_conversation_messages(
+    malformed_messages = await memory.get_conversation_messages_async(
         conversation_id=malformed_adversarial[0].conversation_id,
     )
     assert [message.api_role for message in malformed_messages] == ["system", "user", "assistant"]
@@ -454,7 +456,7 @@ async def test_crescendo_scenario_retry_and_resume_use_real_components_without_s
     assert "conversation_objective: B recovery prompt" in scorer_inputs[2]
     assert "response_to_evaluate_input: RECOVERED B" in scorer_inputs[2]
 
-    all_pieces = memory.get_message_pieces()
+    all_pieces = await memory.get_message_pieces_async()
     assert len({piece.id for piece in all_pieces}) == len(all_pieces)
     assert len({piece.conversation_id for piece in recovered_messages}) == 1
     assert len({piece.conversation_id for piece in pruned_messages}) == 1
@@ -614,8 +616,8 @@ async def test_crescendo_scenario_cancellation_preserves_progress_and_resumes_on
         patch("asyncio.sleep", new_callable=AsyncMock) as sleep_mock,
         patch.object(
             memory,
-            "update_scenario_run_state",
-            wraps=memory.update_scenario_run_state,
+            "update_scenario_run_state_async",
+            wraps=memory.update_scenario_run_state_async,
         ) as update_state,
     ):
         await first_scenario.initialize_async()
@@ -637,15 +639,19 @@ async def test_crescendo_scenario_cancellation_preserves_progress_and_resumes_on
         assert first_teardown.await_count == 2
         scenario_result_id = first_scenario._scenario_result_id
         assert scenario_result_id is not None
-        cancelled_result = memory.get_scenario_results(scenario_result_ids=[scenario_result_id])[0]
+        cancelled_result = (await memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id]))[0]
         assert cancelled_result.scenario_run_state == ScenarioRunState.CANCELLED
         assert cancelled_result.number_tries == 1
         assert [result.objective for result in cancelled_result.attack_results[_ATOMIC_ATTACK_NAME]] == [_OBJECTIVE_A]
-        assert memory.get_attack_results(objective=_OBJECTIVE_B) == []
+        assert (await memory.get_attack_results_async(objective=_OBJECTIVE_B)) == []
 
-        partial_piece = next(piece for piece in memory.get_message_pieces() if piece.original_value == "B progress 4")
+        partial_piece = next(
+            piece for piece in (await memory.get_message_pieces_async()) if piece.original_value == "B progress 4"
+        )
         partial_conversation_id = partial_piece.conversation_id
-        partial_piece_ids = {piece.id for piece in memory.get_message_pieces(conversation_id=partial_conversation_id)}
+        partial_piece_ids = {
+            piece.id for piece in (await memory.get_message_pieces_async(conversation_id=partial_conversation_id))
+        }
 
         resumed_scenario = _build_scenario(
             objective_target=objective_target,
@@ -681,12 +687,13 @@ async def test_crescendo_scenario_cancellation_preserves_progress_and_resumes_on
     assert objective_b_result.conversation_id != partial_conversation_id
     assert objective_b_result.last_response and objective_b_result.last_response.converted_value == "RECOVERED B"
     assert partial_piece_ids <= {
-        piece.id for piece in memory.get_message_pieces(conversation_id=partial_conversation_id)
+        piece.id for piece in (await memory.get_message_pieces_async(conversation_id=partial_conversation_id))
     }
-    resumed_messages = memory.get_conversation_messages(conversation_id=objective_b_result.conversation_id)
+    resumed_messages = await memory.get_conversation_messages_async(conversation_id=objective_b_result.conversation_id)
     assert [message.get_value() for message in resumed_messages] == ["B resumed prompt", "RECOVERED B"]
     assert [
-        message.get_value() for message in memory.get_conversation_messages(conversation_id=partial_conversation_id)
+        message.get_value()
+        for message in (await memory.get_conversation_messages_async(conversation_id=partial_conversation_id))
     ] == [
         "B prompt 1",
         "B progress 1",

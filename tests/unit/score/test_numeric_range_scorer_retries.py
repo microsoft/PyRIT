@@ -10,6 +10,7 @@ from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import InsecureCodeScorer, NumericRange, NumericRubric, SelfAskScaleScorer
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
 
@@ -53,7 +54,7 @@ async def test_out_of_range_score_on_every_attempt_raises_after_retries(
             )
         ]
     )
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[response])
     scorer = build_scorer(chat_target)

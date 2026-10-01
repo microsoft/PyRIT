@@ -31,7 +31,6 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import (
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
-    from pyrit.scenario.core import ScenarioTechnique
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import TrueFalseScorer
 
@@ -236,7 +235,7 @@ class Multilingual(Scenario):
         dataset = SeedDataset.from_yaml_file(cls._DEFAULT_LANGUAGES_SEED_PROMPT_PATH)
         return [str(seed.value) for seed in dataset.seeds]
 
-    def _resolve_languages(self) -> list[str]:
+    async def _resolve_languages_async(self) -> list[str]:
         """
         Resolve the languages for this run, replaying the persisted set on resume.
 
@@ -253,7 +252,7 @@ class Multilingual(Scenario):
             or if ``num_languages`` is out of bounds.
         """
         if self._scenario_result_id is not None:
-            stored = self._memory.get_scenario_results(scenario_result_ids=[self._scenario_result_id])
+            stored = await self._memory.get_scenario_results_async(scenario_result_ids=[self._scenario_result_id])
             if stored:
                 persisted = (stored[0].metadata or {}).get(_LANGUAGES_METADATA_KEY)
                 if persisted:
@@ -306,7 +305,7 @@ class Multilingual(Scenario):
                 "Scenario not properly initialized. Call await scenario.initialize_async() before running."
             )
 
-        self._resolved_languages = self._resolve_languages()
+        self._resolved_languages = await self._resolve_languages_async()
         adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
         strategies = set(self.params.get("translation_strategies") or [_TRANSLATION, _RANDOM_TRANSLATION])
         technique_factories = resolve_technique_factories(
