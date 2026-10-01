@@ -234,6 +234,7 @@ export interface TargetPreferences {
 
 export interface UserPreferences {
   readonly targets: TargetPreferences
+  readonly hiddenTargetRegistryNames: string[]
   readonly labels: Record<string, string | null>
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean

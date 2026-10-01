@@ -49,6 +49,9 @@ export const useTargetTableStyles = makeStyles({
     overflowWrap: 'anywhere',
     wordBreak: 'break-word',
   },
+  hiddenRow: {
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
   endpointCell: {
     overflowWrap: 'break-word',
     wordBreak: 'break-all',
@@ -103,6 +106,9 @@ export const useTargetTableStyles = makeStyles({
   helpHeader: {
     cursor: 'help',
   },
+  visibilityControls: {
+    marginBottom: tokens.spacingVerticalS,
+  },
   noMatchState: {
     display: 'flex',
     flexDirection: 'column',
@@ -111,6 +117,9 @@ export const useTargetTableStyles = makeStyles({
     padding: tokens.spacingVerticalXXXL,
     textAlign: 'center',
     color: tokens.colorNeutralForeground3,
+  },
+  actionCell: {
+    width: '100px',
   },
   rowAction: {
     ...mobileTouchTarget,
