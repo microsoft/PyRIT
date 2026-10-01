@@ -124,7 +124,7 @@ print(f"Missing tool after controlled completion: {negative.get_value()}")
 # have their stricter, original-expectation replay rules.
 
 # %%
-saved = memory.get_observations(observation_ids=negative.observation_ids)[0]
+saved = (await memory.get_observations_async(observation_ids=negative.observation_ids))[0]
 assert saved.scorable == scope
 before_replay = saved.model_dump_json()
 await asyncio.to_thread(provider.shutdown)  # type: ignore
@@ -133,7 +133,9 @@ client.close()
 replayed = (await scorer.score_observation_async(observation=saved, expectation=expects("my_tool_call")))[0]  # type: ignore
 assert replayed.get_value() is True
 assert replayed.observation_ids == negative.observation_ids
-assert memory.get_observations(observation_ids=negative.observation_ids)[0].model_dump_json() == before_replay
+assert (await memory.get_observations_async(observation_ids=negative.observation_ids))[
+    0
+].model_dump_json() == before_replay
 print(f"my_tool_call in saved evidence after capture is closed: {replayed.get_value()}")
 
 # %% [markdown]
@@ -225,7 +227,7 @@ result = await composite_attack.execute_async(  # type: ignore
 )
 assert result.outcome is AttackOutcome.SUCCESS
 print(f"Message and tool evidence: {result.outcome.value}")
-saved = memory.get_observations(observation_ids=result.automated_score.observation_ids)[0]
+saved = (await memory.get_observations_async(observation_ids=result.automated_score.observation_ids))[0]
 await asyncio.to_thread(provider.shutdown)  # type: ignore
 client.close()
 replayed = (  # type: ignore
@@ -233,7 +235,7 @@ replayed = (  # type: ignore
 )[0]
 assert replayed.get_value() is True
 print(f"Saved attack tool evidence: {replayed.get_value()}")
-memory.dispose_engine()
+(await memory.dispose_engine_async())
 
 # %% [markdown]
 # ## Configure tracing

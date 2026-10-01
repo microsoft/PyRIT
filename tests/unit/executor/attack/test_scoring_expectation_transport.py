@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from unit.mocks import MockPromptTarget, store_message
+from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.exceptions import (
     ComponentRole,
@@ -209,10 +209,10 @@ class TestExecutionExpectationTransport:
 
         effective = supplied.model_copy(update={"objective": "attack objective"})
         assert result.last_response is not None
-        [stored] = sqlite_instance.get_scores(score_type="true_false")
+        [stored] = await sqlite_instance.get_scores_async(score_type="true_false")
         assert stored.scored_expectation == effective
         assert stored.scorable == MessageScorable(message_piece_ids=(result.last_response.id,))
-        [stored_result] = sqlite_instance.get_attack_results(objective="attack objective")
+        [stored_result] = await sqlite_instance.get_attack_results_async(objective="attack objective")
         assert stored_result.automated_score is not None
         assert stored_result.automated_score.id == stored.id
         assert stored_result.automated_score.scored_expectation == effective
@@ -490,7 +490,7 @@ class TestExecutionExpectationTransport:
         assert all("attack objective" in prompt and "scoring objective" not in prompt for prompt in target.prompt_sent)
         assert objective.calls == [(ContentScorable(value="default\ndefault"), supplied)]
         assert auxiliary.calls == objective.calls
-        scores = sqlite_instance.get_scores(score_type="true_false")
+        scores = await sqlite_instance.get_scores_async(score_type="true_false")
         assert len(scores) == 2
         assert all(isinstance(score.scorable, ContentEntryScorable) for score in scores)
         assert all(score.scored_expectation == supplied and score.message_piece_id is None for score in scores)
@@ -615,10 +615,12 @@ class TestExecutionExpectationTransport:
         assert on_topic.call_args.args == ("attack objective",)
         await node.send_prompt_async(objective=context.objective)
         if duplicate:
-            child = node.duplicate()
+            child = await node.duplicate_async()
             response = Message.from_prompt(prompt="branch response", role="assistant")
             response.get_piece().conversation_id = child.objective_target_conversation_id
-            await child._score_response_async(response=store_message(response), objective=context.objective)
+            await child._score_response_async(
+                response=(await store_message_async(response)), objective=context.objective
+            )
             node = child
 
         assert node.objective_score is not None

@@ -11,6 +11,7 @@ from openai import RateLimitError
 from unit.mocks import get_sample_conversations
 
 from pyrit.exceptions import EmptyResponseException, RateLimitException
+from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import AzureMLChatTarget
 
@@ -135,9 +136,9 @@ async def test_complete_chat_async_bad_json_response(aml_online_chat: AzureMLCha
 
 
 async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_chat: AzureMLChatTarget):
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     aml_online_chat._memory = mock_memory
 
@@ -152,16 +153,16 @@ async def test_send_prompt_async_bad_request_error_adds_to_memory(aml_online_cha
 
     with pytest.raises(HTTPStatusError) as bre:
         await aml_online_chat.send_prompt_async(message=message)
-        aml_online_chat._memory.get_conversation_messages.assert_called_once_with(conversation_id="123")
-        aml_online_chat._memory.add_message_to_memory.assert_called_once_with(request=message)
+        aml_online_chat._memory.get_conversation_messages_async.assert_called_once_with(conversation_id="123")
+        aml_online_chat._memory.add_message_to_memory_async.assert_called_once_with(request=message)
 
     assert str(bre.value) == "Bad Request"
 
 
 async def test_send_prompt_async_rate_limit_exception_adds_to_memory(aml_online_chat: AzureMLChatTarget):
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     aml_online_chat._memory = mock_memory
 
@@ -175,8 +176,8 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(aml_online_
 
     with pytest.raises(RateLimitException) as rle:
         await aml_online_chat.send_prompt_async(message=message)
-        aml_online_chat._memory.get_conversation_messages.assert_called_once_with(conversation_id="123")
-        aml_online_chat._memory.add_message_to_memory.assert_called_once_with(request=message)
+        aml_online_chat._memory.get_conversation_messages_async.assert_called_once_with(conversation_id="123")
+        aml_online_chat._memory.add_message_to_memory_async.assert_called_once_with(request=message)
 
     assert str(rle.value) == "Status Code: 429, Message: Rate Limit Exception"
 

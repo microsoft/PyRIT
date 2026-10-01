@@ -141,7 +141,7 @@ class VideoHelper:
 
     async def _score_frames_async(
         self, *, message_piece: MessagePiece, expectation: ScoringExpectation | None
-    ) -> list[Score]:
+    ) -> tuple[list[Score], int]:
         """
         Extract frames from video and score them.
 
@@ -150,7 +150,8 @@ class VideoHelper:
             expectation: Criteria forwarded to the frame scorer, with the objective template applied.
 
         Returns:
-            List of scores for the extracted frames.
+            Tuple of the scores for the extracted frames and the number of frames that were extracted.
+            The two are not the same length: a frame scorer may return more than one score per frame.
 
         Raises:
             FileNotFoundError: If the video file does not exist.
@@ -193,7 +194,7 @@ class VideoHelper:
 
         memory = CentralMemory.get_memory_instance()
         for request in image_requests:
-            memory.add_message_to_memory(request=request)
+            (await memory.add_message_to_memory_async(request=request))
 
         with _suppress_observation_collection():
             frame_scores = await self.image_scorer._score_batch_nested_async(
@@ -205,7 +206,7 @@ class VideoHelper:
         if not frame_scores:
             raise ValueError("No scores returned for image frames extracted from video.")
 
-        return frame_scores
+        return frame_scores, len(frames)
 
     def _extract_frames(self, video_path: str) -> list[str]:
         """
@@ -307,7 +308,7 @@ class VideoHelper:
 
             # Add to memory
             memory = CentralMemory.get_memory_instance()
-            memory.add_message_to_memory(request=audio_message)
+            (await memory.add_message_to_memory_async(request=audio_message))
 
             with _suppress_observation_collection():
                 audio_scores = await audio_scorer._score_batch_nested_async(

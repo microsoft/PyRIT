@@ -76,8 +76,10 @@ rollback_public_origin() {
         "namePrefix=$PYRIT_APP_NAME" "originHostName=$rollback_origin_host" \
         "tags=$deployment_tags" "enablePrivateLink=false" || true
     fi
-    local rollback_connections connection_id normalized_connection_id attempt
+    local rollback_connections connection_id normalized_connection_id
     local rollback_connection_count=-1
+    local rollback_poll_seconds=15
+    local rollback_deadline=$((SECONDS + 300))
     rollback_connections=$(az network private-endpoint-connection list \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME-env" \
       --type Microsoft.App/managedEnvironments -o json 2> /dev/null || true)
@@ -93,20 +95,23 @@ rollback_public_origin() {
         '.[] | select(.properties.privateLinkServiceConnectionState.description == $message) | .id' \
         <<< "$rollback_connections")
     fi
-    for attempt in {1..20}; do
+    while :; do
       rollback_connections=$(az network private-endpoint-connection list \
         --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME-env" \
         --type Microsoft.App/managedEnvironments -o json 2> /dev/null || true)
-      if [[ -z "$rollback_connections" ]]; then
+      if [[ -n "$rollback_connections" ]]; then
+        rollback_connection_count=$(jq --arg message "$private_link_request_message" \
+          '[.[] | select(.properties.privateLinkServiceConnectionState.description == $message)] | length' \
+          <<< "$rollback_connections")
+      else
         rollback_connection_count=-1
-        [[ "$attempt" -lt 20 ]] && sleep 15
-        continue
       fi
-      rollback_connection_count=$(jq --arg message "$private_link_request_message" \
-        '[.[] | select(.properties.privateLinkServiceConnectionState.description == $message)] | length' \
-        <<< "$rollback_connections")
-      [[ "$rollback_connection_count" == "0" ]] && break
-      [[ "$attempt" -lt 20 ]] && sleep 15
+      if [[ "$rollback_connection_count" == "0" ]]; then
+        break
+      fi
+      ((SECONDS + rollback_poll_seconds <= rollback_deadline)) || break
+      echo "Waiting for ACA private endpoint connection removal ($((rollback_deadline - SECONDS))s of budget remaining)"
+      sleep "$rollback_poll_seconds"
     done
     if [[ "$rollback_connection_count" != "0" ]]; then
       echo "##vso[task.logissue type=error]ACA private endpoint connection deletion was not confirmed; public access remains disabled and manual recovery is required"
