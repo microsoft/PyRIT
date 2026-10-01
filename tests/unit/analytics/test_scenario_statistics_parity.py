@@ -305,3 +305,27 @@ def test_historical_attempt_counts_stay_separate_from_units(sqlite_instance) -> 
     assert statistics.overall.errors == 2
     assert statistics.overall.retries == 2
     assert statistics.unattributed_attempts == 0
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="The history list rejects plans with two seed groups sharing an objective and falls back to legacy "
+    "totals, while run detail keeps using the plan. Known gap that predates the shared statistics.",
+)
+def test_ambiguous_objective_within_group_agrees_between_list_and_detail(sqlite_instance) -> None:
+    history = _History(
+        plan=_plan(
+            _group(name="attack", eval_hash="eval", seed_ids=["a", "b"]),
+            seeds=[_seed("a", "A"), _seed("b", "A")],
+        ),
+        attempts=[_Attempt("attack", "A", AttackOutcome.SUCCESS)],
+    )
+    scenario_result_id = _persist(sqlite_instance, history)
+
+    service = ScenarioRunService()
+    detail = service.get_run_from_storage(scenario_result_id=scenario_result_id, active_error=None)
+    [list_item] = [item for item in service.list_runs().items if item.scenario_result_id == scenario_result_id]
+
+    assert detail is not None
+    assert list_item.objective_achieved_rate == detail.objective_achieved_rate
+    assert list_item.completed_attacks == detail.completed_attacks
