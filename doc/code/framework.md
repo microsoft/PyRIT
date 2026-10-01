@@ -201,6 +201,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 **Attack Responsibility**: An attack is a type of executor, which manages conversations to achieve an objective.
 
+- A conversation created for an attack belongs to that execution. Reusing conversation history in another execution, child attack, or branch requires a copy with a new conversation ID.
+- Each attack execution has a unique `attack_result_id`.
 - Any branching decision (e.g. the next thing(s) to do is based on a previous result) should be an attack/executor.
 - Executors should always make use of other component's responsibilities. An executor should always branch based on a scorer and NOT a direct response. (e.g. was this prompt blocked? is a scorer responsibility, not an executor responsibility)
 - Executors should use scoring and target capabilities implicitly. Executors should support multi-modal.
