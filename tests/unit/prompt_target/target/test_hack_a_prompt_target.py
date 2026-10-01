@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_image_message_piece
 
+from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import HackAPromptChallenge, HackAPromptTarget
 
@@ -35,9 +36,8 @@ def message(*, value: str, conversation_id: str = "123") -> Message:
 
 
 def memory_holding(*, conversation: list[Message]) -> MagicMock:
-    memory = MagicMock()
-    memory.get_conversation_messages.return_value = conversation
-    memory.add_message_to_memory = AsyncMock()
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_conversation_messages_async.return_value = conversation
     return memory
 
 

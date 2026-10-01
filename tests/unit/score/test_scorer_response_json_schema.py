@@ -15,6 +15,7 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import COMMON_JSON_SCHEMAS, JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     ContentClassifier,
     ContentClassifierPaths,
@@ -33,7 +34,7 @@ SCALE_SCHEMA = COMMON_JSON_SCHEMAS["scale_with_rationale"]
 
 
 def _mock_target(json_response: str) -> MagicMock:
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(
         return_value=[Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])]

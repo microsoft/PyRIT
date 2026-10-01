@@ -27,7 +27,6 @@ Inline configs (``seeds=`` / ``seed_groups=``) never touch memory.
 
 from __future__ import annotations
 
-import asyncio
 import random
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -490,13 +489,7 @@ class DatasetConfiguration:
             DatasetConstraintError: If the dataset yields no seeds even after auto-fetch, or
                 if auto-fetch itself fails (the provider error is chained as the cause).
         """
-        found = list(
-            await asyncio.to_thread(
-                self._memory.get_seeds,
-                dataset_name=dataset_name,
-                **self._get_seeds_filters,
-            )
-        )
+        found = list(await self._memory.get_seeds_async(dataset_name=dataset_name, **self._get_seeds_filters))
         auto_fetch_allowed = self._auto_fetch and _AUTO_FETCH_ALLOWED.get()
         if not found and auto_fetch_allowed:
             try:
@@ -505,17 +498,9 @@ class DatasetConfiguration:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' could not be loaded: auto-fetch from the registered provider failed."
                 ) from exc
-            found = list(
-                await asyncio.to_thread(
-                    self._memory.get_seeds,
-                    dataset_name=dataset_name,
-                    **self._get_seeds_filters,
-                )
-            )
+            found = list(await self._memory.get_seeds_async(dataset_name=dataset_name, **self._get_seeds_filters))
         if not found:
-            unfiltered = (
-                await asyncio.to_thread(self._memory.get_seeds, dataset_name=dataset_name) if self._filters else []
-            )
+            unfiltered = await self._memory.get_seeds_async(dataset_name=dataset_name) if self._filters else []
             if unfiltered:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' has seeds, but none match the configured filters {self._filters}."

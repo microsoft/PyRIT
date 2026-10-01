@@ -655,7 +655,7 @@ class TestHarmbenchMetadataInScenario:
         )
 
         # Verify seeds are queryable from memory (this is what scenarios do)
-        seed_groups = sqlite_instance.get_seed_groups(dataset_name="harmbench")
+        seed_groups = await sqlite_instance.get_seed_groups_async(dataset_name="harmbench")
         assert seed_groups is not None
         assert len(list(seed_groups)) > 0
 

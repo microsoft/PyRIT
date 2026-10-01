@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
@@ -184,20 +185,22 @@ async def test_configured_estimate_reuses_technique_and_baseline_resolution_with
     estimate = await scenario.get_run_size_estimate_async()
     assert estimate.estimated_attack_count == 2
     assert [component.count for component in estimate.components] == [2]
-    assert patch_central_database.return_value.get_scenario_results() == []
+    assert (await patch_central_database.return_value.get_scenario_results_async()) == []
 
 
 async def test_configured_estimate_auto_fetches_selected_named_dataset() -> None:
     """A configured estimate loads its selected dataset through DatasetConfiguration."""
-    memory = MagicMock()
-    memory.get_seeds.return_value = []
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_seeds_async = AsyncMock(return_value=[])
 
     async def populate_memory_async(*, dataset_name: str) -> None:
         assert dataset_name == "sample"
-        memory.get_seeds.return_value = [
-            SeedObjective(value="one", dataset_name="sample"),
-            SeedObjective(value="two", dataset_name="sample"),
-        ]
+        memory.get_seeds_async = AsyncMock(
+            return_value=[
+                SeedObjective(value="one", dataset_name="sample"),
+                SeedObjective(value="two", dataset_name="sample"),
+            ]
+        )
 
     with (
         patch(
@@ -720,7 +723,7 @@ async def test_web_injection_estimate_uses_synthesized_technique_populations() -
         scenario.DATASET_WEB_HTML_JS: ["<script>alert(1)</script>"],
         scenario.DATASET_NORMAL_INSTRUCTIONS: ["Write a poem.", "Explain gravity."],
     }
-    with patch.object(scenario, "_load_dataset_values", return_value=dataset_values):
+    with patch.object(scenario, "_load_dataset_values_async", return_value=dataset_values):
         estimate = await scenario.get_default_run_size_estimate_async()
 
     synthesized = [dataset for dataset in estimate.datasets if dataset.kind == "synthesized"]

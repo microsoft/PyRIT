@@ -460,7 +460,7 @@ class TestPsychosocialCrossProduct:
 
         memory = CentralMemory.get_memory_instance()
         scenario = _scenario_with_mock_scorers()
-        with patch.object(memory, "get_seeds", side_effect=_get_seeds):
+        with patch.object(memory, "get_seeds_async", side_effect=_get_seeds):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,

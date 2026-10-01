@@ -87,7 +87,7 @@ class BatchScorer:
             ValueError: If no entries match the provided filters.
         """
         message_pieces: Sequence[MessagePiece] = []
-        message_pieces = self._memory.get_message_pieces(
+        message_pieces = await self._memory.get_message_pieces_async(
             conversation_id=conversation_id,
             prompt_ids=prompt_ids,
             labels=labels,

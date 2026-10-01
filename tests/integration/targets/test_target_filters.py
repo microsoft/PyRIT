@@ -45,7 +45,7 @@ async def test_azure_content_filters(sqlite_instance, endpoint, api_key, model_n
     attack = PromptSendingAttack(objective_target=target)
     result = await attack.execute_async(objective=prompt)
     assert result is not None
-    conversation = sqlite_instance.get_conversation_messages(conversation_id=result.conversation_id)
+    conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=result.conversation_id)
     assert len(conversation) == 2
     response = conversation[-1]
     assert len(response.message_pieces) == 1
@@ -86,7 +86,7 @@ async def test_azure_content_filters_response_api(sqlite_instance, endpoint, api
     attack = PromptSendingAttack(objective_target=target)
     result = await attack.execute_async(objective=prompt)
     assert result is not None
-    conversation = sqlite_instance.get_conversation_messages(conversation_id=result.conversation_id)
+    conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=result.conversation_id)
     assert len(conversation) == 2
     response = conversation[-1]
     assert len(response.message_pieces) == 1
@@ -111,7 +111,7 @@ async def test_image_input_filters(sqlite_instance, endpoint, api_key, model_nam
     attack = PromptSendingAttack(objective_target=target)
     result = await attack.execute_async(objective=prompt)
     assert result is not None
-    conversation = sqlite_instance.get_conversation_messages(conversation_id=result.conversation_id)
+    conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=result.conversation_id)
     assert len(conversation) == 2
     response = conversation[-1]
     assert len(response.message_pieces) == 1
@@ -138,7 +138,7 @@ async def test_video_input_filters(sqlite_instance, endpoint, api_key, model_nam
     attack = PromptSendingAttack(objective_target=target)
     result = await attack.execute_async(objective=prompt)
     assert result is not None
-    conversation = sqlite_instance.get_conversation_messages(conversation_id=result.conversation_id)
+    conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=result.conversation_id)
     assert len(conversation) == 2
     response = conversation[-1]
     assert len(response.message_pieces) == 1

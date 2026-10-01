@@ -4,7 +4,7 @@
 from unittest.mock import MagicMock
 
 import pytest
-from unit.mocks import store_message
+from unit.mocks import store_message_async
 
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
@@ -15,6 +15,7 @@ from pyrit.models import (
     Score,
     ScoringExpectation,
 )
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     MessageFloatScaleScorer,
     MessageScorable,
@@ -92,10 +93,10 @@ class MockScorer(MessageTrueFalseScorer):
 
 
 @pytest.fixture
-def mock_request(patch_central_database):
+async def mock_request(patch_central_database):
     memory = CentralMemory.get_memory_instance()
     request = MessagePiece(role="user", original_value="test content", conversation_id="test-conv", sequence=1)
-    memory.add_message_pieces_to_memory(message_pieces=[request])
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[request]))
     return request.to_message()
 
 
@@ -112,7 +113,7 @@ def false_scorer(patch_central_database):
 async def test_composite_scorer_and_all_true(mock_request, true_scorer):
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer, true_scorer])
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(mock_request)))
     assert len(scores) == 1
     assert scores[0].get_value() is True
     assert "This is a true score" in scores[0].score_rationale
@@ -122,7 +123,7 @@ async def test_composite_scorer_and_all_true(mock_request, true_scorer):
 async def test_composite_scorer_and_one_false(mock_request, true_scorer, false_scorer):
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer, false_scorer])
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(mock_request)))
     assert len(scores) == 1
     assert scores[0].get_value() is False
     assert "This is a false score" in scores[0].score_rationale
@@ -132,7 +133,7 @@ async def test_composite_scorer_and_one_false(mock_request, true_scorer, false_s
 async def test_composite_scorer_or_all_false(mock_request, false_scorer):
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[false_scorer, false_scorer])
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(mock_request)))
     assert len(scores) == 1
     assert scores[0].get_value() is False
     assert "This is a false score" in scores[0].score_rationale
@@ -142,7 +143,7 @@ async def test_composite_scorer_or_all_false(mock_request, false_scorer):
 async def test_composite_scorer_or_one_true(mock_request, true_scorer, false_scorer):
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[true_scorer, false_scorer])
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(mock_request)))
     assert len(scores) == 1
     assert scores[0].get_value() is True
     assert "This is a true score" in scores[0].score_rationale
@@ -153,7 +154,7 @@ async def test_composite_scorer_majority_true(mock_request, true_scorer, false_s
         aggregator=TrueFalseScoreAggregator.MAJORITY, scorers=[true_scorer, true_scorer, false_scorer]
     )
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(mock_request)))
     assert len(scores) == 1
     assert scores[0].get_value() is True
     assert "This is a true score" in scores[0].score_rationale
@@ -168,7 +169,7 @@ async def test_composite_scorer_majority_false(mock_request, true_scorer, false_
         aggregator=TrueFalseScoreAggregator.MAJORITY, scorers=[true_scorer, false_scorer, false_scorer]
     )
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(mock_request)))
     assert len(scores) == 1
     assert scores[0].get_value() is False
     assert "This is a true score" in scores[0].score_rationale
@@ -195,7 +196,7 @@ async def test_composite_scorer_with_task(mock_request, true_scorer):
 
     task = "test task"
     scores = await scorer.score_async(
-        scorable=MessageScorable.from_message(store_message(mock_request)),
+        scorable=MessageScorable.from_message(await store_message_async(mock_request)),
         expectation=ScoringExpectation(objective=task),
     )
     assert len(scores) == 1
@@ -206,7 +207,7 @@ async def test_composite_scorer_is_silent_when_all_children_are_not_applicable(m
     true_scorer._validator = ScorerPromptValidator(supported_roles=["assistant"])
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(mock_request)))
 
     assert scores == []
 
@@ -218,7 +219,7 @@ async def test_composite_scorer_ignores_non_applicable_child(mock_request, true_
         scorers=[false_scorer, true_scorer],
     )
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(mock_request)))
 
     assert len(scores) == 1
     assert scores[0].get_value() is True
@@ -241,7 +242,7 @@ async def test_composite_routes_supported_conditions_to_each_leaf(mock_request):
     )
 
     await scorer.score_async(
-        scorable=MessageScorable.from_message(store_message(mock_request)),
+        scorable=MessageScorable.from_message(await store_message_async(mock_request)),
         expectation=expectation,
     )
 
@@ -260,7 +261,7 @@ def test_composite_scorer_empty_scorers_list():
 async def test_composite_scorer_anchors_where_its_children_anchored(true_scorer, patch_central_database):
     """The aggregate is about whatever its children were about, so it anchors where they did."""
     scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
-    message = store_message(MessagePiece(role="user", original_value="test content").to_message())
+    message = await store_message_async(MessagePiece(role="user", original_value="test content").to_message())
 
     scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
@@ -269,7 +270,7 @@ async def test_composite_scorer_anchors_where_its_children_anchored(true_scorer,
 
 def test_get_chat_target_returns_first_available(patch_central_database):
     """get_chat_target returns the target from the first sub-scorer that has one."""
-    mock_target = MagicMock()
+    mock_target = MagicMock(spec=PromptTarget)
 
     scorer_without = MockScorer(score_value=True, score_rationale="no target")
     scorer_with = MockScorer(score_value=True, score_rationale="has target")
