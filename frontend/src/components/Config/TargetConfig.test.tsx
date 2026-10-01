@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import TargetConfig from "./TargetConfig";
 import { targetsApi } from "../../services/api";
@@ -52,7 +53,11 @@ const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
-}) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
+}) => (
+  <UserPreferencesProvider accountKey="local">
+    <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
+  </UserPreferencesProvider>
+);
 
 const sampleTargets: TargetInstance[] = [
   makeTarget({
@@ -79,6 +84,7 @@ describe("TargetConfig", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
     mockRuntimeGeneration = "generation-1";
   });
 

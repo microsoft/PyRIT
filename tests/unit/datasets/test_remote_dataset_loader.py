@@ -1,31 +1,85 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
 import io
 import json
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset
+from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.models import SeedDataset, SeedObjective, SeedOrigin, SeedPrompt
 
 
 class ConcreteRemoteLoader(_RemoteDatasetLoader):
     @property
-    def dataset_name(self):
+    def dataset_name(self) -> str:
         return "test_remote"
 
-    async def fetch_dataset_async(self):
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         return SeedDataset(prompts=[])
 
 
 class TestRemoteDatasetLoader:
+    @pytest.mark.parametrize("implements_private_fetch", [False, True])
+    def test_public_fetch_override_raises_before_registration(self, implements_private_fetch: bool) -> None:
+        methods = {"fetch_dataset_async": ConcreteRemoteLoader._fetch_dataset_async}
+        if implements_private_fetch:
+            methods["_fetch_dataset_async"] = ConcreteRemoteLoader._fetch_dataset_async
+
+        with patch.dict(SeedDatasetProvider._registry, clear=True):
+            with pytest.raises(
+                TypeError, match="LegacyRemoteLoader.*Rename the implementation to _fetch_dataset_async"
+            ):
+                type(
+                    "LegacyRemoteLoader",
+                    (_RemoteDatasetLoader,),
+                    methods,
+                )
+
+            assert "LegacyRemoteLoader" not in SeedDatasetProvider._registry
+
+    async def test_abstract_intermediate_loader_and_concrete_discovery(self) -> None:
+        with patch.dict(SeedDatasetProvider._registry, clear=True):
+
+            class AbstractRemoteLoader(_RemoteDatasetLoader):
+                pass
+
+            assert inspect.isabstract(AbstractRemoteLoader)
+            assert "AbstractRemoteLoader" not in SeedDatasetProvider._registry
+
+            class RegisteredRemoteLoader(AbstractRemoteLoader):
+                @property
+                def dataset_name(self) -> str:
+                    return "registered_remote"
+
+                async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+                    return SeedDataset(seeds=[])
+
+            assert not inspect.isabstract(RegisteredRemoteLoader)
+            assert SeedDatasetProvider._registry["RegisteredRemoteLoader"] is RegisteredRemoteLoader
+
+            loader = RegisteredRemoteLoader()
+            dataset = SeedDataset(
+                seeds=[
+                    SeedObjective(value="Evaluate fraud safeguards."),
+                    SeedPrompt(value="Test prompt", data_type="text"),
+                ]
+            )
+            with patch.object(loader, "_fetch_dataset_async", new_callable=AsyncMock, return_value=dataset) as fetch:
+                result = await loader.fetch_dataset_async(cache=False)
+
+            assert result is dataset
+            assert all(seed.origin == SeedOrigin.REMOTE for seed in result.seeds)
+            fetch.assert_called_once_with(cache=False)
+
     def test_get_cache_file_name(self):
         loader = ConcreteRemoteLoader()
         name = loader._get_cache_file_name(source="http://example.com", file_type="json")

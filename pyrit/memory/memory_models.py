@@ -68,6 +68,7 @@ from pyrit.models import (
     Seed,
     SeedIdentifier,
     SeedObjective,
+    SeedOrigin,
     SeedPrompt,
     SeedSimulatedConversation,
     SeedType,
@@ -1503,6 +1504,9 @@ class SeedEntry(Base):
     sequence: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
     role: Mapped[ChatMessageRole | None] = mapped_column(String, nullable=True)
     seed_type: Mapped[SeedType] = mapped_column(String, nullable=False, default="prompt")
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=SeedOrigin.UNKNOWN.value, server_default="unknown", index=True
+    )
     conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: Seed) -> None:
@@ -1536,6 +1540,7 @@ class SeedEntry(Base):
         self.prompt_metadata = self._pack_seed_metadata(entry)
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
+        self.origin = entry.origin.value
         self.conditions = (
             entry.model_dump(mode="json", include={"conditions"})["conditions"] or None
             if isinstance(entry, SeedObjective)
@@ -1649,6 +1654,7 @@ class SeedEntry(Base):
         if self.seed_type == "objective":
             return SeedObjective(
                 id=self.id,
+                origin=SeedOrigin(self.origin),
                 value=self.value,
                 value_sha256=self.value_sha256,
                 name=self.name,
@@ -1686,6 +1692,7 @@ class SeedEntry(Base):
             try:
                 return SeedSimulatedConversation(
                     id=self.id,
+                    origin=SeedOrigin(self.origin),
                     value_sha256=None if is_legacy_record else self.value_sha256,
                     name=self.name,
                     dataset_name=self.dataset_name,
@@ -1713,6 +1720,7 @@ class SeedEntry(Base):
                 ) from exc
         return SeedPrompt(
             id=self.id,
+            origin=SeedOrigin(self.origin),
             value=self.value,
             value_sha256=self.value_sha256,
             data_type=self.data_type,

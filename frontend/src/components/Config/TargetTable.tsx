@@ -11,6 +11,8 @@ import {
   Divider,
   Text,
   Tooltip,
+  Checkbox,
+  mergeClasses,
 } from '@fluentui/react-components'
 import {
   CheckmarkCircleFilled,
@@ -27,9 +29,20 @@ import {
   ArrowHookUpLeftRegular,
   ChevronRightRegular,
   ChevronDownRegular,
+  EyeOffRegular,
+  EyeRegular,
 } from '@fluentui/react-icons'
-import type { TargetInstance } from '../../types'
-import { sameTarget, targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
+
+import { useUserPreferences } from '@/hooks/useUserPreferences'
+import type { TargetInstance } from '@/types'
+import {
+  sameTarget,
+  targetEndpoint,
+  targetModelName,
+  targetType,
+  targetUnderlyingModelName,
+} from '@/utils/targetIdentity'
+
 import {
   CAPABILITY_COLUMNS,
   DEFAULT_TARGET_FILTERS,
@@ -195,6 +208,7 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
     <>
       {innerTargets.map((inner, idx) => (
         <TableRow key={`${parentKey}-inner-${idx}`} className={styles.innerTargetRow}>
+          <TableCell className={styles.actionCell} />
           <TableCell className={styles.registryNameCell}>
             <Text size={200} className={styles.registryNameText}>#{idx + 1} {inner.target_registry_name}</Text>
           </TableCell>
@@ -235,6 +249,13 @@ export default function TargetTable({
   onSetDefaultAdversarialTarget,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
+  const { preferences, updatePreferences } = useUserPreferences()
+  const hiddenTargetRegistryNames = useMemo(
+    () => new Set(preferences.hiddenTargetRegistryNames),
+    [preferences.hiddenTargetRegistryNames],
+  )
+  const [showHiddenTargets, setShowHiddenTargets] = useState(false)
+  const [previousHiddenTargetCount, setPreviousHiddenTargetCount] = useState<number | null>(null)
   const [filters, setFilters] = useState<TargetFilters>(DEFAULT_TARGET_FILTERS)
   // Tracks which RoundRobinTarget rows are expanded to show inner targets.
   // We use a Set of target_registry_name strings — when a name is in the set,
@@ -256,6 +277,25 @@ export default function TargetTable({
   const hasInnerTargets = (target: TargetInstance): boolean =>
     (target.inner_targets ?? []).length > 0
 
+  const hiddenTargetCount = useMemo(
+    () => targets.filter((target) => hiddenTargetRegistryNames.has(target.target_registry_name)).length,
+    [hiddenTargetRegistryNames, targets],
+  )
+
+  if (previousHiddenTargetCount !== hiddenTargetCount) {
+    setPreviousHiddenTargetCount(hiddenTargetCount)
+    if (hiddenTargetCount === 0 && previousHiddenTargetCount !== null) {
+      setShowHiddenTargets(false)
+    }
+  }
+
+  const displayedTargets = useMemo(
+    () => showHiddenTargets
+      ? targets
+      : targets.filter((target) => !hiddenTargetRegistryNames.has(target.target_registry_name)),
+    [hiddenTargetRegistryNames, showHiddenTargets, targets],
+  )
+
   const filterOptions = useMemo(() => getTargetFilterOptions(targets), [targets])
   const activeFilters = useMemo(() => activeTargetFilters(filters, filterOptions), [filters, filterOptions])
   // A reload can remove a selected choice. Forget it (adjusting state during render, as
@@ -264,15 +304,33 @@ export default function TargetTable({
     setFilters(activeFilters)
   }
   const filteredTargets = useMemo(
-    () => targets.filter((target: TargetInstance) => targetMatchesFilters(target, activeFilters)),
-    [targets, activeFilters],
+    () => displayedTargets.filter((target: TargetInstance) => targetMatchesFilters(target, activeFilters)),
+    [displayedTargets, activeFilters],
   )
-  const noTargetsMatch = targets.length > 0 && filteredTargets.length === 0
+  const noTargetsMatch = displayedTargets.length > 0 && filteredTargets.length === 0
 
   const isDefaultObjective = (target: TargetInstance): boolean =>
     sameTarget(defaultObjectiveTarget, target)
   const isDefaultAdversarial = (target: TargetInstance): boolean =>
     sameTarget(defaultAdversarialTarget, target)
+
+  const setTargetHidden = (target: TargetInstance, hidden: boolean): void => {
+    const nextHiddenTargetRegistryNames = new Set(hiddenTargetRegistryNames)
+    if (hidden) nextHiddenTargetRegistryNames.add(target.target_registry_name)
+    else nextHiddenTargetRegistryNames.delete(target.target_registry_name)
+    updatePreferences((current) => {
+      const currentHiddenTargetRegistryNames = new Set(current.hiddenTargetRegistryNames)
+      if (hidden) currentHiddenTargetRegistryNames.add(target.target_registry_name)
+      else currentHiddenTargetRegistryNames.delete(target.target_registry_name)
+      return {
+        ...current,
+        hiddenTargetRegistryNames: [...currentHiddenTargetRegistryNames].sort(),
+      }
+    })
+    if (!targets.some((candidate) => nextHiddenTargetRegistryNames.has(candidate.target_registry_name))) {
+      setShowHiddenTargets(false)
+    }
+  }
 
   return (
     <div className={styles.tableContainer} data-testid="target-table-scroll-region">
@@ -293,11 +351,21 @@ export default function TargetTable({
         />
       </section>
       <Divider appearance="strong" className={styles.defaultsDivider} />
+      <div className={styles.visibilityControls}>
+        <Checkbox
+          checked={showHiddenTargets && hiddenTargetCount > 0}
+          disabled={hiddenTargetCount === 0}
+          label={`Show hidden targets (${hiddenTargetCount})`}
+          onChange={(_, data) => setShowHiddenTargets(data.checked === true)}
+          data-testid="show-hidden-targets"
+        />
+      </div>
       <TargetFiltersBar filters={activeFilters} options={filterOptions} onFiltersChange={setFilters} />
 
       <Table aria-label="Target instances" className={styles.table}>
         <TableHeader className={styles.stickyHeader}>
           <TableRow>
+            <TableHeaderCell className={styles.actionCell}>Actions</TableHeaderCell>
             <TableHeaderCell style={{ width: '180px' }}>
               <Tooltip content={COLUMN_TOOLTIPS.registryName} relationship="description">
                 <span className={styles.helpHeader}>Registry Name</span>
@@ -346,15 +414,32 @@ export default function TargetTable({
           {filteredTargets.map((target) => {
             const expanded = expandedRows.has(target.target_registry_name)
             const expandable = hasInnerTargets(target)
+            const hidden = hiddenTargetRegistryNames.has(target.target_registry_name)
             // Extract weights from target_specific_params so we can show per-inner-target weight
             const weights = target.target_specific_params?.weights as number[] | undefined
 
             return (
               <React.Fragment key={target.target_registry_name}>
                 <TableRow
-                  className={isDefaultObjective(target) || isDefaultAdversarial(target) ? styles.defaultRow : undefined}
+                  className={mergeClasses(
+                    (isDefaultObjective(target) || isDefaultAdversarial(target)) && styles.defaultRow,
+                    hidden && styles.hiddenRow,
+                  )}
                   data-testid={`target-row-${target.target_registry_name}`}
                 >
+                  <TableCell className={styles.actionCell}>
+                    <Button
+                      className={styles.rowAction}
+                      appearance="subtle"
+                      size="small"
+                      icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
+                      onClick={() => setTargetHidden(target, !hidden)}
+                      aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
+                      data-testid={`toggle-target-visibility-${target.target_registry_name}`}
+                    >
+                      {hidden ? 'Show' : 'Hide'}
+                    </Button>
+                  </TableCell>
                   <TableCell className={styles.registryNameCell}>
                     <Text size={200} className={styles.registryNameText}>{target.target_registry_name}</Text>
                     {(isDefaultObjective(target) || isDefaultAdversarial(target)) && (
