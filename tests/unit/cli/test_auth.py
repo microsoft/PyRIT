@@ -3,6 +3,7 @@
 
 """Tests for thin-client authentication helpers."""
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -481,12 +482,13 @@ def test_is_interactive_requires_stdin_and_stderr_ttys() -> None:
         assert _auth._is_interactive() is False
 
 
-async def test_verify_provider_closes_after_authentication_failure() -> None:
+@pytest.mark.parametrize("failure_type", [CliAuthenticationError, RuntimeError, asyncio.CancelledError])
+async def test_verify_provider_closes_after_authentication_failure(failure_type) -> None:
     provider = MagicMock()
-    provider.get_token_async = AsyncMock(side_effect=CliAuthenticationError("failed"))
+    provider.get_token_async = AsyncMock(side_effect=failure_type("failed"))
     provider.close_async = AsyncMock()
 
-    with pytest.raises(CliAuthenticationError, match="failed"):
+    with pytest.raises(failure_type, match="failed"):
         await _auth._verify_provider_async(provider=provider)
 
     provider.close_async.assert_awaited_once()

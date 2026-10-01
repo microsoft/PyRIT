@@ -6,6 +6,7 @@
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
+from pyrit.memory import MemoryInterface
 from pyrit.models import AtomicAttackIdentifier, AttackOutcome, AttackResult, ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 
@@ -72,12 +73,12 @@ def _make_matching_target_mock() -> MagicMock:
 
 def make_mock_memory() -> MagicMock:
     """Create a mock memory instance."""
-    memory = MagicMock()
-    memory.get_attack_results.return_value = []
-    memory.get_conversation_messages.return_value = []
-    memory.get_message_pieces.return_value = []
-    memory.get_conversation_stats.return_value = {}
-    memory._get_conversation.return_value = None
-    memory.get_prompt_scores.return_value = []
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_attack_results_async.return_value = []
+    memory.get_conversation_messages_async.return_value = []
+    memory.get_message_pieces_async.return_value = []
+    memory.get_conversation_stats_async.return_value = {}
+    memory.get_conversation_metadata_async.return_value = None
+    memory.get_prompt_scores_async.return_value = []
 
     return memory

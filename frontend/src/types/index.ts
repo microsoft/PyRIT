@@ -131,7 +131,7 @@ export interface MessageMediaDisplayPiece {
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
 export interface Message {
-  role: 'user' | 'assistant' | 'simulated_assistant' | 'system'
+  role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system'
   content: string
   timestamp: string
   /**
@@ -165,6 +165,12 @@ export interface MessageError {
 export interface ChatSendOutcome {
   status: 'sent' | 'retryable_failure' | 'non_retryable_failure'
   clearDraft: boolean
+}
+
+/** A filter choice: the value it selects and the text shown for it. */
+export interface FilterOption {
+  value: string
+  label: string
 }
 
 // ============================================================================

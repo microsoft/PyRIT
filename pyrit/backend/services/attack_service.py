@@ -15,7 +15,6 @@ ARCHITECTURE:
 - AI-generated attacks may have multiple related conversations
 """
 
-import asyncio
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -207,7 +206,7 @@ class AttackService:
             if decoded_cursor is not None
             else None
         )
-        results = self._memory.get_attack_results(
+        results = await self._memory.get_attack_results_async(
             outcome=outcome,
             operator=operator,
             operation=operation,
@@ -242,7 +241,11 @@ class AttackService:
         for ar in page_results:
             all_conv_ids.update(ar.get_active_conversation_ids())
 
-        stats_map = self._memory.get_conversation_stats(conversation_ids=list(all_conv_ids)) if all_conv_ids else {}
+        stats_map = (
+            (await self._memory.get_conversation_stats_async(conversation_ids=list(all_conv_ids)))
+            if all_conv_ids
+            else {}
+        )
 
         # Phase 3: Build summaries from aggregated stats for the page
         page: list[AttackSummary] = []
@@ -281,7 +284,7 @@ class AttackService:
         Returns:
             Sorted list of unique attack type names.
         """
-        return self._memory.get_unique_attack_class_names()
+        return await self._memory.get_unique_attack_class_names_async()
 
     async def get_converter_options_async(self) -> list[str]:
         """
@@ -293,7 +296,7 @@ class AttackService:
         Returns:
             Sorted list of unique converter type names.
         """
-        return self._memory.get_unique_converter_class_names()
+        return await self._memory.get_unique_converter_class_names_async()
 
     async def get_attack_async(self, *, attack_result_id: str) -> AttackSummary | None:
         """
@@ -304,15 +307,12 @@ class AttackService:
         Returns:
             AttackSummary if found, None otherwise.
         """
-        results = await asyncio.to_thread(
-            self._memory.get_attack_results,
-            attack_result_ids=[attack_result_id],
-        )
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
         ar = results[0]
-        stats_map = self._memory.get_conversation_stats(conversation_ids=[ar.conversation_id])
+        stats_map = await self._memory.get_conversation_stats_async(conversation_ids=[ar.conversation_id])
         stats = stats_map.get(ar.conversation_id, ConversationStats(message_count=0))
         return await attack_result_to_summary_async(ar, stats=stats)
 
@@ -336,7 +336,7 @@ class AttackService:
             ValueError: If the conversation does not belong to the attack.
         """
         # Check attack exists
-        results = self._memory.get_attack_results(attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -346,7 +346,7 @@ class AttackService:
             raise ValueError(f"Conversation '{conversation_id}' is not part of attack '{attack_result_id}'")
 
         # Get messages for this conversation
-        pyrit_messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
+        pyrit_messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
         backend_messages = await pyrit_messages_to_dto_async(
             list(pyrit_messages),
             objective_score_id=ar.last_score.id if ar.last_score else None,
@@ -391,7 +391,7 @@ class AttackService:
 
         # --- Branch via duplication (preferred for tracking) ---------------
         if request.source_conversation_id is not None and request.cutoff_index is not None:
-            conversation_id = self._duplicate_conversation_up_to(
+            conversation_id = await self._duplicate_conversation_up_to_async(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
                 remap_assistant_to_simulated=True,
@@ -427,7 +427,7 @@ class AttackService:
         )
 
         # Store in memory
-        self._memory.add_attack_results_to_memory(attack_results=[attack_result])
+        (await self._memory.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
         # Store prepended conversation messages if provided. A system_prompt is lowered to a
         # single system-role message at the front, composing with any prepended_conversation.
@@ -462,7 +462,7 @@ class AttackService:
         Returns:
             Updated AttackSummary if found, None otherwise.
         """
-        results = self._memory.get_attack_results(attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -485,9 +485,11 @@ class AttackService:
             elif request.outcome is None:
                 return await self.get_attack_async(attack_result_id=attack_result_id)
 
-        self._memory.update_attack_result_by_id(
-            attack_result_id=attack_result_id,
-            update_fields=update_fields,
+        (
+            await self._memory.update_attack_result_by_id_async(
+                attack_result_id=attack_result_id,
+                update_fields=update_fields,
+            )
         )
 
         return await self.get_attack_async(attack_result_id=attack_result_id)
@@ -502,10 +504,7 @@ class AttackService:
         Returns:
             Updated AttackSummary if found, None otherwise.
         """
-        results = await asyncio.to_thread(
-            self._memory.get_attack_results,
-            attack_result_ids=[attack_result_id],
-        )
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -519,8 +518,7 @@ class AttackService:
             )
             outcome_reason = automated_score.score_rationale
 
-        await asyncio.to_thread(
-            self._memory.update_attack_result_by_id,
+        await self._memory.update_attack_result_by_id_async(
             attack_result_id=attack_result_id,
             update_fields={
                 "human_score_id": None,
@@ -543,7 +541,7 @@ class AttackService:
         Returns:
             AttackConversationsResponse if attack found, None otherwise.
         """
-        results = self._memory.get_attack_results(attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -552,7 +550,7 @@ class AttackService:
 
         # Collect all conversation IDs (main + PRUNED related) and fetch stats in one query.
         active_conv_ids = list(ar.get_active_conversation_ids())
-        stats_map = self._memory.get_conversation_stats(conversation_ids=active_conv_ids)
+        stats_map = await self._memory.get_conversation_stats_async(conversation_ids=active_conv_ids)
 
         conversations: list[ConversationSummary] = []
         for conv_id in active_conv_ids:
@@ -600,7 +598,7 @@ class AttackService:
         Returns:
             CreateConversationResponse if attack found, None otherwise.
         """
-        results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -625,14 +623,13 @@ class AttackService:
         source_metadata: Conversation | None = None
         all_pieces: Sequence[MessagePiece] = []
         if request.source_conversation_id is not None and request.cutoff_index is not None:
-            source_metadata = await asyncio.to_thread(
-                self._memory._get_conversation, conversation_id=request.source_conversation_id
+            source_metadata = await self._memory.get_conversation_metadata_async(
+                conversation_id=request.source_conversation_id
             )
             source_metadata = source_metadata or Conversation(
                 conversation_id=request.source_conversation_id, target_identifier=objective_target
             )
-            conversation, all_pieces = await asyncio.to_thread(
-                self._prepare_conversation_up_to,
+            conversation, all_pieces = await self._prepare_conversation_up_to_async(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
                 target_identifier=source_metadata.target_identifier,
@@ -643,8 +640,7 @@ class AttackService:
                 target_identifier=objective_target,
             )
 
-        stored = await asyncio.to_thread(
-            self._memory.add_conversation_branches_to_attack,
+        stored = await self._memory.add_conversation_branches_to_attack_async(
             attack_result_id=attack_result_id,
             conversations=[conversation],
             message_pieces=all_pieces,
@@ -669,7 +665,7 @@ class AttackService:
         Returns:
             UpdateMainConversationResponse if the source attack exists, None otherwise.
         """
-        results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -681,10 +677,8 @@ class AttackService:
             raise ValueError(f"Conversation '{target_conv_id}' is not part of this attack")
 
         now = datetime.now(UTC)
-        stored = await asyncio.to_thread(
-            self._memory.promote_attack_conversation,
-            attack_result_id=attack_result_id,
-            conversation_id=target_conv_id,
+        stored = await self._memory.promote_attack_conversation_async(
+            attack_result_id=attack_result_id, conversation_id=target_conv_id
         )
         if not stored:
             return None
@@ -722,7 +716,7 @@ class AttackService:
     # Private Helper Methods - Duplicate / Branch
     # ========================================================================
 
-    def _duplicate_conversation_up_to(
+    async def _duplicate_conversation_up_to_async(
         self,
         *,
         source_conversation_id: str,
@@ -750,7 +744,7 @@ class AttackService:
         Returns:
             The new conversation ID containing the duplicated messages.
         """
-        conversation, all_pieces = self._prepare_conversation_up_to(
+        conversation, all_pieces = await self._prepare_conversation_up_to_async(
             source_conversation_id=source_conversation_id,
             cutoff_index=cutoff_index,
             target_identifier=target_identifier,
@@ -758,16 +752,16 @@ class AttackService:
 
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:
-            if remap_assistant_to_simulated and piece.api_role == "assistant":
-                piece.role = "simulated_assistant"
+            if remap_assistant_to_simulated:
+                piece.set_simulated_role()
 
         if all_pieces:
-            self._memory.add_conversation_to_memory(conversation=conversation)
-            self._memory.add_message_pieces_to_memory(message_pieces=list(all_pieces))
+            (await self._memory.add_conversation_to_memory_async(conversation=conversation))
+            (await self._memory.add_message_pieces_to_memory_async(message_pieces=list(all_pieces)))
 
         return conversation.conversation_id
 
-    def _prepare_conversation_up_to(
+    async def _prepare_conversation_up_to_async(
         self,
         *,
         source_conversation_id: str,
@@ -780,8 +774,8 @@ class AttackService:
         Returns:
             tuple[Conversation, Sequence[MessagePiece]]: New metadata and lineage-preserving pieces.
         """
-        messages = self._memory.get_conversation_messages(conversation_id=source_conversation_id)
-        new_id, pieces = self._memory.duplicate_messages(
+        messages = await self._memory.get_conversation_messages_async(conversation_id=source_conversation_id)
+        new_id, pieces = await self._memory.duplicate_messages_async(
             messages=[message for message in messages if message.sequence <= cutoff_index]
         )
         return Conversation(conversation_id=new_id, target_identifier=target_identifier), pieces
@@ -801,7 +795,7 @@ class AttackService:
         if not prepended:
             return
         applied_by_message = [resolve_applied_converter_identifiers(msg.pieces) for msg in prepended]
-        self._memory.add_conversation_to_memory(
+        await self._memory.add_conversation_to_memory_async(
             conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
         )
         for seq, msg in enumerate(prepended):
@@ -813,7 +807,7 @@ class AttackService:
                     sequence=seq,
                 )
                 piece.converter_identifiers.extend(applied_by_message[seq].get(index, []))
-                self._memory.add_message_pieces_to_memory(message_pieces=[piece])
+                (await self._memory.add_message_pieces_to_memory_async(message_pieces=[piece]))
 
 
 # ============================================================================

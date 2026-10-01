@@ -77,7 +77,7 @@ class TestRefreshDatasetsSelection:
 
     def _mock_memory(self, *, names_in_memory: list[str]) -> MagicMock:
         memory = MagicMock(spec=MemoryInterface)
-        memory.get_seed_dataset_names.return_value = names_in_memory
+        memory.get_seed_dataset_names_async = AsyncMock(return_value=names_in_memory)
         return memory
 
     async def test_empty_memory_returns_without_fetch(self) -> None:
@@ -153,17 +153,17 @@ class TestRefreshDatasetsStaleness:
     async def test_days_zero_refreshes_recent_dataset(self, sqlite_instance: MemoryInterface) -> None:
         await self._seed(sqlite_instance, dataset_name="fresh", days_old=0)
         initializer = RefreshDatasets()
-        assert initializer._is_stale(memory=sqlite_instance, dataset_name="fresh", days=0) is True
+        assert (await initializer._is_stale_async(memory=sqlite_instance, dataset_name="fresh", days=0)) is True
 
     async def test_recent_dataset_not_stale(self, sqlite_instance: MemoryInterface) -> None:
         await self._seed(sqlite_instance, dataset_name="fresh", days_old=1)
         initializer = RefreshDatasets()
-        assert initializer._is_stale(memory=sqlite_instance, dataset_name="fresh", days=30) is False
+        assert (await initializer._is_stale_async(memory=sqlite_instance, dataset_name="fresh", days=30)) is False
 
     async def test_old_dataset_is_stale(self, sqlite_instance: MemoryInterface) -> None:
         await self._seed(sqlite_instance, dataset_name="old", days_old=40)
         initializer = RefreshDatasets()
-        assert initializer._is_stale(memory=sqlite_instance, dataset_name="old", days=30) is True
+        assert (await initializer._is_stale_async(memory=sqlite_instance, dataset_name="old", days=30)) is True
 
     async def test_cutoff_is_inclusive(self, sqlite_instance: MemoryInterface) -> None:
         fixed_now = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -177,8 +177,12 @@ class TestRefreshDatasetsStaleness:
         initializer = RefreshDatasets()
         with patch("pyrit.setup.initializers.refresh_datasets.datetime") as mock_dt:
             mock_dt.now.return_value = fixed_now
-            assert initializer._is_stale(memory=sqlite_instance, dataset_name="at_cutoff", days=30) is True
-            assert initializer._is_stale(memory=sqlite_instance, dataset_name="just_newer", days=30) is False
+            assert (
+                await initializer._is_stale_async(memory=sqlite_instance, dataset_name="at_cutoff", days=30)
+            ) is True
+            assert (
+                await initializer._is_stale_async(memory=sqlite_instance, dataset_name="just_newer", days=30)
+            ) is False
 
     async def test_no_op_when_all_fresh(self, sqlite_instance: MemoryInterface) -> None:
         await self._seed(sqlite_instance, dataset_name="fresh", days_old=1)
@@ -229,7 +233,7 @@ class TestRefreshDatasetsRefreshCorrectness:
         new_dataset = _make_dataset(dataset_name="d", values=["same-value"], harm_categories=["newharm"])
         await self._run_refresh(new_dataset=new_dataset, dataset_name="d")
 
-        result = sqlite_instance.get_seeds(dataset_name="d")
+        result = await sqlite_instance.get_seeds_async(dataset_name="d")
         assert len(result) == 1
         assert result[0].harm_categories == ["newharm"]
 
@@ -240,7 +244,7 @@ class TestRefreshDatasetsRefreshCorrectness:
         new_dataset = _make_dataset(dataset_name="d", values=["v2"])
         await self._run_refresh(new_dataset=new_dataset, dataset_name="d")
 
-        result = sqlite_instance.get_seeds(dataset_name="d")
+        result = await sqlite_instance.get_seeds_async(dataset_name="d")
         assert len(result) == 1
         assert result[0].value == "v2"
 
@@ -256,7 +260,7 @@ class TestRefreshDatasetsRefreshCorrectness:
         new_dataset = _make_dataset(dataset_name="d", values=["v1"])
         await self._run_refresh(new_dataset=new_dataset, dataset_name="d")
 
-        values = {seed.value for seed in sqlite_instance.get_seeds(dataset_name="d")}
+        values = {seed.value for seed in (await sqlite_instance.get_seeds_async(dataset_name="d"))}
         assert values == {"v1"}
 
     async def test_other_datasets_untouched(self, sqlite_instance: MemoryInterface) -> None:
@@ -271,8 +275,8 @@ class TestRefreshDatasetsRefreshCorrectness:
         new_dataset = _make_dataset(dataset_name="d", values=["new"])
         await self._run_refresh(new_dataset=new_dataset, dataset_name="d")
 
-        assert {s.value for s in sqlite_instance.get_seeds(dataset_name="other")} == {"keep"}
-        assert {s.value for s in sqlite_instance.get_seeds(dataset_name="d")} == {"new"}
+        assert {s.value for s in (await sqlite_instance.get_seeds_async(dataset_name="other"))} == {"keep"}
+        assert {s.value for s in (await sqlite_instance.get_seeds_async(dataset_name="d"))} == {"new"}
 
     async def test_failed_fetch_leaves_existing_seeds_intact(self, sqlite_instance: MemoryInterface) -> None:
         await sqlite_instance.add_seeds_to_memory_async(
@@ -296,7 +300,7 @@ class TestRefreshDatasetsRefreshCorrectness:
             await initializer.initialize_async()
 
         # Fetch failed before delete -> the original seed is still present.
-        assert {s.value for s in sqlite_instance.get_seeds(dataset_name="d")} == {"v1"}
+        assert {s.value for s in (await sqlite_instance.get_seeds_async(dataset_name="d"))} == {"v1"}
 
     async def test_no_dataset_returned_does_not_wipe_dataset(self, sqlite_instance: MemoryInterface) -> None:
         await sqlite_instance.add_seeds_to_memory_async(
@@ -319,7 +323,7 @@ class TestRefreshDatasetsRefreshCorrectness:
         ):
             await initializer.initialize_async()
 
-        assert {s.value for s in sqlite_instance.get_seeds(dataset_name="d")} == {"v1"}
+        assert {s.value for s in (await sqlite_instance.get_seeds_async(dataset_name="d"))} == {"v1"}
 
     async def test_empty_dataset_does_not_wipe_dataset(self, sqlite_instance: MemoryInterface) -> None:
         await sqlite_instance.add_seeds_to_memory_async(
@@ -345,7 +349,7 @@ class TestRefreshDatasetsRefreshCorrectness:
         ):
             await initializer.initialize_async()
 
-        assert {s.value for s in sqlite_instance.get_seeds(dataset_name="d")} == {"v1"}
+        assert {s.value for s in (await sqlite_instance.get_seeds_async(dataset_name="d"))} == {"v1"}
 
     async def test_insert_failure_preserves_existing_seeds(self, sqlite_instance: MemoryInterface) -> None:
         # The initializer isolates a failed replace: replace_seeds_for_dataset_async is mocked to
@@ -382,11 +386,11 @@ class TestRefreshDatasetsRefreshCorrectness:
             await initializer.initialize_async()
 
         # The failed refresh left the original seed untouched (the initializer did not wipe it).
-        assert {s.value for s in sqlite_instance.get_seeds(dataset_name="d")} == {"v1"}
+        assert {s.value for s in (await sqlite_instance.get_seeds_async(dataset_name="d"))} == {"v1"}
 
         # The dataset is still in memory, so a later successful run refreshes it.
         await self._run_refresh(new_dataset=new_dataset, dataset_name="d")
-        assert {s.value for s in sqlite_instance.get_seeds(dataset_name="d")} == {"v2"}
+        assert {s.value for s in (await sqlite_instance.get_seeds_async(dataset_name="d"))} == {"v2"}
 
     async def test_mismatched_dataset_name_does_not_replace(self, sqlite_instance: MemoryInterface) -> None:
         # Guard against a provider returning seeds tagged with a different dataset_name, which would
@@ -413,5 +417,5 @@ class TestRefreshDatasetsRefreshCorrectness:
             await initializer.initialize_async()
 
         # The guard rejected the mismatched dataset -> original seeds preserved, nothing leaked.
-        assert {s.value for s in sqlite_instance.get_seeds(dataset_name="d")} == {"v1"}
-        assert sqlite_instance.get_seeds(dataset_name="other") == []
+        assert {s.value for s in (await sqlite_instance.get_seeds_async(dataset_name="d"))} == {"v1"}
+        assert (await sqlite_instance.get_seeds_async(dataset_name="other")) == []

@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.exceptions import (
     AdversarialChatRefusedException,
@@ -31,7 +32,7 @@ from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailureKind,
 )
 from pyrit.executor.attack.core.attack_strategy import _ObjectiveTargetConversationLifecycle
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import MessageStringNormalizer
 from pyrit.models import (
     AttackOutcome,
@@ -45,7 +46,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import MessageScorer, TrueFalseScorer
@@ -111,7 +112,7 @@ def mock_objective_target() -> MagicMock:
 def mock_adversarial_chat() -> MagicMock:
     chat = MagicMock(spec=PromptTarget)
     chat.send_prompt_async = AsyncMock()
-    chat.set_system_prompt = MagicMock()
+    chat.set_system_prompt_async = AsyncMock()
     chat.get_identifier.return_value = _mock_target_id("MockChatTarget")
     chat.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
     chat.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
@@ -128,7 +129,7 @@ def mock_objective_scorer() -> MagicMock:
 
 @pytest.fixture
 def mock_prompt_normalizer() -> MagicMock:
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.send_prompt_async = AsyncMock()
     return normalizer
 
@@ -601,7 +602,7 @@ class TestContextValidation:
         # Create a separate chat target for objective since prepended_conversation requires PromptTarget
         mock_chat_objective_target = MagicMock(spec=PromptTarget)
         mock_chat_objective_target.send_prompt_async = AsyncMock()
-        mock_chat_objective_target.set_system_prompt = MagicMock()
+        mock_chat_objective_target.set_system_prompt_async = AsyncMock()
         mock_chat_objective_target.get_identifier.return_value = _mock_target_id("MockChatTarget")
         mock_chat_objective_target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
         mock_chat_objective_target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
@@ -635,6 +636,62 @@ class TestContextValidation:
 @pytest.mark.usefixtures("patch_central_database")
 class TestSetupPhase:
     """Tests for the setup phase of the attack."""
+
+    async def test_prepended_tool_exchange_is_context_on_next_adversarial_send(
+        self, *, mock_objective_scorer: MagicMock, basic_context: MultiTurnAttackContext
+    ) -> None:
+        kwargs = {"model_name": "gpt-4", "endpoint": "https://example.invalid", "api_key": "not-a-key"}
+        objective = OpenAIResponseTarget(**kwargs)
+        adversarial = OpenAIResponseTarget(**kwargs)
+        attack = RedTeamingAttack(
+            objective_target=objective,
+            attack_adversarial_config=AttackAdversarialConfig(target=adversarial),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        )
+        basic_context.prepended_conversation = [
+            Message.from_prompt(prompt="Look up the value.", role="user"),
+            MessagePiece(
+                role="assistant",
+                original_value='{"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{}"}',
+                original_value_data_type="function_call",
+            ).to_message(),
+            MessagePiece(
+                role="tool",
+                original_value='{"type":"function_call_output","call_id":"call-1","output":"stored result"}',
+                original_value_data_type="function_call_output",
+            ).to_message(),
+            Message.from_prompt(prompt="The lookup is complete.", role="assistant"),
+        ]
+        await attack._setup_async(context=basic_context)
+        with (
+            patch.object(
+                adversarial,
+                "_handle_openai_request_async",
+                new_callable=AsyncMock,
+                return_value=_adversarial_reply_message(),
+            ) as send,
+            patch.object(adversarial._client.responses, "create", new_callable=AsyncMock) as create,
+        ):
+            await adversarial.send_prompt_async(
+                message=MessagePiece(
+                    role="user",
+                    original_value="Continue.",
+                    conversation_id=basic_context.session.adversarial_chat_conversation_id,
+                ).to_message()
+            )
+            await send.call_args.kwargs["api_call"]()
+        inputs = create.call_args.kwargs["input"]
+        assert all(item.get("type") not in {"function_call", "function_call_output", "tool_call"} for item in inputs)
+        context = [item for item in inputs if "Objective target" in str(item)]
+        assert len(context) == 2
+        assert all(item["role"] == "user" for item in context)
+        assert "stored result" in str(context)
+        source = CentralMemory.get_memory_instance().get_conversation_messages(
+            conversation_id=basic_context.session.conversation_id
+        )
+        assert {"function_call", "function_call_output"} <= {
+            piece.converted_value_data_type for message in source for piece in message.message_pieces
+        }
 
     async def test_setup_initializes_conversation_session(
         self,
@@ -738,7 +795,7 @@ class TestSetupPhase:
             Message.from_prompt(prompt="prepended user", role="user"),
             Message.from_prompt(prompt="prepended assistant", role="assistant"),
         ]
-        attack._memory = MagicMock()
+        attack._memory = MagicMock(spec=MemoryInterface)
 
         # Mock that simulates initialize_context_async merging labels
         async def mock_initialize(*, context, memory_labels=None, **kwargs):
@@ -780,8 +837,8 @@ class TestSetupPhase:
             await attack._setup_async(context=basic_context)
 
         # Verify system prompt was set
-        mock_adversarial_chat.set_system_prompt.assert_called_once()
-        call_args = mock_adversarial_chat.set_system_prompt.call_args
+        mock_adversarial_chat.set_system_prompt_async.assert_called_once()
+        call_args = mock_adversarial_chat.set_system_prompt_async.call_args
         assert "Test objective" in call_args.kwargs["system_prompt"]
         assert call_args.kwargs["conversation_id"] == basic_context.session.adversarial_chat_conversation_id
 
@@ -989,16 +1046,18 @@ class TestObjectiveTargetSending:
             conversation_id=old_conversation_id,
             sequence=0,
         )
-        memory.add_message_pieces_to_memory(
-            message_pieces=[
-                system_piece,
-                MessagePiece(
-                    original_value="First request",
-                    role="user",
-                    conversation_id=old_conversation_id,
-                    sequence=1,
-                ),
-            ]
+        (
+            await memory.add_message_pieces_to_memory_async(
+                message_pieces=[
+                    system_piece,
+                    MessagePiece(
+                        original_value="First request",
+                        role="user",
+                        conversation_id=old_conversation_id,
+                        sequence=1,
+                    ),
+                ]
+            )
         )
         basic_context.prepended_history_send_context = ConversationManager.create_prepended_history_send_context(
             target=objective_target,

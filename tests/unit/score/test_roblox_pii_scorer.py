@@ -98,7 +98,7 @@ async def test_score_async_attributes_roles_and_excludes_future_turns():
             sequence=3,
         ),
     ]
-    memory.add_message_pieces_to_memory(message_pieces=pieces)
+    (await memory.add_message_pieces_to_memory_async(message_pieces=pieces))
     classifier = _classifier()
     scorer = _scorer(classifier=classifier)
 
@@ -172,7 +172,7 @@ async def test_blocked_input_returns_zero_for_each_category():
         conversation_id="blocked-conversation",
         response_error="blocked",
     ).to_message()
-    CentralMemory.get_memory_instance().add_message_to_memory(request=blocked)
+    (await CentralMemory.get_memory_instance().add_message_to_memory_async(request=blocked))
 
     scores = await scorer.score_async(scorable=MessageScorable.from_message(blocked))
 

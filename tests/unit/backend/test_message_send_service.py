@@ -4,7 +4,6 @@
 """Tests for the shared synchronous manual-message owner."""
 
 import asyncio
-import threading
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -69,7 +68,7 @@ def send_dependencies(mock_memory: MagicMock) -> Iterator[tuple[MagicMock, Async
         ConversationReference(conversation_id=name, conversation_type=ConversationType.PRUNED)
         for name in ["second", "third"]
     }
-    mock_memory.get_attack_results.return_value = [ar]
+    mock_memory.get_attack_results_async.return_value = [ar]
     target_service = MagicMock(spec=TargetService)
     converter_service = MagicMock(spec=ConverterService)
     send = AsyncMock(spec=PromptNormalizer.send_prompt_async)
@@ -84,7 +83,7 @@ def send_dependencies(mock_memory: MagicMock) -> Iterator[tuple[MagicMock, Async
 
 
 @pytest.fixture
-def real_send_context(
+async def real_send_context(
     *, sqlite_instance: SQLiteMemory, patch_central_database: MagicMock
 ) -> Iterator[tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter]]:
     target = MockPromptTarget()
@@ -98,7 +97,7 @@ def real_send_context(
             )
         ),
     )
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar]))
     with (
         patch("pyrit.backend.services.message_send_service.get_target_service") as target_service,
         patch("pyrit.backend.services.message_send_service.get_converter_service") as converter_service,
@@ -146,8 +145,8 @@ async def _send_message_and_get_update_fields(
     Returns:
         dict[str, Any]: The fields used to update the attack result.
     """
-    mock_memory.get_attack_results.return_value = [attack_result]
-    mock_memory.get_message_pieces.return_value = []
+    mock_memory.get_attack_results_async.return_value = [attack_result]
+    mock_memory.get_message_pieces_async.return_value = []
 
     converter_objects: list[MagicMock] = []
     for identifier in converter_identifiers:
@@ -167,7 +166,7 @@ async def _send_message_and_get_update_fields(
         mock_normalizer_class.return_value.send_prompt_async = AsyncMock()
 
         await message_send_service.add_message_async(attack_result_id=attack_result_id, request=request)
-    return mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+    return mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
 
 
 def _make_round_robin_identifier(
@@ -203,7 +202,7 @@ class TestAddMessage:
 
     async def test_add_message_raises_for_nonexistent_attack(self, message_send_service, mock_memory) -> None:
         """Test that add_message raises ValueError for nonexistent attack."""
-        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
 
         request = AddMessageRequest(
             pieces=[MessagePieceRequest(original_value="Hello")],
@@ -217,7 +216,7 @@ class TestAddMessage:
     async def test_add_message_raises_when_send_without_registry_name(self, message_send_service, mock_memory) -> None:
         """Test that add_message raises ValueError when send=True but target_registry_name missing."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
 
         request = AddMessageRequest(
             pieces=[MessagePieceRequest(original_value="Hello")],
@@ -241,9 +240,9 @@ class TestAddMessage:
             conversation_id="test-id",
             sequence=1,
         )
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.side_effect = [[], [response_piece]]
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.side_effect = [[], [response_piece]]
+        mock_memory.get_conversation_messages_async.return_value = []
 
         with (
             patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc,
@@ -267,14 +266,14 @@ class TestAddMessage:
             await message_send_service.add_message_async(attack_result_id="test-id", request=request)
 
             mock_normalizer.send_prompt_async.assert_called_once()
-            update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+            update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
             assert update_fields["last_response_id"] == str(response_piece.id)
 
     async def test_add_message_with_send_raises_when_target_not_found(self, message_send_service, mock_memory) -> None:
         """Test that add_message with send=True raises when target object not found."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
 
         with patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc:
             mock_target_svc = MagicMock()
@@ -296,9 +295,9 @@ class TestAddMessage:
     ) -> None:
         """If the send fails but no error piece was stored, the exception propagates (real error)."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []  # no error piece ever stored
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []  # no error piece ever stored
+        mock_memory.get_conversation_messages_async.return_value = []
 
         with (
             patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc,
@@ -327,9 +326,9 @@ class TestAddMessage:
     ) -> None:
         """Test that legacy converter IDs warn and remain an unrestricted pipeline."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
+        mock_memory.get_conversation_messages_async.return_value = []
 
         with (
             patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc,
@@ -417,9 +416,9 @@ class TestAddMessage:
     ) -> None:
         """Test that request and response converter targeting reaches the normalizer."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
+        mock_memory.get_conversation_messages_async.return_value = []
 
         with (
             patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc,
@@ -516,7 +515,7 @@ class TestAddMessage:
             assert response_config.indexes_to_apply == [1]
             assert response_config.prompt_data_types_to_apply == ["text"]
 
-            update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+            update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
             updated_atomic = AtomicAttackIdentifier.model_validate(update_fields["atomic_attack_identifier"])
             updated_attack = updated_atomic.attack_technique.attack
             assert [converter.class_name for converter in updated_attack.request_converters] == [
@@ -530,7 +529,7 @@ class TestAddMessage:
     async def test_add_message_resolves_converters_before_writing(self, message_send_service, mock_memory) -> None:
         """Test that an unknown converter fails before message or attack writes."""
         ar = make_attack_result(conversation_id="test-id", has_target=False)
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
         request = AddMessageRequest(
             pieces=[MessagePieceRequest(original_value="Hello")],
             target_conversation_id="test-id",
@@ -547,18 +546,18 @@ class TestAddMessage:
             with pytest.raises(ValueError, match="Converter instance 'missing' not found"):
                 await message_send_service.add_message_async(attack_result_id="test-id", request=request)
 
-        mock_memory.add_conversation_to_memory.assert_not_called()
-        mock_memory.add_message_pieces_to_memory.assert_not_called()
-        mock_memory.update_attack_result_by_id.assert_not_called()
+        mock_memory.add_conversation_to_memory_async.assert_not_called()
+        mock_memory.add_message_pieces_to_memory_async.assert_not_called()
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
         assert not message_send_service._scheduler._conversations
 
     async def test_add_message_bumps_timestamp(self, message_send_service, mock_memory) -> None:
-        """Should bump the timestamp recency column via update_attack_result (no metadata write)."""
+        "Should bump the timestamp recency column via update_attack_result_async (no metadata write)."
         ar = make_attack_result(conversation_id="test-id")
         ar.metadata = {"created_at": "2026-01-01T00:00:00+00:00"}
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
+        mock_memory.get_conversation_messages_async.return_value = []
 
         request = AddMessageRequest(
             role="user",
@@ -569,8 +568,8 @@ class TestAddMessage:
 
         await message_send_service.add_message_async(attack_result_id="test-id", request=request)
 
-        mock_memory.update_attack_result_by_id.assert_called_once()
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
+        mock_memory.update_attack_result_by_id_async.assert_called_once()
+        call_kwargs = mock_memory.update_attack_result_by_id_async.call_args[1]
         assert call_kwargs["attack_result_id"] == "test-id"
         update_fields = call_kwargs["update_fields"]
         assert isinstance(update_fields["timestamp"], datetime)
@@ -581,9 +580,9 @@ class TestAddMessage:
     ) -> None:
         """Test that only the client-preconverted piece is excluded from conversion."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
+        mock_memory.get_conversation_messages_async.return_value = []
 
         mock_converter = MagicMock()
         mock_converter.get_identifier.return_value = ComponentIdentifier(
@@ -635,7 +634,7 @@ class TestAddMessage:
             assert [identifier.class_name for identifier in sent_pieces[0].converter_identifiers] == ["Base64Converter"]
             assert sent_pieces[1].converter_identifiers == []
             assert len(call_kwargs["response_converter_configurations"]) == 1
-            update_call = mock_memory.update_attack_result_by_id.call_args[1]
+            update_call = mock_memory.update_attack_result_by_id_async.call_args[1]
             assert "atomic_attack_identifier" in update_call["update_fields"]
 
     def test_preconverted_piece_omits_configuration_with_no_eligible_indexes(self, message_send_service) -> None:
@@ -653,8 +652,8 @@ class TestAddMessage:
     async def test_rejects_unrelated_conversation_id(self, message_send_service, mock_memory):
         """Writing to a conversation_id that doesn't belong to the attack should raise ValueError."""
         ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
 
         request = AddMessageRequest(
             role="user",
@@ -1164,8 +1163,8 @@ class TestAddMessageGuards:
     async def test_rejects_mismatched_target(self, message_send_service, mock_memory) -> None:
         """Should raise ValueError when request target differs from attack target."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
 
         # Create a mock target with a different class_name
         wrong_target = MagicMock()
@@ -1195,9 +1194,9 @@ class TestAddMessageGuards:
     ) -> None:
         """Should NOT raise when request target matches attack target."""
         ar = make_attack_result(conversation_id="test-id", has_target=has_target)
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
+        mock_memory.get_conversation_messages_async.return_value = []
 
         with (
             patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc,
@@ -1264,13 +1263,13 @@ class TestAddMessageGuards:
 
 
 class TestResolveVideoRemixMetadata:
-    """Tests for _resolve_video_remix_metadata."""
+    "Tests for _resolve_video_remix_metadata_async."
 
-    def test_resolves_video_id_from_original_piece(self, message_send_service, mock_memory):
+    async def test_resolves_video_id_from_original_piece(self, message_send_service, mock_memory):
         """When a video_path piece has original_prompt_id, resolve video_id onto text piece."""
         original_piece = MagicMock()
         original_piece.prompt_metadata = {"video_id": "vid-abc-123"}
-        mock_memory.get_message_pieces.return_value = [original_piece]
+        mock_memory.get_message_pieces_async.return_value = [original_piece]
 
         request = AddMessageRequest(
             role="user",
@@ -1285,12 +1284,12 @@ class TestResolveVideoRemixMetadata:
             ],
         )
 
-        message_send_service._resolve_video_remix_metadata(request)
+        (await message_send_service._resolve_video_remix_metadata_async(request))
 
         assert request.pieces[0].prompt_metadata == {"video_id": "vid-abc-123"}
         assert request.pieces[1].prompt_metadata == {"video_id": "vid-abc-123"}
 
-    def test_no_op_without_video_pieces(self, message_send_service):
+    async def test_no_op_without_video_pieces(self, message_send_service):
         """Should do nothing when there are no video_path pieces."""
         request = AddMessageRequest(
             role="user",
@@ -1298,11 +1297,11 @@ class TestResolveVideoRemixMetadata:
             pieces=[MessagePieceRequest(original_value="just text", data_type="text")],
         )
 
-        message_send_service._resolve_video_remix_metadata(request)
+        (await message_send_service._resolve_video_remix_metadata_async(request))
 
         assert request.pieces[0].prompt_metadata is None
 
-    def test_no_op_when_video_id_already_set(self, message_send_service, mock_memory):
+    async def test_no_op_when_video_id_already_set(self, message_send_service, mock_memory):
         """Should not overwrite existing video_id on text piece."""
         request = AddMessageRequest(
             role="user",
@@ -1321,12 +1320,12 @@ class TestResolveVideoRemixMetadata:
             ],
         )
 
-        message_send_service._resolve_video_remix_metadata(request)
+        (await message_send_service._resolve_video_remix_metadata_async(request))
 
         assert request.pieces[0].prompt_metadata == {"video_id": "existing-id"}
-        mock_memory.get_message_pieces.assert_not_called()
+        mock_memory.get_message_pieces_async.assert_not_called()
 
-    def test_no_op_without_original_prompt_id(self, message_send_service, mock_memory):
+    async def test_no_op_without_original_prompt_id(self, message_send_service, mock_memory):
         """Should not crash when video_path piece has no original_prompt_id."""
         request = AddMessageRequest(
             role="user",
@@ -1337,16 +1336,16 @@ class TestResolveVideoRemixMetadata:
             ],
         )
 
-        message_send_service._resolve_video_remix_metadata(request)
+        (await message_send_service._resolve_video_remix_metadata_async(request))
 
         assert request.pieces[0].prompt_metadata is None
-        mock_memory.get_message_pieces.assert_not_called()
+        mock_memory.get_message_pieces_async.assert_not_called()
 
-    def test_no_op_when_original_piece_has_no_video_id(self, message_send_service, mock_memory):
+    async def test_no_op_when_original_piece_has_no_video_id(self, message_send_service, mock_memory):
         """Should not set metadata when original piece has no video_id."""
         original_piece = MagicMock()
         original_piece.prompt_metadata = {"other_key": "value"}
-        mock_memory.get_message_pieces.return_value = [original_piece]
+        mock_memory.get_message_pieces_async.return_value = [original_piece]
 
         request = AddMessageRequest(
             role="user",
@@ -1361,7 +1360,7 @@ class TestResolveVideoRemixMetadata:
             ],
         )
 
-        message_send_service._resolve_video_remix_metadata(request)
+        (await message_send_service._resolve_video_remix_metadata_async(request))
 
         assert request.pieces[0].prompt_metadata is None
 
@@ -1637,7 +1636,7 @@ class TestConcurrentMessages:
                 await started.wait()
                 with pytest.raises(ManualSendConflictError):
                     await peer.add_message_async(attack_result_id="attack", request=_request(send=incoming_send))
-                mock_memory.add_message_pieces_to_memory.assert_not_called()
+                mock_memory.add_message_pieces_to_memory_async.assert_not_called()
             finally:
                 active.cancel()
                 with pytest.raises(asyncio.CancelledError):
@@ -1730,7 +1729,7 @@ class TestConcurrentMessages:
         other_attack = make_attack_result(
             conversation_id=str(uuid.uuid4()), attack_result_id=str(uuid.uuid4()), has_target=False
         )
-        await asyncio.to_thread(sqlite_instance.add_attack_results_to_memory, attack_results=[other_attack])
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[other_attack])
         waiting, release = asyncio.Event(), asyncio.Event()
         delays: list[float] = []
 
@@ -1783,8 +1782,7 @@ class TestConcurrentMessages:
         scheduler = service._scheduler
         peer = MessageSendService(scheduler=scheduler)
         branch_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
-        await asyncio.to_thread(
-            sqlite_instance.add_conversation_branches_to_attack,
+        await sqlite_instance.add_conversation_branches_to_attack_async(
             attack_result_id=ar.attack_result_id,
             conversations=[
                 Conversation(conversation_id=cid, target_identifier=target.get_identifier()) for cid in branch_ids
@@ -1865,7 +1863,7 @@ class TestConcurrentMessages:
         error: BaseException,
     ) -> None:
         _, send = send_dependencies
-        mock_memory.get_message_pieces.return_value = [
+        mock_memory.get_message_pieces_async.return_value = [
             MessagePiece(
                 role="assistant", original_value="old error", response_error="processing", conversation_id="main"
             )
@@ -1874,13 +1872,13 @@ class TestConcurrentMessages:
         with pytest.raises(type(error)):
             await message_send_service.add_message_async(attack_result_id="attack", request=_request())
         send.assert_awaited_once()
-        mock_memory.update_attack_result_by_id.assert_not_called()
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
         assert not message_send_service._scheduler._conversations
         assert message_send_service._scheduler._active == 0
         send.side_effect = None
         await message_send_service.add_message_async(attack_result_id="attack", request=_request())
 
-    @pytest.mark.parametrize("write_method", ["add_message_pieces_to_memory", "update_attack_result_by_id"])
+    @pytest.mark.parametrize("write_method", ["add_message_pieces_to_memory_async", "update_attack_result_by_id_async"])
     async def test_cancellation_joins_memory_write_before_releasing_ownership_async(
         self,
         *,
@@ -1889,15 +1887,14 @@ class TestConcurrentMessages:
         send_dependencies: tuple[MagicMock, AsyncMock],
         write_method: str,
     ) -> None:
-        started, release, finished = asyncio.Event(), threading.Event(), threading.Event()
-        loop = asyncio.get_running_loop()
+        started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
-        def hold_write(**_: Any) -> None:
-            loop.call_soon_threadsafe(started.set)
-            assert release.wait(timeout=5)
+        async def hold_write_async(**_: Any) -> None:
+            started.set()
+            await asyncio.wait_for(release.wait(), timeout=5)
             finished.set()
 
-        with patch.object(mock_memory, write_method, side_effect=hold_write):
+        with patch.object(mock_memory, write_method, side_effect=hold_write_async):
             active = asyncio.create_task(
                 message_send_service.add_message_async(attack_result_id="attack", request=_request(send=False))
             )
@@ -1907,7 +1904,7 @@ class TestConcurrentMessages:
                     active.cancel()
                     await asyncio.sleep(0)
                     assert not active.done()
-                    if write_method == "update_attack_result_by_id":
+                    if write_method == "update_attack_result_by_id_async":
                         assert message_send_service._scheduler._metadata_updates == {"attack"}
                 with pytest.raises(ManualSendConflictError):
                     await message_send_service.add_message_async(
@@ -1922,7 +1919,7 @@ class TestConcurrentMessages:
         assert not message_send_service._scheduler._metadata_updates
         await message_send_service.add_message_async(attack_result_id="attack", request=_request(send=False))
 
-    @pytest.mark.parametrize("write_method", ["add_message_pieces_to_memory", "update_attack_result_by_id"])
+    @pytest.mark.parametrize("write_method", ["add_message_pieces_to_memory_async", "update_attack_result_by_id_async"])
     async def test_memory_failure_releases_ownership_and_capacity_async(
         self,
         *,
@@ -1949,11 +1946,11 @@ class TestConcurrentMessages:
         send_dependencies: tuple[MagicMock, AsyncMock],
     ) -> None:
         _, send = send_dependencies
-        mock_memory.get_attack_results.side_effect = [mock_memory.get_attack_results.return_value, []]
+        mock_memory.get_attack_results_async.side_effect = [mock_memory.get_attack_results_async.return_value, []]
         with pytest.raises(ValueError, match="not found after message send"):
             await message_send_service.add_message_async(attack_result_id="attack", request=_request())
         send.assert_awaited_once()
-        mock_memory.update_attack_result_by_id.assert_not_called()
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
         assert not message_send_service._scheduler._conversations
 
     async def test_queued_converter_updates_merge_current_metadata_async(
@@ -1964,8 +1961,7 @@ class TestConcurrentMessages:
     ) -> None:
         _, ar, target, first_converter = real_send_context
         conversation_id = str(uuid.uuid4())
-        await asyncio.to_thread(
-            sqlite_instance.add_conversation_branches_to_attack,
+        await sqlite_instance.add_conversation_branches_to_attack_async(
             attack_result_id=ar.attack_result_id,
             conversations=[Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())],
             message_pieces=[],
@@ -2007,7 +2003,7 @@ class TestConcurrentMessages:
             finally:
                 release.set()
                 await asyncio.gather(*tasks)
-        stored = await asyncio.to_thread(sqlite_instance.get_attack_results, attack_result_ids=[ar.attack_result_id])
+        stored = await sqlite_instance.get_attack_results_async(attack_result_ids=[ar.attack_result_id])
         strategy = stored[0].get_attack_strategy_identifier()
         assert strategy is not None
         for pipeline in ["request_converters", "response_converters"]:
@@ -2032,8 +2028,7 @@ class TestConcurrentMessages:
         scheduler = first._scheduler
         second = MessageSendService(scheduler=scheduler)
         branch_id = str(uuid.uuid4())
-        await asyncio.to_thread(
-            sqlite_instance.add_conversation_branches_to_attack,
+        await sqlite_instance.add_conversation_branches_to_attack_async(
             attack_result_id=ar.attack_result_id,
             conversations=[Conversation(conversation_id=branch_id, target_identifier=target.get_identifier())],
             message_pieces=[],
@@ -2046,12 +2041,11 @@ class TestConcurrentMessages:
                 request.pieces[0].applied_converter_ids = [name]
 
         second_target_started, first_write_started = asyncio.Event(), asyncio.Event()
-        second_metadata_attempted, release_first_write = asyncio.Event(), threading.Event()
-        loop = asyncio.get_running_loop()
+        second_metadata_attempted, release_first_write = asyncio.Event(), asyncio.Event()
         writes: list[dict[str, Any]] = []
         attempts = 0
         send = target._send_prompt_to_target_async
-        update = sqlite_instance.update_attack_result_by_id
+        update = sqlite_instance.update_attack_result_by_id_async
         guard = scheduler.metadata_update_async
 
         async def overlap_targets_async(*, normalized_conversation: list[Message]) -> list[Message]:
@@ -2072,16 +2066,16 @@ class TestConcurrentMessages:
             async with guard(attack_result_id=attack_result_id):
                 yield
 
-        def delay_first_write(*, attack_result_id: str, update_fields: dict[str, Any]) -> None:
+        async def delay_first_write_async(*, attack_result_id: str, update_fields: dict[str, Any]) -> None:
             writes.append(update_fields)
             if len(writes) == 1:
-                loop.call_soon_threadsafe(first_write_started.set)
-                assert release_first_write.wait(timeout=5)
-            update(attack_result_id=attack_result_id, update_fields=update_fields)
+                first_write_started.set()
+                await asyncio.wait_for(release_first_write.wait(), timeout=5)
+            await update(attack_result_id=attack_result_id, update_fields=update_fields)
 
         with (
             patch.object(target, "_send_prompt_to_target_async", side_effect=overlap_targets_async),
-            patch.object(sqlite_instance, "update_attack_result_by_id", side_effect=delay_first_write),
+            patch.object(sqlite_instance, "update_attack_result_by_id_async", side_effect=delay_first_write_async),
             patch.object(scheduler, "metadata_update_async", side_effect=observe_metadata_async),
             patch("pyrit.backend.services.message_send_service.get_converter_service") as registry,
         ):
@@ -2105,7 +2099,7 @@ class TestConcurrentMessages:
 
         assert len(writes) == 2
         assert writes[0]["timestamp"] <= writes[1]["timestamp"]
-        stored = await asyncio.to_thread(sqlite_instance.get_attack_results, attack_result_ids=[ar.attack_result_id])
+        stored = await sqlite_instance.get_attack_results_async(attack_result_ids=[ar.attack_result_id])
         assert stored[0].timestamp == writes[1]["timestamp"]
         assert stored[0].last_response is not None
         assert stored[0].last_response.conversation_id == branch_id
@@ -2134,7 +2128,7 @@ class TestNormalizerPersistence:
         source = [
             MessagePiece(role="user", original_value=value, conversation_id=source_id) for value in ["Hello", "World"]
         ]
-        await asyncio.to_thread(sqlite_instance.add_message_pieces_to_memory, message_pieces=source)
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=source)
         request = AddMessageRequest(
             target_conversation_id=ar.conversation_id,
             target_registry_name="target",
@@ -2154,9 +2148,7 @@ class TestNormalizerPersistence:
             "already converted",
             "V29ybGQ=",
         ]
-        messages = await asyncio.to_thread(
-            sqlite_instance.get_conversation_messages, conversation_id=ar.conversation_id
-        )
+        messages = await sqlite_instance.get_conversation_messages_async(conversation_id=ar.conversation_id)
         assert len(messages) == 2
         assert [piece.original_value for piece in messages[0].message_pieces] == ["Hello", "World"]
         assert [piece.original_prompt_id for piece in messages[0].message_pieces] == [piece.id for piece in source]
@@ -2165,7 +2157,7 @@ class TestNormalizerPersistence:
         assert messages[1].sequence == 1
         assert messages[1].message_pieces[0].original_value == "default"
         assert messages[1].message_pieces[0].converted_value == "ZGVmYXVsdA=="
-        stored = await asyncio.to_thread(sqlite_instance.get_attack_results, attack_result_ids=[ar.attack_result_id])
+        stored = await sqlite_instance.get_attack_results_async(attack_result_ids=[ar.attack_result_id])
         assert service._memory is PromptNormalizer()._memory is sqlite_instance
         assert len(stored) == 1
         assert stored[0].last_response is not None
@@ -2195,16 +2187,12 @@ class TestNormalizerPersistence:
             else:
                 with pytest.raises(RuntimeError, match=failure):
                     await service.add_message_async(attack_result_id=ar.attack_result_id, request=request)
-        messages = await asyncio.to_thread(
-            sqlite_instance.get_conversation_messages, conversation_id=ar.conversation_id
-        )
+        messages = await sqlite_instance.get_conversation_messages_async(conversation_id=ar.conversation_id)
         assert len(messages) == {"request-converter": 0, "target": 2, "response-converter": 1, "write-only": 1}[failure]
         if failure == "target":
             assert messages[-1].message_pieces[0].response_error == "processing"
             assert "RuntimeError: target" in messages[-1].message_pieces[0].converted_value
-            stored = await asyncio.to_thread(
-                sqlite_instance.get_attack_results, attack_result_ids=[ar.attack_result_id]
-            )
+            stored = await sqlite_instance.get_attack_results_async(attack_result_ids=[ar.attack_result_id])
             assert stored[0].last_response is not None
             assert stored[0].last_response.id == messages[-1].message_pieces[0].id
         else:
@@ -2220,7 +2208,7 @@ class TestExactPreviewSend:
     async def test_type_changing_execution_provenance_is_preserved_async(
         self, *, message_send_service: MessageSendService, mock_memory: MagicMock, send: bool
     ) -> None:
-        mock_memory.get_attack_results.return_value = [make_attack_result(conversation_id="test-id")]
+        mock_memory.get_attack_results_async.return_value = [make_attack_result(conversation_id="test-id")]
         converters = {}
         for name, input_type, output_type, output in [
             ("ToImage", "text", "image_path", "preview.png"),
@@ -2288,13 +2276,13 @@ class TestExactPreviewSend:
         if send:
             piece = target.send_prompt_async.call_args.kwargs["message"].message_pieces[0]
         else:
-            piece = mock_memory.add_message_pieces_to_memory.call_args.kwargs["message_pieces"][0]
+            piece = mock_memory.add_message_pieces_to_memory_async.call_args.kwargs["message_pieces"][0]
             target.send_prompt_async.assert_not_awaited()
         assert piece.converted_value == "edited caption"
         assert [identifier.class_name for identifier in piece.converter_identifiers] == expected
         for converter in converters.values():
             converter.convert_tokens_async.assert_not_awaited()
-        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
         identifier = AtomicAttackIdentifier.model_validate(update_fields["atomic_attack_identifier"])
         assert [converter.class_name for converter in identifier.attack_technique.attack.request_converters] == [
             "ToImage",
@@ -2304,7 +2292,7 @@ class TestExactPreviewSend:
     async def test_unknown_applied_converter_rejected_before_sending_async(
         self, *, message_send_service: MessageSendService, mock_memory: MagicMock
     ) -> None:
-        mock_memory.get_attack_results.return_value = [make_attack_result(conversation_id="test-id")]
+        mock_memory.get_attack_results_async.return_value = [make_attack_result(conversation_id="test-id")]
         request = AddMessageRequest(
             pieces=[
                 MessagePieceRequest(
@@ -2326,8 +2314,8 @@ class TestExactPreviewSend:
             with pytest.raises(ValueError, match="unknown"):
                 await message_send_service.add_message_async(attack_result_id="test-id", request=request)
         send.assert_not_awaited()
-        mock_memory.add_message_pieces_to_memory.assert_not_called()
-        mock_memory.update_attack_result_by_id.assert_not_called()
+        mock_memory.add_message_pieces_to_memory_async.assert_not_called()
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
     @pytest.mark.parametrize("original_value", ["Original source", ""])
     @pytest.mark.parametrize("has_converter_pipeline", [True, False])
@@ -2386,7 +2374,7 @@ class TestExactPreviewSend:
         sent_piece = target.send_prompt_async.call_args.kwargs["message"].message_pieces[0]
         assert sent_piece.original_value == original_value
         assert sent_piece.converted_value == "Exact edited preview"
-        pieces = sqlite_instance.get_message_pieces(conversation_id=conversation_id)
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
         assert len(pieces) == 1
         piece = pieces[0]
         assert piece.original_value == original_value
@@ -2442,7 +2430,7 @@ class TestExactPreviewSend:
         expected_original: str,
         expected_final: str,
     ) -> None:
-        mock_memory.get_attack_results.return_value = [make_attack_result(conversation_id="test-id")]
+        mock_memory.get_attack_results_async.return_value = [make_attack_result(conversation_id="test-id")]
         preview_converter = MagicMock(spec=Converter)
         preview_converter.get_identifier.return_value = ComponentIdentifier(
             class_name="PreviewConverter",
@@ -2518,8 +2506,8 @@ class TestExactPreviewSend:
         assert live.original_value == "Unconverted"
         assert live.converted_value == "Live conversion"
         assert [identifier.class_name for identifier in live.converter_identifiers] == ["LiveConverter"]
-        assert mock_memory.add_message_to_memory.call_args.kwargs["request"] is message
-        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert mock_memory.add_message_to_memory_async.call_args.kwargs["request"] is message
+        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
         identifier = AtomicAttackIdentifier.model_validate(update_fields["atomic_attack_identifier"])
         assert [converter.class_name for converter in identifier.attack_technique.attack.request_converters] == [
             "PreviewConverter",

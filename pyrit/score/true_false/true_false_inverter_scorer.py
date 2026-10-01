@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import copy
-import uuid
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -120,7 +119,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         Returns:
             list[Score]: A list containing the single inverted score.
         """
-        inv_score = scores[0]
+        inv_score = self._create_wrapper_score(scores[0])
         scorer_type = self._scorer.get_identifier().class_name
 
         if inv_score.is_undetermined:
@@ -139,8 +138,6 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             inv_score.score_rationale = (
                 f"Inverted score from {scorer_type} result: {inv_score.score_value}\n{inv_score.score_rationale}"
             )
-
-        inv_score.id = uuid.uuid4()
 
         inv_score.scorer_class_identifier = self.get_identifier()
 
