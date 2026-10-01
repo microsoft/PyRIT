@@ -37,15 +37,39 @@ reads and applies it. It performs no eager heavy imports and never imports
 from __future__ import annotations
 
 import copy
+import functools
 import inspect
+import json
 import logging
+import operator
 import re
 import types
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin, get_type_hints
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    Protocol,
+    TypeAlias,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import (
+    AfterValidator,
+    ConfigDict,
+    PydanticSchemaGenerationError,
+    PydanticUndefinedAnnotation,
+    PydanticUserError,
+    TypeAdapter,
+    ValidationError,
+)
+from pydantic_core import SchemaError
+from typing_extensions import get_protocol_members, is_protocol
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
 from pyrit.common.brick_contract import init_parameters_are_forwarded
@@ -409,7 +433,8 @@ def _resolve_single_reference(
     Resolve a single registry-reference value to a stored instance.
 
     A string value is looked up by name in the paired registry. An already-built
-    instance passes through unchanged.
+    instance passes through unchanged. Other JSON data (a number or an object) can
+    never name an instance, so it is rejected instead of reaching the constructor.
 
     Args:
         value (Any): The raw value (a registry name, or an instance to pass through).
@@ -421,9 +446,15 @@ def _resolve_single_reference(
         Any: The resolved instance.
 
     Raises:
-        ValueError: If the name is not registered.
+        ValueError: If the name is not registered, or the value is JSON data rather than a name
+            or instance.
     """
     if not isinstance(value, str):
+        if value is not None and _is_json_data(value):
+            raise ValueError(
+                f"{owner}.{name}: expected a registry name or instance for this reference, "
+                f"but got {type(value).__name__}."
+            )
         return value
 
     registry = getter()
@@ -478,8 +509,9 @@ def _resolve_registry_reference(
         Any: The resolved instance, or a list of resolved instances.
 
     Raises:
-        ValueError: If a name is not registered, or the value's shape (list vs.
-            scalar) does not match the reference's arity.
+        ValueError: If a name is not registered, a value is JSON data rather than a
+            name or instance, or the value's shape (list vs. scalar) does not match the
+            reference's arity.
     """
     if get_origin(annotation) is list:
         if not isinstance(value, list):
@@ -522,7 +554,8 @@ def resolve_reference_value(
         Any: The resolved instance, or the value unchanged when already an instance.
 
     Raises:
-        ValueError: If no registry is wired for ``component_type``, or the name is not registered.
+        ValueError: If no registry is wired for ``component_type``, the name is not registered,
+            or the value is JSON data rather than a name or instance.
     """
     getter = _registry_getter_for_component_type(component_type)
     if getter is None:
@@ -541,8 +574,10 @@ def resolve_constructor_args(
 
     Derives the ``Parameter`` contract for ``cls`` and applies it to
     ``raw_args``. For each raw argument: validate it is a declared parameter;
-    resolve registry-reference parameters by name; coerce simple string values
-    via ``Parameter.coerce_value``; pass everything else through unchanged.
+    resolve registry-reference parameters by name; coerce simple string values,
+    enums, and JSON lists of enum or literal choices via ``Parameter.coerce_value``;
+    check other JSON values against the declared type; pass live Python objects
+    through unchanged.
 
     Args:
         cls (type): The class being built.
@@ -556,7 +591,8 @@ def resolve_constructor_args(
 
     Raises:
         ValueError: If an argument is not a declared parameter, a registry
-            reference cannot be resolved, or a simple value cannot be coerced.
+            reference cannot be resolved, a simple value cannot be coerced, or a
+            JSON value does not match the declared type.
     """
     by_name = {param.name: param for param in derive_parameters(cls=cls, identifier_type=identifier_type)}
 
@@ -585,17 +621,173 @@ def resolve_constructor_args(
             )
         elif param.variants is not None:
             resolved[name] = _resolve_structured_input(parameter=param, value=value)
-        elif (isinstance(value, str) and param.is_string_coercible) or (
-            isinstance(value_type, type) and issubclass(value_type, Enum)
+        elif (
+            (isinstance(value, str) and param.is_string_coercible)
+            or (isinstance(value_type, type) and issubclass(value_type, Enum))
+            or (_is_choice_list(value_type) and _is_json_data(value))
         ):
             try:
                 resolved[name] = param.coerce_value(value)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Parameter '{name}' of '{cls.__name__}': {e}") from e
         else:
-            resolved[name] = value
+            resolved[name] = _check_json_value(parameter=param, value=value, owner=cls.__name__)
 
     return resolved
+
+
+def _is_choice_list(annotation: Any) -> bool:
+    """
+    Return whether an annotation is a list of enum or literal choices.
+
+    ``Parameter.coerce_value`` converts such a list from its JSON choice values, as it
+    does a single enum.
+
+    Returns:
+        bool: True for ``list[SomeEnum]`` and ``list[Literal[...]]``.
+    """
+    if get_origin(annotation) is not list:
+        return False
+    args = get_args(annotation)
+    element = args[0] if args else None
+    return get_origin(element) is Literal or (isinstance(element, type) and issubclass(element, Enum))
+
+
+_PLAIN_SEQUENCE_TYPES = (list, tuple, set, frozenset)
+
+
+def _is_json_data(value: Any, *, sequence_types: tuple[type, ...] = (list,)) -> bool:
+    """
+    Return whether a value holds only JSON-style data rather than live Python objects.
+
+    Args:
+        value (Any): The value to inspect.
+        sequence_types (tuple[type, ...]): Sequence types accepted alongside string-keyed dicts.
+
+    Returns:
+        bool: True for None, strings, numbers, and the given sequences or string-keyed dicts of
+            them (exact built-in types, so subclasses and enums count as live objects), without
+            cycles.
+    """
+    pending = [value]
+    seen: set[int] = set()
+    while pending:
+        item = pending.pop()
+        if item is None or type(item) in (str, int, float, bool):
+            continue
+        if id(item) in seen or type(item) not in (dict, *sequence_types):
+            return False
+        seen.add(id(item))
+        if type(item) is dict:
+            if not all(type(key) is str for key in item):
+                return False
+            pending.extend(item.values())
+        else:
+            pending.extend(item)
+    return True
+
+
+def _json_projection(annotation: Any) -> Any:
+    """
+    Project an annotation onto the types its JSON form is validated against.
+
+    Abstract collections become lists and regex patterns become strings at any depth,
+    including inside unions and containers, so pydantic can validate their JSON form.
+    Protocols become a check that the value provides every protocol member.
+
+    Returns:
+        Any: The projected annotation.
+    """
+    origin = get_origin(annotation) or annotation
+    if origin is re.Pattern:
+        return str
+    if is_protocol(origin):
+        return Annotated[object, AfterValidator(functools.partial(_require_protocol_members, protocol=origin))]
+    args = get_args(annotation)
+    if origin in (Collection, Sequence, Iterable):
+        if not args:
+            return list
+        element_type = _json_projection(args[0])
+        return list[element_type]
+    if not args:
+        return annotation
+    projected = tuple(_json_projection(arg) for arg in args)
+    if origin in (Union, types.UnionType):
+        return functools.reduce(operator.or_, projected)
+    return origin[projected]
+
+
+def _require_protocol_members(value: object, *, protocol: type) -> object:
+    """
+    Require a value to provide every member of a protocol.
+
+    Returns:
+        object: The unchanged value.
+
+    Raises:
+        ValueError: If the value lacks a protocol member.
+    """
+    missing = sorted(name for name in get_protocol_members(protocol) if not hasattr(value, name))
+    if missing:
+        raise ValueError(f"{protocol.__name__} requires {', '.join(missing)}")
+    return value
+
+
+def _json_adapter(annotation: Any) -> TypeAdapter[Any]:
+    """
+    Build a JSON validator for a parameter annotation.
+
+    Annotations naming arbitrary classes are retried as instance checks, which no JSON value
+    satisfies, so JSON input for an object-only parameter is rejected instead of skipped.
+
+    Returns:
+        TypeAdapter[Any]: The validator.
+    """
+    try:
+        return TypeAdapter(annotation)
+    except PydanticSchemaGenerationError:
+        return TypeAdapter(annotation, config=ConfigDict(arbitrary_types_allowed=True))
+
+
+def _check_json_value(*, parameter: Parameter, value: Any, owner: str) -> Any:
+    """
+    Check a JSON value against the parameter's declared type before construction.
+
+    JSON values must match the declared type, and must not need conversion into objects such
+    as paths, enums, or models, which the constructor would otherwise receive as raw JSON.
+    JSON arrays become tuples or sets where the type declares them, and protocol-typed values
+    must provide the protocol's members. Live Python objects from in-process callers, and
+    annotations pydantic cannot resolve or build (such as forward references), are left to the
+    constructor.
+
+    Args:
+        parameter (Parameter): The declared parameter.
+        value (Any): The raw supplied value.
+        owner (str): The class name used in error messages.
+
+    Returns:
+        Any: The value to pass to the constructor.
+
+    Raises:
+        ValueError: If the JSON value does not match the declared type.
+    """
+    if parameter.param_type is None or not _is_json_data(value):
+        return value
+    try:
+        adapter = _json_adapter(_json_projection(parameter.param_type))
+        validated = adapter.validate_json(json.dumps(value), strict=True)
+        plain = _is_json_data(validated, sequence_types=_PLAIN_SEQUENCE_TYPES)
+        unchanged = plain and validated == value
+    except ValidationError as exc:
+        raise ValueError(f"Parameter '{parameter.name}' of '{owner}' expects {parameter.type_name}.") from exc
+    except (PydanticUserError, PydanticUndefinedAnnotation, SchemaError, RecursionError, TypeError, ValueError):
+        logger.debug("Skipping JSON type check for %s.%s", owner, parameter.name)
+        return value
+    if not plain:
+        raise ValueError(
+            f"Parameter '{parameter.name}' of '{owner}' expects {parameter.type_name}, which cannot be built from JSON."
+        )
+    return value if unchanged else validated
 
 
 def _resolve_structured_input(*, parameter: Parameter, value: Any) -> Any:

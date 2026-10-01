@@ -413,6 +413,16 @@ class TestCreateConverter:
         with pytest.raises(ValueError, match="not found"):
             await service.create_converter_async(request=request)
 
+    async def test_create_converter_rejects_wrong_parameter_type(self) -> None:
+        """A JSON value that does not match the declared type is a validation error, not a crash."""
+        service = ConverterService()
+        request = CreateConverterRequest(name="caesar", type="CaesarConverter", params={"caesar_offset": [1]})
+
+        with pytest.raises(ValueError, match="caesar_offset"):
+            await service.create_converter_async(request=request)
+
+        assert service.get_converter_object(converter_id="caesar") is None
+
     async def test_create_converter_success(self) -> None:
         """Test successful converter creation."""
         service = ConverterService()
