@@ -101,6 +101,7 @@ from pyrit.models import (
     SeedGroup,
     SeedIdentifier,
     SeedObjective,
+    SeedOrigin,
     SeedPrompt,
     SeedType,
     TargetIdentifier,
@@ -3393,6 +3394,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -3404,6 +3406,7 @@ class MemoryInterface(abc.ABC):
         remove_seeds_from_memory stay in sync and cannot drift.
 
         Args:
+            origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match. By default this matches by substring; pass exact=True to
                 require full-string equality instead. If None, all values are returned.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
@@ -3458,6 +3461,8 @@ class MemoryInterface(abc.ABC):
             conditions.append(SeedEntry.added_by == added_by)
         if source:
             conditions.append(SeedEntry.source == source)
+        if origin is not None:
+            conditions.append(SeedEntry.origin == SeedOrigin(origin).value)
 
         # Handle seed_type filtering
         if seed_type == "objective":
@@ -3493,6 +3498,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -3501,6 +3507,7 @@ class MemoryInterface(abc.ABC):
         Retrieve a list of seed prompts based on the specified filters.
 
         Args:
+            origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match by substring. If None, all values are returned.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
@@ -3543,6 +3550,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -3573,6 +3581,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -3589,6 +3598,7 @@ class MemoryInterface(abc.ABC):
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
         Args:
+            origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -3642,6 +3652,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -3681,6 +3692,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -3705,6 +3717,7 @@ class MemoryInterface(abc.ABC):
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
         Args:
+            origin (SeedOrigin | None): Match origin before expanding to complete groups.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -3758,6 +3771,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -4357,6 +4371,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -4366,6 +4381,7 @@ class MemoryInterface(abc.ABC):
         Retrieve groups of seed prompts based on the provided filtering criteria.
 
         Args:
+            origin (SeedOrigin | None): Match origin before expanding to complete groups.
             value (str | None, Optional): The value to match by substring.
             value_sha256 (Sequence[str] | None, Optional): SHA256 hash of value to filter seed groups by.
             dataset_name (str | None, Optional): Name of the dataset to match exactly.
@@ -4405,6 +4421,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -7692,6 +7709,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -7719,6 +7737,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -7739,6 +7758,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -7747,6 +7767,7 @@ class MemoryInterface(abc.ABC):
         Retrieve a list of seed prompts based on the specified filters.
 
         Args:
+            origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match by substring. If None, all values are returned.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
@@ -7790,6 +7811,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -7810,6 +7832,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -7840,6 +7863,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -7861,6 +7885,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -7877,6 +7902,7 @@ class MemoryInterface(abc.ABC):
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
         Args:
+            origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -7930,6 +7956,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -7950,6 +7977,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -7980,6 +8008,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -8001,6 +8030,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -8025,6 +8055,7 @@ class MemoryInterface(abc.ABC):
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
         Args:
+            origin (SeedOrigin | None): Match origin before expanding to complete groups.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -8078,6 +8109,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -8158,6 +8190,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -8188,6 +8221,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -8209,6 +8243,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -8218,6 +8253,7 @@ class MemoryInterface(abc.ABC):
         Retrieve groups of seed prompts based on the provided filtering criteria.
 
         Args:
+            origin (SeedOrigin | None): Match origin before expanding to complete groups.
             value (str | None, Optional): The value to match by substring.
             value_sha256 (Sequence[str] | None, Optional): SHA256 hash of value to filter seed groups by.
             dataset_name (str | None, Optional): Name of the dataset to match exactly.
@@ -8256,6 +8292,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,

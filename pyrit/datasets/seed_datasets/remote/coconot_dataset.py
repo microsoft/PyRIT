@@ -131,7 +131,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         return self.SPLITS
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the CoCoNot subset and return it as a SeedDataset.
 

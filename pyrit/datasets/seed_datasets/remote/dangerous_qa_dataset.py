@@ -67,7 +67,7 @@ class _DangerousQADataset(_RemoteDatasetLoader):
         """The dataset name."""
         return "dangerous_qa"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch DangerousQA dataset and return as SeedDataset.
 

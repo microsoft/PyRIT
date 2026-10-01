@@ -75,3 +75,41 @@ datasets. After initialization, the run plan supplies the exact planned count.
 Previews and initialization share configuration-only validation. Invalid caps
 and parameter combinations are rejected before dataset reads. Checks that need
 dataset contents, such as family/trigger coverage, still run during resolution.
+
+## Generated Datasets
+
+A generation provider uses a configured `PromptTarget` to create a dataset. Store the result
+explicitly in memory, then select it by name in a scenario. Generation providers are excluded
+from discovery and bulk loading, so listing datasets cannot trigger model calls. Generation
+checks structure and count, not semantic quality.
+
+The mechanism is not limited to one seed type. The first provider,
+[`TargetObjectiveProvider`](./6_generated_datasets.ipynb), generates text objectives only.
+Other seed types, such as prompts, multimodal groups, and simulated conversations, can use
+the same boundary later.
+
+The provider accepts a `SeedPrompt` as its `system_prompt`. The default generation rules
+and JSON response schema are defined in a bundled YAML file, using the same
+`response_json_schema` header as scorer prompts. Load a custom YAML with
+`SeedPrompt.from_yaml_file(...)` to change the generation rules.
+The header is the response schema source for both target requests and local validation;
+the prompt body contains generation guidance and examples, not a second format definition.
+Custom schemas must require an `objectives` array of strings. Count, non-empty values, and
+uniqueness after trimming are checked separately by the strategy.
+
+For direct strategy use, call `TargetObjectiveGenerator.execute_async` with `instructions`,
+`count`, and optional `harm_categories`. Each call creates a fresh context. Advanced callers
+can use `execute_with_context_async`, but each context permits only one execution attempt.
+Conversation cleanup releases target-side resources without deleting stored evidence.
+Cleanup has a five-second timeout and can extend past the execution deadline by up to
+five seconds. Cleanup failures are logged without replacing the original outcome.
+Each generated seed stores only `generation_conversation_id` in its generation metadata.
+Use that ID to retrieve the generation conversation from memory.
+
+Seeds record their provider or entry category in `origin`: `LOCAL`, `REMOTE`, `GENERATED`,
+`USER`, or `UNKNOWN`. Local YAML loading assigns `LOCAL` when origin is omitted and rejects
+an explicit origin other than `local`. Remote dataset providers assign
+`REMOTE`, even when reading an explicit source file or cached download. Generated datasets
+use `GENERATED`. Origin does not describe upstream authorship. Use `origin=SeedOrigin.USER`
+for explicit user entries. Unspecified and legacy origins remain `UNKNOWN`, while edits
+preserve the recorded origin.

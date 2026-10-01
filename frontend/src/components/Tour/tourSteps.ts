@@ -11,14 +11,30 @@ export interface TourStep extends Step {
   readonly viewRequired: ViewName
 }
 
-/** Builds tour guidance for the controls available in the current target state. */
-export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
+/** Controls which guidance the tour shows for state-dependent steps. */
+export interface TourContext {
+  /** Whether a default objective target is set for this browser. */
+  readonly hasActiveTarget: boolean
+  /** Whether the Configuration nav button is rendered for this user. */
+  readonly canManageConfiguration: boolean
+}
+
+/** Builds tour guidance for the controls available in the current app state. */
+export function createTourSteps({
+  hasActiveTarget,
+  canManageConfiguration,
+}: TourContext): TourStep[] {
   return [
     {
       target: '[data-tour="sidebar-nav"]',
       content:
         'Ahoy! Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Chat is where you send prompts, ' +
-        'History tracks past attacks, and Registry is where you manage targets and converters. Feel free to try clicking between these views!',
+        'History tracks past attacks and scanner runs, Scanner launches full test campaigns, and Registry is where you manage ' +
+        'targets and converters.' +
+        (canManageConfiguration
+          ? ' Configuration holds environment settings for your deployment.'
+          : '') +
+        ' Feel free to try clicking between these views!',
       placement: 'right-start',
       skipBeacon: true,
       viewRequired: 'home',
@@ -57,15 +73,37 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
       viewRequired: 'chat',
     },
     {
-      target: '[data-tour="history-filters"]',
+      target: '[data-tour="scanner-catalog"]',
       content:
-        'Every attack is logged here. Filter by different criteria like outcome, converter type, or labels to ' +
+        'Scanner runs a whole campaign for you. Pick a scenario to sweep many attack techniques and datasets ' +
+        'against a target in one run, instead of sending prompts one at a time in Chat.',
+      placement: 'bottom',
+      skipBeacon: true,
+      viewRequired: 'scenarios',
+    },
+    {
+      target: '[data-tour="history-tabs"]',
+      content:
+        'Every run is logged here. The Attacks tab lists individual conversations and the Scanner tab lists ' +
+        'scenario runs. Each tab has its own filters, such as outcome, converter type, or labels, so you can ' +
         'find exactly what you need!',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'history',
     },
+    {
+      target: '[data-tour="registry-tabs"]',
+      content:
+        'The Registry is your home base. Register targets and set your objective and adversarial defaults under ' +
+        'Targets, and browse the converters you can apply to prompts under Converters.',
+      placement: 'bottom',
+      skipBeacon: true,
+      viewRequired: 'registry',
+    },
   ]
 }
 
-export const TOUR_STEPS = createTourSteps(false)
+export const TOUR_STEPS = createTourSteps({
+  hasActiveTarget: false,
+  canManageConfiguration: false,
+})

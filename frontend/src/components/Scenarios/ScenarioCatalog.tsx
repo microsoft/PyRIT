@@ -370,7 +370,7 @@ export default function ScenarioCatalog() {
       data-testid="scenario-catalog"
       aria-labelledby="scenario-catalog-title"
     >
-      <div className={styles.header}>
+      <div className={styles.header} data-tour="scanner-catalog">
         <div className={styles.headerText}>
           <Text id="scenario-catalog-title" as="h1" size={600} weight="semibold">
             <FluentLink
