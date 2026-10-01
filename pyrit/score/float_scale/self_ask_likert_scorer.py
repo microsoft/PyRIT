@@ -471,5 +471,12 @@ class SelfAskLikertScorer(MessageFloatScaleScorer):
             ),
             score_type="float_scale",
         )
-        score.score_metadata = {"likert_value": int(float(unvalidated.raw_score_value))}
+        # Extend rather than replace: `to_score` has already installed whatever
+        # the response handler parsed off the judge's reply, and the sibling
+        # float-scale scorers leave it in place. Replacing the dict would drop
+        # those keys, so a caller-supplied handler could never carry metadata.
+        score.score_metadata = {
+            **(unvalidated.score_metadata or {}),
+            "likert_value": int(float(unvalidated.raw_score_value)),
+        }
         return score

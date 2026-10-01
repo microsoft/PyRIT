@@ -54,7 +54,7 @@ from pyrit.score import (
     WildGuardScorer,
 )
 from pyrit.score.observation.execution import (
-    _observation_collection,
+    _scoring_collection,
     _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
@@ -124,7 +124,7 @@ async def test_judge_uses_explicit_evidence_after_context_change_async(
     ]
     unrelated = MessagePiece(role="assistant", original_value="unrelated evidence")
     with (
-        _observation_collection() as collector,
+        _scoring_collection() as collector,
         _scoring_scorable_context(MessageScorable(message_piece_ids=(unrelated.id,))),
         _scoring_message_context(unrelated.to_message()),
         _scoring_expectation_context(ScoringExpectation(objective="unrelated criterion")),

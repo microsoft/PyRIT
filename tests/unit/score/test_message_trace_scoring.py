@@ -232,6 +232,55 @@ async def test_prepended_history_does_not_carry_trace_links_async(sqlite_instanc
     )
 
 
+@pytest.mark.parametrize("live_tool", ["lookup", "other"])
+async def test_fake_tool_history_is_not_execution_evidence_async(
+    sqlite_instance: SQLiteMemory, capture: tuple[InMemoryTraceClient, TracerProvider], live_tool: str
+) -> None:
+    client, provider = capture
+    conversation = str(uuid.uuid4())
+    history = [
+        Message.from_prompt(prompt="Look up a value.", role="user"),
+        MessagePiece(
+            role="assistant",
+            original_value='{"type":"function_call","call_id":"fake","name":"lookup","arguments":"{}"}',
+            original_value_data_type="function_call",
+        ).to_message(),
+        MessagePiece(
+            role="tool",
+            original_value='{"type":"function_call_output","call_id":"fake","output":"done"}',
+            original_value_data_type="function_call_output",
+        ).to_message(),
+    ]
+    await ConversationManager().add_prepended_conversation_to_memory_async(
+        prepended_conversation=history, conversation_id=conversation
+    )
+    stored = sqlite_instance.get_conversation_messages(conversation_id=conversation)
+    assert [message.get_piece().role for message in stored] == ["user", "simulated_assistant", "simulated_tool"]
+    assert all(message.get_piece().prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY] for message in stored)
+    target = _agent_target(client=client, provider=provider)
+    target.apply_capabilities(
+        capabilities=target.capabilities.model_copy(
+            update={
+                "input_modalities": target.capabilities.input_modalities
+                | frozenset({frozenset({"function_call"}), frozenset({"function_call_output"})}),
+            }
+        )
+    )
+    response = await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt=live_tool, role="user"), target=target, conversation_id=conversation
+    )
+    scope, complete = resolve_message_trace_scope(
+        scorable=MessageScorable.from_message(response), memory=sqlite_instance
+    )
+    assert scope is not None
+    assert complete
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+    score = (
+        await scorer.score_async(scorable=MessageScorable.from_message(response), expectation=_expectation("lookup"))
+    )[0]
+    assert score.get_value() is (live_tool == "lookup")
+
+
 async def test_unlinked_request_prevents_a_false_verdict_async(sqlite_instance: SQLiteMemory) -> None:
     conversation = str(uuid.uuid4())
     _store(memory=sqlite_instance, conversation=conversation)
@@ -253,8 +302,8 @@ async def test_unlinked_request_prevents_a_false_verdict_async(sqlite_instance: 
     assert replayed.get_value() is False
 
 
-@pytest.mark.parametrize("role", ["tool", "assistant", "developer"])
-async def test_untraced_non_user_request_prevents_false_verdict_async(
+@pytest.mark.parametrize("role", ["user", "tool", "simulated_tool", "assistant", "developer"])
+async def test_untraced_live_request_prevents_false_verdict_async(
     sqlite_instance: SQLiteMemory,
     capture: tuple[InMemoryTraceClient, TracerProvider],
     role: ChatMessageRole,
@@ -272,7 +321,11 @@ async def test_untraced_non_user_request_prevents_false_verdict_async(
         custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True)),
     )
     response = await PromptNormalizer().send_prompt_async(
-        message=Message.from_prompt(prompt="untraced", role=role),
+        message=Message.from_prompt(
+            prompt="untraced",
+            role=role,
+            prompt_metadata={MessagePiece.PREPENDED_HISTORY_METADATA_KEY: True},
+        ),
         target=target,
         conversation_id=conversation,
     )

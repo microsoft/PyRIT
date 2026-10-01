@@ -15,10 +15,10 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select, update
+from sqlalchemy import MetaData, and_, case, exists, false, func, literal, not_, or_, select, update
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -1844,17 +1844,21 @@ class MemoryInterface(abc.ABC):
         *,
         scores: Sequence[Score],
         observations: Sequence[Observation] = (),
+        intermediate_scores: Sequence[Score] = (),
     ) -> None:
         """
         Persist scores whose loose-content anchors need no asynchronous file copy.
 
         File-backed ``ContentScorable`` values must use ``add_scores_to_memory_async``
         so the source bytes can be copied into managed results storage.
+        ``intermediate_scores`` are results of nested scorers at any depth. They share the
+        transaction but are excluded from default score queries.
         """
         self._add_scores_to_memory(
-            scores=scores,
+            scores=[*scores, *intermediate_scores],
             observations=observations,
             prepared_content_hashes={},
+            intermediate_score_ids=frozenset(str(score.id) for score in intermediate_scores),
         )
 
     async def add_scores_to_memory_async(
@@ -1862,22 +1866,27 @@ class MemoryInterface(abc.ABC):
         *,
         scores: Sequence[Score],
         observations: Sequence[Observation] = (),
+        intermediate_scores: Sequence[Score] = (),
     ) -> None:
         """
         Prepare file-backed loose content, then persist scores and observations.
 
+        ``intermediate_scores`` are results of nested scorers at any depth. They share the
+        transaction but are excluded from default score queries.
+
         Raises:
             ValueError: If an observation does not match its scored content.
         """
+        all_scores = [*scores, *intermediate_scores]
         media_scorables = list(
             dict.fromkeys(
                 score.scorable
-                for score in scores
+                for score in all_scores
                 if isinstance(score.scorable, ContentScorable) and score.scorable.data_type in MEDIA_PATH_DATA_TYPES
             )
         )
         if not media_scorables:
-            self.add_scores_to_memory(scores=scores, observations=observations)
+            self.add_scores_to_memory(scores=scores, observations=observations, intermediate_scores=intermediate_scores)
             return
 
         prepared_content = await asyncio.gather(
@@ -1888,7 +1897,7 @@ class MemoryInterface(abc.ABC):
 
         copied_scores: list[tuple[Score, Score]] = []
         scores_to_persist: list[Score] = []
-        for score in scores:
+        for score in all_scores:
             scorable = score.scorable
             prepared = prepared_by_source.get(scorable) if isinstance(scorable, ContentScorable) else None
             if prepared is None:
@@ -1902,6 +1911,7 @@ class MemoryInterface(abc.ABC):
             scores=scores_to_persist,
             observations=observations,
             prepared_content_hashes=prepared_hashes,
+            intermediate_score_ids=frozenset(str(score.id) for score in intermediate_scores),
         )
         for original_score, copied_score in copied_scores:
             original_score.scorable = copied_score.scorable
@@ -1949,6 +1959,7 @@ class MemoryInterface(abc.ABC):
         scores: Sequence[Score],
         observations: Sequence[Observation],
         prepared_content_hashes: Mapping[ContentScorable, str],
+        intermediate_score_ids: frozenset[str] = frozenset(),
     ) -> None:
         """
         Insert a list of scores into the memory storage.
@@ -1988,7 +1999,12 @@ class MemoryInterface(abc.ABC):
                 session.add_all(content_entries)
                 session.flush()
                 self._validate_observation_evidence(session=session, observations=persisted_observations)
-                self._persist_score_rows(session=session, scores=persisted_scores, observations=persisted_observations)
+                self._persist_score_rows(
+                    session=session,
+                    scores=persisted_scores,
+                    observations=persisted_observations,
+                    intermediate_score_ids=intermediate_score_ids,
+                )
                 session.commit()
             except SQLAlchemyError:
                 session.rollback()
@@ -2102,10 +2118,15 @@ class MemoryInterface(abc.ABC):
         return content_entries, persisted_scores, persisted_observations
 
     def _persist_score_rows(
-        self, *, session: Session, scores: Sequence[Score], observations: Sequence[Observation]
+        self,
+        *,
+        session: Session,
+        scores: Sequence[Score],
+        observations: Sequence[Observation],
+        intermediate_score_ids: frozenset[str] = frozenset(),
     ) -> None:
         """Build score, observation, identifier, and ordered-link rows in one session."""
-        entries = [ScoreEntry(entry=score) for score in scores]
+        entries = [ScoreEntry(entry=score, is_intermediate=str(score.id) in intermediate_score_ids) for score in scores]
         observation_entries = [ObservationEntry(entry=observation) for observation in observations]
         observation_message_links = [
             ObservationMessagePieceEntry(
@@ -2354,6 +2375,7 @@ class MemoryInterface(abc.ABC):
         sent_after: datetime | None = None,
         sent_before: datetime | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
+        include_intermediate: bool = False,
     ) -> Sequence[Score]:
         """
         Retrieve a list of Score objects based on the specified filters.
@@ -2366,6 +2388,7 @@ class MemoryInterface(abc.ABC):
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
                 allows filtering by various scorer identifier JSON properties. Defaults to None.
+            include_intermediate (bool): Include nested results in filtered queries. Explicit IDs always include them.
 
         Returns:
             Sequence[Score]: A list of Score objects that match the specified filters.
@@ -2408,6 +2431,8 @@ class MemoryInterface(abc.ABC):
             no_condition_scores: list[Score] = []
             return no_condition_scores
 
+        if not include_intermediate:
+            conditions.append(ScoreEntry.is_intermediate == false())
         score_entries: Sequence[ScoreEntry] = self._query_entries(ScoreEntry, conditions=and_(*conditions))
         return [entry.get_score() for entry in score_entries]
 
@@ -2426,6 +2451,7 @@ class MemoryInterface(abc.ABC):
         data_type: str | None = None,
         not_data_type: str | None = None,
         converted_value_sha256: Sequence[str] | None = None,
+        include_intermediate: bool = False,
     ) -> Sequence[Score]:
         """
         Retrieve scores attached to message pieces based on the specified filters.
@@ -2446,6 +2472,7 @@ class MemoryInterface(abc.ABC):
             not_data_type (str | None, optional): The data type to exclude. Defaults to None.
             converted_value_sha256 (Sequence[str] | None, optional): A list of SHA256 hashes of converted values.
                 Defaults to None.
+            include_intermediate (bool): Include nested judgments instead of only public root results.
 
         Returns:
             Sequence[Score]: A list of scores extracted from the message pieces.
@@ -2476,7 +2503,7 @@ class MemoryInterface(abc.ABC):
             ScoreEntry,
             batch_column=ScoreEntry.prompt_request_response_id,
             batch_values=list(original_ids),
-            other_conditions=[],
+            other_conditions=[] if include_intermediate else [ScoreEntry.is_intermediate == false()],
         )
         entries_by_id = {entry.id: entry for entry in score_entries}
 
@@ -2490,6 +2517,8 @@ class MemoryInterface(abc.ABC):
                 array_to_match=batch,
                 match_mode="any",
             )
+            if not include_intermediate:
+                scorable_condition = and_(scorable_condition, ScoreEntry.is_intermediate == false())
             anchored_entries = self._query_entries(ScoreEntry, conditions=scorable_condition)
             entries_by_id.update({entry.id: entry for entry in anchored_entries})
 
@@ -4801,7 +4830,8 @@ class MemoryInterface(abc.ABC):
         for (labels,) in are_rows:
             if not isinstance(labels, dict):
                 continue
-            for key, value in labels.items():
+            # Persisted JSON can contain legacy values outside the ORM's declared type.
+            for key, value in cast("Mapping[str, object]", labels).items():
                 if key in {"operator", "operation"}:
                     continue
                 if isinstance(value, str):
@@ -4820,6 +4850,7 @@ class MemoryInterface(abc.ABC):
                 .filter(AttackResultEntry.operator.isnot(None))
                 .distinct()
                 .all()
+                if value is not None
             ]
             operations = [
                 value
@@ -4827,6 +4858,7 @@ class MemoryInterface(abc.ABC):
                 .filter(AttackResultEntry.operation.isnot(None))
                 .distinct()
                 .all()
+                if value is not None
             ]
         return {"operators": sorted(operators), "operations": sorted(operations)}
 
@@ -5401,7 +5433,7 @@ class MemoryInterface(abc.ABC):
         for (labels,) in rows:
             if not isinstance(labels, dict):
                 continue
-            for key, value in labels.items():
+            for key, value in cast("Mapping[str, object]", labels).items():
                 if isinstance(value, str):
                     label_values.setdefault(key, set()).add(value)
         return {key: sorted(values) for key, values in sorted(label_values.items())}

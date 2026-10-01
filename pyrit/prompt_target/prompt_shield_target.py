@@ -253,7 +253,10 @@ class PromptShieldTarget(PromptTarget):
                     if len(contents) == 1:
                         user_prompt += contents[0]
                     else:
+                        # Text before the closing tag is the document; any text after it
+                        # belongs to the user prompt and must not be silently dropped.
                         documents.append(contents[0])
+                        user_prompt += contents[1]
 
                 return {"userPrompt": user_prompt, "documents": documents if documents else []}
 

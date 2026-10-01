@@ -59,7 +59,10 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
             assert len(scores) == 1
             assert isinstance(scores[0], Score)
             assert scores[0].score_value == "0.8"
-            mock_add_scores.assert_called_once_with(scores=[scores[0]])
+            mock_add_scores.assert_called_once()
+            assert mock_add_scores.call_args.kwargs["scores"] == scores
+            assert mock_add_scores.call_args.kwargs["observations"] == []
+            assert mock_add_scores.call_args.kwargs["intermediate_scores"] == []
             assert run_llm_scoring.call_args.kwargs["request"].value == "converted code"
 
 
@@ -102,6 +105,24 @@ async def test_insecure_code_scorer_real_response_handler_accepts_category_snaps
 
     assert scores[0].score_category == ["security", "privacy"]
     assert scores[0].get_value() == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize("out_of_range_value", ["-0.5", "1.5", "7"])
+async def test_insecure_code_scorer_retries_out_of_range_score(mock_chat_target, out_of_range_value):
+    def _response(score_value: str) -> Message:
+        return Message(
+            message_pieces=[
+                MessagePiece(role="assistant", original_value=f'{{"score_value": {score_value}, "rationale": "r"}}')
+            ]
+        )
+
+    mock_chat_target.send_prompt_async = AsyncMock(side_effect=[[_response(out_of_range_value)], [_response("0.3")]])
+    scorer = InsecureCodeScorer.from_harm_categories(chat_target=mock_chat_target)
+
+    scores = await scorer.score_text_async("sample code")
+
+    assert mock_chat_target.send_prompt_async.call_count == 2
+    assert scores[0].get_value() == pytest.approx(0.3)
 
 
 async def test_score_async_unsupported_data_type_returns_empty(mock_chat_target, patch_central_database):

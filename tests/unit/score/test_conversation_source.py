@@ -198,8 +198,10 @@ async def test_conversation_source_does_not_filter_and_retains_references_async(
         await ConversationSource().acquire_async(scorable=ConversationScorable(conversation_id="missing"))
 
 
+@pytest.mark.parametrize("entry", ["conversation", "message"])
 async def test_conversation_judge_keeps_child_content_and_persists_once_async(
     sqlite_instance: MemoryInterface,
+    entry: str,
 ) -> None:
     message = store_message(MessagePiece(role="assistant", original_value="retained answer").to_message())
     target = MagicMock(spec=PromptTarget)
@@ -218,8 +220,18 @@ async def test_conversation_judge_keeps_child_content_and_persists_once_async(
     assert message.message_pieces[0].conversation_id
     anchor = ConversationScorable(conversation_id=message.message_pieces[0].conversation_id)
     with patch.object(sqlite_instance, "add_scores_to_memory", wraps=sqlite_instance.add_scores_to_memory) as persist:
-        score = (await scorer.score_async(scorable=anchor))[0]
+        evidence = anchor if entry == "conversation" else MessageScorable.from_message(message)
+        score = (await scorer.score_async(scorable=evidence))[0]
     assert persist.call_count == 1
+    stored = sqlite_instance.get_scores(score_type="true_false", include_intermediate=True)
+    assert len(stored) == 2
+    intermediate = next(item for item in stored if item.id != score.id)
+    assert isinstance(intermediate.scorable, ContentEntryScorable)
+    assert intermediate.scorer_class_identifier == child.get_identifier()
+    assert score.scorable == anchor
+    assert score.scorer_class_identifier == scorer.get_identifier()
+    assert score.message_piece_id == (None if entry == "conversation" else message.message_pieces[0].id)
+    assert [item.id for item in sqlite_instance.get_scores(score_type="true_false")] == [score.id]
     observations = sqlite_instance.get_observations(observation_ids=score.observation_ids)
     assert len(observations) == 2
     judgment = next(obs for obs in observations if isinstance(obs.scorable, ContentEntryScorable))

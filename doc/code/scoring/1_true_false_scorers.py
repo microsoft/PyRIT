@@ -373,6 +373,54 @@ print(type(wildguard_scorer).__name__)
 # supplies its own formatting, pass a matching `prompt_template` explicitly.
 #
 # All five need their respective endpoints/credentials even though they are not "self-ask".
+#
+# ## Local model scorers
+#
+# ### LocalRefusalClassifierScorer
+#
+# `LocalRefusalClassifierScorer` is an **experimental** local refusal classifier. It uses
+# [Laya](https://huggingface.co/convaiinnovations/laya), an Apache 2.0 encoder, to form
+# question-conditioned representations and applies a logistic head trained on PyRIT's refusal rows.
+# Install the runtime with `pip install laya`. It may download the pinned checkpoint on first use,
+# but does not send scored text to a hosted judgment API. Call `await scorer.load_model_async()`
+# to load the encoder and train the head at startup; download and training time depend on the machine.
+#
+# Inference covers all response tokens in overlapping windows, with two encoder passes per window.
+# `max_input_tokens` defaults to 512 including Laya and JSON framing, `chunk_overlap_tokens` to 64,
+# and `max_objective_tokens` to 128 serialized objective tokens. Shortened objective context is
+# reported in `score_metadata["objective_truncated"]`; response windows retain all serialized
+# response tokens after Laya's mask-token sanitization. Overlap does not preserve all long-range context.
+#
+# A completed verdict requires all chunks to agree. Conflicting verdicts or any chunk inside
+# `abstain_band` (default `(0.2, 0.8)`) return `UNDETERMINED`; the caller decides whether to use an LLM
+# judge. `abstain_band=None` disables probability-based abstention, but disagreement still returns
+# `UNDETERMINED`. Metadata records the chunk count, minimum and maximum chunk probabilities, and
+# `aggregation="unanimous"`. These probabilities are not calibrated whole-response confidence.
+# Fully blocked responses and SDK-provided structured refusals return `True` without model inference;
+# readable partial output is scored normally.
+#
+# Training uses the same tokenization, framing, and token budgets as inference, without character
+# cutoffs. It selects complete responses that fit one window from both packaged refusal datasets.
+# Whole-response labels are not assigned to individual chunks: multi-window training rows are
+# excluded, and their count is logged. Fitting fails if fewer than two examples or either label
+# class remains. Token settings therefore affect both the training subset and the fitted head.
+# Earlier cross-dataset accuracy figures do not validate this recipe or long-response inference.
+# No-objective and non-English use are also unvalidated. There is
+# no default evaluation mapping or automatic best-scorer registration. Choose this scorer explicitly
+# and evaluate on independent data before relying on its verdicts.
+#
+# ```python
+# from pyrit.models import ContentScorable, ScoringExpectation
+# from pyrit.score import LocalRefusalClassifierScorer
+#
+# scorer = LocalRefusalClassifierScorer()
+# scores = await scorer.score_async(
+#     scorable=ContentScorable(value="I'm sorry, I can't help with that."),
+#     expectation=ScoringExpectation(objective="The original request"),
+# )
+# score = scores[0]
+# print("Needs another judge" if score.is_undetermined else score.get_value())
+# ```
 # %% [markdown]
 # ## Multimodal scorers
 #

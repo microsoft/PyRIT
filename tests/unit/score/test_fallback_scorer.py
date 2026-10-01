@@ -147,12 +147,16 @@ async def test_complete_primary_skips_fallback_async(
     }
     assert child_score == original
     assert [score.id for score in sqlite_instance.get_scores(score_type=family)] == [result.id]
+    assert {score.id for score in sqlite_instance.get_scores(score_type=family, include_intermediate=True)} == {
+        result.id,
+        child_score.id,
+    }
     assert isinstance(wrapper, FloatScaleScorer if family == "float_scale" else TrueFalseScorer)
 
 
 @pytest.mark.parametrize("fallback_abstains", [False, True])
 async def test_fallback_preserves_both_attempts_without_mutating_children_async(
-    *, pair: tuple[Scorer, Scorer, Scorer], family: ScoreType, fallback_abstains: bool
+    *, pair: tuple[Scorer, Scorer, Scorer], family: ScoreType, fallback_abstains: bool, sqlite_instance: MemoryInterface
 ) -> None:
     wrapper, primary, fallback = pair
     primary_score = _score(family=family, value=None, rationale="uncertain", metadata={"model": "primary"})
@@ -182,6 +186,11 @@ async def test_fallback_preserves_both_attempts_without_mutating_children_async(
     if fallback_abstains:
         assert "also returned an undetermined score" in result.score_rationale
     assert [primary_score, fallback_score] == originals
+    assert {score.id for score in sqlite_instance.get_scores(score_type=family, include_intermediate=True)} == {
+        result.id,
+        primary_score.id,
+        fallback_score.id,
+    }
 
 
 @pytest.mark.parametrize("empty_primary", [False, True])

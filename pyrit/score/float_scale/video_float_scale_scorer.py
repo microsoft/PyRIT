@@ -146,7 +146,7 @@ class VideoFloatScaleScorer(
             or multiple scores (one per category) if using FloatScaleScorerByCategory.
         """
         objective = expectation.objective if expectation else None
-        frame_scores = await self._video_helper._score_frames_async(
+        frame_scores, num_frames = await self._video_helper._score_frames_async(
             message_piece=message_piece, expectation=expectation
         )
 
@@ -168,8 +168,10 @@ class VideoFloatScaleScorer(
         # Call the aggregator - all aggregators now return list[ScoreAggregatorResult]
         aggregator_results: list[ScoreAggregatorResult] = self._score_aggregator(all_scores)
 
-        # Build rationale prefix
-        rationale_prefix = f"Video scored by analyzing {len(frame_scores)} frames"
+        # Build rationale prefix. The frame count comes from the helper because a
+        # frame scorer may return more than one score per frame, in which case
+        # len(frame_scores) is a score count rather than a frame count.
+        rationale_prefix = f"Video scored by analyzing {num_frames} frames"
         if audio_scored:
             rationale_prefix += " and audio transcript"
 

@@ -11,7 +11,7 @@ import uuid
 from abc import abstractmethod
 from contextlib import nullcontext
 from dataclasses import replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
@@ -42,10 +42,11 @@ from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
+    _collect_scores,
     _get_current_scorable,
     _get_current_scored_message_piece,
-    _observation_collection,
     _ObservationEvidence,
+    _scoring_collection,
     _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
@@ -270,6 +271,9 @@ class MessageScorer(Scorer):
     Subclasses implement ``_score_async``, which still receives a ``Message``.
     """
 
+    # True when scoring needs other stored turns from the source conversation.
+    _REQUIRES_CONVERSATION_HISTORY: ClassVar[bool] = False
+
     #: When False, a blocked response from the scorer's own LLM produces an undetermined
     #: score instead of raising.
     raise_if_scorer_blocks: bool = True
@@ -440,7 +444,7 @@ class MessageScorer(Scorer):
         context_scorable = (
             self._context_scorable_from_message(message=message) if message is not None else cast("Scorable", scorable)
         )
-        with _observation_collection() as collector:
+        with _scoring_collection() as collector:
             with _scoring_scorable_context(context_scorable):
                 # The deprecated parameter hands over the message itself, so scoring it must not
                 # round trip through a reference.
@@ -468,8 +472,32 @@ class MessageScorer(Scorer):
                     )
             return await self._validate_and_persist_scores_async(
                 scores=scores,
-                observations=collector.referenced_by(scores=scores),
+                observations=collector.referenced_by(scores=[*scores, *collector.intermediate_scores]),
+                intermediate_scores=collector.intermediate_scores,
             )
+
+    async def _score_nested_message_async(
+        self, *, message: Message, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        """
+        Score an in-hand child message without changing its role or committing results.
+
+        Returns:
+            list[Score]: Validated child results retained for the public caller to persist.
+        """
+        self._validate_expectation(expectation=expectation)
+        anchor = self._context_scorable_from_message(message=message)
+        with _scoring_scorable_context(anchor), _scoring_expectation_context(expectation):
+            scores = await self._score_resolved_message_async(
+                message=message,
+                expectation=expectation,
+                anchor=anchor,
+                infer_objective_from_request=False,
+            )
+        if scores:
+            self.validate_return_scores(scores=scores)
+            _collect_scores(scores)
+        return scores
 
     def _context_scorable_from_message(self, *, message: Message) -> Scorable | None:
         """

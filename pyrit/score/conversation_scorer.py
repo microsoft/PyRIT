@@ -44,6 +44,7 @@ class ConversationScorer(MessageScorer, ABC):
     Note: This class cannot be instantiated directly. Use create_conversation_scorer() factory instead.
     """
 
+    _REQUIRES_CONVERSATION_HISTORY = True
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text"],
         enforce_all_pieces_valid=False,
@@ -210,19 +211,24 @@ class ConversationScorer(MessageScorer, ABC):
                     error=error, objective=expectation.objective if expectation else None
                 )
             ]
-        for score in scores:
+        results = []
+        for child_score in scores:
+            score = self._create_wrapper_score(child_score)
             score.scorable = scorable
             score.message_piece_id = None
             if observation.id not in score.observation_ids:
                 score.observation_ids.append(observation.id)
-        return scores
+            results.append(score)
+        return results
 
     def _render_conversation(self, pieces: tuple[MessagePiece, ...]) -> str:
         lines = []
         for piece in pieces:
             if piece.api_role not in ("user", "assistant", "tool") or not self._validator.is_role_supported(piece):
                 continue
-            role = "Assistant (simulated)" if piece.is_simulated else piece.api_role.capitalize()
+            role = piece.api_role.capitalize()
+            if piece.is_simulated:
+                role += " (simulated)"
             partial = piece.prompt_metadata.get("partial_content")
             text = (
                 str(partial)

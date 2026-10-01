@@ -413,6 +413,7 @@ async def test_openai_response_target_scopes_provider_session_to_send() -> None:
     provider.execution_scope_async = execution_scope
     target = object.__new__(OpenAIResponseTarget)
     target._tool_providers = [provider]
+    target._suppress_tools = False
     target._run_tool_call_loop_async = AsyncMock(return_value=[])  # type: ignore[method-assign]
     send_implementation = inspect.unwrap(OpenAIResponseTarget._send_prompt_to_target_async)
 
@@ -438,6 +439,8 @@ async def test_openai_response_target_retries_request_inside_provider_scope() ->
     provider.execution_scope_async = execution_scope
     target = object.__new__(OpenAIResponseTarget)
     target._tool_providers = [provider]
+    target._suppress_tools = False
+    target._execute_tools = True
     target._get_json_response_config = MagicMock(return_value=JsonResponseConfig(enabled=False))  # type: ignore[method-assign]
     target._construct_request_body_async = AsyncMock(return_value={})  # type: ignore[method-assign]
     response = Message(

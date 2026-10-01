@@ -221,7 +221,11 @@ for fallback_wrapper in (overlap_scorer, word_scorer):
 # Multiple child results are rejected rather than paired by position or discarded.
 # Aggregate them explicitly before using fallback if a single aggregate is meaningful.
 #
-# Only the root score is persisted. The wrapper creates a new score without modifying
+# The root call persists its result and the returned results of nested scorers in one transaction.
+# This does not retain temporary scores used only within a scorer's internal aggregation.
+# It returns only its own result. Default memory queries exclude intermediate scores;
+# use `include_intermediate=True` to include them, or retrieve a score by its ID.
+# No parent-child score links are stored. The wrapper creates a new score without modifying
 # either child result and retains their observation links. Metadata records `resolved_by`
 # as `"primary"` or `"fallback"`. Child metadata keys are prefixed with `primary.` and
 # `fallback.`, so duplicate keys and nested fallback details are not overwritten.
