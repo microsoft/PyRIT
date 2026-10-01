@@ -90,6 +90,32 @@ def response_target(patch_central_database: None) -> Iterator[OpenAIResponseTarg
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConversationEditor:
+    @pytest.mark.parametrize("same_attack", [False, True])
+    async def test_save_long_conversation_async(self, *, sqlite_instance: SQLiteMemory, same_attack: bool) -> None:
+        service = AttackService()
+        source = await service.save_conversation_async(request=draft())
+        request = SaveConversationRequest(
+            save_id=uuid.uuid4(),
+            destination="same_attack" if same_attack else "new_attack",
+            attack_result_id=source.attack.attack_result_id if same_attack else None,
+            source_attack_result_id=source.attack.attack_result_id,
+            source_conversation_id=source.messages.conversation_id,
+            operator="owner",
+            messages=[
+                ConversationMessageRequest(
+                    role="system" if index == 0 else "user" if index % 2 else "simulated_assistant",
+                    pieces=[ConversationPieceRequest(data_type="text", original_value=f"Message {index}")],
+                )
+                for index in range(201)
+            ],
+        )
+
+        saved = await service.save_conversation_async(request=request)
+
+        assert len(saved.messages.messages) == 201
+        stored = sqlite_instance.get_message_pieces(conversation_id=saved.messages.conversation_id)
+        assert [piece.original_value for piece in stored] == [f"Message {index}" for index in range(201)]
+
     @pytest.mark.parametrize("change", ["original", "converted", "role", "unchanged"])
     async def test_source_scores_do_not_follow_edited_content_async(
         self, *, sqlite_instance: SQLiteMemory, change: str

@@ -1094,12 +1094,15 @@ export default function ChatWindow({
     if (!attackResultId || !viewedConversationId || copyingRef.current || isSending || isLoadingEdit) return
     if (destination === 'same_attack' && isMutationLocked) return
     const sourceId = viewedConversationId
-    const target = destination === 'new_attack' ? defaultBranchTarget ?? activeTarget : activeTarget
     copyingRef.current = true
     setIsLoadingEdit(true)
     setEditorError(null)
     try {
       const source = await attacksApi.getMessages(attackResultId, sourceId)
+      const copiedMessages = toConversationDraft(source.messages.slice(0, messageIndex + 1))
+      const target = destination === 'new_attack' && activeTarget
+        && editorTargetDisabledReason(activeTarget, draftToolTypes(copiedMessages))
+        ? null : activeTarget
       const response = await copySave.save({
         sourceAttackId: attackResultId,
         sourceConversationId: sourceId,
@@ -1107,7 +1110,7 @@ export default function ChatWindow({
         objective,
         target,
         labels,
-        messages: toConversationDraft(source.messages.slice(0, messageIndex + 1)),
+        messages: copiedMessages,
       }, destination)
       if (viewedConvRef.current !== sourceId) return
       if (destination === 'same_attack') onSelectConversation(response.messages.conversation_id)

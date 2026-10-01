@@ -642,7 +642,8 @@ describe("ChatWindow Integration", () => {
     mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
     const router = createMemoryRouter([{
       path: "/", element: <ChatWindow {...defaultProps} attackResultId="existing" conversationId="source"
-        activeConversationId="source" objective="Source objective" />,
+        activeConversationId="source" objective="Source objective"
+        defaultBranchTarget={makeTarget({ target_registry_name: "unrelated-default", capabilities: buildCapabilities() })} />,
     }]);
     render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       <RouterProvider router={router} />
@@ -654,6 +655,7 @@ describe("ChatWindow Integration", () => {
     expect(request.destination).toBe(destination);
     expect(request.objective).toBe(destination === "new_attack" ? "Source objective" : undefined);
     expect(request.expected_objective).toBeUndefined();
+    expect(request.target_registry_name).toBe(mockTarget.target_registry_name);
     expect(request.messages.map((message) => message.pieces[0].source_piece_id)).toEqual(["source-0", "source-1"]);
     expect(screen.queryByTestId("conversation-editor")).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -664,6 +666,60 @@ describe("ChatWindow Integration", () => {
         "copied", "copied-conversation", "Source objective", mockTarget,
       ));
     }
+    expect(mockedAttacksApi.addMessage).not.toHaveBeenCalled();
+  });
+
+  it.each<{ name: string; target: TargetInstance | null }>([
+    { name: "unavailable", target: null },
+    { name: "non-editable", target: makeTarget({
+      capabilities: buildCapabilities({ supported_input_modalities: ["text", "function_call"] }),
+    }) },
+    { name: "single-turn", target: makeTarget({
+      capabilities: buildCapabilities({
+        supports_editable_history: true, supports_multi_turn: false,
+        supported_input_modalities: ["text", "function_call"],
+      }),
+    }) },
+    { name: "missing tool support", target: mockTarget },
+  ])("copies to a targetless new attack when the source target is $name", async ({ target }: { target: TargetInstance | null }) => {
+    const user = userEvent.setup();
+    const source: BackendMessage[] = [{
+      turn_number: 0, role: "assistant", created_at: "2026-01-01T00:00:00Z",
+      message_pieces: [{
+        id: "source-call", original_value_data_type: "text", original_value: "Original text",
+        converted_value_data_type: "function_call",
+        converted_value: JSON.stringify({ type: "function_call", call_id: "call-1", name: "lookup", arguments: "{}" }),
+        scores: [], response_error: "none",
+      }],
+    }];
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: source });
+    mockedAttacksApi.saveConversation.mockResolvedValue({
+      attack: {
+        attack_result_id: "copied", conversation_id: "copied-conversation", objective: "", attack_type: "ManualAttack",
+        converters: [], message_count: 1, related_conversation_ids: [], labels: {}, created_at: "", updated_at: "",
+        target_unbound: true,
+      },
+      messages: { conversation_id: "copied-conversation", messages: source, target_response_status: null },
+    });
+    mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
+    const router = createMemoryRouter([{
+      path: "/", element: <ChatWindow {...defaultProps} attackResultId="existing" conversationId="source"
+        activeConversationId="source" activeTarget={target} defaultBranchTarget={mockTarget} />,
+    }]);
+    render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+      <RouterProvider router={router} />
+    </UserPreferencesProvider></FluentProvider>);
+    await user.click(await screen.findByRole("button", { name: "Copy conversation" }));
+    await user.click(screen.getByRole("menuitem", { name: "New attack", exact: true }));
+    await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
+    const request = mockedAttacksApi.saveConversation.mock.calls[0][0];
+    expect(request.destination).toBe("new_attack");
+    expect(request.target_registry_name).toBeUndefined();
+    expect(request.messages[0].pieces[0].converted_value_data_type).toBe("function_call");
+    await waitFor(() => expect(defaultProps.onConversationCreated).toHaveBeenCalledWith(
+      "copied", "copied-conversation", "", null,
+    ));
+    expect(screen.queryByTestId("conversation-editor")).not.toBeInTheDocument();
     expect(mockedAttacksApi.addMessage).not.toHaveBeenCalled();
   });
 

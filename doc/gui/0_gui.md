@@ -239,6 +239,9 @@ User and assistant messages have one **Copy conversation** menu. **This conversa
 copies the selected message into the prompt box without saving or sending.
 **New conversation** and **New attack** copy the conversation through the selected
 message and open the saved destination directly, without the editor or save dialog.
+**New attack** keeps the source target when it supports the copied history. Otherwise,
+the copy has no target; select a compatible target before sending. The default target
+does not change this choice. Saving and copying support histories longer than 200 messages.
 Retrying the same failed save or copy reuses its save ID to avoid duplicate results.
 A new copy after a confirmed success gets a new ID.
 Downloads, original/converted views, and score details remain available.

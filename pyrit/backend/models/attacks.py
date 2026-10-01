@@ -589,7 +589,7 @@ class SaveConversationRequest(_AttackAttributionInput):
     expected_objective: str | None = None
     objective: str | None = Field(None, description="Omit to keep the destination's objective unchanged")
     target_registry_name: str | None = None
-    messages: list[MessageRequest] = Field(default_factory=list, max_length=200)
+    messages: list[MessageRequest] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_destination(self) -> "SaveConversationRequest":
