@@ -224,7 +224,7 @@ class AttackService:
             if decoded_cursor is not None
             else None
         )
-        results = self._memory.get_attack_results(
+        results = await self._memory.get_attack_results_async(
             outcome=outcome,
             operator=operator,
             operation=operation,
@@ -259,7 +259,11 @@ class AttackService:
         for ar in page_results:
             all_conv_ids.update(ar.get_active_conversation_ids())
 
-        stats_map = self._memory.get_conversation_stats(conversation_ids=list(all_conv_ids)) if all_conv_ids else {}
+        stats_map = (
+            (await self._memory.get_conversation_stats_async(conversation_ids=list(all_conv_ids)))
+            if all_conv_ids
+            else {}
+        )
 
         # Phase 3: Build summaries from aggregated stats for the page
         page: list[AttackSummary] = []
@@ -298,7 +302,7 @@ class AttackService:
         Returns:
             Sorted list of unique attack type names.
         """
-        return self._memory.get_unique_attack_class_names()
+        return await self._memory.get_unique_attack_class_names_async()
 
     async def get_converter_options_async(self) -> list[str]:
         """
@@ -310,7 +314,7 @@ class AttackService:
         Returns:
             Sorted list of unique converter type names.
         """
-        return self._memory.get_unique_converter_class_names()
+        return await self._memory.get_unique_converter_class_names_async()
 
     async def get_attack_async(self, *, attack_result_id: str) -> AttackSummary | None:
         """
@@ -321,15 +325,12 @@ class AttackService:
         Returns:
             AttackSummary if found, None otherwise.
         """
-        results = await asyncio.to_thread(
-            self._memory.get_attack_results,
-            attack_result_ids=[attack_result_id],
-        )
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
         ar = results[0]
-        stats_map = self._memory.get_conversation_stats(conversation_ids=[ar.conversation_id])
+        stats_map = await self._memory.get_conversation_stats_async(conversation_ids=[ar.conversation_id])
         stats = stats_map.get(ar.conversation_id, ConversationStats(message_count=0))
         return await attack_result_to_summary_async(ar, stats=stats)
 
@@ -353,7 +354,7 @@ class AttackService:
             ValueError: If the conversation does not belong to the attack.
         """
         # Check attack exists
-        results = self._memory.get_attack_results(attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -363,7 +364,7 @@ class AttackService:
             raise ValueError(f"Conversation '{conversation_id}' is not part of attack '{attack_result_id}'")
 
         # Get messages for this conversation
-        pyrit_messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
+        pyrit_messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
         backend_messages = await pyrit_messages_to_dto_async(
             list(pyrit_messages),
             objective_score_id=ar.last_score.id if ar.last_score else None,
@@ -394,8 +395,7 @@ class AttackService:
         target_identifier = await self._get_save_target_async(request.target_registry_name)
         copied: Sequence[MessagePiece] = []
         if request.source_conversation_id is not None and request.cutoff_index is not None:
-            conversation, copied = await asyncio.to_thread(
-                self._prepare_conversation_up_to,
+            conversation, copied = await self._prepare_conversation_up_to_async(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
                 target_identifier=target_identifier,
@@ -427,8 +427,7 @@ class AttackService:
                 start_sequence=max((piece.sequence for piece in copied), default=-1) + 1,
             )
             task = asyncio.create_task(
-                asyncio.to_thread(
-                    self._memory.add_conversation_branches_to_attack,
+                self._memory.add_conversation_branches_to_attack_async(
                     attack_result_id=attack_result.attack_result_id,
                     conversations=[conversation],
                     message_pieces=[*copied, *pieces],
@@ -501,7 +500,7 @@ class AttackService:
         Returns:
             Updated AttackSummary if found, None otherwise.
         """
-        results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -522,15 +521,13 @@ class AttackService:
                 return await self.get_attack_async(attack_result_id=attack_result_id)
             update_fields.update(self._objective_update_fields(old=existing_objective, new=request.objective))
         if request.objective is None:
-            await asyncio.to_thread(
-                self._memory.update_attack_result_by_id,
+            await self._memory.update_attack_result_by_id_async(
                 attack_result_id=attack_result_id,
                 update_fields=update_fields,
             )
             return await self.get_attack_async(attack_result_id=attack_result_id)
         try:
-            await asyncio.to_thread(
-                self._memory.update_attack_result_conditionally,
+            await self._memory.update_attack_result_conditionally_async(
                 attack_result_id=attack_result_id,
                 expected_fields={"objective": results[0].objective},
                 update_fields=update_fields,
@@ -554,7 +551,7 @@ class AttackService:
             if request.destination == "same_attack"
             else str(uuid.uuid5(request.save_id, "attack"))
         )
-        existing = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
+        existing = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if existing and existing[0].metadata.get(f"conversation_save:{conversation_id}") == fingerprint:
             return await self._saved_conversation_response_async(
                 attack_result_id=attack_result_id,
@@ -567,7 +564,7 @@ class AttackService:
         update_fields: dict[str, Any] = {}
         if same_attack:
             attack_result_id = str(request.attack_result_id)
-            results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
+            results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
             if not results:
                 raise ValueError("The destination attack does not exist")
             attack = results[0]
@@ -620,8 +617,7 @@ class AttackService:
                 target=target,
             )
             save_task = asyncio.create_task(
-                asyncio.to_thread(
-                    self._memory.add_conversation_branches_to_attack,
+                self._memory.add_conversation_branches_to_attack_async(
                     attack_result_id=attack_result_id,
                     conversations=[Conversation(conversation_id=conversation_id, target_identifier=target_identifier)],
                     message_pieces=pieces,
@@ -692,14 +688,12 @@ class AttackService:
         """
         if request.source_conversation_id is None:
             return {}
-        results = await asyncio.to_thread(
-            self._memory.get_attack_results,
+        results = await self._memory.get_attack_results_async(
             attack_result_ids=[str(request.source_attack_result_id)],
         )
         if not results or str(request.source_conversation_id) not in results[0].get_active_conversation_ids():
             raise ValueError("The source conversation does not belong to the source attack")
-        pieces = await asyncio.to_thread(
-            self._memory.get_message_pieces,
+        pieces = await self._memory.get_message_pieces_async(
             conversation_id=str(request.source_conversation_id),
         )
         return {piece.id: piece for piece in pieces}
@@ -835,6 +829,8 @@ class AttackService:
         target_object = service.get_target_object(target_registry_name=target.target_registry_name)
         if target_object is None:
             raise ValueError("The selected target is no longer registered")
+        if not isinstance(target_object, PromptTarget):
+            raise ValueError("The selected registry entry is not a prompt target")
         return target_object
 
     @staticmethod
@@ -866,10 +862,7 @@ class AttackService:
         Returns:
             Updated AttackSummary if found, None otherwise.
         """
-        results = await asyncio.to_thread(
-            self._memory.get_attack_results,
-            attack_result_ids=[attack_result_id],
-        )
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -883,8 +876,7 @@ class AttackService:
             )
             outcome_reason = automated_score.score_rationale
 
-        await asyncio.to_thread(
-            self._memory.update_attack_result_by_id,
+        await self._memory.update_attack_result_by_id_async(
             attack_result_id=attack_result_id,
             update_fields={
                 "human_score_id": None,
@@ -907,7 +899,7 @@ class AttackService:
         Returns:
             AttackConversationsResponse if attack found, None otherwise.
         """
-        results = self._memory.get_attack_results(attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -916,7 +908,7 @@ class AttackService:
 
         # Collect all conversation IDs (main + PRUNED related) and fetch stats in one query.
         active_conv_ids = list(ar.get_active_conversation_ids())
-        stats_map = self._memory.get_conversation_stats(conversation_ids=active_conv_ids)
+        stats_map = await self._memory.get_conversation_stats_async(conversation_ids=active_conv_ids)
 
         conversations: list[ConversationSummary] = []
         for conv_id in active_conv_ids:
@@ -964,7 +956,7 @@ class AttackService:
         Returns:
             CreateConversationResponse if attack found, None otherwise.
         """
-        results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -989,14 +981,13 @@ class AttackService:
         source_metadata: Conversation | None = None
         all_pieces: Sequence[MessagePiece] = []
         if request.source_conversation_id is not None and request.cutoff_index is not None:
-            source_metadata = await asyncio.to_thread(
-                self._memory._get_conversation, conversation_id=request.source_conversation_id
+            source_metadata = await self._memory.get_conversation_metadata_async(
+                conversation_id=request.source_conversation_id
             )
             source_metadata = source_metadata or Conversation(
                 conversation_id=request.source_conversation_id, target_identifier=objective_target
             )
-            conversation, all_pieces = await asyncio.to_thread(
-                self._prepare_conversation_up_to,
+            conversation, all_pieces = await self._prepare_conversation_up_to_async(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
                 target_identifier=source_metadata.target_identifier,
@@ -1007,8 +998,7 @@ class AttackService:
                 target_identifier=objective_target,
             )
 
-        stored = await asyncio.to_thread(
-            self._memory.add_conversation_branches_to_attack,
+        stored = await self._memory.add_conversation_branches_to_attack_async(
             attack_result_id=attack_result_id,
             conversations=[conversation],
             message_pieces=all_pieces,
@@ -1033,7 +1023,7 @@ class AttackService:
         Returns:
             UpdateMainConversationResponse if the source attack exists, None otherwise.
         """
-        results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
 
@@ -1045,10 +1035,8 @@ class AttackService:
             raise ValueError(f"Conversation '{target_conv_id}' is not part of this attack")
 
         now = datetime.now(UTC)
-        stored = await asyncio.to_thread(
-            self._memory.promote_attack_conversation,
-            attack_result_id=attack_result_id,
-            conversation_id=target_conv_id,
+        stored = await self._memory.promote_attack_conversation_async(
+            attack_result_id=attack_result_id, conversation_id=target_conv_id
         )
         if not stored:
             return None
@@ -1067,7 +1055,7 @@ class AttackService:
             AddMessageResponse: Updated attack and messages after sending or storing.
         """
         if request.send:
-            results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
+            results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
             if results and results[0].metadata.get("target_unbound") is True:
                 if request.target_conversation_id not in results[0].get_active_conversation_ids():
                     raise ValueError(f"Conversation '{request.target_conversation_id}' is not part of this attack")
@@ -1099,9 +1087,7 @@ class AttackService:
             raise ValueError("Select a target before sending")
         target = await self._get_save_target_async(registry_name)
         conversations = {
-            conversation_id: await asyncio.to_thread(
-                self._memory.get_conversation_messages, conversation_id=conversation_id
-            )
+            conversation_id: await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
             for conversation_id in attack.get_active_conversation_ids()
         }
         target_object = await self._validate_editor_target_async(
@@ -1125,8 +1111,7 @@ class AttackService:
             )
         )
         metadata = {"target_unbound": False, "target_registry_name": registry_name}
-        await asyncio.to_thread(
-            self._memory.update_attack_result_conditionally,
+        await self._memory.update_attack_result_conditionally_async(
             attack_result_id=attack.attack_result_id,
             expected_fields={
                 "atomic_attack_identifier_hash": attack.atomic_attack_identifier.hash
@@ -1140,7 +1125,7 @@ class AttackService:
                 for conversation_id, messages in conversations.items()
             },
         )
-        results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack.attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
         if not results:
             raise ValueError("The attack no longer exists")
         return results[0]
@@ -1149,7 +1134,7 @@ class AttackService:
     # Private Helper Methods - Duplicate / Branch
     # ========================================================================
 
-    def _prepare_conversation_up_to(
+    async def _prepare_conversation_up_to_async(
         self,
         *,
         source_conversation_id: str,
@@ -1162,8 +1147,8 @@ class AttackService:
         Returns:
             tuple[Conversation, Sequence[MessagePiece]]: New metadata and lineage-preserving pieces.
         """
-        messages = self._memory.get_conversation_messages(conversation_id=source_conversation_id)
-        new_id, pieces = self._memory.duplicate_messages(
+        messages = await self._memory.get_conversation_messages_async(conversation_id=source_conversation_id)
+        new_id, pieces = await self._memory.duplicate_messages_async(
             messages=[message for message in messages if message.sequence <= cutoff_index]
         )
         for piece in pieces:

@@ -402,8 +402,10 @@ class _OpenAIRealtimeStreamingSession:
         )
 
         target_identifier = target.get_identifier()
-        target._memory.add_conversation_to_memory(
-            conversation=Conversation(conversation_id=self._conversation_id, target_identifier=target_identifier)
+        (
+            await target._memory.add_conversation_to_memory_async(
+                conversation=Conversation(conversation_id=self._conversation_id, target_identifier=target_identifier)
+            )
         )
         user_piece = MessagePiece(
             role="user",

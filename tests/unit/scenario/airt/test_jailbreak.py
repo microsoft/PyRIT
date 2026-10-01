@@ -669,7 +669,7 @@ class TestJailbreakSystemPromptDelivery:
             await scenario.initialize_async()
             await scenario._atomic_attacks[0].run_async()
 
-        pieces = CentralMemory.get_memory_instance().get_message_pieces()
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async()
         system_values = [p.converted_value for p in pieces if p.role == "system"]
         user_values = [p.converted_value for p in pieces if p.role == "user"]
         objectives = {g.objective.value for g in mock_memory_seed_groups}
@@ -714,7 +714,7 @@ class TestJailbreakSystemPromptDelivery:
             # Must not raise a same-sequence role collision.
             await scenario._atomic_attacks[0].run_async()
 
-        pieces = CentralMemory.get_memory_instance().get_message_pieces()
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async()
         system_values = [p.converted_value for p in pieces if p.role == "system"]
         user_values = [p.converted_value for p in pieces if p.role == "user"]
         assert any("Niccolo" in v for v in system_values), "jailbreak framing not delivered as a system prompt"
@@ -746,8 +746,8 @@ class TestJailbreakResumePersistence:
             persisted = ["persisted_a.yaml", "persisted_b.yaml"]
             stored = MagicMock()
             stored.metadata = {_JAILBREAK_TEMPLATES_METADATA_KEY: persisted}
-            with patch.object(scenario._memory, "get_scenario_results", return_value=[stored]):
-                assert scenario._resolve_templates() == persisted
+            with patch.object(scenario._memory, "get_scenario_results_async", return_value=[stored]):
+                assert (await scenario._resolve_templates_async()) == persisted
 
 
 @pytest.mark.usefixtures(*FIXTURES)

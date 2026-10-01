@@ -4,7 +4,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import store_message
+from unit.mocks import store_message_async
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -58,13 +58,13 @@ async def test_score_async_returns_score_from_unvalidated(mock_chat_target):
     )
 
     message = MessagePiece(role="assistant", original_value="4").to_message()
-    with patch.object(scorer._memory, "add_scores_to_memory", new=MagicMock()):
+    with patch.object(scorer._memory, "add_scores_to_memory_async", new=AsyncMock()):
         with patch(
             "pyrit.score.true_false.self_ask_question_answer_scorer._run_llm_scoring_async",
             new=AsyncMock(return_value=unvalidated),
         ):
             scores = await scorer.score_async(
-                scorable=MessageScorable.from_message(store_message(message)),
+                scorable=MessageScorable.from_message(await store_message_async(message)),
                 expectation=ScoringExpectation(objective="2+2=?", conditions=[AnswerMatches(correct_answer="4")]),
             )
 
@@ -235,14 +235,14 @@ async def test_inferred_objective_is_context_not_ground_truth_async(
 ) -> None:
     question = "Capital of France? The correct answer is Paris."
     request = MessagePiece(role="user", original_value=question, conversation_id="inferred-qa", sequence=0).to_message()
-    sqlite_instance.add_message_to_memory(request=request)
+    (await sqlite_instance.add_message_to_memory_async(request=request))
     response = MessagePiece(
         role="assistant",
         original_value="Paris",
         conversation_id=request.get_piece().conversation_id,
         sequence=1,
     ).to_message()
-    sqlite_instance.add_message_to_memory(request=response)
+    (await sqlite_instance.add_message_to_memory_async(request=response))
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
     mock_chat_target.send_prompt_async = AsyncMock(
         return_value=[
@@ -277,7 +277,7 @@ async def test_inferred_objective_is_context_not_ground_truth_async(
     assert scores[0].scored_expectation == ScoringExpectation(
         objective=question, conditions=[AnswerMatches(correct_answer="Paris")]
     )
-    [stored] = sqlite_instance.get_scores(score_ids=[scores[0].id])
+    [stored] = await sqlite_instance.get_scores_async(score_ids=[scores[0].id])
     assert stored.scored_expectation == scores[0].scored_expectation
 
 
@@ -306,7 +306,7 @@ async def test_typed_answer_observation_replays_full_expectation_async(
         conditions=[AnswerMatches(correct_answer="Paris", correct_answer_label="B")],
     )
     live = (await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation))[0]
-    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
     replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
 
     assert replay.get_value() == live.get_value()

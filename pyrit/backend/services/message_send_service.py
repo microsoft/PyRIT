@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Synchronous manual-message preparation, dispatch, and attack metadata updates."""
+"""Manual-message preparation, dispatch, and attack metadata updates."""
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import partial
@@ -92,7 +92,7 @@ class MessageSendService:
             yield
 
     async def _add_message_async(self, *, attack_result_id: str, request: AddMessageRequest) -> None:
-        results = await asyncio.to_thread(self._memory.get_attack_results, attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             raise ValueError(f"Attack '{attack_result_id}' not found")
 
@@ -146,7 +146,7 @@ class MessageSendService:
         applied_converter_identifiers = resolve_applied_converter_identifiers(request.pieces)
         last_response_id: str | None = None
 
-        existing = await asyncio.to_thread(self._memory.get_message_pieces, conversation_id=msg_conversation_id)
+        existing = await self._memory.get_message_pieces_async(conversation_id=msg_conversation_id)
         sequence = max((p.sequence for p in existing), default=-1) + 1
 
         if request.send:
@@ -171,9 +171,7 @@ class MessageSendService:
                 # generic 500. If no new error piece was stored (the failure
                 # happened before the send, e.g. media preparation), re-raise so the
                 # route still reports a real error.
-                current_pieces = await asyncio.to_thread(
-                    self._memory.get_message_pieces, conversation_id=msg_conversation_id
-                )
+                current_pieces = await self._memory.get_message_pieces_async(conversation_id=msg_conversation_id)
                 if not any(p.id not in prior_ids and p.has_error() for p in current_pieces):
                     raise
                 logger.exception(
@@ -181,19 +179,14 @@ class MessageSendService:
                     attack_result_id,
                     msg_conversation_id,
                 )
-            current_pieces = await asyncio.to_thread(
-                self._memory.get_message_pieces,
-                conversation_id=msg_conversation_id,
-            )
+            current_pieces = await self._memory.get_message_pieces_async(conversation_id=msg_conversation_id)
             last_response = next(
                 (piece for piece in current_pieces if piece.id not in prior_ids and piece.role == "assistant"),
                 None,
             )
             last_response_id = str(last_response.id) if last_response else None
         else:
-            existing_metadata = await asyncio.to_thread(
-                self._memory._get_conversation, conversation_id=msg_conversation_id
-            )
+            existing_metadata = await self._memory.get_conversation_metadata_async(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
@@ -205,7 +198,7 @@ class MessageSendService:
         async with self._scheduler.metadata_update_async(attack_result_id=attack_result_id):
             await self._complete_memory_write_async(
                 partial(
-                    self._update_attack_after_message,
+                    self._update_attack_after_message_async,
                     attack_result_id=attack_result_id,
                     last_response_id=last_response_id,
                     request_converter_configurations=self._exclude_preconverted_piece_indexes(
@@ -242,7 +235,7 @@ class MessageSendService:
                 f"Create a new attack to use a different target."
             )
 
-    def _update_attack_after_message(
+    async def _update_attack_after_message_async(
         self,
         *,
         attack_result_id: str,
@@ -267,7 +260,7 @@ class MessageSendService:
         Raises:
             ValueError: If the attack disappeared before its metadata could be updated.
         """
-        results = self._memory.get_attack_results(attack_result_ids=[attack_result_id])
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             raise ValueError(f"Attack '{attack_result_id}' not found after message send")
         ar = results[0]
@@ -307,9 +300,11 @@ class MessageSendService:
                     )
                     update_fields["atomic_attack_identifier"] = new_atomic.model_dump()
 
-        self._memory.update_attack_result_by_id(
-            attack_result_id=attack_result_id,
-            update_fields=update_fields,
+        (
+            await self._memory.update_attack_result_by_id_async(
+                attack_result_id=attack_result_id,
+                update_fields=update_fields,
+            )
         )
 
     @staticmethod
@@ -432,7 +427,7 @@ class MessageSendService:
         """Send message to target via normalizer and store response."""
         await self._persist_base64_pieces_async(request)
 
-        await asyncio.to_thread(self._resolve_video_remix_metadata, request)
+        await self._resolve_video_remix_metadata_async(request)
 
         pyrit_message = request_to_pyrit_message(
             request=request,
@@ -471,7 +466,7 @@ class MessageSendService:
         await self._persist_base64_pieces_async(request)
         await self._complete_memory_write_async(
             partial(
-                self._store_message_only,
+                self._persist_message_only_async,
                 conversation_id=conversation_id,
                 request=request,
                 sequence=sequence,
@@ -480,7 +475,7 @@ class MessageSendService:
             )
         )
 
-    def _store_message_only(
+    async def _persist_message_only_async(
         self,
         *,
         conversation_id: str,
@@ -489,8 +484,10 @@ class MessageSendService:
         target_identifier: ComponentIdentifier | None,
         applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
     ) -> None:
-        self._memory.add_conversation_to_memory(
-            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        (
+            await self._memory.add_conversation_to_memory_async(
+                conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+            )
         )
         for index, p in enumerate(request.pieces):
             piece = request_piece_to_pyrit_message_piece(
@@ -501,23 +498,27 @@ class MessageSendService:
             )
             piece.set_simulated_role()
             piece.converter_identifiers.extend(applied_converter_identifiers.get(index, []))
-            self._memory.add_message_pieces_to_memory(message_pieces=[piece])
+            (await self._memory.add_message_pieces_to_memory_async(message_pieces=[piece]))
 
     @staticmethod
-    async def _complete_memory_write_async(write: Callable[[], None]) -> None:
-        """Keep ownership until an offloaded write finishes, even when the caller cancels."""
-        worker = asyncio.create_task(asyncio.to_thread(write))
+    async def _complete_memory_write_async(write: Callable[[], Coroutine[Any, Any, None]]) -> None:
+        """Keep ownership until a write finishes, even when the caller cancels."""
+        worker = asyncio.create_task(write())
         cancelled = False
         while not worker.done():
             try:
                 await asyncio.shield(worker)
             except asyncio.CancelledError:
                 cancelled = True
-        worker.result()
+            except Exception:
+                if not cancelled:
+                    raise
+                break
         if cancelled:
-            raise asyncio.CancelledError
+            raise asyncio.CancelledError from (None if worker.cancelled() else worker.exception())
+        worker.result()
 
-    def _resolve_video_remix_metadata(self, request: AddMessageRequest) -> None:
+    async def _resolve_video_remix_metadata_async(self, request: AddMessageRequest) -> None:
         """
         Auto-resolve video_id metadata for remix mode.
 
@@ -542,7 +543,7 @@ class MessageSendService:
         for vp in video_pieces:
             if not vp.original_prompt_id:
                 continue
-            original_pieces = self._memory.get_message_pieces(prompt_ids=[vp.original_prompt_id])
+            original_pieces = await self._memory.get_message_pieces_async(prompt_ids=[vp.original_prompt_id])
             if not original_pieces:
                 continue
             video_id = (original_pieces[0].prompt_metadata or {}).get("video_id")

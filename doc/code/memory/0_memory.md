@@ -7,13 +7,31 @@ To simplify memory interaction, the `pyrit.memory.CentralMemory` class automatic
 **Manual Memory Setting**:
 
 At the beginning of each notebook, make sure to call:
-```
-# Import initialize_pyrit_async
-# Import the specific constant for the MemoryDatabaseType, or provide the literal value
-from pyrit.setup import initialize_pyrit_async, IN_MEMORY, SQLITE, AZURE_SQL
+```python
+from pyrit.memory import CentralMemory
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-await initialize_pyrit_async(memory_db_type: MemoryDatabaseType, memory_instance_kwargs: Any | None)
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)
+memory = CentralMemory.get_memory_instance()
+messages = await memory.get_conversation_messages_async(conversation_id="example")
 ```
+
+Use the `_async` memory methods in async code. The synchronous methods remain
+available during deprecation. In-memory SQLite serializes transactions across
+threads and event loops to prevent shared-cache table locks.
+
+Repeated initialization reuses the existing memory without running schema setup
+again. Setup raises an error if `CentralMemory` and the requested backend singleton
+disagree, or if setup tries to change an existing SQLite instance between in-memory
+and persistent modes.
+
+Do not overlap synchronous and async sessions on the same event-loop thread.
+In-memory SQLite raises an error instead of blocking that loop. Use async methods
+for concurrent work on an event loop.
+
+Before an event loop stops, call `await memory.dispose_loop_resources_async()`
+on that loop. After all memory work stops, call `await memory.dispose_engine_async()`
+to close the remaining resources.
 
 The `MemoryDatabaseType` is a `Literal` with 3 options: IN_MEMORY, SQLITE, AZURE_SQL. (Read more below)
    - `initialize_pyrit_async` takes the `MemoryDatabaseType` and an argument list (`memory_instance_kwargs`), to initialize the shared memory instance.
