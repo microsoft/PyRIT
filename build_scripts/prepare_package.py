@@ -6,11 +6,15 @@ Script to prepare the PyRIT package for distribution.
 This builds the TypeScript/React frontend and copies artifacts into the Python package structure.
 """
 
+import argparse
 import contextlib
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from build_scripts.stamp_compatibility import stamp_source, verify_frontend
 
 
 def _configure_utf8_stdio() -> None:
@@ -30,12 +34,13 @@ def _configure_utf8_stdio() -> None:
             reconfigure(encoding="utf-8", errors="replace")
 
 
-def build_frontend(frontend_dir: Path) -> bool:
+def build_frontend(frontend_dir: Path, *, compatibility_id: str | None = None) -> bool:
     """
     Build the TypeScript/React frontend using npm.
 
     Args:
         frontend_dir: Path to the frontend directory
+        compatibility_id: Identity to embed in the frontend bundle.
 
     Returns:
         True if successful, False otherwise
@@ -66,7 +71,7 @@ def build_frontend(frontend_dir: Path) -> bool:
     print("\nInstalling frontend dependencies...")
     try:
         subprocess.run(
-            [npm, "install", "--legacy-peer-deps"],
+            [npm, "ci", "--legacy-peer-deps"],
             cwd=frontend_dir,
             check=True,
             stdout=subprocess.PIPE,
@@ -84,6 +89,7 @@ def build_frontend(frontend_dir: Path) -> bool:
         subprocess.run(
             [npm, "run", "build"],
             cwd=frontend_dir,
+            env={**os.environ, "PYRIT_COMPATIBILITY_ID": compatibility_id} if compatibility_id else None,
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -134,7 +140,7 @@ def copy_frontend_to_package(frontend_dist: Path, backend_frontend: Path) -> boo
     return False
 
 
-def main() -> int:
+def main(*, development: bool = False) -> int:
     """Build frontend and prepare package for distribution."""
     _configure_utf8_stdio()
 
@@ -143,6 +149,7 @@ def main() -> int:
     frontend_dir = root / "frontend"
     frontend_dist = frontend_dir / "dist"
     backend_frontend = root / "pyrit" / "backend" / "frontend"
+    stamp = stamp_source(root, development=development)
 
     print("PyRIT Package Preparation")
     print("=" * 60)
@@ -157,7 +164,7 @@ def main() -> int:
         return 1
 
     # Build the frontend
-    if not build_frontend(frontend_dir):
+    if not build_frontend(frontend_dir, compatibility_id=stamp["compatibility_id"]):
         print("\n❌ Failed to build frontend")
         return 1
 
@@ -165,6 +172,11 @@ def main() -> int:
     if not copy_frontend_to_package(frontend_dist, backend_frontend):
         print("\n❌ Failed to copy frontend to package")
         return 1
+
+    final_stamp = stamp_source(root, development=development)
+    if final_stamp != stamp:
+        raise ValueError("Source provenance changed while building the frontend; rebuild from one source snapshot")
+    verify_frontend(root, stamp)
 
     print("\n" + "=" * 60)
     print("✅ Package preparation complete!")
@@ -177,4 +189,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--development", action="store_true", help="Allow dirty local assets, never for publication")
+    sys.exit(main(development=parser.parse_args().development))

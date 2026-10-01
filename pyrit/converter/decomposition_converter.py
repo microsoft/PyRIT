@@ -232,9 +232,10 @@ class DecompositionConverter(Converter):
             InvalidJsonException: If the response is missing, unparseable, or fails validation.
         """
         conversation_id = str(uuid.uuid4())
-        self._converter_target.set_system_prompt(
-            system_prompt=self._decomposition_prompt.render_template_value(),
-            conversation_id=conversation_id,
+        (
+            await self._converter_target.set_system_prompt_async(
+                system_prompt=self._decomposition_prompt.render_template_value(), conversation_id=conversation_id
+            )
         )
 
         prompt_metadata = JsonResponseConfig(

@@ -258,9 +258,9 @@ def _expectation(objective: str | None = "scoring context") -> ScoringExpectatio
     return ScoringExpectation(objective=objective, conditions=(_FirstCondition(), _SecondCondition()))
 
 
-def _stored_response(memory: MemoryInterface) -> Message:
+async def _stored_response_async(memory: MemoryInterface) -> Message:
     response = MessagePiece(role="assistant", original_value="response", conversation_id=str(uuid.uuid4())).to_message()
-    memory.add_message_to_memory(request=response)
+    (await memory.add_message_to_memory_async(request=response))
     return response
 
 
@@ -347,7 +347,7 @@ class TestResponseScoringExpectation:
     ) -> None:
         expectation = ScoringExpectation(objective=objective)
         scores = await _score_response_async(
-            response=_stored_response(sqlite_instance),
+            response=(await _stored_response_async(sqlite_instance)),
             scorers=[_ConfiguredMessageScorer(), _ConfiguredGenericScorer()],
             multiple=multiple,
             expectation=expectation,
@@ -361,7 +361,7 @@ class TestResponseScoringExpectation:
         self, *, sqlite_instance: MemoryInterface, multiple: bool
     ) -> None:
         scores = await _score_response_async(
-            response=_stored_response(sqlite_instance),
+            response=(await _stored_response_async(sqlite_instance)),
             scorers=[_ConfiguredMessageScorer()],
             multiple=multiple,
         )
@@ -374,7 +374,7 @@ class TestResponseScoringExpectation:
     ) -> None:
         with pytest.warns(DeprecationWarning, match="objective argument.*2.0.0"):
             scores = await _score_response_async(
-                response=_stored_response(sqlite_instance),
+                response=(await _stored_response_async(sqlite_instance)),
                 scorers=[_ConfiguredMessageScorer()],
                 multiple=multiple,
                 objective=objective,
@@ -410,7 +410,8 @@ class TestResponseScoringExpectation:
         expectation = _expectation()
         with pytest.raises(ValueError, match="does not support"):
             await scorer.score_async(
-                scorable=MessageScorable.from_message(_stored_response(sqlite_instance)), expectation=expectation
+                scorable=MessageScorable.from_message(await _stored_response_async(sqlite_instance)),
+                expectation=expectation,
             )
         assert not scorer.expectations
 
@@ -439,13 +440,13 @@ class TestResponseScoringExpectation:
         )
         expectation = _expectation()
         scores = await _score_response_async(
-            response=_stored_response(sqlite_instance),
+            response=(await _stored_response_async(sqlite_instance)),
             scorers=[root],
             multiple=False,
             expectation=expectation,
         )
         assert leaf.expectations == [expectation.model_copy(update={"conditions": (_FirstCondition(),)})]
-        stored = sqlite_instance.get_scores(score_type="true_false")
+        stored = await sqlite_instance.get_scores_async(score_type="true_false")
         assert len(scores) == len(stored) == 1
         assert scores[0].scored_expectation == stored[0].scored_expectation == expectation
 
@@ -462,7 +463,7 @@ class TestResponseScoringExpectation:
             response_error="processing",
             conversation_id=str(uuid.uuid4()),
         ).to_message()
-        sqlite_instance.add_message_to_memory(request=response)
+        (await sqlite_instance.add_message_to_memory_async(request=response))
         objective, auxiliary = _MessageRecordingScorer(), _GenericRecordingScorer()
         auxiliary.CONDITION_TYPE = _FirstCondition
         expectation = ScoringExpectation(conditions=(_FirstCondition(),))
@@ -566,12 +567,12 @@ class TestGenericScoringGroup:
             spy.assert_awaited_once()
             assert spy.call_args.kwargs["scorable"] is scorable
             assert spy.call_args.kwargs["expectation"] is expectation
-        stored = sqlite_instance.get_scores(score_type="true_false")
+        stored = await sqlite_instance.get_scores_async(score_type="true_false")
         assert len(stored) == 2
         for score in stored:
             assert score.scored_expectation == expectation
             assert isinstance(score.scorable, ContentEntryScorable)
-            content = sqlite_instance.get_scorable_content(content_ids=[score.scorable.content_id])
+            content = await sqlite_instance.get_scorable_content_async(content_ids=[score.scorable.content_id])
             assert content[score.scorable.content_id].value == scorable.value
 
     async def test_empty_scorer_group_rejects_conditions_only_async(self) -> None:
@@ -599,7 +600,7 @@ class TestGenericScoringGroup:
                 expectation=expectation,
             )
         assert [len(scores) for scores in results] == [2, 0]
-        assert len(sqlite_instance.get_scores(score_type="float_scale")) == 2
+        assert len(await sqlite_instance.get_scores_async(score_type="float_scale")) == 2
 
     async def test_group_propagates_root_exception_context_async(self) -> None:
         scorer = _GenericRecordingScorer()
@@ -703,7 +704,7 @@ class TestStrictRouting:
     ) -> None:
         with pytest.raises(ValueError, match="does not support|requires one|exactly one"):
             await MessageScorer.score_response_async(
-                response=_stored_response(sqlite_instance),
+                response=(await _stored_response_async(sqlite_instance)),
                 objective_scorer=_MessageRecordingScorer(),
                 auxiliary_scorers=[_GenericRecordingScorer()],
                 expectation=ScoringExpectation(conditions=(_FirstCondition(),)),
@@ -714,7 +715,7 @@ class TestStrictRouting:
     ) -> None:
         with pytest.raises(ValueError, match="one input for each auxiliary scorer"):
             await MessageScorer.score_response_async(
-                response=_stored_response(sqlite_instance),
+                response=(await _stored_response_async(sqlite_instance)),
                 auxiliary_scorers=[_ConfiguredGenericScorer()],
                 auxiliary_expectations=[],
             )
@@ -782,7 +783,9 @@ async def test_group_roots_commit_observations_independently_async(
     scorers = _judgment_scorers()
     expectation = ScoringExpectation(conditions=(_FirstCondition(),))
 
-    with patch.object(sqlite_instance, "add_scores_to_memory", wraps=sqlite_instance.add_scores_to_memory) as persist:
+    with patch.object(
+        sqlite_instance, "add_scores_to_memory_async", wraps=sqlite_instance.add_scores_to_memory_async
+    ) as persist:
         if content_group:
             score_lists = await Scorer.score_with_scorers_async(
                 scorable=ContentScorable(value="combined response"), scorers=scorers, expectation=expectation
@@ -790,7 +793,10 @@ async def test_group_roots_commit_observations_independently_async(
             scores = [score for root_scores in score_lists for score in root_scores]
         else:
             scores = await _score_response_async(
-                response=_stored_response(sqlite_instance), scorers=scorers, multiple=False, expectation=expectation
+                response=(await _stored_response_async(sqlite_instance)),
+                scorers=scorers,
+                multiple=False,
+                expectation=expectation,
             )
 
     assert len(scores) == persist.call_count == 2
@@ -803,10 +809,10 @@ async def test_group_roots_commit_observations_independently_async(
         assert isinstance(score.scorable, ContentEntryScorable if content_group else MessageScorable)
     for score in scores:
         assert score.scored_expectation is expectation
-        stored = sqlite_instance.get_scores(score_ids=[score.id])[0]
+        stored = (await sqlite_instance.get_scores_async(score_ids=[score.id]))[0]
         assert stored.scored_expectation == expectation
         assert stored.observation_ids == score.observation_ids
-        [observation] = sqlite_instance.get_observations(observation_ids=stored.observation_ids)
+        [observation] = await sqlite_instance.get_observations_async(observation_ids=stored.observation_ids)
         assert observation.scorable == stored.scorable
 
 
@@ -815,7 +821,7 @@ async def test_group_failure_keeps_other_root_commit_and_no_orphan_observations_
     sqlite_instance: MemoryInterface,
 ) -> None:
     objective, auxiliary = _judgment_scorers()
-    response = _stored_response(sqlite_instance)
+    response = await _stored_response_async(sqlite_instance)
     expectation = ScoringExpectation(conditions=(_FirstCondition(),))
     committed = asyncio.Event()
     failed_observation_ids: list[uuid.UUID] = []
@@ -843,12 +849,12 @@ async def test_group_failure_keeps_other_root_commit_and_no_orphan_observations_
             timeout=10,
         )
 
-    stored = sqlite_instance.get_scores(score_type="true_false")
+    stored = await sqlite_instance.get_scores_async(score_type="true_false")
     assert len(stored) == 1
     assert stored[0].scored_expectation == expectation
-    assert len(sqlite_instance.get_observations(observation_ids=stored[0].observation_ids)) == 1
+    assert len(await sqlite_instance.get_observations_async(observation_ids=stored[0].observation_ids)) == 1
     assert failed_observation_ids
-    assert sqlite_instance.get_observations(observation_ids=failed_observation_ids) == []
+    assert (await sqlite_instance.get_observations_async(observation_ids=failed_observation_ids)) == []
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -862,7 +868,7 @@ async def test_composite_judgment_observations_keep_each_child_fingerprint_async
     )
     expectation = _expectation("shared context")
     [score] = await root.score_async(scorable=ContentScorable(value="response"), expectation=expectation)
-    observations = sqlite_instance.get_observations(observation_ids=score.observation_ids)
+    observations = await sqlite_instance.get_observations_async(observation_ids=score.observation_ids)
     assert len(observations) == 2
     assert score.scored_expectation == expectation
     fingerprints = {
@@ -874,6 +880,6 @@ async def test_composite_judgment_observations_keep_each_child_fingerprint_async
         assert isinstance(observation.payload, ScorerTargetResponsePayload)
         actual_fingerprints.add(observation.payload.expectation_fingerprint)
     assert actual_fingerprints == fingerprints
-    [stored] = sqlite_instance.get_scores(score_ids=[score.id])
+    [stored] = await sqlite_instance.get_scores_async(score_ids=[score.id])
     assert stored.scored_expectation == expectation
     assert set(stored.observation_ids) == {observation.id for observation in observations}

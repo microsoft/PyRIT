@@ -134,7 +134,7 @@ class _ScenarioHistoryQueries:
             ScenarioResultEntry.timestamp.desc(),
             ScenarioResultEntry.id.desc(),
         ).limit(limit + 1)
-        with closing(self._memory.get_session()) as session:
+        with closing(self._memory._get_session()) as session:
             rows = session.execute(statement).all()
         page_rows = rows[:limit]
 

@@ -287,7 +287,7 @@ class TestDivergence:
         ) as send:
             await scenario.run_async()
         assert send.call_count == 36
-        scores = sqlite_instance.get_scores(score_type="true_false")
+        scores = await sqlite_instance.get_scores_async(score_type="true_false")
         assert len(scores) == 36
         assert all(score.get_value() is diverged for score in scores)
         assert Counter(score.scored_expectation.conditions[0].text for score in scores) == {

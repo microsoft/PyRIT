@@ -11,7 +11,7 @@ import random
 import struct
 from typing import TYPE_CHECKING
 
-from pyrit.analytics.technique_analysis import compute_technique_stats
+from pyrit.analytics.technique_analysis import compute_technique_stats_async
 from pyrit.scenario.scenarios.adaptive.selectors.technique_selector import SelectorScope
 
 if TYPE_CHECKING:
@@ -129,7 +129,7 @@ class EpsilonGreedyTechniqueSelector:
         rng = _derive_rng(self._seed, decision_key)
 
         effective_run_id = scenario_result_id if self._scope.current_run_only else None
-        stats = compute_technique_stats(
+        stats = await compute_technique_stats_async(
             technique_eval_hashes=technique_list,
             scenario_result_id=effective_run_id,
             targeted_harm_categories=self._scope.targeted_harm_categories,

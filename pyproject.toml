@@ -27,6 +27,8 @@ classifiers = [
 requires-python = ">=3.11, <3.15"
 dependencies = [
     "aiofiles>=24,<26",
+    "aioodbc>=0.5.0",
+    "aiosqlite>=0.21.0",
     "alembic>=1.16.0",
     "appdirs>=1.4.0",
     "art>=6.5.0",
@@ -62,7 +64,7 @@ dependencies = [
     "reportlab>=4.4.4",
     "segno>=1.6.6",
     "scipy>=1.15.3",
-    "SQLAlchemy>=2.0.41",
+    "SQLAlchemy[asyncio]>=2.0.41",
     "starlette>=1.0.1",
     "termcolor>=2.4.0",
     "tenacity>=9.1.2",
@@ -94,6 +96,7 @@ dev = [
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.6.1",
     "respx>=0.22.0",
+    "sse-starlette>=3.0.0",
     "ruff>=0.14.4",
     "types-aiofiles>=24.1.0",
     "types-PyYAML>=6.0.12.20250516",
@@ -136,8 +139,13 @@ litellm = [
     "litellm>=1.84.0",
 ]
 
+a2a = [
+    "a2a-sdk>=1.1.5,<2",
+]
+
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
+    "a2a-sdk>=1.1.5,<2",
     "accelerate>=1.7.0",
     "azure-ai-ml>=1.32.0",
     "azure-cognitiveservices-speech>=1.44.0",
@@ -280,7 +288,8 @@ constraint-dependencies = [
 
 [build-system]
 requires = ["setuptools>=64.0.0", "wheel>=0.46.2"]
-build-backend = "setuptools.build_meta"
+build-backend = "build_scripts.build_backend"
+backend-path = ["."]
 
 [tool.setuptools.packages.find]
 include = ["pyrit", "pyrit.*"]
@@ -297,6 +306,7 @@ license-files = [
 
 [tool.setuptools.package-data]
 pyrit = [
+    "_compatibility.json",
     "backend/frontend/**/*",
     "memory/alembic/**/*",
     "memory/alembic.ini",

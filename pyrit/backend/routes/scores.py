@@ -3,7 +3,6 @@
 
 """Score API routes."""
 
-import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -58,7 +57,7 @@ async def create_manual_score(  # pyrit-async-suffix-exempt
         ScoreView: The persisted manual score.
     """
     memory = CentralMemory.get_memory_instance()
-    pieces = await asyncio.to_thread(memory.get_message_pieces, prompt_ids=[request_body.message_id])
+    pieces = await memory.get_message_pieces_async(prompt_ids=[request_body.message_id])
     piece = next((piece for piece in pieces if str(piece.id) == str(request_body.message_id)), None)
     if piece is None:
         raise HTTPException(
@@ -66,10 +65,7 @@ async def create_manual_score(  # pyrit-async-suffix-exempt
             detail=f"Message '{request_body.message_id}' not found",
         )
 
-    attacks = await asyncio.to_thread(
-        memory.get_attack_results,
-        attack_result_ids=[str(request_body.attack_result_id)],
-    )
+    attacks = await memory.get_attack_results_async(attack_result_ids=[str(request_body.attack_result_id)])
     if not attacks:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -101,8 +97,7 @@ async def create_manual_score(  # pyrit-async-suffix-exempt
     score = scores[0]
     if request_body.update_attack:
         outcome = _get_manual_score_outcome(request=request_body)
-        updated = await asyncio.to_thread(
-            memory.update_attack_result_by_id,
+        updated = await memory.update_attack_result_by_id_async(
             attack_result_id=attack.attack_result_id,
             update_fields={
                 "human_score_id": uuid.UUID(str(score.id)),
