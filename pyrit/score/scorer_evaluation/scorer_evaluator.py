@@ -16,7 +16,7 @@ from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.models import MessageScorable, Score, ScoringExpectation, UndeterminedScoreError
 from pyrit.models.harm_category import HarmCategory, normalize_harm_category_key
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.score.message_scorer import extract_objective_from_previous_turn
+from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
     HarmHumanLabeledEntry,
     HumanLabeledDataset,
@@ -378,11 +378,13 @@ class ScorerEvaluator(abc.ABC):
             ValueError: If the labeled_dataset is invalid.
         """
         # Validate dataset and extract data
-        assistant_responses, human_scores_list, objectives = self._validate_and_extract_data(labeled_dataset)
+        assistant_responses, human_scores_list, objectives = await self._validate_and_extract_data_async(
+            labeled_dataset
+        )
 
         # Harm datasets carry no objective, so the previous turn stands in for one.
         resolved_objectives = objectives or [
-            extract_objective_from_previous_turn(message=response, memory=self.scorer._memory)
+            (await extract_objective_from_previous_turn_async(message=response, memory=self.scorer._memory))
             for response in assistant_responses
         ]
 
@@ -547,7 +549,7 @@ class ScorerEvaluator(abc.ABC):
         )
 
     @abc.abstractmethod
-    def _validate_and_extract_data(
+    async def _validate_and_extract_data_async(
         self,
         labeled_dataset: HumanLabeledDataset,
     ) -> tuple[list[Message], list[list[float]], list[str] | None]:
@@ -564,6 +566,7 @@ class ScorerEvaluator(abc.ABC):
         Raises:
             ValueError: If the dataset is invalid for this evaluator.
         """
+        raise NotImplementedError
 
     @abc.abstractmethod
     def _compute_metrics(
@@ -630,7 +633,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
 
     expected_metrics_type = MetricsType.HARM
 
-    def _validate_and_extract_data(
+    async def _validate_and_extract_data_async(
         self,
         labeled_dataset: HumanLabeledDataset,
     ) -> tuple[list[Message], list[list[float]], list[str] | None]:
@@ -660,7 +663,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
             harm_entry = cast("HarmHumanLabeledEntry", entry)
             assistant_messages: list[Message] = []
             for message in harm_entry.conversation:
-                self.scorer._memory.add_message_to_memory(request=message)
+                (await self.scorer._memory.add_message_to_memory_async(request=message))
                 if message.api_role == "assistant":
                     assistant_messages.append(message)
             if len(assistant_messages) != 1:
@@ -785,7 +788,7 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
 
     expected_metrics_type = MetricsType.OBJECTIVE
 
-    def _validate_and_extract_data(
+    async def _validate_and_extract_data_async(
         self,
         labeled_dataset: HumanLabeledDataset,
     ) -> tuple[list[Message], list[list[float]], list[str] | None]:
@@ -813,7 +816,7 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
         for entry in labeled_dataset.entries:
             objective_entry = cast("ObjectiveHumanLabeledEntry", entry)
             for message in objective_entry.conversation:
-                self.scorer._memory.add_message_to_memory(request=message)
+                (await self.scorer._memory.add_message_to_memory_async(request=message))
                 assistant_responses.append(message)
             human_scores_list.append([float(score) for score in objective_entry.human_scores])
             objectives.append(objective_entry.objective)

@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message
+from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message_async
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -96,7 +96,8 @@ async def test_judge_uses_explicit_evidence_after_context_change_async(
     sqlite_instance: MemoryInterface, include_piece: bool
 ) -> None:
     messages = [
-        store_message(MessagePiece(role="assistant", original_value=value).to_message()) for value in ("A", "B")
+        await store_message_async(MessagePiece(role="assistant", original_value=value).to_message())
+        for value in ("A", "B")
     ]
     target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier("ExplicitEvidenceJudge")
@@ -134,12 +135,12 @@ async def test_judge_uses_explicit_evidence_after_context_change_async(
         )
         scores = [result.to_score(score_value=result.raw_score_value, score_type="true_false") for result in results]
         observations = collector.referenced_by(scores=scores)
-    sqlite_instance.add_scores_to_memory(scores=scores, observations=observations)
+    await sqlite_instance.add_scores_to_memory_async(scores=scores, observations=observations)
     assert len(observations) == 2
     for request, score in zip(requests, scores, strict=True):
         assert score.scorable == request.scorable
         assert score.scored_expectation == request.expectation
-        observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+        observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
         assert observation.scorable == request.scorable
         assert observation.scored_message_piece_id == request.scored_prompt_id
 
@@ -178,7 +179,7 @@ async def test_judge_uses_explicit_criteria_not_ambient_context_async() -> None:
             *(judge.judge_async(request=request, response_handler=JsonSchemaResponseHandler()) for request in requests)
         )
     assert [score.scored_expectation for score in scores] == expectations
-    conversations = [call.kwargs["conversation_id"] for call in target.set_system_prompt.call_args_list]
+    conversations = [call.kwargs["conversation_id"] for call in target.set_system_prompt_async.call_args_list]
     assert len(set(conversations)) == 2
 
 

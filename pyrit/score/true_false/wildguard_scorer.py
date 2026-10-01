@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from contextvars import ContextVar
 from functools import partial
 from typing import Any, ClassVar
@@ -243,9 +242,7 @@ class WildGuardScorer(MessageTrueFalseScorer):
         if not message_piece.conversation_id or message_piece.sequence < 1:
             return None
 
-        conversation = await asyncio.to_thread(
-            self._memory.get_message_pieces, conversation_id=message_piece.conversation_id
-        )
+        conversation = await self._memory.get_message_pieces_async(conversation_id=message_piece.conversation_id)
         prior_user_pieces = [
             piece for piece in conversation if piece.sequence < message_piece.sequence and piece.api_role == "user"
         ]

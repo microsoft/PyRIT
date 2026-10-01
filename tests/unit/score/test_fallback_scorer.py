@@ -6,7 +6,7 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from unit.mocks import MockPromptTarget, store_message
+from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -146,8 +146,10 @@ async def test_complete_primary_skips_fallback_async(
         "primary.resolved_by": "inner",
     }
     assert child_score == original
-    assert [score.id for score in sqlite_instance.get_scores(score_type=family)] == [result.id]
-    assert {score.id for score in sqlite_instance.get_scores(score_type=family, include_intermediate=True)} == {
+    assert [score.id for score in (await sqlite_instance.get_scores_async(score_type=family))] == [result.id]
+    assert {
+        score.id for score in await sqlite_instance.get_scores_async(score_type=family, include_intermediate=True)
+    } == {
         result.id,
         child_score.id,
     }
@@ -186,7 +188,9 @@ async def test_fallback_preserves_both_attempts_without_mutating_children_async(
     if fallback_abstains:
         assert "also returned an undetermined score" in result.score_rationale
     assert [primary_score, fallback_score] == originals
-    assert {score.id for score in sqlite_instance.get_scores(score_type=family, include_intermediate=True)} == {
+    assert {
+        score.id for score in await sqlite_instance.get_scores_async(score_type=family, include_intermediate=True)
+    } == {
         result.id,
         primary_score.id,
         fallback_score.id,
@@ -237,7 +241,7 @@ async def test_child_errors_propagate_without_persisting_async(
         await wrapper.score_async(scorable=ContentScorable(value="evidence"))
     if failing_primary:
         fallback_call.assert_not_awaited()
-    assert sqlite_instance.get_scores(score_type=family) == []
+    assert (await sqlite_instance.get_scores_async(score_type=family)) == []
 
 
 @pytest.mark.parametrize("multiple_primary", [False, True])
@@ -255,7 +259,7 @@ async def test_rejects_multiple_child_scores_async(
         await wrapper.score_async(scorable=ContentScorable(value="evidence"))
     if multiple_primary:
         call.assert_not_awaited()
-    assert sqlite_instance.get_scores(score_type=family) == []
+    assert (await sqlite_instance.get_scores_async(score_type=family)) == []
 
 
 @pytest.mark.parametrize("difference", ["content", "piece", "category"])
@@ -350,7 +354,7 @@ async def test_normalizes_objective_and_forwards_expectation_async(
     for call in (primary_call, fallback_call):
         assert call.call_args.kwargs == {"scorable": scorable, "expectation": normalized}
     assert result.scored_expectation == normalized
-    assert sqlite_instance.get_scores(score_type=family)[0].scored_expectation == normalized
+    assert (await sqlite_instance.get_scores_async(score_type=family))[0].scored_expectation == normalized
 
 
 async def test_preflight_validates_fallback_before_primary_execution_async(
@@ -552,14 +556,14 @@ async def test_real_judges_persist_both_observations_and_only_wrapper_score_asyn
     expectation = ScoringExpectation(objective="criterion")
     scorable: Scorable = ContentScorable(value="evidence")
     if stored_message:
-        message = store_message(MessagePiece(role="assistant", original_value="evidence").to_message())
+        message = await store_message_async(MessagePiece(role="assistant", original_value="evidence").to_message())
         scorable = MessageScorable.from_message(message)
     with (
         patch.object(primary_target, "send_prompt_async", new_callable=AsyncMock, return_value=[blocked]),
         patch.object(fallback_target, "send_prompt_async", new_callable=AsyncMock, return_value=[judged]),
     ):
         result = (await wrapper.score_async(scorable=scorable, expectation=expectation))[0]
-    stored = sqlite_instance.get_scores(score_type=family)
+    stored = await sqlite_instance.get_scores_async(score_type=family)
     assert len(stored) == 1
     assert stored[0].id == result.id
     assert stored[0].get_value() == (1.0 if family == "float_scale" else True)
@@ -567,7 +571,7 @@ async def test_real_judges_persist_both_observations_and_only_wrapper_score_asyn
     assert stored[0].score_metadata == result.score_metadata
     assert stored[0].scorer_class_identifier == wrapper.get_identifier()
     assert len(result.observation_ids) == 2
-    observations = sqlite_instance.get_observations(observation_ids=result.observation_ids)
+    observations = await sqlite_instance.get_observations_async(observation_ids=result.observation_ids)
     assert len(observations) == 2
     assert {observation.scorable for observation in observations} == {result.scorable}
     if isinstance(scorable, MessageScorable):

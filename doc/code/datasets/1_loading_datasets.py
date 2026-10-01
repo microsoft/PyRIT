@@ -118,4 +118,4 @@ memory = CentralMemory().get_memory_instance()
 await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="pyrit")
 
 # Memory has flexible querying capabilities
-memory.get_seeds(harm_categories=["illegal"], seed_type="objective")
+(await memory.get_seeds_async(harm_categories=["illegal"], seed_type="objective"))

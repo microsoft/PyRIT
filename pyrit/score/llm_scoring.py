@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import uuid
@@ -34,7 +33,7 @@ from pyrit.score.observation.execution import (
     _collect_observation,
     _has_observation_collection,
     _ObservationEvidence,
-    _scored_evidence_digest,
+    _scored_evidence_digest_async,
 )
 
 if TYPE_CHECKING:
@@ -140,8 +139,7 @@ async def _run_llm_scoring_async(
     resolved_normalizer = normalizer or PromptNormalizer()
     scored_piece_id = uuid.UUID(str(request.scored_prompt_id)) if observation_scorable is not None else None
     scored_evidence_digest = (
-        await asyncio.to_thread(
-            _scored_evidence_digest,
+        await _scored_evidence_digest_async(
             scorable=observation_scorable,
             scored_piece_id=cast("uuid.UUID", scored_piece_id),
             memory=resolved_normalizer.memory,
@@ -158,7 +156,7 @@ async def _run_llm_scoring_async(
     )
 
     if request.system_prompt is not None:
-        chat_target.set_system_prompt(
+        await chat_target.set_system_prompt_async(
             system_prompt=request.system_prompt,
             conversation_id=conversation_id,
         )

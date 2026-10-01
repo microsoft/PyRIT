@@ -3,8 +3,6 @@
 
 """Acquire a whole-conversation snapshot without selecting scoring criteria."""
 
-import asyncio
-
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     Acquisition,
@@ -39,7 +37,7 @@ class ConversationSource:
             ValueError: If the conversation does not exist.
         """
         memory = CentralMemory.get_memory_instance()
-        messages = await asyncio.to_thread(memory.get_conversation_messages, conversation_id=scorable.conversation_id)
+        messages = await memory.get_conversation_messages_async(conversation_id=scorable.conversation_id)
         pieces = tuple(piece for message in messages for piece in message.message_pieces)
         if not pieces:
             raise ValueError(f"Conversation with ID {scorable.conversation_id} not found in memory.")

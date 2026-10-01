@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
-from unit.mocks import get_mock_target_identifier, store_message
+from unit.mocks import get_mock_target_identifier, store_message_async
 
 from pyrit.exceptions import ScorerLLMResponseBlockedException
 from pyrit.memory import MemoryInterface
@@ -40,13 +40,13 @@ from pyrit.score.observation.execution import _ObservationEvidenceResolver
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
 
-def test_conversation_finalization_preserves_fallback_anchor() -> None:
-    message = store_message(MessagePiece(role="assistant", original_value="retained answer").to_message())
+async def test_conversation_finalization_preserves_fallback_anchor_async() -> None:
+    message = await store_message_async(MessagePiece(role="assistant", original_value="retained answer").to_message())
     anchor = MessageScorable.from_message(message)
     scorer = create_conversation_scorer(scorer=OutputMatchesScorer())
     assert isinstance(scorer, MessageScorer)
     score = Score(score_type="true_false", status=ScoreStatus.UNDETERMINED)
-    scorer._finalize_message_scores(message=message, scores=[score], anchor=anchor, expectation=None)
+    await scorer._finalize_message_scores_async(message=message, scores=[score], anchor=anchor, expectation=None)
     assert score.scorable == anchor
     assert Score.model_validate(score.model_dump()).scorable == anchor
 
@@ -58,7 +58,7 @@ def test_conversation_finalization_preserves_fallback_anchor() -> None:
 async def test_conversation_blocked_judge_policy_and_evidence_async(
     sqlite_instance: MemoryInterface, entry: str, retained_response: bool, raise_if_blocked: bool
 ) -> None:
-    message = store_message(MessagePiece(role="assistant", original_value="retained answer").to_message())
+    message = await store_message_async(MessagePiece(role="assistant", original_value="retained answer").to_message())
     piece = message.message_pieces[0]
     assert piece.conversation_id
     anchor = ConversationScorable(conversation_id=piece.conversation_id)
@@ -81,7 +81,9 @@ async def test_conversation_blocked_judge_policy_and_evidence_async(
     expectation = ScoringExpectation(objective="Judge the conversation")
     evidence = anchor if entry == "conversation" else MessageScorable.from_message(message)
     with (
-        patch.object(sqlite_instance, "add_scores_to_memory", wraps=sqlite_instance.add_scores_to_memory) as persist,
+        patch.object(
+            sqlite_instance, "add_scores_to_memory_async", wraps=sqlite_instance.add_scores_to_memory_async
+        ) as persist,
         patch.object(
             child,
             "_score_nested_async",
@@ -109,7 +111,7 @@ async def test_conversation_blocked_judge_policy_and_evidence_async(
     assert score.scored_expectation == expectation
     assert score.message_piece_id == (None if entry == "conversation" else piece.id)
     assert child.raise_if_scorer_blocks is True
-    observations = sqlite_instance.get_observations(observation_ids=score.observation_ids)
+    observations = await sqlite_instance.get_observations_async(observation_ids=score.observation_ids)
     assert len(observations) == (2 if retained_response else 1)
     snapshot = next(obs for obs in observations if isinstance(obs.payload, ConversationObservationPayload))
     assert snapshot.scorable == anchor
@@ -123,8 +125,12 @@ async def test_conversation_blocked_judge_policy_and_evidence_async(
 @pytest.mark.parametrize("nested", [False, True])
 async def test_conversation_snapshot_does_not_grow_async(sqlite_instance: MemoryInterface, nested: bool) -> None:
     conversation_id = str(uuid.uuid4())
-    first = store_message(MessagePiece(role="user", original_value="A", conversation_id=conversation_id).to_message())
-    store_message(MessagePiece(role="assistant", original_value="B", conversation_id=conversation_id).to_message())
+    first = await store_message_async(
+        MessagePiece(role="user", original_value="A", conversation_id=conversation_id).to_message()
+    )
+    await store_message_async(
+        MessagePiece(role="assistant", original_value="B", conversation_id=conversation_id).to_message()
+    )
     scorer = create_conversation_scorer(scorer=OutputMatchesScorer())
     root = TrueFalseInverterScorer(scorer=scorer) if nested else scorer
     anchor = ConversationScorable(conversation_id=conversation_id)
@@ -133,21 +139,25 @@ async def test_conversation_snapshot_does_not_grow_async(sqlite_instance: Memory
     assert first_score.get_value() is nested
     assert first_score.scorable == anchor
     assert first_score.message_piece_id is None
-    snapshot = sqlite_instance.get_observations(observation_ids=first_score.observation_ids)[0]
+    snapshot = (await sqlite_instance.get_observations_async(observation_ids=first_score.observation_ids))[0]
     assert isinstance(snapshot.payload, ConversationObservationPayload)
     assert len(snapshot.payload.message_piece_ids) == 2
     assert Observation.model_validate_json(snapshot.model_dump_json()) == snapshot
 
-    store_message(MessagePiece(role="assistant", original_value="C", conversation_id=conversation_id).to_message())
+    await store_message_async(
+        MessagePiece(role="assistant", original_value="C", conversation_id=conversation_id).to_message()
+    )
     # A legacy trigger is a locator, not a cutoff.
     second_score = (await scorer.score_async(scorable=MessageScorable.from_message(first), expectation=expectation))[0]
     assert second_score.get_value() is True
     assert second_score.scorable == anchor
     assert second_score.message_piece_id == first.message_pieces[0].id
-    current = sqlite_instance.get_observations(observation_ids=second_score.observation_ids)[0]
+    current = (await sqlite_instance.get_observations_async(observation_ids=second_score.observation_ids))[0]
     assert len(current.evidence_message_piece_ids) == 3
-    with patch.object(sqlite_instance, "get_conversation_messages", side_effect=AssertionError("Must not reacquire")):
-        saved = _ObservationEvidenceResolver(memory=sqlite_instance).resolve(observation=snapshot)
+    with patch.object(
+        sqlite_instance, "get_conversation_messages_async", side_effect=AssertionError("Must not reacquire")
+    ):
+        saved = await _ObservationEvidenceResolver(memory=sqlite_instance).resolve_async(observation=snapshot)
     assert isinstance(saved, tuple)
     assert [piece.converted_value for piece in saved] == ["A", "B"]
     with pytest.raises(NonReplayableObservationError):
@@ -158,13 +168,13 @@ async def test_conversation_snapshot_does_not_grow_async(sqlite_instance: Memory
 async def test_conversation_snapshot_rejects_changed_evidence_async(
     sqlite_instance: MemoryInterface, change: str
 ) -> None:
-    message = store_message(MessagePiece(role="assistant", original_value="B").to_message())
+    message = await store_message_async(MessagePiece(role="assistant", original_value="B").to_message())
     piece = message.message_pieces[0]
     assert piece.conversation_id
     observation = await ConversationSource().acquire_async(
         scorable=ConversationScorable(conversation_id=piece.conversation_id)
     )
-    pieces = {stored.id: stored for stored in sqlite_instance.get_message_pieces(prompt_ids=[piece.id])}
+    pieces = {stored.id: stored for stored in await sqlite_instance.get_message_pieces_async(prompt_ids=[piece.id])}
     changed = pieces[piece.id]
     if change == "missing":
         pieces.clear()
@@ -185,7 +195,7 @@ async def test_conversation_snapshot_rejects_changed_evidence_async(
 async def test_conversation_source_does_not_filter_and_retains_references_async(
     sqlite_instance: MemoryInterface,
 ) -> None:
-    message = store_message(MessagePiece(role="system", original_value="system evidence").to_message())
+    message = await store_message_async(MessagePiece(role="system", original_value="system evidence").to_message())
     assert message.message_pieces[0].conversation_id
     anchor = ConversationScorable(conversation_id=message.message_pieces[0].conversation_id)
     observation = await ConversationSource().acquire_async(scorable=anchor)
@@ -193,7 +203,7 @@ async def test_conversation_source_does_not_filter_and_retains_references_async(
     scorer = create_conversation_scorer(scorer=OutputMatchesScorer())
     expectation = ScoringExpectation(conditions=(OutputMatches(matcher=Contains(value="evidence")),))
     assert await scorer.score_async(scorable=anchor, expectation=expectation) == []
-    assert sqlite_instance.get_observations(observation_ids=[observation.id]) == []
+    assert await sqlite_instance.get_observations_async(observation_ids=[observation.id]) == []
     with pytest.raises(ValueError, match="not found"):
         await ConversationSource().acquire_async(scorable=ConversationScorable(conversation_id="missing"))
 
@@ -203,7 +213,7 @@ async def test_conversation_judge_keeps_child_content_and_persists_once_async(
     sqlite_instance: MemoryInterface,
     entry: str,
 ) -> None:
-    message = store_message(MessagePiece(role="assistant", original_value="retained answer").to_message())
+    message = await store_message_async(MessagePiece(role="assistant", original_value="retained answer").to_message())
     target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier("ConversationJudge")
     target.send_prompt_async = AsyncMock(
@@ -219,11 +229,13 @@ async def test_conversation_judge_keeps_child_content_and_persists_once_async(
     assert scorer.get_chat_target() is target
     assert message.message_pieces[0].conversation_id
     anchor = ConversationScorable(conversation_id=message.message_pieces[0].conversation_id)
-    with patch.object(sqlite_instance, "add_scores_to_memory", wraps=sqlite_instance.add_scores_to_memory) as persist:
+    with patch.object(
+        sqlite_instance, "add_scores_to_memory_async", wraps=sqlite_instance.add_scores_to_memory_async
+    ) as persist:
         evidence = anchor if entry == "conversation" else MessageScorable.from_message(message)
         score = (await scorer.score_async(scorable=evidence))[0]
     assert persist.call_count == 1
-    stored = sqlite_instance.get_scores(score_type="true_false", include_intermediate=True)
+    stored = await sqlite_instance.get_scores_async(score_type="true_false", include_intermediate=True)
     assert len(stored) == 2
     intermediate = next(item for item in stored if item.id != score.id)
     assert isinstance(intermediate.scorable, ContentEntryScorable)
@@ -231,8 +243,8 @@ async def test_conversation_judge_keeps_child_content_and_persists_once_async(
     assert score.scorable == anchor
     assert score.scorer_class_identifier == scorer.get_identifier()
     assert score.message_piece_id == (None if entry == "conversation" else message.message_pieces[0].id)
-    assert [item.id for item in sqlite_instance.get_scores(score_type="true_false")] == [score.id]
-    observations = sqlite_instance.get_observations(observation_ids=score.observation_ids)
+    assert [item.id for item in await sqlite_instance.get_scores_async(score_type="true_false")] == [score.id]
+    observations = await sqlite_instance.get_observations_async(observation_ids=score.observation_ids)
     assert len(observations) == 2
     judgment = next(obs for obs in observations if isinstance(obs.scorable, ContentEntryScorable))
     assert judgment.scorable != score.scorable
@@ -240,7 +252,9 @@ async def test_conversation_judge_keeps_child_content_and_persists_once_async(
     assert replay[0].get_value() is True
     assert target.send_prompt_async.call_count == 1
     with pytest.raises(IntegrityError, match="observation"):
-        sqlite_instance.delete_conversation_pieces_after_sequence(conversation_id=anchor.conversation_id, sequence=-1)
+        await sqlite_instance.delete_conversation_pieces_after_sequence_async(
+            conversation_id=anchor.conversation_id, sequence=-1
+        )
 
 
 @pytest.mark.parametrize("value", ["", " ", "\n"])

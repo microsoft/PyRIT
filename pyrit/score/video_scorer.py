@@ -194,7 +194,7 @@ class VideoHelper:
 
         memory = CentralMemory.get_memory_instance()
         for request in image_requests:
-            memory.add_message_to_memory(request=request)
+            (await memory.add_message_to_memory_async(request=request))
 
         with _suppress_observation_collection():
             frame_scores = await self.image_scorer._score_batch_nested_async(
@@ -308,7 +308,7 @@ class VideoHelper:
 
             # Add to memory
             memory = CentralMemory.get_memory_instance()
-            memory.add_message_to_memory(request=audio_message)
+            (await memory.add_message_to_memory_async(request=audio_message))
 
             with _suppress_observation_collection():
                 audio_scores = await audio_scorer._score_batch_nested_async(

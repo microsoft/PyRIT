@@ -3,7 +3,6 @@
 
 import asyncio
 import uuid
-from contextlib import closing
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -11,6 +10,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import Session
+from unit.mocks import run_memory_session_async
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import PromptMemoryEntry, ScorableContentEntry, ScoreEntry
@@ -70,10 +70,12 @@ class TestIntermediateScores:
         threshold = FloatScaleThresholdScorer(scorer=leaf, threshold=0.5)
         inverter = TrueFalseInverterScorer(scorer=threshold)
 
-        with patch.object(sqlite_instance, "add_scores_to_memory", wraps=sqlite_instance.add_scores_to_memory) as add:
+        with patch.object(
+            sqlite_instance, "add_scores_to_memory_async", wraps=sqlite_instance.add_scores_to_memory_async
+        ) as add:
             result = (await inverter.score_async(scorable=evidence))[0]
 
-        add.assert_called_once()
+        add.assert_awaited_once()
         assert children == originals
         assert result.get_value() is False
         # Float feedback semantics are a separate change from retaining judgments.
@@ -98,29 +100,32 @@ class TestIntermediateScores:
         )
         assert threshold_result.get_value() is True
         assert threshold_result.id != result.id
-        assert sqlite_instance.get_scores(score_type="float_scale") == []
-        assert len(sqlite_instance.get_scores(score_type="float_scale", include_intermediate=True)) == 2
-        assert len(sqlite_instance.get_scores(score_ids=[str(children[0].id)])) == 1
+        assert await sqlite_instance.get_scores_async(score_type="float_scale") == []
+        assert len(await sqlite_instance.get_scores_async(score_type="float_scale", include_intermediate=True)) == 2
+        assert len(await sqlite_instance.get_scores_async(score_ids=[str(children[0].id)])) == 1
 
     async def test_message_queries_exclude_intermediate_results_async(self, sqlite_instance: MemoryInterface) -> None:
         piece = MessagePiece(role="assistant", original_value="evidence", conversation_id=str(uuid.uuid4()))
-        sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece])
         scorer = TrueFalseInverterScorer(scorer=SubStringScorer(substring="evidence"))
         roots = await scorer.score_async(scorable=MessageScorable.from_message(piece.to_message()))
 
         with patch.object(sqlite_instance, "_query_entries", wraps=sqlite_instance._query_entries) as query:
-            stored_roots = sqlite_instance.get_scores(score_type="true_false")
-            prompt_scores = sqlite_instance.get_prompt_scores(prompt_ids=[piece.id])
+            stored_roots = await sqlite_instance.get_scores_async(score_type="true_false")
+            prompt_scores = await sqlite_instance.get_prompt_scores_async(prompt_ids=[piece.id])
         assert [score.id for score in stored_roots] == [roots[0].id]
         assert [score.id for score in prompt_scores] == [roots[0].id]
-        assert len(sqlite_instance.get_prompt_scores(prompt_ids=[piece.id], include_intermediate=True)) == 2
-        with closing(sqlite_instance.get_session()) as session:
+        assert len(await sqlite_instance.get_prompt_scores_async(prompt_ids=[piece.id], include_intermediate=True)) == 2
+
+        def check_relationships(session: Session) -> None:
             entry = session.get(PromptMemoryEntry, piece.id)
             assert entry is not None
             assert [score.id for score in entry.scores] == [roots[0].id]
             assert len(entry.all_scores) == 2
-        assert sqlite_instance.get_scores() == []
-        assert sqlite_instance.get_scores(score_ids=[]) == []
+
+        await run_memory_session_async(memory=sqlite_instance, operation=check_relationships)
+        assert await sqlite_instance.get_scores_async() == []
+        assert await sqlite_instance.get_scores_async(score_ids=[]) == []
 
         statements = [
             select(ScoreEntry).where(call.kwargs["conditions"])
@@ -143,11 +148,11 @@ class TestIntermediateScores:
             assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
 
         piece = MessagePiece(role="assistant", original_value="evidence", conversation_id=str(uuid.uuid4()), sequence=1)
-        sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece])
         scorer = TrueFalseInverterScorer(scorer=SubStringScorer(substring="evidence"))
         await scorer.score_async(scorable=MessageScorable.from_message(piece.to_message()))
 
-        removed = sqlite_instance.delete_conversation_pieces_after_sequence(
+        removed = await sqlite_instance.delete_conversation_pieces_after_sequence_async(
             conversation_id=piece.conversation_id, sequence=0
         )
 
@@ -177,7 +182,7 @@ class TestIntermediateScores:
             original_value_data_type="audio_path",
             conversation_id=str(uuid.uuid4()),
         )
-        sqlite_instance.add_message_pieces_to_memory(message_pieces=[piece])
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece])
         child = SubStringScorer(
             substring="evidence",
             validator=ScorerPromptValidator(supported_data_types=["text"], supported_roles=[supported_role]),
@@ -188,8 +193,8 @@ class TestIntermediateScores:
         ):
             roots = await scorer.score_async(scorable=MessageScorable.from_message(piece.to_message()))
 
-        assert len(sqlite_instance.get_message_pieces(conversation_id=piece.conversation_id)) == 1
-        stored = sqlite_instance.get_scores(score_type="true_false", include_intermediate=True)
+        assert len(await sqlite_instance.get_message_pieces_async(conversation_id=piece.conversation_id)) == 1
+        stored = await sqlite_instance.get_scores_async(score_type="true_false", include_intermediate=True)
         if role != supported_role:
             assert roots == []
             assert stored == []
@@ -199,7 +204,7 @@ class TestIntermediateScores:
         assert len(stored) == 2
         intermediate = next(score for score in stored if score.id != roots[0].id)
         assert isinstance(intermediate.scorable, ContentEntryScorable)
-        content = sqlite_instance.get_scorable_content(content_ids=[intermediate.scorable.content_id])
+        content = await sqlite_instance.get_scorable_content_async(content_ids=[intermediate.scorable.content_id])
         assert content[intermediate.scorable.content_id].value == "evidence"
 
     async def test_batch_roots_do_not_share_intermediate_results_async(self, sqlite_instance: MemoryInterface) -> None:
@@ -215,7 +220,7 @@ class TestIntermediateScores:
         )
 
         assert len(roots) == 2
-        stored = sqlite_instance.get_scores(score_type="true_false", include_intermediate=True)
+        stored = await sqlite_instance.get_scores_async(score_type="true_false", include_intermediate=True)
         assert len(stored) == 8
         for root in roots:
             matching = [score for score in stored if score.scorable == root.scorable]
@@ -237,7 +242,7 @@ class TestIntermediateScores:
         roots = await leaf.score_text_async(text="evidence")
         assert len(roots) == 1
         assert len(sqlite_instance._query_entries(ScoreEntry)) == 1
-        assert [score.id for score in sqlite_instance.get_scores(score_type="true_false")] == [roots[0].id]
+        assert [score.id for score in await sqlite_instance.get_scores_async(score_type="true_false")] == [roots[0].id]
 
     async def test_root_and_intermediates_roll_back_together_async(self, sqlite_instance: MemoryInterface) -> None:
         scorer = TrueFalseInverterScorer(scorer=SubStringScorer(substring="evidence"))

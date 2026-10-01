@@ -1,12 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import gc
 import sqlite3
 import weakref
 from collections.abc import Generator
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing, contextmanager
+from contextlib import asynccontextmanager, closing, contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -20,7 +20,7 @@ from pyrit.memory.memory_models import Base, PromptMemoryEntry
 from pyrit.models import MessagePiece
 from unit import conftest as unit_fixtures
 
-_sqlite_instance = contextmanager(unit_fixtures.sqlite_instance.__wrapped__)
+_sqlite_instance = asynccontextmanager(unit_fixtures.sqlite_instance.__wrapped__)
 _sqlite_template = contextmanager(unit_fixtures.sqlite_template.__wrapped__)
 
 
@@ -28,8 +28,9 @@ _sqlite_template = contextmanager(unit_fixtures.sqlite_template.__wrapped__)
 def sqlite_connections() -> Generator[list[sqlite3.Connection], None, None]:
     connections: list[sqlite3.Connection] = []
 
-    def record_connection(*, dbapi_connection: sqlite3.Connection, connection_record: ConnectionPoolEntry) -> None:
-        connections.append(dbapi_connection)
+    def record_connection(*, dbapi_connection: object, connection_record: ConnectionPoolEntry) -> None:
+        if isinstance(dbapi_connection, sqlite3.Connection):
+            connections.append(dbapi_connection)
 
     event.listen(Engine, "connect", record_connection, named=True)
     try:
@@ -73,15 +74,17 @@ def _schema_snapshot(engine: Engine) -> dict[str, object]:
     return {"tables": tables, "revisions": revisions}
 
 
-def test_sqlite_template_migrates_once_and_closes_connections(sqlite_connections: list[sqlite3.Connection]) -> None:
+async def test_sqlite_template_migrates_once_and_closes_connections(
+    sqlite_connections: list[sqlite3.Connection],
+) -> None:
     with (
         patch.object(migration, "run_schema_migrations", wraps=migration.run_schema_migrations) as migrate,
         patch.object(migration, "check_schema_migrations", wraps=migration.check_schema_migrations) as check,
         _sqlite_template() as template,
     ):
         for _ in range(3):
-            with _sqlite_instance(sqlite_template=template) as memory:
-                assert memory.get_message_pieces() == []
+            async with _sqlite_instance(sqlite_template=template) as memory:
+                assert (await memory.get_message_pieces_async()) == []
         migrate.assert_called_once()
         check.assert_called_once()
         assert template.execute("PRAGMA query_only").fetchone() == (1,)
@@ -124,13 +127,13 @@ def test_sqlite_instance_copies_migrated_schema_and_revision(sqlite_instance: SQ
         engine.dispose()
 
 
-def test_sqlite_instance_isolates_rows_schema_and_results(
+async def test_sqlite_instance_isolates_rows_schema_and_results(
     *, sqlite_template: sqlite3.Connection, sqlite_connections: list[sqlite3.Connection]
 ) -> None:
     previous_memory = None
     previous_results_path = None
     for _ in range(3):
-        with _sqlite_instance(sqlite_template=sqlite_template) as memory:
+        async with _sqlite_instance(sqlite_template=sqlite_template) as memory:
             assert memory is not previous_memory
             assert memory.results_path != previous_results_path
             assert memory.memory_embedding is None
@@ -157,7 +160,7 @@ def test_sqlite_instance_isolates_rows_schema_and_results(
                     )
                 )
             )
-            assert len(memory.get_message_pieces()) == 1
+            assert len(await memory.get_message_pieces_async()) == 1
             with memory.engine.begin() as connection:
                 connection.execute(text("CREATE TABLE fixture_extra (id INTEGER)"))
                 connection.execute(text("CREATE TEMP TABLE fixture_temp (id INTEGER)"))
@@ -174,7 +177,7 @@ def test_sqlite_instance_isolates_rows_schema_and_results(
 
 
 @pytest.mark.parametrize("has_previous", [False, True])
-def test_sqlite_instance_restores_only_its_memory_registration(
+async def test_sqlite_instance_restores_only_its_memory_registration(
     *, sqlite_template: sqlite3.Connection, has_previous: bool
 ) -> None:
     class UnrelatedSingleton(metaclass=Singleton):
@@ -187,7 +190,7 @@ def test_sqlite_instance_restores_only_its_memory_registration(
             Singleton._instances[SQLiteMemory] = previous_memory
         else:
             Singleton._instances.pop(SQLiteMemory, None)
-        with _sqlite_instance(sqlite_template=sqlite_template) as memory:
+        async with _sqlite_instance(sqlite_template=sqlite_template) as memory:
             assert Singleton._instances[SQLiteMemory] is memory
             assert CentralMemory.get_memory_instance() is memory
             unrelated = UnrelatedSingleton()
@@ -196,23 +199,23 @@ def test_sqlite_instance_restores_only_its_memory_registration(
         assert CentralMemory._memory_instance is previous_central
 
 
-def test_sqlite_instance_does_not_modify_an_existing_database(sqlite_template: sqlite3.Connection) -> None:
-    with _sqlite_instance(sqlite_template=sqlite_template) as previous:
+async def test_sqlite_instance_does_not_modify_an_existing_database(sqlite_template: sqlite3.Connection) -> None:
+    async with _sqlite_instance(sqlite_template=sqlite_template) as previous:
         previous._insert_entry(
             PromptMemoryEntry(
                 entry=MessagePiece(role="user", original_value="previous data", conversation_id="previous-conversation")
             )
         )
-        with _sqlite_instance(sqlite_template=sqlite_template) as current:
+        async with _sqlite_instance(sqlite_template=sqlite_template) as current:
             assert current.engine is not previous.engine
-            assert current.get_message_pieces() == []
+            assert (await current.get_message_pieces_async()) == []
         assert SQLiteMemory() is previous
         assert CentralMemory.get_memory_instance() is previous
-        assert previous.get_message_pieces()[0].original_value == "previous data"
+        assert (await previous.get_message_pieces_async())[0].original_value == "previous data"
 
 
 @pytest.mark.parametrize("failure", ["backup", "test"])
-def test_sqlite_instance_cleans_up_on_failure(
+async def test_sqlite_instance_cleans_up_on_failure(
     *, sqlite_template: sqlite3.Connection, sqlite_connections: list[sqlite3.Connection], failure: str
 ) -> None:
     with closing(sqlite3.connect(":memory:")) as closed_template:
@@ -224,10 +227,12 @@ def test_sqlite_instance_cleans_up_on_failure(
     with (
         patch.dict(Singleton._instances, {SQLiteMemory: previous_memory}),
         patch.object(CentralMemory, "_memory_instance", previous_central),
-        patch.object(SQLiteMemory, "dispose_engine", autospec=True, side_effect=SQLiteMemory.dispose_engine) as dispose,
+        patch.object(
+            SQLiteMemory, "dispose_engine_async", autospec=True, side_effect=SQLiteMemory.dispose_engine_async
+        ) as dispose,
     ):
         with pytest.raises(expected_error, match="closed|test failed"):
-            with _sqlite_instance(sqlite_template=template):
+            async with _sqlite_instance(sqlite_template=template):
                 raise RuntimeError("test failed")
         dispose.assert_called_once()
         memory = dispose.call_args.args[0]
@@ -237,8 +242,8 @@ def test_sqlite_instance_cleans_up_on_failure(
     _assert_closed(sqlite_connections)
 
 
-def test_sqlite_instance_does_not_retain_process_exit_cleanup(sqlite_template: sqlite3.Connection) -> None:
-    with _sqlite_instance(sqlite_template=sqlite_template) as memory:
+async def test_sqlite_instance_does_not_retain_process_exit_cleanup(sqlite_template: sqlite3.Connection) -> None:
+    async with _sqlite_instance(sqlite_template=sqlite_template) as memory:
         assert memory.cleanup.__func__ is MemoryInterface.cleanup
         assert "cleanup" not in memory.__dict__
         memory_reference = weakref.ref(memory)
@@ -247,7 +252,7 @@ def test_sqlite_instance_does_not_retain_process_exit_cleanup(sqlite_template: s
     assert memory_reference() is None
 
 
-def test_sqlite_instance_reset_still_runs_real_migrations(sqlite_instance: SQLiteMemory) -> None:
+async def test_sqlite_instance_reset_still_runs_real_migrations(sqlite_instance: SQLiteMemory) -> None:
     before = _schema_snapshot(sqlite_instance.engine)
     sqlite_instance._insert_entry(
         PromptMemoryEntry(
@@ -257,28 +262,26 @@ def test_sqlite_instance_reset_still_runs_real_migrations(sqlite_instance: SQLit
     with sqlite_instance.engine.begin() as connection:
         connection.execute(text('DROP TABLE "ScoreEntries"'))
     with patch.object(migration.command, "upgrade", wraps=migration.command.upgrade) as upgrade:
-        sqlite_instance.reset_database()
+        await sqlite_instance.reset_database_async()
         upgrade.assert_called_once()
         assert upgrade.call_args.args[1] == "head"
-    assert sqlite_instance.get_message_pieces() == []
+    assert (await sqlite_instance.get_message_pieces_async()) == []
     assert _schema_snapshot(sqlite_instance.engine) == before
 
 
-def test_sqlite_instance_keeps_real_threaded_sessions(sqlite_instance: SQLiteMemory) -> None:
+async def test_sqlite_instance_keeps_real_async_sessions_async(sqlite_instance: SQLiteMemory) -> None:
     with sqlite_instance.engine.begin() as connection:
         connection.execute(text("CREATE TABLE fixture_threads (value INTEGER)"))
 
-    def write_rows(worker: int) -> None:
+    async def write_rows_async(worker: int) -> None:
         assert CentralMemory.get_memory_instance() is sqlite_instance
         for index in range(10):
-            with closing(sqlite_instance.get_session()) as session:
-                session.execute(
+            async with await sqlite_instance.get_session_async() as session:
+                await session.execute(
                     text("INSERT INTO fixture_threads (value) VALUES (:value)"), {"value": worker * 10 + index}
                 )
-                session.commit()
+                await session.commit()
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        for future in [executor.submit(write_rows, worker) for worker in range(4)]:
-            future.result(timeout=30)
-    with closing(sqlite_instance.get_session()) as session:
-        assert session.execute(text("SELECT COUNT(DISTINCT value) FROM fixture_threads")).scalar_one() == 40
+    await asyncio.gather(*(write_rows_async(worker) for worker in range(4)))
+    async with await sqlite_instance.get_session_async() as session:
+        assert (await session.execute(text("SELECT COUNT(DISTINCT value) FROM fixture_threads"))).scalar_one() == 40

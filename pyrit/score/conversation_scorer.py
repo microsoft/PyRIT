@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -84,7 +83,7 @@ class ConversationScorer(MessageScorer, ABC):
             skip_on_error_result=skip_on_error_result,
         )
 
-    def _finalize_message_scores(
+    async def _finalize_message_scores_async(
         self,
         *,
         message: Message,
@@ -93,7 +92,9 @@ class ConversationScorer(MessageScorer, ABC):
         expectation: ScoringExpectation | None,
     ) -> None:
         conversation_anchors = [score.scorable for score in scores]
-        super()._finalize_message_scores(message=message, scores=scores, anchor=anchor, expectation=expectation)
+        await super()._finalize_message_scores_async(
+            message=message, scores=scores, anchor=anchor, expectation=expectation
+        )
         for score, conversation_anchor in zip(scores, conversation_anchors, strict=True):
             if isinstance(conversation_anchor, ConversationScorable):
                 score.scorable = conversation_anchor
@@ -190,9 +191,7 @@ class ConversationScorer(MessageScorer, ABC):
         observation = await self._source.acquire_async(scorable=scorable)
         if observation.scorable != scorable or not isinstance(observation.payload, ConversationObservationPayload):
             raise ValueError("Conversation source returned incompatible evidence or scope.")
-        pieces = await asyncio.to_thread(
-            _ObservationEvidenceResolver(memory=self._memory).resolve, observation=observation
-        )
+        pieces = await _ObservationEvidenceResolver(memory=self._memory).resolve_async(observation=observation)
         if not isinstance(pieces, tuple):
             raise TypeError("Conversation evidence must resolve to an ordered tuple of message pieces.")
         text = self._render_conversation(pieces)

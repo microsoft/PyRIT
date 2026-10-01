@@ -800,7 +800,7 @@ describe('AttackHistory', () => {
       expect(screen.getByText('Attack History')).toBeInTheDocument()
     })
 
-    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('should call onFiltersChange with attackTypes when attack type filter is selected', async () => {
