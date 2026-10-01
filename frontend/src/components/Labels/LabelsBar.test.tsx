@@ -1271,7 +1271,9 @@ describe('LabelsBar', () => {
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
       await user.click(screen.getByTestId('label-operation'))
-      await screen.findByTestId('edit-label-operation')
+      const input = await screen.findByTestId('edit-label-operation')
+      // Focus moves into the picker after a short delay; clicking away first would not blur it.
+      await waitFor(() => expect(input).toHaveFocus())
       await user.click(document.body)
 
       await waitFor(() => {

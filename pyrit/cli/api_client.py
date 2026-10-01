@@ -275,12 +275,9 @@ class PyRITApiClient:
         from pyrit.models.catalog import ScenarioRunSummary
 
         client = self._get_client()
-        payload = request.model_dump(mode="json", exclude_none=True)
-        if "max_dataset_size" in request.model_fields_set:
-            payload["max_dataset_size"] = request.max_dataset_size
         resp = await client.post(
             "/api/scenarios/runs",
-            json=payload,
+            json=request.model_dump(mode="json", exclude_none=True),
         )
         self._raise_for_status(resp)
         return ScenarioRunSummary.model_validate(resp.json())

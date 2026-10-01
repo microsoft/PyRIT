@@ -67,6 +67,8 @@ const SCENARIO: RegisteredScenario = {
   uses_default_adversarial_target: true,
   supported_parameters: [],
   default_run_size: {
+    dataset_size: { kind: 'bounded', value: 1 },
+    dataset_limit: { state: 'scenario_default' },
     estimated_attack_count: 2,
     components: [],
     datasets: [],
@@ -83,6 +85,8 @@ const TARGET: TargetInstance = {
 }
 
 const ESTIMATE: ScenarioRunSizeEstimateResponse = {
+  dataset_size: { kind: 'bounded', value: 1 },
+  dataset_limit: { state: 'scenario_default' },
   estimated_attack_count: 2,
   components: [{
     label: 'Configured attacks',

@@ -58,17 +58,13 @@ Datasets can be loaded from local YAML files or fetched remotely from sources li
 
 ## Dataset selection limits
 
-`DatasetConfiguration` defaults to a maximum size of **5**. This default also
-applies to `DatasetAttackConfiguration`, notebook code, and programmatic use.
-An explicit limit, such as `max_dataset_size=4`, takes priority. Pass
-`max_dataset_size=None` to use the full population.
+`DatasetAttackConfiguration`, used by scenarios, defaults to a maximum size of
+**5**, unless the scenario sets another limit. Explicit `None` removes that cap.
+The general `DatasetConfiguration` remains uncapped. Limits apply to the combined
+selection; `CompoundDatasetAttackConfiguration.per_dataset(...)` sets per-dataset caps.
 
-A single configuration applies its limit to the combined selection, even when it
-names several datasets. `CompoundDatasetAttackConfiguration.per_dataset(...)`
-applies the limit to each dataset independently. A compound configuration can also
-set a separate limit on the combined result.
-
-Before a scenario starts, its run estimate uses these configured limits without
-reading datasets. Scenario-specific template and attempt counts still apply.
-Once initialization selects the real seed groups, the run plan supplies the exact
-planned count. Smaller datasets and compatibility checks can change the count.
+`get_size_budget()` returns a `ScenarioDatasetSizeEstimate`: `bounded` is an upper
+limit, `all_available` is finite source data without a total cap, and
+`indeterminate` means the size contract is unknown.
+Pre-run estimates use configured limits and scenario factors without reading
+datasets. After initialization, the run plan supplies the exact planned count.

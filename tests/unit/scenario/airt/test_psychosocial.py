@@ -15,7 +15,13 @@ from pyrit.converter import (
     TranslationConverter,
 )
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, ScenarioRunSizeEstimateStatus, SeedObjective
+from pyrit.models import (
+    AttackSeedGroup,
+    ComponentIdentifier,
+    ScenarioRunSizeEstimateStatus,
+    SeedObjective,
+    scenario_dataset_size_from_limit,
+)
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.scenario.core.dataset_configuration import (
@@ -161,17 +167,15 @@ async def test_compound_estimate_uses_initialization_cap_async(
     if outer_limit is None:
         assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
         assert estimate.estimated_attack_count is None
-        with patch.object(memory, "get_seeds", side_effect=get_seeds):
-            estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=True)
-        assert estimate.configured_dataset_size is None
+        assert estimate.dataset_size == scenario_dataset_size_from_limit(None)
         assert all(dataset.configured_caps == [] for dataset in estimate.datasets)
     else:
-        assert estimate.configured_dataset_size == outer_limit * harm_count
-        assert estimate.effective_parameters["max_dataset_size"] == outer_limit
+        assert estimate.dataset_size == scenario_dataset_size_from_limit(outer_limit * harm_count)
+        assert estimate.dataset_limit.value == outer_limit
         assert [dataset.configured_caps[0].count for dataset in estimate.datasets] == [outer_limit] * harm_count
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+        assert estimate.estimated_attack_count == expected_count
 
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
-    assert estimate.estimated_attack_count == expected_count
     with patch.object(memory, "get_seeds", side_effect=get_seeds):
         await scenario.initialize_async()
     plan = scenario._build_run_plan()
@@ -322,7 +326,7 @@ class TestPsychosocialConstruction:
         assert Psychosocial().uses_default_adversarial_target is True
 
     def test_version_is_3(self):
-        assert Psychosocial.VERSION == 3
+        assert Psychosocial.VERSION == 4
 
     def test_default_technique_is_default(self):
         assert _scenario_with_mock_scorers()._default_technique == PsychosocialTechnique.DEFAULT

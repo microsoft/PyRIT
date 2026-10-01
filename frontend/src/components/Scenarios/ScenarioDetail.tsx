@@ -96,9 +96,8 @@ function targetOptionLabel(target: TargetInstance): string {
 }
 
 function defaultMaxDatasetSize(scenario: RegisteredScenario): string {
-  const estimate = scenario.default_run_size
-  const size = estimate.effective_parameters?.max_dataset_size ?? estimate.configured_dataset_size
-  return typeof size === 'number' ? String(size) : ''
+  const limit = scenario.default_run_size.dataset_limit
+  return limit.state === 'value' ? String(limit.value) : ''
 }
 
 /** Resolves a Fluent `SpinButton` change event to a numeric value, preferring the parsed `value` over the raw `displayValue`. */
@@ -200,7 +199,7 @@ function formatAtomicAttackCount(state: ScenarioRunEstimateState): string {
   }
   const prefix = estimate.approximate ? 'About ' : ''
   if (estimate.total !== null) {
-    return `${prefix}${estimate.total.toLocaleString()}`
+    return `${estimate.approximate ? 'Up to ' : ''}${estimate.total.toLocaleString()}`
   }
   if (estimate.minimum != null && estimate.maximum != null) {
     return estimate.minimum === estimate.maximum
@@ -211,7 +210,7 @@ function formatAtomicAttackCount(state: ScenarioRunEstimateState): string {
     return `At least ${prefix.toLowerCase()}${estimate.minimum.toLocaleString()}`
   }
   if (estimate.maximum != null) {
-    return `Up to ${prefix.toLowerCase()}${estimate.maximum.toLocaleString()}`
+    return `Up to ${estimate.maximum.toLocaleString()}`
   }
   return 'Varies'
 }
@@ -236,7 +235,7 @@ interface BuildEstimateRequestInput {
   dynamicParameters: Parameter[]
   scenarioParamValues: Record<string, ParameterFormValue>
   datasetOverride: string
-  maxDatasetSize?: string
+  maxDatasetSize: string
   harmCategoriesFilter: string
   dataTypesFilter: string
   includeBaseline: boolean
@@ -311,11 +310,9 @@ function buildEstimateRequest({
     scenarioParams = result.parameters
   }
 
-  let maxDatasetSizeValue: number | null | undefined
-  const trimmedMaxDatasetSize = maxDatasetSize?.trim()
-  if (trimmedMaxDatasetSize === '') {
-    maxDatasetSizeValue = null
-  } else if (trimmedMaxDatasetSize !== undefined) {
+  let maxDatasetSizeValue: number | undefined
+  const trimmedMaxDatasetSize = maxDatasetSize.trim()
+  if (trimmedMaxDatasetSize.length > 0) {
     const parsed = Number(trimmedMaxDatasetSize)
     if (!Number.isInteger(parsed) || parsed < 1) {
       return { ok: false, error: 'Max dataset size must be a positive integer.' }
@@ -612,7 +609,6 @@ function ScenarioLaunchForm({
     [scenario],
   )
   const [maxDatasetSize, setMaxDatasetSize] = useState(configuredDefaultMaxDatasetSize)
-  const [datasetLimitEdited, setDatasetLimitEdited] = useState(false)
   const [harmCategoriesFilter, setHarmCategoriesFilter] = useState('')
   const [dataTypesFilter, setDataTypesFilter] = useState('')
   const [maxConcurrency, setMaxConcurrency] = useState(DEFAULT_MAX_CONCURRENCY)
@@ -665,13 +661,13 @@ function ScenarioLaunchForm({
     [isBaselineForbidden, techniqueOptions],
   )
   const techniques = selectedTechniques
-  const maxDatasetSizeOverride = !datasetLimitEdited
-    ? undefined
-    : maxDatasetSize.trim() === ''
-      ? ''
-      : maxDatasetSize === configuredDefaultMaxDatasetSize ? undefined : maxDatasetSize
-  const datasetSizeLabel = maxDatasetSize.trim()
-    || (maxDatasetSizeOverride === '' ? 'Unlimited' : 'Scenario default')
+  const maxDatasetSizeOverride = maxDatasetSize.trim()
+    && maxDatasetSize !== configuredDefaultMaxDatasetSize
+    ? maxDatasetSize
+    : ''
+  const datasetSizeLabel = scenario.default_run_size.dataset_limit.state === 'not_applicable'
+    ? 'Not applicable'
+    : maxDatasetSize.trim() || configuredDefaultMaxDatasetSize || 'Scenario default'
   const estimateResult = useMemo(
     () => buildEstimateRequest({
       scenario,
@@ -814,7 +810,7 @@ function ScenarioLaunchForm({
     estimateRequestState?.requestKey === estimateRequestKey
     && estimateRequestState.status === 'error'
   ) {
-    estimateState = lastGoodEstimate && estimateRequest?.max_dataset_size !== null
+    estimateState = lastGoodEstimate
       ? {
           status: 'stale',
           estimate: lastGoodEstimate.estimate,
@@ -827,7 +823,7 @@ function ScenarioLaunchForm({
           label: 'The backend estimate could not be refreshed.',
           note: estimateRequestState.error,
         }
-  } else if (lastGoodEstimate && estimateRequest?.max_dataset_size !== null) {
+  } else if (lastGoodEstimate) {
     estimateState = {
       status: 'refreshing',
       estimate: lastGoodEstimate.estimate,
@@ -1138,35 +1134,22 @@ function ScenarioLaunchForm({
                 </Field>
                 <Field
                   label="Max dataset size"
-                  hint={configuredDefaultMaxDatasetSize
-                    ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Clear this field to remove the dataset size limit.`
-                    : 'The default limit is unknown. Leave unchanged to keep it, enter a limit, or choose Use all data.'}
+                  hint={scenario.default_run_size.dataset_limit.state === 'not_applicable'
+                    ? 'This scenario uses prompt-generation limits instead of a dataset size limit.'
+                    : configuredDefaultMaxDatasetSize
+                    ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Edit it to override the default.`
+                    : 'Enter a positive integer to limit the selected dataset size. Leave empty to use scenario defaults.'}
                 >
                   <Input
                     className={styles.numberInput}
                     type="number"
                     min={1}
                     value={maxDatasetSize}
-                    disabled={submitting}
-                    onChange={(_, data) => {
-                      setMaxDatasetSize(data.value)
-                      setDatasetLimitEdited(true)
-                    }}
+                    disabled={submitting || scenario.default_run_size.dataset_limit.state === 'not_applicable'}
+                    onChange={(_, data) => setMaxDatasetSize(data.value)}
                     data-testid="max-dataset-size-input"
                   />
                 </Field>
-                {!configuredDefaultMaxDatasetSize && (
-                  <Button
-                    className={styles.touchTarget}
-                    disabled={submitting}
-                    onClick={() => {
-                      setMaxDatasetSize('')
-                      setDatasetLimitEdited(true)
-                    }}
-                  >
-                    Use all data
-                  </Button>
-                )}
                 <Field
                   label="Harm categories"
                   hint="Comma-separated values. A seed must match every listed category."

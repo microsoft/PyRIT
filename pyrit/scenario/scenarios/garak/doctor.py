@@ -103,7 +103,7 @@ class Doctor(Scenario):
     (https://hiddenlayer.com/innovation-hub/novel-universal-bypass-for-all-major-llms/)
     """
 
-    VERSION: int = 1
+    VERSION: int = 2
 
     # Template-dominated like the Jailbreak scenario: baseline is supported but off
     # by default since the unmodified objective is a weak comparison point here.

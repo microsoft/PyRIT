@@ -19,7 +19,9 @@ from pyrit.common.utils import to_sha256
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    BoundedDatasetSize,
     ObjectiveTargetEvaluationIdentifier,
+    ScenarioDatasetSizeEstimate,
     ScenarioResult,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
@@ -28,6 +30,7 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     ScorerEvaluationIdentifier,
     SeedPrompt,
+    scenario_dataset_size_from_limit,
 )
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
 from pyrit.models.parameter import Parameter
@@ -367,25 +370,35 @@ class AdversarialBenchmark(Scenario):
         runtime_use_cached = self.params.get("use_cached")
         return self._constructor_use_cached if runtime_use_cached is None else bool(runtime_use_cached)
 
-    def _get_run_size_budget(self) -> int | None:
+    def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """
         Use the outer cap, matching benchmark sampling which bypasses child limits.
 
         Returns:
-            int | None: Global dataset cap, or None for an unlimited population.
+            ScenarioDatasetSizeEstimate: Global cap or all available benchmark data.
         """
-        return self._dataset_config.max_dataset_size
+        return scenario_dataset_size_from_limit(self._dataset_config.max_dataset_size)
 
-    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
+    def _get_estimate_dataset_configuration(self) -> DatasetAttackConfiguration:
+        """
+        Describe only the outer cap applied by the benchmark sampler.
+
+        Returns:
+            DatasetAttackConfiguration: Cap metadata without ignored child limits.
+        """
+        return DatasetAttackConfiguration(
+            dataset_names=self._dataset_config.dataset_names or None,
+            max_dataset_size=self._dataset_config.max_dataset_size,
+        )
+
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate the target-by-technique matrix from the selected population size.
 
         Returns:
             ScenarioRunSizeEstimate: Structured benchmark estimate.
         """
-        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(
-            read_dataset_counts=read_dataset_counts
-        )
+        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
         per_target_components = [
             ScenarioRunSizeComponent(
                 label=technique.value,
@@ -403,13 +416,14 @@ class AdversarialBenchmark(Scenario):
         target_names = self.params.get("adversarial_targets") or []
         if not target_names:
             return ScenarioRunSizeEstimate(
-                status=ScenarioRunSizeEstimateStatus.Conditional,
-                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
+                status=ScenarioRunSizeEstimateStatus.Approximate,
+                total_attack_count=per_target_maximum,
                 components=per_target_components,
                 datasets=datasets,
                 note=(
-                    "Budget is per adversarial target. At least one adversarial_targets entry is required, "
-                    "and the total scales with the number of entries supplied. Baseline is forbidden."
+                    "Estimate assumes one adversarial target. Configure adversarial_targets before launch; "
+                    "the total scales with the number of targets. Cached results can reduce actual work. "
+                    "Baseline is forbidden."
                 ),
             )
 

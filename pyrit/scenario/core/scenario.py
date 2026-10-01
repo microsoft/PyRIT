@@ -28,10 +28,16 @@ from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
+    AllAvailableDatasetSize,
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
+    BoundedDatasetSize,
+    DatasetLimitInput,
+    DatasetLimitState,
+    IndeterminateDatasetSize,
     ScenarioDatasetSizeCap,
+    ScenarioDatasetSizeEstimate,
     ScenarioDatasetSummary,
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
@@ -55,8 +61,6 @@ from pyrit.registry.resolution import resolve_declared_params, resolve_reference
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
-    read_only_dataset_resolution,
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
@@ -622,23 +626,20 @@ class Scenario(ABC):
         self.set_params_from_args(args={})
         return await self.get_run_size_estimate_async(target_is_configured=False)
 
+    USES_DATASET_SIZE_LIMIT: ClassVar[bool] = True
+
     @final
-    async def get_run_size_estimate_async(
-        self, *, target_is_configured: bool = False, read_dataset_counts: bool = False
-    ) -> ScenarioRunSizeEstimate:
+    async def get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate the currently configured run without creating or persisting it.
 
         ``set_params_from_args`` should be called first for a request-specific
         estimate. Omitted values use the same declared defaults, aggregate
         expansion, dataset limits, and baseline policy as ``initialize_async``.
-        Dataset contents are not read unless explicitly requested for an unlimited
-        population. The initialized run plan supplies exact counts.
+        Dataset contents are not read. The initialized run plan supplies exact counts.
 
         Args:
             target_is_configured: Whether a concrete objective target has been resolved.
-            read_dataset_counts: Allow unlimited estimates to read existing database
-                populations. Missing datasets are never fetched.
 
         Returns:
             ScenarioRunSizeEstimate: Structured configured-run estimate.
@@ -651,49 +652,38 @@ class Scenario(ABC):
         if target_is_configured and self._objective_target is None:
             raise ValueError("target_is_configured requires a resolved objective_target")
         budget = self._get_run_size_budget()
-        if budget is None and not read_dataset_counts:
+        dataset_limit = self._get_dataset_limit_input()
+        if isinstance(budget, IndeterminateDatasetSize):
             return ScenarioRunSizeEstimate.unavailable(
+                note=budget.detail, dataset_size=budget, dataset_limit=dataset_limit
+            )
+        if isinstance(budget, AllAvailableDatasetSize):
+            return ScenarioRunSizeEstimate.unavailable(
+                dataset_size=budget,
+                dataset_limit=dataset_limit,
                 note=(
                     "No size limit is configured for at least one selected population. "
-                    "An estimate requires a limit that the scenario applies during execution."
-                )
+                    "The exact count is available after initialization."
+                ),
             )
-        use_database = budget is None and read_dataset_counts
-        try:
-            estimate = (
-                await self._estimate_run_size_async(read_dataset_counts=True)
-                if use_database
-                else await self._estimate_run_size_async()
-            )
-        except DatasetConstraintError as exc:
-            if not use_database:
-                raise
-            return ScenarioRunSizeEstimate.unavailable(note=f"Cannot count the existing dataset groups: {exc}")
-        if estimate.status is ScenarioRunSizeEstimateStatus.Unavailable:
-            return estimate
+        estimate = await self._estimate_run_size_async(budget=budget)
         values = estimate.model_dump(exclude={"estimated_attack_count"})
-        values["configured_dataset_size"] = (
-            estimate.configured_dataset_size if estimate.configured_dataset_size is not None else budget
-        )
-        if self._dataset_config.max_dataset_size is not None and any(
-            dataset.kind == "dataset" for dataset in estimate.datasets
-        ):
-            values["effective_parameters"]["max_dataset_size"] = self._dataset_config.max_dataset_size
+        values["dataset_size"] = budget
+        values["dataset_limit"] = dataset_limit
+        if estimate.status is ScenarioRunSizeEstimateStatus.Unavailable:
+            return ScenarioRunSizeEstimate.model_validate(values)
         if estimate.status is ScenarioRunSizeEstimateStatus.Exact:
             values["status"] = ScenarioRunSizeEstimateStatus.Approximate
             values["minimum_attack_count"] = None
             values["maximum_attack_count"] = None
         source_note = (
-            "Approximate count based on existing database seed groups and the selected techniques. "
-            "No missing datasets were fetched. Compatibility checks can reduce the actual count. "
-            if use_database
-            else "Approximate count based on configured limits, without reading datasets. "
+            "Approximate count based on configured limits, without reading datasets. "
             "Smaller datasets, filters, and compatibility checks can reduce the actual count. "
         )
         values["note"] = source_note + "The running view uses the exact initialized run plan. " + (estimate.note or "")
         return ScenarioRunSizeEstimate.model_validate(values)
 
-    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate a standard technique-by-seed-group scenario.
 
@@ -701,14 +691,12 @@ class Scenario(ABC):
         synthesizes technique-specific populations, or selects techniques adaptively.
 
         Args:
-            read_dataset_counts: Allow read-only group resolution when no finite budget exists.
+            budget: Resolved logical-group size contract before technique expansion.
 
         Returns:
             ScenarioRunSizeEstimate: Configured sweep and baseline budget.
         """
-        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(
-            read_dataset_counts=read_dataset_counts
-        )
+        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
         technique_count = len(self._scenario_techniques)
         components = [
             ScenarioRunSizeComponent(
@@ -743,59 +731,40 @@ class Scenario(ABC):
             note=note,
         )
 
-    def _get_run_size_budget(self) -> int | None:
+    def _get_dataset_limit_input(self) -> DatasetLimitInput:
+        """Return the editable limit, never an aggregate population budget."""
+        if not self.USES_DATASET_SIZE_LIMIT:
+            return DatasetLimitInput(state=DatasetLimitState.NotApplicable)
+        limit = self._dataset_config.max_dataset_size
+        return (
+            DatasetLimitInput(state=DatasetLimitState.Value, value=limit) if limit is not None else DatasetLimitInput()
+        )
+
+    def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """Return the scenario's configured population budget."""
         return self._dataset_config.get_size_budget()
 
+    def _get_estimate_dataset_configuration(self) -> DatasetAttackConfiguration:
+        """Return the configuration whose caps apply to previewed selection."""
+        return self._dataset_config
+
     async def _get_dataset_size_for_estimate_async(
-        self, *, read_dataset_counts: bool = False
+        self, *, budget: BoundedDatasetSize
     ) -> tuple[int, list[ScenarioDatasetSummary]]:
         """
-        Describe finite limits, or count existing groups for an unlimited preview.
-
-        Mixed-cap configurations retain their finite child limits. Their selected
-        counts are available, but their full population counts remain unknown.
+        Describe configured limits without reading or sampling the population.
 
         Args:
-            read_dataset_counts: Allow read-only group resolution when no finite budget exists.
+            budget: Resolved logical-group size contract before technique expansion.
 
         Returns:
             tuple[int, list[ScenarioDatasetSummary]]: Population size and per-dataset details.
 
-        Raises:
-            ValueError: If no finite limit exists and database reads are disabled.
-            DatasetConstraintError: If an existing dataset is missing or invalid.
         """
-        budget = self._get_run_size_budget()
-        if budget is None and read_dataset_counts:
-            with read_only_dataset_resolution():
-                groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(
-                    apply_sampling=self._dataset_config.has_size_cap
-                )
-            caps = self._dataset_config.size_caps_by_dataset()
-            datasets = [
-                ScenarioDatasetSummary(
-                    name=name,
-                    logical_seed_group_count=None if self._dataset_config.has_size_cap else len(groups),
-                    selected_seed_group_count=len(groups),
-                    configured_caps=[
-                        ScenarioDatasetSizeCap(
-                            label=label,
-                            count=count,
-                            configured_on=configured_on,
-                            dataset_name=name,
-                        )
-                        for label, count, configured_on in caps.get(name, [])
-                    ],
-                )
-                for name, groups in groups_by_dataset.items()
-            ]
-            return sum(len(groups) for groups in groups_by_dataset.values()), datasets
-        if budget is None:
-            raise ValueError("A finite dataset size limit is required for this estimate.")
-        caps = self._dataset_config.size_caps_by_dataset()
+        config = self._get_estimate_dataset_configuration()
+        caps = config.size_caps_by_dataset() if self.USES_DATASET_SIZE_LIMIT else {}
         names = list(caps) or self._dataset_config.dataset_names
-        return budget, [
+        return budget.value, [
             ScenarioDatasetSummary(
                 name=name,
                 configured_caps=[
@@ -903,7 +872,6 @@ class Scenario(ABC):
                 ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
         """
         self._resolve_runtime_configuration(require_objective_target=True)
-
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
         # into a ScenarioContext, and hand it to the subclass extension point. Baseline emission
         # is the scenario's own responsibility — matrix scenarios get it for free (the matrix

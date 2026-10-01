@@ -16,6 +16,7 @@ from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
+    BoundedDatasetSize,
     ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
@@ -208,19 +209,22 @@ class PackageHallucination(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    def _get_run_size_budget(self) -> int:
-        """Return the combined generated-prompt cap for the selected languages."""
-        return self._max_prompts_per_language * len(self._scenario_techniques)
+    USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
 
-    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
+    def _get_run_size_budget(self) -> BoundedDatasetSize:
+        """Return the combined generated-prompt cap for the selected languages."""
+        return BoundedDatasetSize(value=self._max_prompts_per_language * len(self._scenario_techniques))
+
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate generated prompts from the per-language cap without loading the corpus.
 
         Returns:
             ScenarioRunSizeEstimate: Combined budget for the selected languages.
         """
+        assert isinstance(budget, BoundedDatasetSize)
         return ScenarioRunSizeEstimate(
-            total_attack_count=self._get_run_size_budget(),
+            total_attack_count=budget.value,
             components=[
                 ScenarioRunSizeComponent(label=technique.value, count=self._max_prompts_per_language)
                 for technique in self._scenario_techniques

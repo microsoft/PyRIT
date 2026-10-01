@@ -7,7 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import AttackSeedGroup, SeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    IndeterminateDatasetSize,
+    SeedGroup,
+    SeedObjective,
+    SeedPrompt,
+    scenario_dataset_size_from_limit,
+)
 from pyrit.scenario.core.dataset_configuration import (
     INLINE_DATASET_NAME,
     CompoundDatasetAttackConfiguration,
@@ -72,25 +79,6 @@ def sample_seed_groups() -> list[SeedGroup]:
     ]
 
 
-async def test_clear_size_limits_restores_full_compound_population_async() -> None:
-    groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"objective-{index}")]) for index in range(8)]
-    config = CompoundDatasetAttackConfiguration(
-        configurations=[
-            DatasetAttackConfiguration(seed_groups=groups[:4], max_dataset_size=1),
-            CompoundDatasetAttackConfiguration(
-                configurations=[DatasetAttackConfiguration(seed_groups=groups[4:], max_dataset_size=2)],
-                max_dataset_size=1,
-            ),
-        ],
-        max_dataset_size=1,
-    )
-    assert len(await config.get_attack_seed_groups_async()) == 1
-    config.clear_size_limits()
-    assert not config.has_size_cap
-    assert config.get_size_budget() is None
-    assert len(await config.get_attack_seed_groups_async()) == 8
-
-
 def make_objectives(*values: str) -> list[SeedObjective]:
     """Build a list of SeedObjective seeds (each becomes its own attack group)."""
     return [SeedObjective(value=v) for v in values]
@@ -115,7 +103,7 @@ def test_compound_budget_combines_children_before_outer_cap(*, outer_limit: int 
         ],
         max_dataset_size=outer_limit,
     )
-    assert config.get_size_budget() == expected
+    assert config.get_size_budget() == scenario_dataset_size_from_limit(expected)
 
 
 @pytest.mark.parametrize(("outer_limit", "expected"), [(None, None), (7, 7)])
@@ -127,13 +115,28 @@ def test_unlimited_child_budget_needs_outer_limit(*, outer_limit: int | None, ex
         ],
         max_dataset_size=outer_limit,
     )
-    assert config.get_size_budget() == expected
+    assert config.get_size_budget() == scenario_dataset_size_from_limit(expected)
 
 
 def test_per_dataset_default_does_not_add_implicit_compound_cap() -> None:
     config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["a", "b"])
-    assert config.get_size_budget() == 10
+    assert config.get_size_budget() == scenario_dataset_size_from_limit(10)
     assert config.max_dataset_size is None
+
+
+def test_general_dataset_default_remains_uncapped() -> None:
+    config = DatasetConfiguration(seeds=make_objectives(*(str(index) for index in range(8))))
+    assert config.max_dataset_size is None
+    assert config.get_size_budget() == scenario_dataset_size_from_limit(None)
+    assert config._apply_max_dataset_size(list(range(8))) == list(range(8))
+
+
+def test_compound_indeterminate_child_is_not_bounded_by_outer_cap() -> None:
+    unknown = DatasetAttackConfiguration(dataset_names=["unknown"])
+    known = DatasetAttackConfiguration(dataset_names=["known"])
+    config = CompoundDatasetAttackConfiguration(configurations=[known, unknown], max_dataset_size=5)
+    with patch.object(unknown, "get_size_budget", return_value=IndeterminateDatasetSize()):
+        assert config.get_size_budget() == IndeterminateDatasetSize()
 
 
 class TestDatasetConfigurationInit:
@@ -151,7 +154,7 @@ class TestDatasetConfigurationInit:
         assert config._seed_groups == sample_seed_groups
         assert config._seeds is None
         assert config._dataset_names is None
-        assert config.max_dataset_size == 5
+        assert config.max_dataset_size is None
 
     def test_init_with_dataset_names_only(self) -> None:
         config = DatasetConfiguration(dataset_names=["dataset1", "dataset2"])

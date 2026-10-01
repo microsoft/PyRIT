@@ -35,6 +35,8 @@ const datasetSummary = {
 };
 
 const configuredEstimate = {
+  dataset_size: { kind: 'bounded', value: 4 },
+  dataset_limit: { state: 'scenario_default' },
   estimated_attack_count: 8,
   minimum_attack_count: null,
   maximum_attack_count: null,
@@ -118,6 +120,8 @@ const catalogScenario = {
     },
   ],
   default_run_size: {
+    dataset_size: { kind: 'bounded', value: 8 },
+    dataset_limit: { state: 'scenario_default' },
     estimated_attack_count: 16,
     minimum_attack_count: null,
     maximum_attack_count: null,
@@ -558,7 +562,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(page.getByTitle("Scanner")).toHaveAttribute("aria-current", "page");
   });
 
-  test("sends explicit unlimited selection to estimate and launch, then completes live polling", async ({ page }) => {
+  test("sends one exact configuration to estimate and launch, then completes live polling", async ({ page }) => {
     const mocks = await mockScenarioAPIs(page);
     await page.goto(`/scanner/${SCENARIO_NAME}`);
 
@@ -568,12 +572,10 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(preview).toBeVisible();
 
     await configurePromptSendingRun(page);
-    await page.getByRole("button", { name: "Use all data" }).click();
 
     const expectedEstimateRequest = {
       target_name: "test-target",
       techniques: ["prompt_sending"],
-      max_dataset_size: null,
       include_baseline: false,
       scenario_params: {
         num_jailbreaks: 2,
@@ -594,7 +596,6 @@ test.describe("Scenario catalog, history, and live run routing", () => {
       scenario_name: SCENARIO_NAME,
       target_name: "test-target",
       techniques: ["prompt_sending"],
-      max_dataset_size: expectedEstimateRequest.max_dataset_size,
       max_concurrency: 10,
       max_retries: 0,
       include_baseline: false,

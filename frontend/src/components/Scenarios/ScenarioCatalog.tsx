@@ -28,7 +28,7 @@ import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import { useRuntime } from '@/hooks/useRuntime'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { RegisteredScenario, ScenarioDatasetSummary } from '@/types'
+import type { RegisteredScenario, ScenarioDatasetSizeEstimate, ScenarioDatasetSummary } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import { useScenarioCatalogStyles } from './ScenarioCatalog.styles'
@@ -84,11 +84,11 @@ function formatObjectiveCount(value: number): string {
 function DefaultDatasetSummary({
   datasets,
   declaredDatasets,
-  configuredSize,
+  datasetSize,
 }: {
   datasets: ScenarioDatasetSummary[]
   declaredDatasets: string[]
-  configuredSize: number | null | undefined
+  datasetSize: ScenarioDatasetSizeEstimate
 }) {
   const styles = useScenarioCatalogStyles()
 
@@ -102,12 +102,21 @@ function DefaultDatasetSummary({
 
   return (
     <div className={styles.compactStack}>
-      {configuredSize != null && (
-        <Text weight="semibold">Up to {formatObjectiveCount(configuredSize)}</Text>
-      )}
+      <Text weight="semibold">{formatSizeBound(datasetSize)}</Text>
       <Text size={200} className={styles.secondaryText}>{datasetNames.join(' · ')}</Text>
     </div>
   )
+}
+
+function formatSizeBound(size: ScenarioDatasetSizeEstimate): string {
+  switch (size.kind) {
+    case 'bounded':
+      return `Up to ${formatObjectiveCount(size.value)}`
+    case 'all_available':
+      return 'All available data (configured child limits still apply)'
+    case 'indeterminate':
+      return size.detail
+  }
 }
 
 interface ScenarioCatalogRowProps {
@@ -234,7 +243,7 @@ function ScenarioCatalogRow({ scenario, estimatesLoading }: ScenarioCatalogRowPr
         <DefaultDatasetSummary
           datasets={scenario.default_run_size.datasets}
           declaredDatasets={scenario.default_datasets}
-          configuredSize={scenario.default_run_size.configured_dataset_size}
+          datasetSize={scenario.default_run_size.dataset_size}
         />
       </TableCell>
       <TableCell

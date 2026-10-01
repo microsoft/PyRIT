@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models import (
+    BoundedDatasetSize,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
 )
@@ -214,16 +215,14 @@ class AdaptiveScenario(Scenario):
 
         return atomic_attacks
 
-    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate the configured envelope budget, excluding adaptive inner attempts.
 
         Returns:
             ScenarioRunSizeEstimate: The adaptive outer-envelope estimate.
         """
-        selected_count, datasets = await self._get_dataset_size_for_estimate_async(
-            read_dataset_counts=read_dataset_counts
-        )
+        selected_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
         max_attempts = int(self.params.get("max_attempts_per_objective", 3))
         baseline_components = (
             [

@@ -67,6 +67,8 @@ function makeScenario(overrides: Partial<RegisteredScenario> & { scenario_name: 
     uses_default_adversarial_target: true,
     supported_parameters: [],
     default_run_size: {
+      dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
+      dataset_limit: { state: 'scenario_default' },
       estimated_attack_count: null,
       minimum_attack_count: null,
       maximum_attack_count: null,
@@ -132,6 +134,8 @@ describe('ScenarioCatalog', () => {
       scenario_name: 'scenario.pending',
       default_datasets: ['harmbench'],
       default_run_size: {
+        dataset_size: { kind: 'bounded', value: 4 },
+        dataset_limit: { state: 'scenario_default' },
         estimated_attack_count: 4,
         minimum_attack_count: null,
         maximum_attack_count: null,
@@ -428,7 +432,7 @@ describe('ScenarioCatalog', () => {
           default_techniques: [],
           default_datasets: ['dataset-one'],
           default_run_size: {
-            configured_dataset_size: 1,
+            dataset_size: { kind: 'bounded', value: 1 }, dataset_limit: { state: 'value', value: 1 },
             estimated_attack_count: null,
             components: [],
             datasets: [{
@@ -446,6 +450,8 @@ describe('ScenarioCatalog', () => {
           scenario_name: 'scenario.two',
           default_datasets: ['dataset-two'],
           default_run_size: {
+            dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
+            dataset_limit: { state: 'scenario_default' },
             estimated_attack_count: null,
             components: [],
             datasets: [{
@@ -513,7 +519,7 @@ describe('ScenarioCatalog', () => {
             override_scope: 'per_dataset',
           },
           default_run_size: {
-            configured_dataset_size: 10,
+            dataset_size: { kind: 'bounded', value: 10 }, dataset_limit: { state: 'value', value: 10 },
             estimated_attack_count: null,
             components: [],
             datasets: [
@@ -554,6 +560,8 @@ describe('ScenarioCatalog', () => {
         makeScenario({
           scenario_name: 'adaptive.text_adaptive',
           default_run_size: {
+            dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
+            dataset_limit: { state: 'scenario_default' },
             estimated_attack_count: null,
             minimum_attack_count: 21,
             maximum_attack_count: 42,
@@ -632,7 +640,7 @@ describe('ScenarioCatalog', () => {
             estimated_attack_count: null,
             minimum_attack_count: 12,
             maximum_attack_count: 20,
-            configured_dataset_size: 4,
+            dataset_size: { kind: 'bounded', value: 4 }, dataset_limit: { state: 'value', value: 4 },
             components: [
               {
                 label: 'Default attacks',

@@ -736,9 +736,19 @@ export interface ScenarioDatasetSummary {
   selection_note: string | null
 }
 
+export type ScenarioDatasetSizeEstimate =
+  | { kind: 'bounded'; value: number }
+  | { kind: 'all_available' }
+  | { kind: 'indeterminate'; detail: string }
+
+export type DatasetLimitInput =
+  | { state: 'value'; value: number }
+  | { state: 'scenario_default' | 'not_applicable'; value?: null }
+
 export interface ScenarioRunSizeEstimateResponse {
   status?: 'exact' | 'approximate' | 'conditional' | 'unavailable'
-  configured_dataset_size?: number | null
+  dataset_size: ScenarioDatasetSizeEstimate
+  dataset_limit: DatasetLimitInput
   estimated_attack_count: number | null
   minimum_attack_count?: number | null
   maximum_attack_count?: number | null
@@ -787,6 +797,7 @@ export interface ScenarioRunEstimateDataset {
 
 export interface ScenarioRunEstimate {
   scope: 'default' | 'request'
+  datasetSize: ScenarioDatasetSizeEstimate
   approximate?: boolean
   total: number | null
   minimum?: number | null

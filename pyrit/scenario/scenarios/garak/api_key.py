@@ -16,6 +16,7 @@ from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
+    BoundedDatasetSize,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
@@ -252,7 +253,7 @@ class ApiKey(Scenario):
             self._objective_scorer_identifier = self._objective_scorer.get_identifier()
         return groups
 
-    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Count each synthesized request once rather than crossing techniques again.
 
@@ -266,7 +267,7 @@ class ApiKey(Scenario):
         if not isinstance(config, ApiKeyDatasetConfiguration):
             raise DatasetConstraintError("ApiKey requires an ApiKeyDatasetConfiguration.")
         config._set_techniques([ApiKeyTechnique(technique.value) for technique in self._scenario_techniques])
-        count, datasets = await self._get_dataset_size_for_estimate_async(read_dataset_counts=read_dataset_counts)
+        count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
         for dataset in datasets:
             dataset.kind = "synthesized"
         components = [

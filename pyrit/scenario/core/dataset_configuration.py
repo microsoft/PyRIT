@@ -36,8 +36,19 @@ from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
+from pyrit.common import forward_init_parameters
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, Seed, SeedGroup, group_seeds_into_attack_groups
+from pyrit.models import (
+    AllAvailableDatasetSize,
+    AttackSeedGroup,
+    BoundedDatasetSize,
+    IndeterminateDatasetSize,
+    ScenarioDatasetSizeEstimate,
+    Seed,
+    SeedGroup,
+    group_seeds_into_attack_groups,
+    scenario_dataset_size_from_limit,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -294,7 +305,7 @@ class DatasetConfiguration:
         seeds: Sequence[Seed] | None = None,
         seed_groups: list[SeedGroup] | None = None,
         dataset_names: list[str] | None = None,
-        max_dataset_size: int | None = 5,
+        max_dataset_size: int | None = None,
         filters: dict[str, list[str]] | None = None,
         validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
         auto_fetch: bool = True,
@@ -307,9 +318,8 @@ class DatasetConfiguration:
             seed_groups (list[SeedGroup] | None): Explicit, inline seed groups (never
                 touches memory).
             dataset_names (list[str] | None): Names of datasets to load from memory.
-            max_dataset_size (int | None): Randomly samples up to this many items
-                from the resolved dataset (without replacement). Defaults to 5.
-                Pass None to use the full dataset.
+            max_dataset_size (int | None): If set, randomly samples up to this many items
+                from the resolved dataset (without replacement).
             filters (dict[str, list[str]] | None): Filters passed to ``MemoryInterface.get_seeds``
                 when resolving named datasets (e.g. ``{"harm_categories": ["cyber"]}``).
                 Applied before ``max_dataset_size`` sampling; ignored for inline seeds.
@@ -407,18 +417,9 @@ class DatasetConfiguration:
         """
         return dict(self._filters)
 
-    @property
-    def has_size_cap(self) -> bool:
-        """Whether this configuration applies a logical-group selection cap."""
-        return self.max_dataset_size is not None
-
-    def get_size_budget(self) -> int | None:
+    def get_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """Return the configured selection budget without reading or sampling seeds."""
-        return self.max_dataset_size
-
-    def clear_size_limits(self) -> None:
-        """Remove the dataset selection cap."""
-        self.max_dataset_size = None
+        return scenario_dataset_size_from_limit(self.max_dataset_size)
 
     def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
         """
@@ -619,6 +620,18 @@ class DatasetAttackConfiguration(DatasetConfiguration):
     (e.g. synthesizing a per-prompt objective). The default regroups by
     ``prompt_group_id`` via ``group_seeds_into_attack_groups``.
     """
+
+    @forward_init_parameters
+    def __init__(self, *, max_dataset_size: int | None = 5, **kwargs: Any) -> None:
+        """
+        Configure scenario attack groups with a finite default selection cap.
+
+        Args:
+            max_dataset_size (int | None): Maximum selected attack groups. Defaults to 5;
+                explicit None retains the full population.
+            **kwargs (Any): Dataset source, filters, and validation options.
+        """
+        super().__init__(max_dataset_size=max_dataset_size, **kwargs)
 
     def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """
@@ -886,23 +899,25 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             return DatasetSourceKind.INLINE
         return DatasetSourceKind.MEMORY
 
-    @property
-    def has_size_cap(self) -> bool:
-        """Whether the compound or any child applies a logical-group cap."""
-        return self.max_dataset_size is not None or any(child.has_size_cap for child in self._configurations)
-
-    def get_size_budget(self) -> int | None:
+    def get_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """
         Combine child budgets and apply the optional overall cap without reading seeds.
 
         Returns:
-            int | None: The combined limit, or None when the configuration is unlimited.
+            ScenarioDatasetSizeEstimate: A combined upper limit, or all available finite data.
         """
         budgets = [child.get_size_budget() for child in self._configurations]
-        if any(budget is None for budget in budgets):
-            return self.max_dataset_size
-        total = sum(budget for budget in budgets if budget is not None)
-        return min(total, self.max_dataset_size) if self.max_dataset_size is not None else total
+        for budget in budgets:
+            if isinstance(budget, IndeterminateDatasetSize):
+                return budget
+        if not all(isinstance(budget, BoundedDatasetSize) for budget in budgets):
+            if self.max_dataset_size is not None:
+                return BoundedDatasetSize(value=self.max_dataset_size)
+            return AllAvailableDatasetSize()
+        total = sum(budget.value for budget in budgets if isinstance(budget, BoundedDatasetSize))
+        return BoundedDatasetSize(
+            value=min(total, self.max_dataset_size) if self.max_dataset_size is not None else total
+        )
 
     def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
         """
@@ -933,12 +948,6 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         super().update_filters(filters=filters)
         for child in self._configurations:
             child.update_filters(filters=filters)
-
-    def clear_size_limits(self) -> None:
-        """Remove the combined cap and every child dataset selection cap."""
-        super().clear_size_limits()
-        for child in self._configurations:
-            child.clear_size_limits()
 
     async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
         """

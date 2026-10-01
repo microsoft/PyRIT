@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from pyrit.models import (
+    BoundedDatasetSize,
     ScenarioDatasetSizeCap,
     ScenarioDatasetSummary,
     ScenarioDefaultRunSizeEstimate,
@@ -92,7 +93,11 @@ def test_run_size_estimate_preserves_legacy_total_and_serializes_additively() ->
             },
         ],
         "datasets": [],
-        "configured_dataset_size": None,
+        "dataset_size": {
+            "kind": "indeterminate",
+            "detail": "Population configuration is not available.",
+        },
+        "dataset_limit": {"state": "scenario_default", "value": None},
         "effective_parameters": {
             "include_baseline": True,
             "techniques": ["one", "two"],
@@ -118,7 +123,7 @@ def test_approximate_estimate_round_trip_preserves_unknown_population() -> None:
     estimate = ScenarioRunSizeEstimate(
         status=ScenarioRunSizeEstimateStatus.Approximate,
         total_attack_count=10,
-        configured_dataset_size=5,
+        dataset_size=BoundedDatasetSize(value=5),
         components=[ScenarioRunSizeComponent(label="Techniques", count=10)],
         datasets=[ScenarioDatasetSummary(name="not-loaded")],
     )
@@ -129,6 +134,7 @@ def test_approximate_estimate_round_trip_preserves_unknown_population() -> None:
     assert restored.maximum_attack_count is None
     assert restored.datasets[0].logical_seed_group_count is None
     assert restored.datasets[0].selected_seed_group_count is None
+    assert restored.dataset_size == BoundedDatasetSize(value=5)
 
 
 def test_approximate_estimate_still_requires_consistent_components() -> None:

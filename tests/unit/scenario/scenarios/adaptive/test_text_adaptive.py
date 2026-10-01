@@ -148,7 +148,7 @@ class TestTextAdaptiveBasics:
         ):
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
 
-        assert estimate.estimated_attack_count == scenario._default_dataset_config.get_size_budget() * 2
+        assert estimate.estimated_attack_count == scenario._default_dataset_config.get_size_budget().value * 2
         assert estimate.minimum_attack_count is None
         assert estimate.maximum_attack_count is None
 
@@ -176,7 +176,7 @@ class TestTextAdaptiveBasics:
             estimate = await scenario.get_run_size_estimate_async()
             mock_dispatcher_class.assert_not_called()
 
-        assert estimate.estimated_attack_count == scenario._default_dataset_config.get_size_budget() * 2
+        assert estimate.estimated_attack_count == scenario._default_dataset_config.get_size_budget().value * 2
         assert estimate.minimum_attack_count is None
         assert estimate.maximum_attack_count is None
 

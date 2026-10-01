@@ -431,27 +431,11 @@ async def test_start_scenario_run_async(client, mock_httpx_client):
     mock_httpx_client.post.assert_awaited_once()
     args, kwargs = mock_httpx_client.post.call_args
     assert args == ("/api/scenarios/runs",)
+    # The CLI serializes the typed request via model_dump(mode="json", exclude_none=True);
+    # required fields must appear in the body, None-valued fields must not.
     assert kwargs["json"]["scenario_name"] == "x"
     assert kwargs["json"]["target_name"] == "t"
     assert "scenario_params" not in kwargs["json"]
-
-
-@pytest.mark.parametrize("limit_fields", [{}, {"max_dataset_size": 5}, {"max_dataset_size": None}])
-async def test_start_scenario_run_preserves_explicit_limit_async(
-    *, client: PyRITApiClient, mock_httpx_client: MagicMock, limit_fields: dict[str, int | None]
-) -> None:
-    mock_httpx_client.post.return_value = _make_response(json_data=_run_summary_payload())
-    request = RunScenarioRequest.model_validate(
-        {"scenario_name": "x", "target_name": "t", "scenario_params": None, **limit_fields}
-    )
-
-    await client.start_scenario_run_async(request=request)
-
-    payload = mock_httpx_client.post.call_args.kwargs["json"]
-    restored = RunScenarioRequest.model_validate(payload)
-    assert ("max_dataset_size" in restored.model_fields_set) == ("max_dataset_size" in limit_fields)
-    assert restored.max_dataset_size == request.max_dataset_size
-    assert "scenario_params" not in payload
 
 
 async def test_get_scenario_run_async(client, mock_httpx_client):

@@ -23,6 +23,11 @@ from pydantic import AliasChoices, BaseModel, Field, computed_field, field_valid
 from pyrit.models.parameter import Parameter
 from pyrit.models.results.scenario_result import ScenarioRunState
 from pyrit.models.retry_event import RetryEvent
+from pyrit.models.scenario_dataset_size_estimate import (
+    DatasetLimitInput,
+    IndeterminateDatasetSize,
+    ScenarioDatasetSizeEstimate,
+)
 
 # Authoritative set of dataset seed filters exposed over the run request surface. Each entry
 # is used verbatim as a ``MemoryInterface.get_seeds`` keyword argument, so a filter key IS the
@@ -163,7 +168,8 @@ class ScenarioRunSizeEstimate(BaseModel):
     condition: ScenarioRunSizeEstimateCondition | None = None
     components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
     datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
-    configured_dataset_size: int | None = Field(default=None, ge=0)
+    dataset_size: ScenarioDatasetSizeEstimate = Field(default_factory=IndeterminateDatasetSize)
+    dataset_limit: DatasetLimitInput = Field(default_factory=DatasetLimitInput)
     effective_parameters: dict[str, bool | int | float | str | list[str]] = Field(
         default_factory=dict,
         description="Scenario parameter values used by this estimate, including implicit runtime defaults.",
@@ -239,7 +245,10 @@ class ScenarioRunSizeEstimate(BaseModel):
                 ("maximum_attack_count", self.maximum_attack_count),
             ):
                 if bound is not None and bound != self.total_attack_count:
-                    raise ValueError(f"Exact run-size estimates require {field_name} to equal total_attack_count")
+                    raise ValueError(
+                        f"{self.status.value.capitalize()} run-size estimates require {field_name} "
+                        "to equal total_attack_count"
+                    )
             if component_total != self.total_attack_count:
                 raise ValueError(f"Run-size estimate components total {component_total}, not {self.total_attack_count}")
             return self
@@ -275,14 +284,25 @@ class ScenarioRunSizeEstimate(BaseModel):
         return self
 
     @classmethod
-    def unavailable(cls, *, note: str = "Default-run size estimate is unavailable.") -> "ScenarioRunSizeEstimate":
+    def unavailable(
+        cls,
+        *,
+        note: str = "Default-run size estimate is unavailable.",
+        dataset_size: ScenarioDatasetSizeEstimate | None = None,
+        dataset_limit: DatasetLimitInput | None = None,
+    ) -> "ScenarioRunSizeEstimate":
         """
         Build an unavailable estimate without presenting a guessed total.
 
         Returns:
             ScenarioRunSizeEstimate: An unavailable estimate.
         """
-        return cls(status=ScenarioRunSizeEstimateStatus.Unavailable, note=note)
+        return cls(
+            status=ScenarioRunSizeEstimateStatus.Unavailable,
+            note=note,
+            dataset_size=dataset_size or IndeterminateDatasetSize(),
+            dataset_limit=dataset_limit or DatasetLimitInput(),
+        )
 
 
 ScenarioDefaultRunSizeEstimate = ScenarioRunSizeEstimate
@@ -354,11 +374,7 @@ class ScenarioRunSizeEstimateRequest(BaseModel):
     dataset_names: list[str] | None = Field(
         None, description="Dataset names to estimate (uses scenario default if omitted)"
     )
-    max_dataset_size: int | None = Field(
-        None,
-        ge=1,
-        description="Maximum selected logical seed groups. Omit to keep defaults; null removes dataset caps.",
-    )
+    max_dataset_size: int | None = Field(None, ge=1, description="Maximum selected logical seed groups")
     dataset_filters: dict[str, list[str]] | None = Field(
         None,
         description="Dataset seed filters keyed by field. Accepted keys: harm_categories, data_types.",
@@ -399,11 +415,7 @@ class RunScenarioRequest(BaseModel):
     )
     techniques: list[str] | None = Field(None, description="Technique names to use (uses scenario default if omitted)")
     dataset_names: list[str] | None = Field(None, description="Dataset names to use (uses scenario default if omitted)")
-    max_dataset_size: int | None = Field(
-        None,
-        ge=1,
-        description="Maximum selected logical seed groups. Omit to keep defaults; null removes dataset caps.",
-    )
+    max_dataset_size: int | None = Field(None, ge=1, description="Maximum items per dataset")
     dataset_filters: dict[str, list[str]] | None = Field(
         None,
         description=(

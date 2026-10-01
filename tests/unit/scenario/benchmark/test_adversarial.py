@@ -70,6 +70,7 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
     TargetIdentifier,
+    scenario_dataset_size_from_limit,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
@@ -219,13 +220,17 @@ async def test_compound_estimate_uses_initialization_cap_async(
         estimate = await bench.get_run_size_estimate_async()
     if outer_limit is None:
         assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
-        with patch.object(bench._memory, "get_seeds", side_effect=get_seeds):
-            estimate = await bench.get_run_size_estimate_async(read_dataset_counts=True)
+        assert estimate.estimated_attack_count is None
+    else:
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+        assert estimate.estimated_attack_count == outer_limit
 
     expected_count = outer_limit if outer_limit is not None else 6
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
-    assert estimate.configured_dataset_size == outer_limit
-    assert estimate.estimated_attack_count == expected_count
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(outer_limit)
+    assert all(
+        [cap.count for cap in dataset.configured_caps] == ([] if outer_limit is None else [outer_limit])
+        for dataset in estimate.datasets
+    )
     with patch.object(bench._memory, "get_seeds", side_effect=get_seeds):
         await bench.initialize_async()
     plan = bench._build_run_plan()

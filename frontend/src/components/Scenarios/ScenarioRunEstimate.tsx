@@ -77,7 +77,7 @@ function countLabel(value: number, singular: string, plural: string): string {
 function formatPlannedAttackSummary(estimate: ScenarioRunEstimate): string {
   const prefix = estimate.approximate ? 'About ' : ''
   if (estimate.total !== null) {
-    return `${prefix}${countLabel(estimate.total, 'attack', 'attacks')}`
+    return `${estimate.approximate ? 'Up to ' : ''}${countLabel(estimate.total, 'attack', 'attacks')}`
   }
   if (estimate.minimum != null && estimate.maximum != null) {
     return estimate.minimum === estimate.maximum
@@ -85,7 +85,7 @@ function formatPlannedAttackSummary(estimate: ScenarioRunEstimate): string {
       : `${prefix}${formatEstimateValue(estimate.minimum)}-${formatEstimateValue(estimate.maximum)} attacks`
   }
   if (estimate.maximum != null) {
-    return `Up to ${prefix.toLowerCase()}${countLabel(estimate.maximum, 'attack', 'attacks')}`
+    return `Up to ${countLabel(estimate.maximum, 'attack', 'attacks')}`
   }
   if (estimate.minimum != null) {
     return `At least ${prefix.toLowerCase()}${countLabel(estimate.minimum, 'attack', 'attacks')}`

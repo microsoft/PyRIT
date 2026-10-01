@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Finite and read-only unlimited previews stay separate from initialized run plans."""
+"""Configuration-only previews stay separate from exact initialized run plans."""
 
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
@@ -14,13 +14,18 @@ from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackSeedGroup,
+    BoundedDatasetSize,
     ComponentIdentifier,
+    IndeterminateDatasetSize,
     ScenarioRunPlan,
+    ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateCondition,
     ScenarioRunSizeEstimateStatus,
     SeedObjective,
+    scenario_dataset_size_from_limit,
 )
 from pyrit.prompt_target import PromptTarget
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario.core import (
     AtomicAttack,
     CompoundDatasetAttackConfiguration,
@@ -45,6 +50,7 @@ from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
 )
 from pyrit.scenario.scenarios.garak.web_injection import WebInjection, WebInjectionTechnique
 from pyrit.score import TrueFalseScorer
+from pyrit.setup.initializers.techniques import build_technique_factories
 from tests.unit.mocks import MockPromptTarget
 
 
@@ -132,7 +138,7 @@ async def test_default_estimate_uses_five_without_population_or_persistence_asyn
     assert estimate.minimum_attack_count is None
     assert estimate.maximum_attack_count is None
     assert [component.count for component in estimate.components] == [10, 5]
-    assert estimate.configured_dataset_size == 5
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(5)
     assert estimate.datasets[0].logical_seed_group_count is None
     assert estimate.datasets[0].selected_seed_group_count is None
     assert estimate.datasets[0].configured_caps[0].count == 5
@@ -140,11 +146,32 @@ async def test_default_estimate_uses_five_without_population_or_persistence_asyn
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("read_dataset_counts", [False, True])
+async def test_indeterminate_contract_does_not_trigger_population_reads_async() -> None:
+    scenario = _MatrixEstimateScenario()
+    budget = IndeterminateDatasetSize(detail="Custom population is not supported.")
+    with patch.object(scenario, "_get_run_size_budget", return_value=budget):
+        estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+    assert estimate.dataset_size == budget
+    assert estimate.note == budget.detail
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_unavailable_formula_preserves_known_budget_async() -> None:
+    scenario = _MatrixEstimateScenario()
+    with patch.object(
+        scenario, "_estimate_run_size_async", return_value=ScenarioRunSizeEstimate.unavailable(note="No formula.")
+    ):
+        estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+    assert estimate.dataset_size == BoundedDatasetSize(value=5)
+    assert estimate.dataset_limit.value == 5
+    assert estimate.note == "No formula."
+
+
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(("baseline", "expected"), [(False, 7), (True, 14)])
-async def test_configured_estimate_uses_selected_techniques_and_limit_async(
-    *, baseline: bool, expected: int, read_dataset_counts: bool
-) -> None:
+async def test_configured_estimate_uses_selected_techniques_and_limit_async(*, baseline: bool, expected: int) -> None:
     scenario = _MatrixEstimateScenario()
     scenario.set_params_from_args(
         args={
@@ -153,10 +180,10 @@ async def test_configured_estimate_uses_selected_techniques_and_limit_async(
             "dataset_config": DatasetAttackConfiguration(dataset_names=["also-missing"], max_dataset_size=7),
         }
     )
-    estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=read_dataset_counts)
+    estimate = await scenario.get_run_size_estimate_async()
     assert estimate.estimated_attack_count == expected
     assert estimate.datasets[0].name == "also-missing"
-    assert estimate.effective_parameters["max_dataset_size"] == 7
+    assert estimate.dataset_limit.value == 7
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -171,7 +198,7 @@ async def test_estimate_expands_aggregate_and_applies_combined_cap_once_async() 
     )
     estimate = await scenario.get_run_size_estimate_async()
     assert estimate.estimated_attack_count == 6
-    assert estimate.configured_dataset_size == 3
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(3)
     assert all(dataset.configured_caps[0].configured_on == "configuration" for dataset in estimate.datasets)
 
 
@@ -185,7 +212,7 @@ async def test_estimate_combines_independent_child_limits_async() -> None:
         }
     )
     estimate = await scenario.get_run_size_estimate_async()
-    assert estimate.configured_dataset_size == 10
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(10)
     assert estimate.estimated_attack_count == 20
 
 
@@ -201,74 +228,34 @@ async def test_unlimited_estimate_does_not_load_data_or_invent_a_count_async() -
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("baseline", [False, True])
-async def test_unlimited_preview_counts_groups_with_selected_techniques_async(baseline: bool) -> None:
-    scenario = _MatrixEstimateScenario()
-    scenario.set_params_from_args(
-        args={
-            "include_baseline": baseline,
-            "scenario_techniques": [_TwoTechniqueDefault.ONE],
-            "dataset_config": DatasetAttackConfiguration(dataset_names=["stored"], max_dataset_size=None),
-        }
-    )
-    groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"objective-{index}")]) for index in range(7)]
-    with patch.object(scenario, "_resolve_seed_groups_by_dataset_async", return_value={"stored": groups}) as resolve:
-        estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=True)
-    resolve.assert_awaited_once_with(apply_sampling=False)
-    assert estimate.estimated_attack_count == (14 if baseline else 7)
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
-    assert estimate.configured_dataset_size is None
-    assert estimate.datasets[0].logical_seed_group_count == 7
-    assert scenario._memory.get_scenario_results() == []
-
-
-@pytest.mark.usefixtures("patch_central_database")
-async def test_unlimited_jailbreak_preserves_template_and_attempt_factors_async(jailbreak: Jailbreak) -> None:
-    jailbreak.set_params_from_args(
-        args={
-            "scenario_techniques": [_JailbreakDefault.PROMPT_SENDING],
-            "include_baseline": True,
-            "jailbreak_names": ["aim.yaml", "dan.yaml", "third.yaml"],
-            "num_jailbreak_attempts": 2,
-            "dataset_config": DatasetAttackConfiguration(dataset_names=["stored"], max_dataset_size=None),
-        }
-    )
-    groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"objective-{index}")]) for index in range(7)]
-    with patch.object(jailbreak, "_resolve_seed_groups_by_dataset_async", return_value={"stored": groups}):
-        estimate = await jailbreak.get_run_size_estimate_async(read_dataset_counts=True)
-    assert estimate.estimated_attack_count == 7 * 3 * 2 + 7
-    assert estimate.configured_dataset_size is None
-
-
-@pytest.mark.usefixtures("patch_central_database")
-async def test_unlimited_psychosocial_keeps_distinct_harm_population_sizes_async() -> None:
-    scenario = Psychosocial(imminent_crisis_scorer=_scorer(), licensed_therapist_scorer=_scorer())
-    scenario.set_params_from_args(
-        args={"dataset_config": DatasetAttackConfiguration(dataset_names=["ignored"], max_dataset_size=None)}
-    )
-    populations = {
-        harm.dataset_name: [
-            AttackSeedGroup(seeds=[SeedObjective(value=f"{harm.dataset_name}-{index}")]) for index in range(count)
-        ]
-        for harm, count in zip(scenario._selected_sub_harms(), [2, 3], strict=True)
-    }
-    with patch.object(scenario, "_resolve_seed_groups_by_dataset_async", return_value=populations):
-        estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=True)
-    assert [component.count for component in estimate.components] == [6, 2, 9, 3]
-    assert [dataset.logical_seed_group_count for dataset in estimate.datasets] == [2, 3]
-    assert estimate.configured_dataset_size is None
-    assert all(dataset.configured_caps == [] for dataset in estimate.datasets)
-
-
-@pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("scenario_class", [WebInjection, SystemPromptExtraction])
-async def test_database_preview_does_not_invent_uncapped_generated_counts_async(scenario_class: type[Scenario]) -> None:
-    scenario = scenario_class()
-    if isinstance(scenario, SystemPromptExtraction):
-        scenario = SystemPromptExtraction(prompt_cap=None)
-    with patch.object(scenario, "_resolve_seed_groups_by_dataset_async", side_effect=AssertionError("Generated data")):
-        estimate = await scenario.get_run_size_estimate_async(read_dataset_counts=True)
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+async def test_all_builtin_default_size_contracts_are_bounded_async() -> None:
+    TargetRegistry.reset_registry_singleton()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    ScenarioRegistry.reset_registry_singleton()
+    targets = TargetRegistry.get_registry_singleton()
+    for name in ("adversarial_chat", "objective_scorer_chat"):
+        targets.instances.register(MockPromptTarget(), name=name)
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_technique_factories())
+    try:
+        with patch.object(Scenario, "_get_default_objective_scorer", return_value=_scorer()):
+            registry = ScenarioRegistry.get_registry_singleton()
+            names = registry.get_class_names()
+            assert "garak.web_injection" in names
+            for name in names:
+                scenario_class = registry.get_class(name)
+                if not scenario_class.__module__.startswith("pyrit.scenario.scenarios."):
+                    continue
+                scenario = registry.create_instance(name)
+                estimate = await scenario.get_default_run_size_estimate_async()
+                assert isinstance(estimate.dataset_size, BoundedDatasetSize), name
+                assert estimate.status is not ScenarioRunSizeEstimateStatus.Unavailable, name
+                finite_count = estimate.total_attack_count or estimate.maximum_attack_count
+                assert finite_count is not None and finite_count > 0, name
+                assert all(dataset.logical_seed_group_count is None for dataset in estimate.datasets), name
+    finally:
+        ScenarioRegistry.reset_registry_singleton()
+        AttackTechniqueRegistry.reset_registry_singleton()
+        TargetRegistry.reset_registry_singleton()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -308,7 +295,7 @@ async def test_adaptive_estimate_preserves_envelopes_and_inner_attempt_limit_asy
     scenario.set_params_from_args(args={"include_baseline": False, "max_attempts_per_objective": 7})
     with patch.object(scenario, "_build_techniques_dict", side_effect=AssertionError("Loaded techniques")):
         estimate = await scenario.get_run_size_estimate_async()
-    assert estimate.estimated_attack_count == scenario._get_run_size_budget()
+    assert estimate.estimated_attack_count == scenario._get_run_size_budget().value
     assert estimate.effective_parameters["max_attempts_per_objective"] == 7
     assert "7 selected technique attempts" in estimate.note
 
@@ -388,7 +375,7 @@ async def test_jailbreak_system_delivery_validates_target_async(*, jailbreak: Ja
 async def test_encoding_keeps_converter_and_prompt_configuration_factors_async() -> None:
     estimate = await Encoding(objective_scorer=_scorer()).get_default_run_size_estimate_async()
     assert estimate.estimated_attack_count == 20 * 15 * 5 + 20
-    assert estimate.configured_dataset_size == 20
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(20)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -399,31 +386,9 @@ async def test_web_injection_estimate_does_not_load_or_synthesize_populations_as
         patch.object(scenario, "_build_synthesized_seed_groups", side_effect=AssertionError("Synthesized seeds")),
     ):
         estimate = await scenario.get_default_run_size_estimate_async()
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
-    assert estimate.estimated_attack_count is None
-    assert estimate.configured_dataset_size is None
-
-
-@pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize(
-    "technique",
-    [
-        WebInjectionTechnique.MarkdownImageExfil,
-        WebInjectionTechnique.ColabAIDataLeakage,
-        WebInjectionTechnique.PlaygroundMarkdownExfil,
-        WebInjectionTechnique.MarkdownXSS,
-    ],
-)
-async def test_web_injection_uncapped_sources_ignore_dataset_limit_async(technique: WebInjectionTechnique) -> None:
-    scenario = WebInjection()
-    scenario.set_params_from_args(
-        args={
-            "scenario_techniques": [technique, WebInjectionTechnique.TaskXSS],
-            "dataset_config": DatasetAttackConfiguration(dataset_names=["missing"], max_dataset_size=1),
-        }
-    )
-    estimate = await scenario.get_run_size_estimate_async()
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+    assert estimate.estimated_attack_count == (5 * 12 + 2) * 2
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(5 * 12 + 2)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -449,7 +414,7 @@ async def test_web_injection_capped_techniques_use_generation_limits_async(
     budget = len(scenario.STRING_ASSEMBLY_SEEDS) + 3 * 7
     assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
     assert estimate.estimated_attack_count == budget * (2 if baseline else 1)
-    assert estimate.configured_dataset_size == budget
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(budget)
     assert estimate.effective_parameters == {"max_prompts_per_technique": 7}
 
 
@@ -472,7 +437,7 @@ async def test_package_hallucination_uses_per_language_generation_cap_async(
     language_count = len(PackageHallucinationTechnique.expand({technique}))
     assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
     assert estimate.estimated_attack_count == cap * language_count
-    assert estimate.configured_dataset_size == cap * language_count
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(cap * language_count)
     assert estimate.effective_parameters == {"max_prompts_per_language": cap}
 
 
@@ -494,7 +459,7 @@ async def test_system_prompt_extraction_uses_one_shared_generation_cap_async(
     )
     estimate = await scenario.get_run_size_estimate_async()
     assert estimate.estimated_attack_count == prompt_cap
-    assert estimate.configured_dataset_size == prompt_cap
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(prompt_cap)
     if prompt_cap is None:
         assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
     else:
@@ -507,7 +472,7 @@ async def test_psychosocial_keeps_per_harm_limits_and_baselines_async() -> None:
     scenario = Psychosocial(imminent_crisis_scorer=_scorer(), licensed_therapist_scorer=_scorer())
     estimate = await scenario.get_default_run_size_estimate_async()
     assert estimate.estimated_attack_count == 40
-    assert estimate.configured_dataset_size == 10
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(10)
     assert [component.count for component in estimate.components] == [15, 5, 15, 5]
 
 
@@ -538,11 +503,12 @@ async def test_benchmark_without_targets_reports_per_target_budget_async() -> No
     ):
         scenario = AdversarialBenchmark(objective_scorer=_scorer())
     estimate = await scenario.get_default_run_size_estimate_async()
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
+    assert estimate.estimated_attack_count == 16
     assert estimate.minimum_attack_count is None
     assert estimate.maximum_attack_count is None
     assert [component.count for component in estimate.components] == [8, 8]
-    assert "per adversarial target" in estimate.note
+    assert "assumes one adversarial target" in estimate.note
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -573,4 +539,4 @@ async def test_foundry_counts_compositions_not_flattened_techniques_async() -> N
 async def test_synthesized_scenarios_apply_shared_caps_once_async(scenario_class: type[Scenario]) -> None:
     scenario = scenario_class(objective_scorer=_scorer())
     estimate = await scenario.get_default_run_size_estimate_async()
-    assert estimate.estimated_attack_count == scenario._get_run_size_budget()
+    assert estimate.estimated_attack_count == scenario._get_run_size_budget().value

@@ -12,11 +12,14 @@ from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackSeedGroup,
+    BoundedDatasetSize,
+    ScenarioDatasetSizeEstimate,
     ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     SeedObjective,
     SeedPrompt,
+    scenario_dataset_size_from_limit,
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -155,24 +158,25 @@ class SystemPromptExtraction(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    def _get_run_size_budget(self) -> int | None:
-        """Return the shared cap on system-prompt and template combinations."""
-        return self._prompt_cap
+    USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
 
-    async def _estimate_run_size_async(self, *, read_dataset_counts: bool = False) -> ScenarioRunSizeEstimate:
+    def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
+        """Return the shared cap on system-prompt and template combinations."""
+        return scenario_dataset_size_from_limit(self._prompt_cap)
+
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate the combined prompt budget without multiplying it by category count.
 
         Returns:
-            ScenarioRunSizeEstimate: Shared prompt cap, or unavailable when uncapped.
+            ScenarioRunSizeEstimate: Shared prompt cap.
         """
-        if self._prompt_cap is None:
-            return ScenarioRunSizeEstimate.unavailable(note="No prompt_cap is configured.")
+        count = budget.value
         return ScenarioRunSizeEstimate(
-            total_attack_count=self._prompt_cap,
-            components=[ScenarioRunSizeComponent(label="System-prompt/template combinations", count=self._prompt_cap)],
+            total_attack_count=count,
+            components=[ScenarioRunSizeComponent(label="System-prompt/template combinations", count=count)],
             datasets=[ScenarioDatasetSummary(name="System-prompt/template combinations", kind="synthesized")],
-            effective_parameters={"prompt_cap": self._prompt_cap},
+            effective_parameters={"prompt_cap": budget.value},
             note="The prompt cap is shared across all selected categories. Dataset size limits do not apply.",
         )
 

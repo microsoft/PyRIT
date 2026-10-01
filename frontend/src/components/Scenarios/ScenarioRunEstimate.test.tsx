@@ -16,6 +16,8 @@ function TestWrapper({ children }: { children: ReactNode }) {
 }
 
 const EXACT_ESTIMATE: ScenarioRunSizeEstimateResponse = {
+  dataset_size: { kind: 'all_available' },
+  dataset_limit: { state: 'scenario_default' },
   estimated_attack_count: 8,
   components: [
     {
@@ -52,11 +54,49 @@ const EXACT_ESTIMATE: ScenarioRunSizeEstimateResponse = {
 }
 
 describe('ScenarioRunEstimate', () => {
+  it('shows the indeterminate detail when no note is present', () => {
+    const state = mapScenarioRunEstimate({
+      ...EXACT_ESTIMATE,
+      status: 'unavailable',
+      dataset_size: {
+        kind: 'indeterminate',
+        detail: 'Custom population is not supported.',
+      },
+      estimated_attack_count: null,
+      components: [],
+      note: null,
+    }, 'request')
+    render(
+      <TestWrapper>
+        <ScenarioRunEstimateDetails state={state} />
+      </TestWrapper>,
+    )
+    expect(screen.getByText('Configured run size unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Custom population is not supported.')).toBeInTheDocument()
+    expect(screen.queryByText('Calculating run estimate...')).not.toBeInTheDocument()
+  })
+
+  it('labels cap-based conditional counts as approximate', () => {
+    const state = mapScenarioRunEstimate({
+      ...EXACT_ESTIMATE,
+      status: 'conditional',
+      dataset_size: { kind: 'bounded', value: 4 },
+      estimated_attack_count: null,
+      maximum_attack_count: 8,
+    }, 'request')
+    render(
+      <TestWrapper>
+        <ScenarioRunEstimateSummary state={state} />
+      </TestWrapper>,
+    )
+    expect(screen.getByText('Up to 8 attacks')).toBeInTheDocument()
+  })
+
   it('labels a configuration-based total as approximate without population counts', () => {
     const state = mapScenarioRunEstimate({
       ...EXACT_ESTIMATE,
       status: 'approximate',
-      configured_dataset_size: 5,
+      dataset_size: { kind: 'bounded', value: 5 }, dataset_limit: { state: 'value', value: 5 },
       datasets: [{
         name: 'not-loaded',
         kind: 'dataset',
@@ -71,7 +111,7 @@ describe('ScenarioRunEstimate', () => {
         <ScenarioRunEstimateSummary state={state} />
       </TestWrapper>,
     )
-    expect(screen.getByText('About 8 attacks')).toBeInTheDocument()
+    expect(screen.getByText('Up to 8 attacks')).toBeInTheDocument()
     expect(screen.getByText('Approximate estimate')).toBeInTheDocument()
     expect(screen.queryByText('Estimate unavailable')).not.toBeInTheDocument()
   })
@@ -98,13 +138,13 @@ describe('ScenarioRunEstimate', () => {
   it.each<[number | null, number | null, string]>([
     [12, 20, 'About 12-20 attacks'],
     [12, 12, 'About 12 attacks'],
-    [null, 20, 'Up to about 20 attacks'],
+    [null, 20, 'Up to 20 attacks'],
     [12, null, 'At least about 12 attacks'],
   ])('labels budget ranges as approximate (%s, %s)', (minimum, maximum, label) => {
     const state = mapScenarioRunEstimate({
       ...EXACT_ESTIMATE,
       status: 'conditional',
-      configured_dataset_size: 4,
+      dataset_size: { kind: 'bounded', value: 4 }, dataset_limit: { state: 'value', value: 4 },
       estimated_attack_count: null,
       minimum_attack_count: minimum,
       maximum_attack_count: maximum,

@@ -738,6 +738,8 @@ describe("api service", () => {
     it("posts the exact estimate request and forwards cancellation", async () => {
       const mockResponse = {
         data: {
+          dataset_size: { kind: 'bounded', value: 4 },
+          dataset_limit: { state: 'scenario_default' },
           estimated_attack_count: 8,
           components: [],
           datasets: [],

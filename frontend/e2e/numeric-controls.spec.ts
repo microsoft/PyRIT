@@ -25,6 +25,8 @@ const SCENARIO: RegisteredScenario = {
     { name: 'temperature', type_name: 'float', required: false, default: '0.5', choices: null, is_list: false },
   ],
   default_run_size: {
+    dataset_size: { kind: 'indeterminate', reason: 'configuration_unavailable', detail: 'Population configuration is not available.' },
+    dataset_limit: { state: 'scenario_default' },
     estimated_attack_count: null,
     components: [],
     datasets: [],

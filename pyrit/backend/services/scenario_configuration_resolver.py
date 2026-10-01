@@ -91,7 +91,6 @@ class ScenarioConfigurationResolver:
         techniques: list[str] | None = None,
         dataset_names: list[str] | None = None,
         max_dataset_size: int | None = None,
-        max_dataset_size_explicit: bool = False,
         dataset_filters: dict[str, list[str]] | None = None,
         include_baseline: bool | None = None,
         max_concurrency: int | None = None,
@@ -100,8 +99,6 @@ class ScenarioConfigurationResolver:
     ) -> dict[str, Any]:
         """
         Resolve shared launch and estimate fields into scenario parameters.
-
-        An explicit null dataset size removes all dataset caps; omission keeps defaults.
 
         Returns:
             dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
@@ -122,8 +119,7 @@ class ScenarioConfigurationResolver:
             resolved["memory_labels"] = memory_labels
 
         filters = dataset_filters or {}
-        override_size = max_dataset_size_explicit or max_dataset_size is not None
-        needs_introspection = bool(techniques) or bool(dataset_names) or override_size or bool(filters)
+        needs_introspection = bool(techniques) or bool(dataset_names) or max_dataset_size is not None or bool(filters)
         if not needs_introspection:
             return resolved
 
@@ -145,14 +141,16 @@ class ScenarioConfigurationResolver:
             if technique_converters:
                 resolved["technique_converters"] = technique_converters
 
-        if dataset_names or override_size or filters:
+        if dataset_names or max_dataset_size is not None or filters:
             default_config = introspection_instance._default_dataset_config
             if dataset_names:
                 default_config_class = type(default_config)
                 try:
                     resolved["dataset_config"] = default_config_class(
                         dataset_names=dataset_names,
-                        max_dataset_size=(max_dataset_size if override_size else default_config.max_dataset_size),
+                        max_dataset_size=(
+                            max_dataset_size if max_dataset_size is not None else default_config.max_dataset_size
+                        ),
                         filters=filters or None,
                     )
                 except TypeError as exc:
@@ -166,8 +164,6 @@ class ScenarioConfigurationResolver:
                 if filters:
                     default_config.update_filters(filters=filters)
                 resolved["dataset_config"] = default_config
-            if override_size and max_dataset_size is None:
-                resolved["dataset_config"].clear_size_limits()
 
         return resolved
 
