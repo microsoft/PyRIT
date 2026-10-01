@@ -144,14 +144,16 @@ async def test_websocket_target_restores_history_after_server_disconnect(sqlite_
             first_response = await target.send_prompt_async(message=first_request)
             await first_connection_closed.wait()
 
-            sqlite_instance.add_conversation_to_memory(
-                conversation=Conversation(
-                    conversation_id=conversation_id,
-                    target_identifier=target.get_identifier(),
+            (
+                await sqlite_instance.add_conversation_to_memory_async(
+                    conversation=Conversation(
+                        conversation_id=conversation_id,
+                        target_identifier=target.get_identifier(),
+                    )
                 )
             )
-            sqlite_instance.add_message_to_memory(request=first_request)
-            sqlite_instance.add_message_to_memory(request=first_response[0])
+            (await sqlite_instance.add_message_to_memory_async(request=first_request))
+            (await sqlite_instance.add_message_to_memory_async(request=first_response[0]))
 
             second_request = MessagePiece(
                 role="user",

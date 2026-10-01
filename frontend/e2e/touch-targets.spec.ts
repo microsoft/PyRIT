@@ -51,6 +51,18 @@ const TARGETS = [
       supported_output_modalities: ["text"],
     },
   }),
+  makeTarget({
+    target_registry_name: "mobile-speech-target",
+    target_type: "OpenAITTSTarget",
+    endpoint: "https://speech.example.test",
+    model_name: "tts-mobile",
+    capabilities: {
+      supports_multi_turn: false,
+      supports_system_prompt: false,
+      supported_input_modalities: ["text"],
+      supported_output_modalities: ["audio_path"],
+    },
+  }),
 ];
 
 const MESSAGES = [
@@ -401,6 +413,14 @@ async function expectCompactDesktopTarget(locator: Locator): Promise<void> {
   expect(box.height).toBeLessThan(MINIMUM_TOUCH_TARGET_SIZE);
 }
 
+async function expectCompactDesktopTargets(locator: Locator): Promise<void> {
+  const count = await locator.count();
+  expect(count).toBeGreaterThan(0);
+  for (let index = 0; index < count; index += 1) {
+    await expectCompactDesktopTarget(locator.nth(index));
+  }
+}
+
 async function expectNoDocumentOverflow(page: Page): Promise<void> {
   const dimensions = await page.evaluate(() => ({
     viewportWidth: document.documentElement.clientWidth,
@@ -500,6 +520,26 @@ test.describe("Mobile touch targets", () => {
       page.getByRole("button", { name: "Expand inner targets" })
     );
     await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by input:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by output:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by capability:", exact: true }));
+    for (const filter of ["type", "input", "output", "capability"]) {
+      await expectMinimumTouchTarget(page.getByRole("button", { name: `Open Filter by ${filter}:`, exact: true }));
+    }
+    const capabilityFilter = page.getByRole("combobox", { name: "Filter by capability:", exact: true });
+    await capabilityFilter.click();
+    await expectMinimumTouchTargets(page.getByRole("menuitemcheckbox"));
+    await page.getByRole("menuitemcheckbox", { name: "System Prompt", exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Multi-turn", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menuitemcheckbox")).toHaveCount(0);
+    await expect(capabilityFilter).toHaveValue("Capabilities: System Prompt (+1)");
+    const capabilityWidths = await capabilityFilter.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(capabilityWidths.scrollWidth).toBeLessThanOrEqual(capabilityWidths.clientWidth);
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
     await expectNoDocumentOverflow(page);
 
     await page.goto("/history");
@@ -766,6 +806,14 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
     page.getByRole("button", { name: "Refresh", exact: true })
   );
   await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by input:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by output:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by capability:", exact: true }));
+  await page.getByRole("combobox", { name: "Filter by capability:", exact: true }).click();
+  await expectCompactDesktopTargets(page.getByRole("menuitemcheckbox"));
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitemcheckbox")).toHaveCount(0);
+  await expectCompactDesktopTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
   await expectCompactDesktopTarget(
     page.getByRole("combobox", { name: "Default objective target", exact: true })
   );

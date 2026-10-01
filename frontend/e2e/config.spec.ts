@@ -57,6 +57,36 @@ const RESPONSIVE_VIEWPORTS = [
   { name: "desktop", width: 1280, height: 800 },
 ] as const;
 
+const FILTER_TARGETS: FlatTarget[] = [
+  {
+    target_registry_name: "filter-chat",
+    target_type: "OpenAIChatTarget",
+    capabilities: {
+      supports_system_prompt: true,
+      supported_input_modalities: ["text", "image_path"],
+      supported_output_modalities: ["text"],
+    },
+  },
+  {
+    target_registry_name: "filter-responses",
+    target_type: "OpenAIResponseTarget",
+    capabilities: {
+      supports_json_schema: true,
+      supports_system_prompt: true,
+      supported_input_modalities: ["text", "function_call_output"],
+      supported_output_modalities: ["text"],
+    },
+  },
+  {
+    target_registry_name: "filter-speech",
+    target_type: "OpenAITTSTarget",
+    capabilities: {
+      supported_input_modalities: ["text"],
+      supported_output_modalities: ["audio_path"],
+    },
+  },
+];
+
 const TARGET_PICKER_CHOICES = [
   {
     targetType: "AzureMLChatTarget",
@@ -173,6 +203,19 @@ async function selectTargetType(
   }).click();
 }
 
+async function checkFilterOptions(
+  page: Page,
+  filterName: string,
+  optionNames: readonly string[]
+): Promise<void> {
+  await page.getByRole("combobox", { name: filterName, exact: true }).click();
+  for (const optionName of optionNames) {
+    await page.getByRole("menuitemcheckbox", { name: optionName, exact: true }).click();
+  }
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitemcheckbox")).toHaveCount(0);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -278,6 +321,21 @@ test.describe("Target Registry Page", () => {
 
     // Second target should now appear
     await expect(page.getByText("dall-e-3", { exact: true })).toBeVisible({ timeout: 10000 });
+  });
+
+  test("should keep focus on Reset all filters after it clears them", async ({ page }) => {
+    await routeResponsiveTargetData(page, FILTER_TARGETS);
+    await goToTargets(page);
+    await checkFilterOptions(page, "Filter by type:", ["OpenAIChatTarget"]);
+    await expect(page.getByTestId("target-row-filter-speech")).toHaveCount(0);
+
+    const reset = page.getByRole("button", { name: "Reset all filters", exact: true });
+    await reset.focus();
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByTestId("target-row-filter-speech")).toBeVisible();
+    await expect(reset).toBeFocused();
+    await expect(reset).toHaveAttribute("aria-disabled", "true");
   });
 });
 
@@ -522,6 +580,80 @@ test.describe("Responsive Target Registry", () => {
           name: `Remove ${LONG_REGISTRY_NAME_B}`,
         }),
         dialog
+      );
+    });
+
+    test(`should fit and align filter selections at ${viewport.name} width`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({
+        width: viewport.width,
+        height: viewport.height,
+      });
+      await routeResponsiveTargetData(page, FILTER_TARGETS);
+      await goToTargets(page);
+      await expect(page.getByTestId("target-row-filter-speech")).toBeVisible();
+
+      const selections = [
+        {
+          filterName: "Filter by type:",
+          optionNames: ["OpenAIChatTarget", "OpenAIResponseTarget"],
+          summary: "Type: OpenAIChatTarget (+1)",
+        },
+        {
+          filterName: "Filter by input:",
+          optionNames: ["Function call output", "Image"],
+          summary: "Inputs: Function call output (+1)",
+        },
+        {
+          filterName: "Filter by capability:",
+          optionNames: ["System Prompt", "JSON Schema"],
+          summary: "Capabilities: System Prompt (+1)",
+        },
+      ] as const;
+      for (const { filterName, optionNames } of selections) {
+        await checkFilterOptions(page, filterName, optionNames);
+      }
+      await expect(page.getByTestId("target-row-filter-responses")).toBeVisible();
+      await expect(page.getByTestId("target-row-filter-chat")).toHaveCount(0);
+
+      for (const { filterName, summary } of selections) {
+        const filter = page.getByRole("combobox", { name: filterName, exact: true });
+        await expect(filter).toHaveValue(summary);
+        const widths = await filter.evaluate((element) => ({
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+        }));
+        expect(widths.scrollWidth).toBeLessThanOrEqual(widths.clientWidth);
+      }
+
+      // Wrapped dropdowns start under the first one, and the reset button centers on the first row.
+      const filterBoxes = await page
+        .getByTestId("target-filters")
+        .getByRole("combobox")
+        .evaluateAll((filters) =>
+          filters.map((filter) => {
+            const box = filter.parentElement?.getBoundingClientRect();
+            return { left: box?.left ?? 0, centerY: box ? box.top + box.height / 2 : 0 };
+          })
+        );
+      expect(filterBoxes).toHaveLength(4);
+      for (const { left } of filterBoxes) {
+        expect(left).toBeGreaterThanOrEqual(filterBoxes[0].left);
+      }
+      const resetBox = await page.getByTestId("target-reset-filters-btn").boundingBox();
+      if (!resetBox) {
+        throw new Error("Expected a visible reset button");
+      }
+      expect(Math.abs(resetBox.y + resetBox.height / 2 - filterBoxes[0].centerY)).toBeLessThanOrEqual(1);
+
+      const config = page.getByTestId("target-config");
+      const configWidth = await config.evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      }));
+      expect(configWidth.scrollWidth).toBeLessThanOrEqual(
+        configWidth.clientWidth
       );
     });
   }
