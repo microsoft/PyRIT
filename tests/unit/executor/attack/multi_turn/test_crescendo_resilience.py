@@ -308,7 +308,7 @@ class TestCrescendoMixedFailureRecovery:
         # A scorable names piece ids rather than carrying the message, so read them back.
         memory = CentralMemory.get_memory_instance()
         refusal_inputs = [
-            MessageScorableResolver().resolve(scorable=call.kwargs["scorable"], memory=memory).get_value()
+            (await MessageScorableResolver().resolve_async(scorable=call.kwargs["scorable"], memory=memory)).get_value()
             for call in refusal_scorer.score_async.await_args_list
         ]
         assert refusal_inputs == [
@@ -543,7 +543,7 @@ class TestCrescendoSeededModalityTransitions:
         ]
 
         refusal_inputs = [
-            MessageScorableResolver().resolve(scorable=call.kwargs["scorable"], memory=attack._memory)
+            await MessageScorableResolver().resolve_async(scorable=call.kwargs["scorable"], memory=attack._memory)
             for call in refusal_scorer.score_async.await_args_list
         ]
         objective_inputs = [call.kwargs["response"] for call in score_response.await_args_list]
@@ -715,7 +715,7 @@ class TestCrescendoSeededModalityTransitions:
         } == {first_conversation_id}
 
         refusal_inputs = [
-            MessageScorableResolver().resolve(scorable=call.kwargs["scorable"], memory=attack._memory)
+            await MessageScorableResolver().resolve_async(scorable=call.kwargs["scorable"], memory=attack._memory)
             for call in refusal_scorer.score_async.await_args_list
         ]
         assert [message.get_value() for message in refusal_inputs] == [

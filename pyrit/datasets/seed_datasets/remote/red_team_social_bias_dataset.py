@@ -55,7 +55,7 @@ class _RedTeamSocialBiasDataset(_RemoteDatasetLoader):
         return "red_team_social_bias"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Red Team Social Bias dataset and return as SeedDataset.
 

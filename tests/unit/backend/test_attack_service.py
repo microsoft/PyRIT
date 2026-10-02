@@ -781,6 +781,42 @@ class TestGetConversationMessages:
 class TestCreateAttack:
     """Tests for create_attack method."""
 
+    @pytest.mark.parametrize("copy_history", [False, True])
+    async def test_manual_creation_registers_ownership_async(
+        self, *, sqlite_instance: SQLiteMemory, copy_history: bool
+    ) -> None:
+        target = MockPromptTarget()
+        source_owner = str(uuid.uuid4())
+        source_id = str(uuid.uuid4())
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(
+                conversation_id=source_id,
+                target_identifier=target.get_identifier(),
+                attack_result_id=source_owner,
+            )
+        )
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(role="user", original_value="history", conversation_id=source_id).to_message()
+        )
+        with patch("pyrit.backend.services.attack_service.get_target_service") as targets:
+            targets.return_value.get_target_async = AsyncMock(return_value=object())
+            targets.return_value.get_target_object.return_value = target
+            created = await AttackService().create_attack_async(
+                request=CreateAttackRequest(
+                    target_registry_name="target",
+                    source_conversation_id=source_id if copy_history else None,
+                    cutoff_index=0 if copy_history else None,
+                )
+            )
+        [owned] = await sqlite_instance.get_attack_result_conversations_async(attack_result_id=created.attack_result_id)
+        assert owned.conversation_id == created.conversation_id
+        assert owned.target_identifier == target.get_identifier()
+        assert owned.conversation_id != source_id
+        [source] = await sqlite_instance.get_attack_result_conversations_async(attack_result_id=source_owner)
+        assert source.conversation_id == source_id
+        copied = await sqlite_instance.get_message_pieces_async(attack_result_id=created.attack_result_id)
+        assert [piece.original_value for piece in copied] == (["history"] if copy_history else [])
+
     async def test_create_attack_validates_target_exists(self, attack_service) -> None:
         """Test that create_attack validates target exists."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
@@ -2063,6 +2099,7 @@ class TestCreateRelatedConversation:
             metadata = await sqlite_instance.get_conversation_metadata_async(conversation_id=conversation_id)
             assert metadata is not None
             assert metadata.target_identifier == target_identifier
+            assert metadata.attack_result_id == attack.attack_result_id
             rows = await asyncio.to_thread(
                 sqlite_instance._query_entries,
                 ConversationEntry,
@@ -2070,6 +2107,11 @@ class TestCreateRelatedConversation:
             )
             assert rows[0].target_identifier_hash == target_identifier.hash
         assert target.prompt_sent == ["Hello", "Hello"]
+        owned = await sqlite_instance.get_attack_result_conversations_async(attack_result_id=attack.attack_result_id)
+        assert {conversation.conversation_id for conversation in owned} == {
+            attack.conversation_id,
+            branch.conversation_id,
+        }
 
     async def test_nested_branching_preserves_target_after_version_change_async(
         self, sqlite_instance: SQLiteMemory
@@ -2109,6 +2151,7 @@ class TestCreateRelatedConversation:
             conversation_id: (version, identifier) for conversation_id, version, identifier in expected_rows
         }
         assert all(row.target_identifier_hash == target.hash for row in rows)
+        assert all(str(row.attack_result_id) == attack.attack_result_id for row in rows)
         current = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
         assert current[0].get_active_conversation_ids() == {row.conversation_id for row in rows}
 

@@ -47,6 +47,7 @@ dependencies = [
     "fastapi>=0.133.0",
     "httpx[http2]>=0.27.2",
     "jinja2>=3.1.6",
+    "jsonschema>=4.25.1",
     "mcp>=1.26,<2",
     "numpy>=1.26.0; python_version < '3.14'",
     "numpy>=2.3.0; python_version >= '3.14'",
@@ -180,6 +181,9 @@ filterwarnings = [
     "error:Scorer\\.score_async:DeprecationWarning",
     # Rates come from pyrit.analytics; tests that cover the deprecated method opt back in with pytest.warns.
     "error:ScenarioResult\\.objective_achieved_rate:DeprecationWarning",
+    # Ordinary callers must use async memory; compatibility tests capture the warnings.
+    "error:MemoryInterface\\.:DeprecationWarning",
+    "error:MessageScorableResolver\\.resolve:DeprecationWarning",
 ]
 
 [tool.ty]

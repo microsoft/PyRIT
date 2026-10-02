@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.converter import Converter
 from pyrit.exceptions import (
     ComponentRole,
@@ -132,7 +133,11 @@ class PromptNormalizer:
         target_identifier = target.get_identifier()
         (
             await self.memory.add_conversation_to_memory_async(
-                conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+                conversation=Conversation(
+                    conversation_id=conversation_id,
+                    target_identifier=target_identifier,
+                    attack_result_id=get_current_attack_result_id(),
+                )
             )
         )
 
@@ -467,7 +472,11 @@ class PromptNormalizer:
         prepended_conversation = copy.deepcopy(prepended_conversation)
         (
             await self.memory.add_conversation_to_memory_async(
-                conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+                conversation=Conversation(
+                    conversation_id=conversation_id,
+                    target_identifier=target_identifier,
+                    attack_result_id=get_current_attack_result_id(),
+                )
             )
         )
 

@@ -1,16 +1,26 @@
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { act, render, screen, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { makeTarget } from '@/test-utils/targetFixtures'
+import type { TargetCapabilities, TargetInstance } from '@/types'
+import {
+  DEFAULT_USER_PREFERENCES,
+  readUserPreferences,
+  userPreferencesStorageKey,
+  writeUserPreferences,
+} from '@/utils/userPreferences'
 import TargetTable from './TargetTable'
-import type { TargetCapabilities, TargetInstance } from '../../types'
 
 jest.mock('./TargetTable.styles', () => ({
   useTargetTableStyles: () => new Proxy({}, { get: () => '' }),
 }))
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
+  <UserPreferencesProvider accountKey="local">
+    <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
+  </UserPreferencesProvider>
 )
 
 function makeCapabilities(inputs: string[], outputs: string[]): TargetCapabilities {
@@ -96,6 +106,7 @@ describe('TargetTable', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    window.localStorage.clear()
   })
 
   it('should render a flat table with all targets visible', () => {
@@ -419,6 +430,131 @@ describe('TargetTable', () => {
 
     await pickFilterOption(user, 'Filter by type:', 'OpenAIChatTarget')
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+  })
+
+  it('should hide a target and persist the choice across remounts', async () => {
+    const user = userEvent.setup()
+    const firstRender = render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+
+    expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+
+    firstRender.unmount()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
+    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+  })
+
+  it('should show hidden targets and allow restoring them', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Hide azure_image_dalle' }))
+    expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Show azure_image_dalle' }))
+
+    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (0)' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+
+    expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+  })
+
+  it('should merge a visibility change with the latest stored choices', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    writeUserPreferences('local', {
+      ...DEFAULT_USER_PREFERENCES,
+      hiddenTargetRegistryNames: ['azure_image_dalle'],
+    })
+    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+
+    expect(readUserPreferences('local').hiddenTargetRegistryNames).toEqual([
+      'azure_image_dalle',
+      'openai_chat_gpt4',
+    ])
+  })
+
+  it('should reset showing hidden targets when synchronized preferences restore the last one', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} />
+      </TestWrapper>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
+
+    act(() => {
+      writeUserPreferences('local', DEFAULT_USER_PREFERENCES)
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: userPreferencesStorageKey('local'),
+        storageArea: window.localStorage,
+      }))
+    })
+
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (0)' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Hide azure_image_dalle' }))
+
+    expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
+  })
+
+  it('should hide registry entries independently when they share an identifier', async () => {
+    const user = userEvent.setup()
+    const duplicateTargets = [
+      makeTarget({
+        target_registry_name: 'first_registry_name',
+        target_type: 'OpenAIChatTarget',
+        model_name: 'shared-model',
+        identifier_hash: 'shared-identifier-hash',
+      }),
+      makeTarget({
+        target_registry_name: 'second_registry_name',
+        target_type: 'OpenAIChatTarget',
+        model_name: 'shared-model',
+        identifier_hash: 'shared-identifier-hash',
+      }),
+    ]
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={duplicateTargets} />
+      </TestWrapper>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Hide first_registry_name' }))
+
+    expect(screen.queryByText('first_registry_name')).not.toBeInTheDocument()
+    expect(screen.getByText('second_registry_name')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).toBeInTheDocument()
   })
 
   it('should not show filter when only one target type exists', () => {
@@ -760,6 +896,11 @@ describe('TargetTable', () => {
     expect(screen.getByText('#2 inner_b')).toBeInTheDocument()
     expect(screen.getByText('https://a.openai.azure.com')).toBeInTheDocument()
     expect(screen.getByText('https://b.openai.azure.com')).toBeInTheDocument()
+    const firstInnerRow = screen.getByRole('row', { name: /#1 inner_a/ })
+    const firstInnerCells = within(firstInnerRow).getAllByRole('cell')
+    expect(firstInnerCells[0]).toBeEmptyDOMElement()
+    expect(firstInnerCells[1]).toHaveTextContent('#1 inner_a')
+    expect(firstInnerCells[2]).toHaveTextContent('OpenAIChatTarget')
   })
 
   it('should not show expand button for regular targets', () => {

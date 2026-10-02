@@ -46,6 +46,7 @@ from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
+from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.common.path import DATASETS_PATH
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
@@ -364,7 +365,11 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
     try:
         (
             await target._memory.add_conversation_to_memory_async(
-                conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+                conversation=Conversation(
+                    conversation_id=conversation_id,
+                    target_identifier=target.get_identifier(),
+                    attack_result_id=get_current_attack_result_id(),
+                )
             )
         )
         (await target._memory.add_message_to_memory_async(request=Message(message_pieces=[system_piece])))
@@ -453,7 +458,11 @@ async def _probe_multi_turn_async(target: PromptTarget, timeout_s: float, retrie
     try:
         (
             await target._memory.add_conversation_to_memory_async(
-                conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+                conversation=Conversation(
+                    conversation_id=conversation_id,
+                    target_identifier=target.get_identifier(),
+                    attack_result_id=get_current_attack_result_id(),
+                )
             )
         )
         (await target._memory.add_message_to_memory_async(request=Message(message_pieces=[first])))
@@ -603,7 +612,11 @@ async def _probe_tool_calls_async(
             ),
         )
     await target._memory.add_conversation_to_memory_async(
-        conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier()),
+        conversation=Conversation(
+            conversation_id=conversation_id,
+            target_identifier=target.get_identifier(),
+            attack_result_id=get_current_attack_result_id(),
+        ),
     )
     for message in history:
         message.set_simulated_role()

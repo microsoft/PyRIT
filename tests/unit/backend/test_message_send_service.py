@@ -29,6 +29,7 @@ from pyrit.backend.services.manual_send_scheduler import (
 )
 from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
 from pyrit.backend.services.target_service import TargetService
+from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.common.utils import to_sha256
 from pyrit.converter import Base64Converter, Converter, ConverterResult
 from pyrit.memory import CentralMemory, SQLiteMemory
@@ -114,6 +115,34 @@ def _request(*, conversation_id: str = "main", send: bool = True) -> AddMessageR
         target_registry_name="target" if send else None,
         send=send,
     )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_manual_send_exposes_and_persists_ownership_async(
+    *,
+    sqlite_instance: SQLiteMemory,
+    real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+) -> None:
+    service, attack, target, _ = real_send_context
+    received: list[str | None] = []
+    original_send = target._send_prompt_to_target_async
+
+    async def record_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        received.append(get_current_attack_result_id())
+        return await original_send(normalized_conversation=normalized_conversation)
+
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=record_async):
+        await service.add_message_async(
+            attack_result_id=attack.attack_result_id,
+            request=_request(conversation_id=attack.conversation_id),
+        )
+    assert received == [attack.attack_result_id]
+    assert get_current_attack_result_id() is None
+    [owned] = await sqlite_instance.get_attack_result_conversations_async(attack_result_id=attack.attack_result_id)
+    assert owned.conversation_id == attack.conversation_id
+    assert owned.target_identifier == target.get_identifier()
+    pieces = await sqlite_instance.get_message_pieces_async(attack_result_id=attack.attack_result_id)
+    assert [piece.role for piece in pieces] == ["user", "assistant"]
 
 
 async def _wait_for_queue_async(*, scheduler: ManualSendScheduler, size: int = 1) -> None:

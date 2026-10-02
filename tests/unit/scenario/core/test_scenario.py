@@ -714,7 +714,7 @@ class TestScenarioExecution:
         assert result.scenario_name == "ConcreteScenario"
         assert result.scenario_version == 5
         assert result.pyrit_version is not None
-        assert result.get_techniques_used() == [
+        assert sorted(result.get_techniques_used()) == [
             "attack_run_1",
             "attack_run_2",
             "attack_run_3",

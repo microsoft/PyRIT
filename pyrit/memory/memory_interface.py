@@ -115,6 +115,7 @@ from pyrit.models import (
     SeedGroup,
     SeedIdentifier,
     SeedObjective,
+    SeedOrigin,
     SeedPrompt,
     SeedType,
     TargetIdentifier,
@@ -900,13 +901,16 @@ class MemoryInterface(abc.ABC):
         ``conversation_id`` with a different target is a conflict and raises ``ValueError`` -- a conversation is held
         with exactly one target and is never re-targeted.
 
+        The caller supplies ownership through ``conversation.attack_result_id``.
+        Registering a conversation that belongs to a different execution raises ``ValueError``.
+
         Args:
             conversation (Conversation): The conversation metadata to record, carrying the
                 ``conversation_id`` and the target it is held with (if known).
 
         Raises:
             ValueError: If ``conversation_id`` is empty, or if a conversation with the same
-                id already exists with a different target.
+                id already exists with a different target or belongs to a different attack execution.
         """
         self._insert_conversation(conversation=conversation)
 
@@ -1039,8 +1043,12 @@ class MemoryInterface(abc.ABC):
         """
         Register conversation metadata in the caller's transaction, without committing.
 
+        The caller supplies the owner explicitly. An existing conversation with no owner
+        can be claimed; one owned by a different execution is never reassigned.
+
         Raises:
-            ValueError: If the ID is empty or the conversation is already held with a different target.
+            ValueError: If the ID is empty, or the conversation is already held with a different
+                target or owned by a different attack execution.
         """
         if not conversation.conversation_id:
             raise ValueError("Cannot register a conversation without a conversation_id.")
@@ -1053,7 +1061,8 @@ class MemoryInterface(abc.ABC):
                     target_identifier=TargetIdentifier.from_component_identifier(conversation.target_identifier),
                 )
             session.add(entry)
-        elif (
+            return
+        if (
             entry.target_identifier is not None
             and existing.target_identifier is not None
             and ComponentIdentifier.model_validate(existing.target_identifier) != conversation.target_identifier
@@ -1062,6 +1071,24 @@ class MemoryInterface(abc.ABC):
                 f"Conversation {conversation.conversation_id} is already registered with a different "
                 f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
                 f"target and cannot be re-registered with {entry.target_identifier!r}."
+            )
+        if entry.attack_result_id is None or existing.attack_result_id == entry.attack_result_id:
+            return
+        session.execute(
+            update(ConversationEntry)
+            .where(
+                ConversationEntry.conversation_id == conversation.conversation_id,
+                ConversationEntry.attack_result_id.is_(None),
+            )
+            .values(attack_result_id=entry.attack_result_id)
+            .execution_options(synchronize_session=False)
+        )
+        session.refresh(existing)
+        if existing.attack_result_id != entry.attack_result_id:
+            raise ValueError(
+                f"Conversation {conversation.conversation_id} belongs to attack result "
+                f"{existing.attack_result_id} and cannot be assigned to attack result {entry.attack_result_id}. "
+                "An attack execution that reuses existing history must copy it into a new conversation."
             )
 
     def _execute_add_conversation_retry(
@@ -2840,6 +2867,40 @@ class MemoryInterface(abc.ABC):
         """
         return await self._run_database_operation_async(self._get_conversation, conversation_id=conversation_id)
 
+    def _get_attack_result_conversations(self, *, attack_result_id: str) -> list[Conversation]:
+        """
+        Return the conversations owned by the attack execution that produced ``attack_result_id``.
+
+        Args:
+            attack_result_id (str): The attack result ID.
+
+        Returns:
+            list[Conversation]: The owned conversations' metadata, ordered by conversation ID.
+        """
+        entries = self._query_entries(
+            ConversationEntry,
+            conditions=ConversationEntry.attack_result_id == uuid.UUID(attack_result_id),
+        )
+        return sorted((entry.get_conversation() for entry in entries), key=lambda item: item.conversation_id)
+
+    async def get_attack_result_conversations_async(self, *, attack_result_id: str) -> list[Conversation]:
+        """
+        Read the conversations owned by one attack execution.
+
+        These include its objective conversation and any adversarial, scoring, converter
+        and branch conversations created while it ran. A child attack's conversations
+        belong to the child's result.
+
+        Args:
+            attack_result_id: The ID of the attack result the execution produced.
+
+        Returns:
+            The owned conversations' metadata, ordered by conversation ID.
+        """
+        return await self._run_database_operation_async(
+            self._get_attack_result_conversations, attack_result_id=attack_result_id
+        )
+
     async def update_scenario_result_async(self, *, scenario_result: ScenarioResult) -> None:
         """
         Persist an updated scenario result.
@@ -2937,6 +2998,7 @@ class MemoryInterface(abc.ABC):
         not_data_type: str | None = None,
         converted_value_sha256: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
+        attack_result_id: str | None = None,
     ) -> Sequence[MessagePiece]:
         """
         Retrieve a list of MessagePiece objects based on the specified filters.
@@ -2960,6 +3022,8 @@ class MemoryInterface(abc.ABC):
             identifier_filters (Sequence[IdentifierFilter] | None, optional):
                 A sequence of IdentifierFilter objects that
                 allow filtering by various identifier JSON properties. Defaults to None.
+            attack_result_id (str | None, optional): Only return pieces from conversations owned by
+                the attack execution that produced this result. Defaults to None.
 
         Returns:
             Sequence[MessagePiece]: A list of MessagePiece objects that match the specified filters.
@@ -2993,6 +3057,14 @@ class MemoryInterface(abc.ABC):
             if identifier_filters:
                 conditions.extend(
                     self._build_message_piece_identifier_conditions(identifier_filters=identifier_filters)
+                )
+            if attack_result_id:
+                conditions.append(
+                    PromptMemoryEntry.conversation_id.in_(
+                        select(ConversationEntry.conversation_id).where(
+                            ConversationEntry.attack_result_id == uuid.UUID(attack_result_id)
+                        )
+                    )
                 )
 
             # Identify list parameters that may need batching
@@ -3046,7 +3118,7 @@ class MemoryInterface(abc.ABC):
 
         return new_conversation_id, all_pieces
 
-    def _execute_duplicate_conversation(self, *, conversation_id: str) -> str:
+    def _execute_duplicate_conversation(self, *, conversation_id: str, attack_result_id: str | None = None) -> str:
         """
         Duplicate a conversation for reuse.
 
@@ -3056,6 +3128,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             conversation_id (str): The conversation ID with existing conversations.
+            attack_result_id (str | None): Destination owner. Defaults to the source owner.
 
         Returns:
             The uuid for the new conversation.
@@ -3065,6 +3138,8 @@ class MemoryInterface(abc.ABC):
         )
         source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
+        if attack_result_id is None and source_metadata is not None:
+            attack_result_id = source_metadata.attack_result_id
         new_conversation_id, all_pieces = self._dispatch_memory_operation(
             "duplicate_messages", self._execute_duplicate_messages, messages=messages
         )
@@ -3072,14 +3147,20 @@ class MemoryInterface(abc.ABC):
             self._dispatch_memory_operation(
                 "add_conversation_to_memory",
                 self._execute_add_conversation_to_memory,
-                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target),
+                conversation=Conversation(
+                    conversation_id=new_conversation_id,
+                    target_identifier=source_target,
+                    attack_result_id=attack_result_id,
+                ),
             )
             self._dispatch_memory_operation(
                 "add_message_pieces_to_memory", self._execute_add_message_pieces_to_memory, message_pieces=all_pieces
             )
         return new_conversation_id
 
-    def _execute_duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
+    def _execute_duplicate_conversation_excluding_last_turn(
+        self, *, conversation_id: str, attack_result_id: str | None = None
+    ) -> str:
         """
         Duplicate a conversation, excluding the last turn. In this case, last turn is defined as before the last
         user request (e.g. if there is half a turn, it just removes that half).
@@ -3088,6 +3169,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             conversation_id (str): The conversation ID with existing conversations.
+            attack_result_id (str | None): Destination owner. Defaults to the source owner.
 
         Returns:
             The uuid for the new conversation.
@@ -3112,6 +3194,8 @@ class MemoryInterface(abc.ABC):
 
         source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
+        if attack_result_id is None and source_metadata is not None:
+            attack_result_id = source_metadata.attack_result_id
         new_conversation_id, all_pieces = self._dispatch_memory_operation(
             "duplicate_messages", self._execute_duplicate_messages, messages=messages_to_duplicate
         )
@@ -3119,7 +3203,11 @@ class MemoryInterface(abc.ABC):
             self._dispatch_memory_operation(
                 "add_conversation_to_memory",
                 self._execute_add_conversation_to_memory,
-                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target),
+                conversation=Conversation(
+                    conversation_id=new_conversation_id,
+                    target_identifier=source_target,
+                    attack_result_id=attack_result_id,
+                ),
             )
             self._dispatch_memory_operation(
                 "add_message_pieces_to_memory", self._execute_add_message_pieces_to_memory, message_pieces=all_pieces
@@ -3411,6 +3499,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -3422,6 +3511,7 @@ class MemoryInterface(abc.ABC):
         remove_seeds_from_memory stay in sync and cannot drift.
 
         Args:
+            origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match. By default this matches by substring; pass exact=True to
                 require full-string equality instead. If None, all values are returned.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
@@ -3476,6 +3566,8 @@ class MemoryInterface(abc.ABC):
             conditions.append(SeedEntry.added_by == added_by)
         if source:
             conditions.append(SeedEntry.source == source)
+        if origin is not None:
+            conditions.append(SeedEntry.origin == SeedOrigin(origin).value)
 
         # Handle seed_type filtering
         if seed_type == "objective":
@@ -3511,6 +3603,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -3519,6 +3612,7 @@ class MemoryInterface(abc.ABC):
         Retrieve a list of seed prompts based on the specified filters.
 
         Args:
+            origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match by substring. If None, all values are returned.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
@@ -3561,6 +3655,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -3591,6 +3686,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -3607,6 +3703,7 @@ class MemoryInterface(abc.ABC):
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
         Args:
+            origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -3660,6 +3757,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -3699,6 +3797,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -3723,6 +3822,7 @@ class MemoryInterface(abc.ABC):
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
         Args:
+            origin (SeedOrigin | None): Match origin before expanding to complete groups.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -3776,6 +3876,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -4375,6 +4476,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -4384,6 +4486,7 @@ class MemoryInterface(abc.ABC):
         Retrieve groups of seed prompts based on the provided filtering criteria.
 
         Args:
+            origin (SeedOrigin | None): Match origin before expanding to complete groups.
             value (str | None, Optional): The value to match by substring.
             value_sha256 (Sequence[str] | None, Optional): SHA256 hash of value to filter seed groups by.
             dataset_name (str | None, Optional): Name of the dataset to match exactly.
@@ -4423,6 +4526,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -4502,6 +4606,9 @@ class MemoryInterface(abc.ABC):
             raise ValueError("A prepared branch cannot replace the source conversation")
         if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
             raise ValueError("Copied message pieces must belong to the prepared branches")
+        for conversation in [*conversations, *([source_conversation] if source_conversation else [])]:
+            if conversation.attack_result_id not in (None, attack_result_id):
+                raise ValueError("Prepared conversations must belong to the destination attack")
 
         with closing(self._get_session()) as session, session.begin():
             entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
@@ -4511,9 +4618,15 @@ class MemoryInterface(abc.ABC):
                 active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
                 if source_conversation.conversation_id not in active_ids:
                     raise ValueError("Source conversation is not an active objective conversation of this attack")
-                self._insert_conversation_in_session(session=session, conversation=source_conversation)
+                self._insert_conversation_in_session(
+                    session=session,
+                    conversation=source_conversation.model_copy(update={"attack_result_id": attack_result_id}),
+                )
             for conversation in conversations:
-                self._insert_conversation_in_session(session=session, conversation=conversation)
+                self._insert_conversation_in_session(
+                    session=session,
+                    conversation=conversation.model_copy(update={"attack_result_id": attack_result_id}),
+                )
             self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
             pruned_ids = list(entry.pruned_conversation_ids or [])
             for conversation_id in conversation_ids:
@@ -6297,13 +6410,16 @@ class MemoryInterface(abc.ABC):
         ``conversation_id`` with a different target is a conflict and raises ``ValueError`` -- a conversation is held
         with exactly one target and is never re-targeted.
 
+        The caller supplies ownership through ``conversation.attack_result_id``.
+        Registering a conversation that belongs to a different execution raises ``ValueError``.
+
         Args:
             conversation (Conversation): The conversation metadata to record, carrying the
                 ``conversation_id`` and the target it is held with (if known).
 
         Raises:
             ValueError: If ``conversation_id`` is empty, or if a conversation with the same
-                id already exists with a different target.
+                id already exists with a different target or belongs to a different attack execution.
         """
         return await self._run_database_operation_async(
             self._execute_add_conversation_to_memory, conversation=conversation
@@ -7421,6 +7537,7 @@ class MemoryInterface(abc.ABC):
         not_data_type: str | None = None,
         converted_value_sha256: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
+        attack_result_id: str | None = None,
     ) -> Sequence[MessagePiece]:
         """
         Use ``get_message_pieces_async``.
@@ -7449,6 +7566,7 @@ class MemoryInterface(abc.ABC):
             not_data_type=not_data_type,
             converted_value_sha256=converted_value_sha256,
             identifier_filters=identifier_filters,
+            attack_result_id=attack_result_id,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.get_message_pieces)
@@ -7468,6 +7586,7 @@ class MemoryInterface(abc.ABC):
         not_data_type: str | None = None,
         converted_value_sha256: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
+        attack_result_id: str | None = None,
     ) -> Sequence[MessagePiece]:
         """
         Retrieve a list of MessagePiece objects based on the specified filters.
@@ -7491,6 +7610,8 @@ class MemoryInterface(abc.ABC):
             identifier_filters (Sequence[IdentifierFilter] | None, optional):
                 A sequence of IdentifierFilter objects that
                 allow filtering by various identifier JSON properties. Defaults to None.
+            attack_result_id (str | None, optional): Only return pieces from conversations owned by
+                the attack execution that produced this result. Defaults to None.
 
         Returns:
             Sequence[MessagePiece]: A list of MessagePiece objects that match the specified filters.
@@ -7514,6 +7635,7 @@ class MemoryInterface(abc.ABC):
             not_data_type=not_data_type,
             converted_value_sha256=converted_value_sha256,
             identifier_filters=identifier_filters,
+            attack_result_id=attack_result_id,
         )
 
     def duplicate_messages(self, *, messages: Sequence[Message]) -> tuple[str, Sequence[MessagePiece]]:
@@ -7548,7 +7670,7 @@ class MemoryInterface(abc.ABC):
         """
         return await self._run_database_operation_async(self._execute_duplicate_messages, messages=messages)
 
-    def duplicate_conversation(self, *, conversation_id: str) -> str:
+    def duplicate_conversation(self, *, conversation_id: str, attack_result_id: str | None = None) -> str:
         """
         Use ``duplicate_conversation_async``.
 
@@ -7562,10 +7684,10 @@ class MemoryInterface(abc.ABC):
             new_item="MemoryInterface.duplicate_conversation_async",
             removed_in="1.4.0",
         )
-        return self._execute_duplicate_conversation(conversation_id=conversation_id)
+        return self._execute_duplicate_conversation(conversation_id=conversation_id, attack_result_id=attack_result_id)
 
     @legacy_sync_override(lambda: MemoryInterface.duplicate_conversation)
-    async def duplicate_conversation_async(self, *, conversation_id: str) -> str:
+    async def duplicate_conversation_async(self, *, conversation_id: str, attack_result_id: str | None = None) -> str:
         """
         Duplicate a conversation for reuse.
 
@@ -7575,15 +7697,18 @@ class MemoryInterface(abc.ABC):
 
         Args:
             conversation_id (str): The conversation ID with existing conversations.
+            attack_result_id (str | None): Destination owner. Defaults to the source owner.
 
         Returns:
             The uuid for the new conversation.
         """
         return await self._run_database_operation_async(
-            self._execute_duplicate_conversation, conversation_id=conversation_id
+            self._execute_duplicate_conversation, conversation_id=conversation_id, attack_result_id=attack_result_id
         )
 
-    def duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
+    def duplicate_conversation_excluding_last_turn(
+        self, *, conversation_id: str, attack_result_id: str | None = None
+    ) -> str:
         """
         Use ``duplicate_conversation_excluding_last_turn_async``.
 
@@ -7597,10 +7722,14 @@ class MemoryInterface(abc.ABC):
             new_item="MemoryInterface.duplicate_conversation_excluding_last_turn_async",
             removed_in="1.4.0",
         )
-        return self._execute_duplicate_conversation_excluding_last_turn(conversation_id=conversation_id)
+        return self._execute_duplicate_conversation_excluding_last_turn(
+            conversation_id=conversation_id, attack_result_id=attack_result_id
+        )
 
     @legacy_sync_override(lambda: MemoryInterface.duplicate_conversation_excluding_last_turn)
-    async def duplicate_conversation_excluding_last_turn_async(self, *, conversation_id: str) -> str:
+    async def duplicate_conversation_excluding_last_turn_async(
+        self, *, conversation_id: str, attack_result_id: str | None = None
+    ) -> str:
         """
         Duplicate a conversation, excluding the last turn. In this case, last turn is defined as before the last
         user request (e.g. if there is half a turn, it just removes that half).
@@ -7609,12 +7738,15 @@ class MemoryInterface(abc.ABC):
 
         Args:
             conversation_id (str): The conversation ID with existing conversations.
+            attack_result_id (str | None): Destination owner. Defaults to the source owner.
 
         Returns:
             The uuid for the new conversation.
         """
         return await self._run_database_operation_async(
-            self._execute_duplicate_conversation_excluding_last_turn, conversation_id=conversation_id
+            self._execute_duplicate_conversation_excluding_last_turn,
+            conversation_id=conversation_id,
+            attack_result_id=attack_result_id,
         )
 
     def add_message_to_memory(self, *, request: Message) -> None:
@@ -7747,6 +7879,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -7774,6 +7907,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -7794,6 +7928,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -7802,6 +7937,7 @@ class MemoryInterface(abc.ABC):
         Retrieve a list of seed prompts based on the specified filters.
 
         Args:
+            origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match by substring. If None, all values are returned.
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
@@ -7845,6 +7981,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -7865,6 +8002,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -7895,6 +8033,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -7916,6 +8055,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -7932,6 +8072,7 @@ class MemoryInterface(abc.ABC):
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
         Args:
+            origin (SeedOrigin | None): Match the recorded ingestion origin.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -7985,6 +8126,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -8005,6 +8147,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -8035,6 +8178,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -8056,6 +8200,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -8080,6 +8225,7 @@ class MemoryInterface(abc.ABC):
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
 
         Args:
+            origin (SeedOrigin | None): Match origin before expanding to complete groups.
             value (str): The value to match. For the remove methods this defaults to full-string equality
                 (exact=True) so a short or common value does not delete far more seeds than intended; pass
                 exact=False to match by substring instead. If None, all values are considered.
@@ -8133,6 +8279,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -8213,6 +8360,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -8243,6 +8391,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,
@@ -8264,6 +8413,7 @@ class MemoryInterface(abc.ABC):
         groups: Sequence[str] | None = None,
         source: str | None = None,
         seed_type: SeedType | None = None,
+        origin: SeedOrigin | None = None,
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
@@ -8273,6 +8423,7 @@ class MemoryInterface(abc.ABC):
         Retrieve groups of seed prompts based on the provided filtering criteria.
 
         Args:
+            origin (SeedOrigin | None): Match origin before expanding to complete groups.
             value (str | None, Optional): The value to match by substring.
             value_sha256 (Sequence[str] | None, Optional): SHA256 hash of value to filter seed groups by.
             dataset_name (str | None, Optional): Name of the dataset to match exactly.
@@ -8311,6 +8462,7 @@ class MemoryInterface(abc.ABC):
             groups=groups,
             source=source,
             seed_type=seed_type,
+            origin=origin,
             parameters=parameters,
             metadata=metadata,
             prompt_group_ids=prompt_group_ids,

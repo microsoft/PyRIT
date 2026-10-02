@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Literal, final
 
 from pyrit.common.async_compatibility import legacy_sync_override
+from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import MessageListNormalizer
@@ -421,7 +422,11 @@ class PromptTarget(Identifiable):
             raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
 
         self._memory.add_conversation_to_memory(
-            conversation=Conversation(conversation_id=conversation_id, target_identifier=self.get_identifier())
+            conversation=Conversation(
+                conversation_id=conversation_id,
+                target_identifier=self.get_identifier(),
+                attack_result_id=get_current_attack_result_id(),
+            )
         )
         self._memory.add_message_to_memory(
             request=MessagePiece(
@@ -476,7 +481,11 @@ class PromptTarget(Identifiable):
 
         (
             await self._memory.add_conversation_to_memory_async(
-                conversation=Conversation(conversation_id=conversation_id, target_identifier=self.get_identifier())
+                conversation=Conversation(
+                    conversation_id=conversation_id,
+                    target_identifier=self.get_identifier(),
+                    attack_result_id=get_current_attack_result_id(),
+                )
             )
         )
         (
