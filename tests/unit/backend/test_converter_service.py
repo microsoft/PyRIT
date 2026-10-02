@@ -783,6 +783,69 @@ class TestPersistDataUriParams:
         assert service._registry.instances.get("invalid-pdf") is None
         assert list(service._upload_path.iterdir()) == []
 
+    async def test_create_converter_registers_nothing_when_response_mapping_fails(
+        self, upload_service: ConverterService
+    ) -> None:
+        request = CreateConverterRequest(
+            name="unmapped-pdf",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+
+        with (
+            patch(
+                "pyrit.backend.services.converter_service.converter_object_to_instance",
+                side_effect=RuntimeError("mapping failed"),
+            ),
+            pytest.raises(RuntimeError, match="mapping failed"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        assert upload_service._registry.instances.get("unmapped-pdf") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_rechecks_name_after_upload(self, upload_service: ConverterService) -> None:
+        persist_async = upload_service._persist_data_uri_params_async
+
+        async def persist_then_take_name_async(**kwargs: object) -> object:
+            result = await persist_async(**kwargs)
+            upload_service._registry.instances.register(Base64Converter(), name="taken")
+            return result
+
+        request = CreateConverterRequest(
+            name="taken",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+        with (
+            patch.object(upload_service, "_persist_data_uri_params_async", side_effect=persist_then_take_name_async),
+            patch.object(upload_service._registry, "create_instance") as create_instance,
+            pytest.raises(ValueError, match="already exists"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        create_instance.assert_not_called()
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_removes_upload_when_registration_fails(
+        self, upload_service: ConverterService
+    ) -> None:
+        request = CreateConverterRequest(
+            name="raced-pdf",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+
+        with (
+            patch.object(
+                upload_service._registry.instances, "register", side_effect=ValueError("'raced-pdf' already exists")
+            ),
+            pytest.raises(ValueError, match="already exists"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        assert list(upload_service._upload_path.iterdir()) == []
+
     @pytest.mark.parametrize("error", [OSError("write failed"), asyncio.CancelledError()])
     async def test_persist_data_uri_cleans_partial_write(
         self, upload_service: ConverterService, error: BaseException
