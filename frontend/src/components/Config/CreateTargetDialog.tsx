@@ -312,27 +312,26 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const requiredMetadataParameterMissing = requiredMetadataParameters.some(
     (parameter) => !isParameterValueSet(parameterValues[parameter.name]),
   )
-  const endpointParameter = targetTypeEntry?.parameters.find((parameter) => parameter.name === 'endpoint')
-  const modelNameParameter = targetTypeEntry?.parameters.find((parameter) => parameter.name === 'model_name')
-  const underlyingModelParameter = targetTypeEntry?.parameters.find(
-    (parameter) => parameter.name === 'underlying_model' || parameter.name === 'underlying_model_name',
+  const parameterByName = useMemo(
+    () => new Map(targetTypeEntry?.parameters.map((parameter) => [parameter.name, parameter]) ?? []),
+    [targetTypeEntry],
   )
-  const apiKeyParameter = targetTypeEntry?.parameters.find((parameter) => parameter.name === 'api_key')
-  const customFunctionsParameter = targetTypeEntry?.parameters.find(
-    (parameter) => parameter.name === 'custom_functions',
-  )
+  const endpointParameter = parameterByName.get('endpoint')
+  const modelNameParameter = parameterByName.get('model_name')
+  const underlyingModelParameter = parameterByName.get('underlying_model')
+    ?? parameterByName.get('underlying_model_name')
+  const apiKeyParameter = parameterByName.get('api_key')
+  const customFunctionsParameter = parameterByName.get('custom_functions')
   const customFunctionsReason = customFunctionsParameter
     ? getTargetParameterPolicy(targetType, customFunctionsParameter.name)?.reason
     : null
   const metadataUnavailableForSelection = targetType !== '' && !targetTypeEntry
-  const hasEndpointField = endpointParameter !== undefined
+  const hasField = (name: string) => parameterByName.has(name)
     || (metadataUnavailableForSelection && !isRoundRobin)
-  const hasModelNameField = modelNameParameter !== undefined
-    || (metadataUnavailableForSelection && !isRoundRobin)
-  const hasUnderlyingModelField = underlyingModelParameter !== undefined
-    || (metadataUnavailableForSelection && !isRoundRobin)
-  const hasApiKeyField = apiKeyParameter !== undefined
-    || (metadataUnavailableForSelection && !isRoundRobin)
+  const hasEndpointField = hasField('endpoint')
+  const hasModelNameField = hasField('model_name')
+  const hasUnderlyingModelField = hasField('underlying_model') || hasField('underlying_model_name')
+  const hasApiKeyField = hasField('api_key')
   const selectedTargetDisplayName = getTargetDisplayName(targetType)
   const selectedTargetAuthDescription = targetTypeEntry
     ? getAuthDescription(targetTypeEntry.supported_auth_modes)
