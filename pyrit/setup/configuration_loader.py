@@ -117,6 +117,8 @@ class ConfigurationLoader(YamlLoadable):
         operation: Name for the current operation.
         enable_live_reinitialization: Whether administrators may replace the live
             single-process backend runtime from the GUI.
+        allow_media_url_import: Whether the backend downloads http(s) media URLs from API
+            requests into managed storage. When False, such URLs are rejected.
 
     Example YAML configuration:
         memory_db_type: sqlite
@@ -161,6 +163,7 @@ class ConfigurationLoader(YamlLoadable):
     max_concurrent_scenario_runs: int = 3
     enable_live_reinitialization: bool = False
     allow_custom_initializers: bool = False
+    allow_media_url_import: bool = True
     custom_initializers_source: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
@@ -183,6 +186,8 @@ class ConfigurationLoader(YamlLoadable):
         validate_env_akv_strict(env_akv_strict=self.env_akv_strict)
         if not isinstance(self.enable_live_reinitialization, bool):
             raise TypeError("enable_live_reinitialization must be a bool.")
+        if not isinstance(self.allow_media_url_import, bool):
+            raise TypeError("allow_media_url_import must be a bool.")
         self._validate_allow_custom_initializers()
         self._normalize_memory_db_type()
         self._normalize_initializers()

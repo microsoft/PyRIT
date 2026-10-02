@@ -133,13 +133,18 @@ The backend is the part of PyRIT that accepts requests from other machines, so i
 request values before using them:
 
 - Media values in messages, previews, and prepended conversations, and file parameters of
-  converters, must be uploaded content or point into this server's media storage: the
-  `prompt-memory-entries` and `seed-prompt-entries` folders under the memory results path.
-  Blob URLs are accepted only when results are stored in Azure Blob Storage, and only
-  inside those folders of the configured results container. Other file paths and URLs
-  are rejected.
-- The backend only reads media URLs inside this server's result storage. Converter
-  previews and sent messages reject `url` pieces; stored history may still contain them.
+  converters, must be uploaded content, a media URL, or a reference into this server's media
+  storage: the `prompt-memory-entries` and `seed-prompt-entries` folders under the memory
+  results path. Other file paths are rejected.
+- Media URLs and `url` pieces are downloaded once into that storage (60 second limit,
+  100 MiB limit, at most 3 redirects, no request credentials forwarded), and only the stored
+  copy reaches converters and targets, so signed URLs are not passed to model providers.
+  This includes messages that are stored without being sent, because stored history is
+  replayed to targets later. A `url` piece takes the media type of its content
+  (`image_path`, `audio_path`, `video_path`, or `binary_path`); send a literal URL as `text`.
+  Blob URLs inside the configured results container are kept as references, without their
+  query string, instead of being downloaded. Set `allow_media_url_import: false` in
+  `.pyrit_conf` to reject media URLs instead.
 - Target types that read local files or load model code (`HTTPXAPITarget`,
   `HuggingFaceChatTarget`) cannot be created through the API. Register them in Python or
   with an initializer, where the operator controls their settings; for example, set
@@ -147,8 +152,9 @@ request values before using them:
 
 Intentional exceptions:
 
-- Target endpoints, raw HTTP requests, and their redirects are chosen by the operator and
-  are not restricted. Limit outbound network access in the deployment instead.
+- Target endpoints, raw HTTP requests, media URLs, and their redirects are chosen by the
+  operator and are not restricted to particular hosts. Limit outbound network access in the
+  deployment instead.
 - Prompt content is not filtered. It is adversarial test data by design.
 - Any file type can be stored as a payload. `GET /api/media` only renders known image,
   audio, and video types inline; everything else downloads as a file.

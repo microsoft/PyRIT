@@ -25,6 +25,7 @@ from pyrit.backend.services.converter_service import (
     ConverterService,
     get_converter_service,
 )
+from pyrit.backend.services.media_url_import import MediaDownload
 from pyrit.converter import (
     Base64Converter,
     BinaryConverter,
@@ -628,22 +629,62 @@ class TestPersistDataUriParams:
             f"{_BLOB_RESULTS_ROOT}/private/input.mp4",
             f"{_BLOB_RESULTS_ROOT}/prompt-memory-entries/inputs/..\\..\\private/input.mp4",
             f"{_BLOB_RESULTS_ROOT}%5Cprompt-memory-entries/private/input.mp4",
+            "https://example.org/input.mp4",
         ],
     )
-    async def test_path_or_str_url_outside_results_is_rejected(
+    async def test_path_or_str_url_outside_results_is_downloaded_to_owned_upload(
         self, upload_service: ConverterService, url: str
     ) -> None:
-        with _results_root(_BLOB_RESULTS_ROOT), pytest.raises(ValueError, match="result storage"):
+        download = MediaDownload(content=b"MP4", content_type="video/mp4", final_url=url)
+        with (
+            _results_root(_BLOB_RESULTS_ROOT),
+            patch(
+                "pyrit.backend.services.converter_service.download_media_url_async", AsyncMock(return_value=download)
+            ) as download_mock,
+        ):
+            result, owned_paths = await upload_service._persist_data_uri_params_async(
+                converter_type="AddImageVideoConverter", params={"video_path": url}
+            )
+
+        download_mock.assert_awaited_once_with(url=url)
+        assert len(owned_paths) == 1
+        assert owned_paths[0].parent == upload_service._upload_path
+        assert owned_paths[0].suffix == ".mp4"
+        assert owned_paths[0].read_bytes() == b"MP4"
+        assert result == {"video_path": owned_paths[0]}
+
+    async def test_path_or_str_blob_url_is_kept_without_query(self, upload_service: ConverterService) -> None:
+        url = f"{_BLOB_RESULTS_ROOT}/prompt-memory-entries/inputs/input.mp4"
+
+        with _results_root(_BLOB_RESULTS_ROOT):
+            result, owned_paths = await upload_service._persist_data_uri_params_async(
+                converter_type="AddImageVideoConverter", params={"video_path": f"{url}?sv=2024&sig=secret"}
+            )
+
+        assert result == {"video_path": url}
+        assert owned_paths == []
+
+    async def test_failed_url_download_leaves_no_upload(self, upload_service: ConverterService) -> None:
+        with (
+            patch(
+                "pyrit.backend.services.converter_service.download_media_url_async",
+                AsyncMock(side_effect=ValueError("Media URL https://example.org/x.png returned HTTP 404.")),
+            ),
+            pytest.raises(ValueError, match="HTTP 404"),
+        ):
             await upload_service.create_converter_async(
-                request=CreateConverterRequest(name="remote", type="AddImageVideoConverter", params={"video_path": url})
+                request=CreateConverterRequest(
+                    name="remote", type="AddImageVideoConverter", params={"video_path": "https://example.org/x.png"}
+                )
             )
         assert upload_service._registry.instances.get_entry("remote") is None
+        assert list(upload_service._upload_path.iterdir()) == []
 
-    @pytest.mark.parametrize("value", [r"C:\server\input.mp4", "input.mp4", "https://example.org/input.mp4", 123])
-    async def test_path_or_str_rest_rejects_non_upload_non_blob_values(
+    @pytest.mark.parametrize("value", [r"C:\server\input.mp4", "input.mp4", "ftp://example.org/input.mp4", 123])
+    async def test_path_or_str_rest_rejects_non_upload_non_url_values(
         self, upload_service: ConverterService, value: object
     ) -> None:
-        with pytest.raises(ValueError, match="data URI or supplied as an Azure Blob URL"):
+        with pytest.raises(ValueError, match="data URI or given as an http\\(s\\) URL"):
             await upload_service.create_converter_async(
                 request=CreateConverterRequest(
                     name="invalid", type="AddImageVideoConverter", params={"video_path": value}
@@ -979,21 +1020,42 @@ class TestPreviewConversion:
         assert result.converted_value == str(stored_path)
         factory.assert_not_called()
 
-    @pytest.mark.parametrize("value", ["https://example.test/image.png", "/api/media?path=/etc/hostname"])
-    async def test_preview_conversion_rejects_media_outside_results(self, tmp_path: Path, value: str) -> None:
-        """Media values must point into this server's media storage."""
+    async def test_preview_conversion_rejects_media_outside_results(self, tmp_path: Path) -> None:
+        """Media references must point into this server's media storage."""
         service = ConverterService()
-        request = ConverterPreviewRequest(original_value=value, original_value_data_type="image_path", converter_ids=[])
+        request = ConverterPreviewRequest(
+            original_value="/api/media?path=/etc/hostname", original_value_data_type="image_path", converter_ids=[]
+        )
 
-        with _results_root(str(tmp_path)), pytest.raises(ValueError, match="result storage|results directory"):
+        with _results_root(str(tmp_path)), pytest.raises(ValueError, match="results directory"):
             await service.preview_conversion_async(request=request)
 
-    def test_preview_request_rejects_url_input(self) -> None:
-        """Preview never downloads caller-supplied URLs."""
-        with pytest.raises(ValidationError, match="URL input is not supported"):
-            ConverterPreviewRequest(
-                original_value="https://example.test/image.png", original_value_data_type="url", converter_ids=[]
-            )
+    async def test_preview_imports_url_input_as_media(self, tmp_path: Path) -> None:
+        """A URL preview input is downloaded once and converted as the stored media type."""
+        service = ConverterService()
+        serializer = MagicMock(value=str(tmp_path / "prompt-memory-entries" / "imported.png"))
+        serializer.save_data_async = AsyncMock()
+        download = MediaDownload(content=b"PNG", content_type="image/png", final_url="https://example.test/cat")
+        request = ConverterPreviewRequest(
+            original_value="https://example.test/cat", original_value_data_type="url", converter_ids=[]
+        )
+
+        with (
+            _results_root(str(tmp_path)),
+            patch(
+                "pyrit.backend.services.media_persistence.download_media_url_async", AsyncMock(return_value=download)
+            ) as download_mock,
+            patch(
+                "pyrit.backend.services.converter_service.data_serializer_factory", return_value=serializer
+            ) as factory,
+        ):
+            result = await service.preview_conversion_async(request=request)
+
+        download_mock.assert_awaited_once_with(url="https://example.test/cat")
+        factory.assert_called_once_with(category="prompt-memory-entries", data_type="image_path", extension=".png")
+        serializer.save_data_async.assert_awaited_once_with(b"PNG")
+        assert result.original_value_data_type == "url"
+        assert (result.converted_value, result.converted_value_data_type) == (serializer.value, "image_path")
 
     async def test_preview_conversion_chains_multiple_converters(self) -> None:
         """Test that preview chains multiple converters."""

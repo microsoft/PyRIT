@@ -667,24 +667,6 @@ class AddMessageRequest(BaseModel):
 
         return self
 
-    @model_validator(mode="after")
-    def _reject_url_pieces_when_sending(self) -> "AddMessageRequest":
-        """
-        Reject URL pieces in a message that will be sent.
-
-        Sending can route a piece through converters that download URL input on the
-        server. Stored history may still hold URL pieces because storing never fetches them.
-
-        Returns:
-            AddMessageRequest: The validated request.
-
-        Raises:
-            ValueError: If a piece to be sent has a ``url`` data type.
-        """
-        if self.send and any("url" in (piece.data_type, piece.converted_value_data_type) for piece in self.pieces):
-            raise ValueError("URL pieces cannot be sent; upload the file content instead")
-        return self
-
 
 class AddMessageResponse(BaseModel):
     """

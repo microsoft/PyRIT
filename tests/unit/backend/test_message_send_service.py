@@ -27,6 +27,7 @@ from pyrit.backend.services.manual_send_scheduler import (
     ManualSendScheduler,
     get_manual_send_scheduler,
 )
+from pyrit.backend.services.media_url_import import MediaDownload
 from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
 from pyrit.backend.services.target_service import TargetService
 from pyrit.common.attack_result_scope import get_current_attack_result_id
@@ -795,7 +796,8 @@ class TestPersistBase64Pieces:
         stored_path = (tmp_path / "prompt-memory-entries" / "preview.png").resolve()
         if stored_in_blob:
             mock_memory.results_path = "https://account.blob.core.windows.net/results"
-            converted_value = expected_value = f"{mock_memory.results_path}/prompt-memory-entries/preview.png?sv=1"
+            expected_value = f"{mock_memory.results_path}/prompt-memory-entries/preview.png"
+            converted_value = f"{expected_value}?sv=1"
         else:
             mock_memory.results_path = str(tmp_path)
             converted_value, expected_value = f"/api/media?path={stored_path}", str(stored_path)
@@ -817,16 +819,15 @@ class TestPersistBase64Pieces:
         assert request.pieces[0].converted_value == expected_value
         factory.assert_not_called()
 
-    @pytest.mark.parametrize("converted_value", ["https://example.com/preview.png", "/api/media?path=/etc/hostname"])
     async def test_converted_media_outside_results_is_rejected_async(
-        self, *, mock_memory: MagicMock, tmp_path: Path, converted_value: str
+        self, *, mock_memory: MagicMock, tmp_path: Path
     ) -> None:
         mock_memory.results_path = str(tmp_path)
         request = AddMessageRequest(
             pieces=[
                 MessagePieceRequest(
                     original_value="source",
-                    converted_value=converted_value,
+                    converted_value="/api/media?path=/etc/hostname",
                     converted_value_data_type="image_path",
                 )
             ],
@@ -834,8 +835,32 @@ class TestPersistBase64Pieces:
             target_conversation_id="test-id",
         )
 
-        with pytest.raises(ValueError, match="result storage|results directory"):
+        with pytest.raises(ValueError, match="results directory"):
             await MessageSendService._persist_base64_pieces_async(request)
+
+    async def test_url_piece_is_imported_before_sending_async(self, *, tmp_path: Path) -> None:
+        stored = str(tmp_path / "prompt-memory-entries" / "imported.png")
+        serializer = MagicMock(value=stored)
+        serializer.save_data_async = AsyncMock()
+        download = MediaDownload(content=b"PNG", content_type="image/png", final_url="https://example.com/cat")
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(data_type="url", original_value="https://example.com/cat?sig=secret")],
+            send=True,
+            target_conversation_id="test-id",
+        )
+
+        with (
+            patch(
+                "pyrit.backend.services.media_persistence.download_media_url_async", AsyncMock(return_value=download)
+            ) as download_mock,
+            patch("pyrit.backend.services.message_send_service.data_serializer_factory", return_value=serializer),
+        ):
+            await MessageSendService._persist_base64_pieces_async(request)
+
+        download_mock.assert_awaited_once_with(url="https://example.com/cat?sig=secret")
+        piece = request.pieces[0]
+        assert (piece.data_type, piece.original_value) == ("image_path", stored)
+        assert "sig=secret" not in piece.model_dump_json()
 
     async def test_identical_original_and_converted_media_saved_once_async(self) -> None:
         request = AddMessageRequest(
@@ -1084,16 +1109,16 @@ class TestPersistBase64Pieces:
         )
         assert request.pieces[0].original_value == "/saved/image.png"
 
-    async def test_http_url_is_kept_as_is(self, message_send_service, mock_memory: MagicMock) -> None:
-        """HTTPS blob URLs inside the results container should not be re-persisted."""
+    async def test_http_url_is_kept_without_query(self, message_send_service, mock_memory: MagicMock) -> None:
+        """HTTPS blob URLs inside the results container are kept as references, without their query string."""
         mock_memory.results_path = "https://myblob.blob.core.windows.net/results"
-        blob_url = "https://myblob.blob.core.windows.net/results/prompt-memory-entries/images/photo.png?sv=2024"
+        blob_url = "https://myblob.blob.core.windows.net/results/prompt-memory-entries/images/photo.png"
         request = AddMessageRequest(
             role="user",
             pieces=[
                 MessagePieceRequest(
                     data_type="image_path",
-                    original_value=blob_url,
+                    original_value=f"{blob_url}?sv=2024&sig=secret",
                     mime_type="image/png",
                 ),
             ],

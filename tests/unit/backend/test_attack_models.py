@@ -8,7 +8,7 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-from pyrit.backend.models.attacks import AddMessageRequest, MessagePieceRequest
+from pyrit.backend.models.attacks import MessagePieceRequest
 from pyrit.models import PromptDataType
 
 
@@ -74,25 +74,3 @@ def test_message_piece_accepts_applied_converter_order(converter_ids: list[str])
 def test_message_piece_rejects_applied_converters_without_value(converter_ids: list[str]) -> None:
     with pytest.raises(ValidationError, match="applied_converter_ids requires converted_value"):
         MessagePieceRequest(original_value="source", applied_converter_ids=converter_ids)
-
-
-@pytest.mark.parametrize(
-    "piece",
-    [
-        MessagePieceRequest(data_type="url", original_value="https://example.test/image.png"),
-        MessagePieceRequest(
-            original_value="source", converted_value="https://example.test/image.png", converted_value_data_type="url"
-        ),
-    ],
-)
-def test_add_message_rejects_url_pieces_when_sending(piece: MessagePieceRequest) -> None:
-    with pytest.raises(ValidationError, match="URL pieces cannot be sent"):
-        AddMessageRequest(pieces=[piece], send=True, target_conversation_id="conversation")
-
-
-def test_add_message_stores_url_pieces_without_sending() -> None:
-    piece = MessagePieceRequest(data_type="url", original_value="https://example.test/blob.png")
-
-    request = AddMessageRequest(role="assistant", pieces=[piece], send=False, target_conversation_id="conversation")
-
-    assert request.pieces[0].data_type == "url"

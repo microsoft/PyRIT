@@ -134,6 +134,14 @@ enable_live_reinitialization: false
 # Default: false
 allow_custom_initializers: false
 
+# When true, the backend downloads http(s) media URLs from API requests (media
+# values, `url` pieces, and converter file parameters) once into managed storage,
+# with time, size, and redirect limits, and passes only the stored copy on. When
+# false, such URLs are rejected and media must be uploaded.
+#
+# Default: true
+allow_media_url_import: true
+
 # Optional storage for custom initializer Python scripts. This may be a local
 # directory or an Azure Blob container URI with an optional blob prefix.
 # Container URIs may include a SAS; otherwise DefaultAzureCredential is used. Defaults to
