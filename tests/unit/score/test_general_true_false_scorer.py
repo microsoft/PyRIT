@@ -188,6 +188,7 @@ def _response(body: str) -> Message:
 async def test_general_scorer_category_precedence(patch_central_database, body, expected_category):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt_async = AsyncMock()
     chat_target.send_prompt_async = AsyncMock(return_value=[_response(body)])
     scorer = SelfAskGeneralTrueFalseScorer(
         chat_target=chat_target, system_prompt_format_string="Prompt.", category="harm"
