@@ -206,6 +206,7 @@ class MyCustomScenario(Scenario):
             version=1,
             objective_scorer=TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())),
             technique_class=MyCustomTechnique,
+            # DatasetAttackConfiguration selects at most 5 attack groups by default; set max_dataset_size to change it.
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"]),
             scenario_result_id=scenario_result_id,
         )

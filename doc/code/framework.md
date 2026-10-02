@@ -145,6 +145,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Datasets should never be retrieved from SeedDatasetProviders; SeedDatasetProviders should load into memory, and then components retrieve from memory
 - Most components should always work with seeds passed directly in (except scenarios which may package them from memory). Never use SeedDatasetProviders, file paths, etc. Either pass the seed as an argument or retrieve from memory.
 - There is a Seed hierarchy and the right types should be used (SeedObjective, SeedPrompt, SimulatedSeedPrompt, AttackSeedGroup, ...)
+- Generated dataset providers adapt generation-strategy results to typed seeds. Strategies
+  own model interaction and validation; memory stores the seeds, and scenarios select them.
 - `SeedObjective.conditions` holds typed criteria beside its objective text. Seed storage and
   identity retain those criteria; `SeedGroup.scoring_expectation` exposes them for execution.
 - **Does not own**: a dataset defines and holds seeds; it doesn't package them for an attack. Specifically not:
@@ -199,6 +201,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 **Attack Responsibility**: An attack is a type of executor, which manages conversations to achieve an objective.
 
+- A conversation created for an attack belongs to that execution. Reusing conversation history in another execution, child attack, or branch requires a copy with a new conversation ID.
+- Each attack execution has a unique `attack_result_id`.
 - Any branching decision (e.g. the next thing(s) to do is based on a previous result) should be an attack/executor.
 - Executors should always make use of other component's responsibilities. An executor should always branch based on a scorer and NOT a direct response. (e.g. was this prompt blocked? is a scorer responsibility, not an executor responsibility)
 - Executors should use scoring and target capabilities implicitly. Executors should support multi-modal.

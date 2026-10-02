@@ -634,7 +634,7 @@ class TestPyritMessagesToDto:
         from pyrit.memory import CentralMemory
 
         stub = MagicMock()
-        stub.get_prompt_scores = MagicMock(return_value=[])
+        stub.get_prompt_scores_async = AsyncMock(return_value=[])
         with patch.object(CentralMemory, "get_memory_instance", return_value=stub):
             yield stub
 
@@ -879,7 +879,7 @@ class TestPyritMessagesToDtoRealObjects:
         from pyrit.models import Score as RealPyritScore
 
         piece = RealPyritMessagePiece(role="user", original_value="hi", conversation_id="real-conv-scores")
-        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+        (await sqlite_instance.add_message_to_memory_async(request=RealPyritMessage(message_pieces=[piece])))
 
         score = RealPyritScore(
             score_value="0.75",
@@ -888,9 +888,9 @@ class TestPyritMessagesToDtoRealObjects:
             score_rationale="example rationale",
             message_piece_id=piece.id,
         )
-        sqlite_instance.add_scores_to_memory(scores=[score])
+        (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
-        reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
+        reloaded = await sqlite_instance.get_conversation_messages_async(conversation_id=piece.conversation_id)
         result = await pyrit_messages_to_dto_async(list(reloaded))
 
         assert len(result) == 1
@@ -909,9 +909,9 @@ class TestPyritMessagesToDtoRealObjects:
         from pyrit.models import MessagePiece as RealPyritMessagePiece
 
         piece = RealPyritMessagePiece(role="user", original_value="hi", conversation_id="real-conv-empty")
-        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+        (await sqlite_instance.add_message_to_memory_async(request=RealPyritMessage(message_pieces=[piece])))
 
-        reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
+        reloaded = await sqlite_instance.get_conversation_messages_async(conversation_id=piece.conversation_id)
         result = await pyrit_messages_to_dto_async(list(reloaded))
 
         assert result[0].message_pieces[0].scores == []
@@ -924,28 +924,30 @@ class TestPyritMessagesToDtoRealObjects:
 
         conv_id = "real-conv-1"
         user_piece = RealPyritMessagePiece(role="user", original_value="ask", conversation_id=conv_id)
-        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[user_piece]))
+        (await sqlite_instance.add_message_to_memory_async(request=RealPyritMessage(message_pieces=[user_piece])))
         assistant_piece = RealPyritMessagePiece(role="assistant", original_value="reply", conversation_id=conv_id)
-        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[assistant_piece]))
+        (await sqlite_instance.add_message_to_memory_async(request=RealPyritMessage(message_pieces=[assistant_piece])))
 
-        sqlite_instance.add_scores_to_memory(
-            scores=[
-                RealPyritScore(
-                    score_value="true",
-                    score_type="true_false",
-                    score_rationale="refusal detected",
-                    message_piece_id=assistant_piece.id,
-                ),
-                RealPyritScore(
-                    score_value="0.1",
-                    score_type="float_scale",
-                    score_rationale="low severity",
-                    message_piece_id=assistant_piece.id,
-                ),
-            ]
+        (
+            await sqlite_instance.add_scores_to_memory_async(
+                scores=[
+                    RealPyritScore(
+                        score_value="true",
+                        score_type="true_false",
+                        score_rationale="refusal detected",
+                        message_piece_id=assistant_piece.id,
+                    ),
+                    RealPyritScore(
+                        score_value="0.1",
+                        score_type="float_scale",
+                        score_rationale="low severity",
+                        message_piece_id=assistant_piece.id,
+                    ),
+                ]
+            )
         )
 
-        reloaded = sqlite_instance.get_conversation_messages(conversation_id=conv_id)
+        reloaded = await sqlite_instance.get_conversation_messages_async(conversation_id=conv_id)
         result = await pyrit_messages_to_dto_async(list(reloaded))
 
         by_role = {msg.role: msg for msg in result}
@@ -970,15 +972,15 @@ class TestPyritMessagesToDtoRealObjects:
             conversation_id=conversation_id,
             sequence=1,
         )
-        sqlite_instance.add_message_to_memory(request=Message(message_pieces=[text_piece, media_piece]))
+        (await sqlite_instance.add_message_to_memory_async(request=Message(message_pieces=[text_piece, media_piece])))
 
         text_score_one = Score(score_value="true", score_type="true_false", message_piece_id=text_piece.id)
         text_score_two = Score(score_value="0.8", score_type="float_scale", message_piece_id=text_piece.id)
         media_score = Score(score_value="blocked", score_type="unknown", message_piece_id=media_piece.id)
         scores = [text_score_one, text_score_two, media_score]
-        sqlite_instance.add_scores_to_memory(scores=scores)
+        (await sqlite_instance.add_scores_to_memory_async(scores=scores))
 
-        reloaded = sqlite_instance.get_conversation_messages(conversation_id=conversation_id)
+        reloaded = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
         expected_score_ids_by_piece = {
             str(text_piece.id): {str(text_score_one.id), str(text_score_two.id)},
             str(media_piece.id): {str(media_score.id)},

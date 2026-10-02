@@ -1,4 +1,5 @@
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from './_fixtures'
+import { mockVersion } from './_compatibility'
 
 import type { RegisteredScenario } from '../src/types'
 
@@ -25,6 +26,8 @@ const SCENARIO: RegisteredScenario = {
     { name: 'temperature', type_name: 'float', required: false, default: '0.5', choices: null, is_list: false },
   ],
   default_run_size: {
+    dataset_size: { kind: 'indeterminate', reason: 'configuration_unavailable', detail: 'Population configuration is not available.' },
+    dataset_limit: { state: 'scenario_default' },
     estimated_attack_count: null,
     components: [],
     datasets: [],
@@ -42,7 +45,7 @@ async function mockNumericControlApis(page: Page): Promise<void> {
       '/api/auth/access': { isAdmin: true },
       '/api/health': { status: 'healthy' },
       '/api/runtime': READY_RUNTIME,
-      '/api/version': { version: '1.2.0', display: 'Mock PyRIT', default_labels: { operator: 'test' } },
+      '/api/version': mockVersion({ display: 'Mock PyRIT', default_labels: { operator: 'test' } }),
       '/api/targets': {
         items: [makeTarget({ target_registry_name: 'mock-target' })],
         pagination: { limit: 200, has_more: false },

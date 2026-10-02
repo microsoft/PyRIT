@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from unit.mocks import get_mock_prompt_normalizer
 
 import pyrit.executor.attack
 from pyrit.common.path import DATASETS_PATH, EXECUTOR_SEED_PROMPT_PATH
@@ -46,7 +47,6 @@ from pyrit.models import (
     SeedPrompt,
     get_common_json_schema,
 )
-from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
 
@@ -156,7 +156,7 @@ def mock_chat_target() -> MagicMock:
     """Create a mock PromptTarget with common setup."""
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
-    target.set_system_prompt = MagicMock()
+    target.set_system_prompt_async = AsyncMock()
     target.get_identifier.return_value = _mock_target_id("MockChatTarget")
     target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
     target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
@@ -179,7 +179,7 @@ def mock_adversarial_chat() -> MagicMock:
     """Create a mock adversarial chat target."""
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
-    target.set_system_prompt = MagicMock()
+    target.set_system_prompt_async = AsyncMock()
     target.get_identifier.return_value = _mock_target_id("MockAdversarialChat")
     target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
     target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
@@ -198,7 +198,7 @@ def mock_objective_scorer() -> MagicMock:
 @pytest.fixture
 def mock_prompt_normalizer() -> MagicMock:
     """Create a mock prompt normalizer."""
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.send_prompt_async = AsyncMock()
     return normalizer
 
@@ -280,7 +280,7 @@ def red_teaming_attack(
     adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
     scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
 
-    mock_normalizer = MagicMock(spec=PromptNormalizer)
+    mock_normalizer = get_mock_prompt_normalizer()
     # The default RedTeamingAttack adversarial system prompt declares the shared adversarial_chat
     # JSON schema, so the adversarial reply must be JSON for next_message extraction.
     json_adversarial_response = Message.from_prompt(
@@ -327,7 +327,7 @@ def crescendo_attack(
         max_turns=10,
     )
 
-    mock_normalizer = MagicMock(spec=PromptNormalizer)
+    mock_normalizer = get_mock_prompt_normalizer()
     mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
     attack._prompt_normalizer = mock_normalizer
 
@@ -365,7 +365,7 @@ def tap_attack(
         on_topic_checking_enabled=False,
     )
 
-    mock_normalizer = MagicMock(spec=PromptNormalizer)
+    mock_normalizer = get_mock_prompt_normalizer()
     mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
     attack._prompt_normalizer = mock_normalizer
 
@@ -393,7 +393,7 @@ class TestNextMessageSentFirst:
         """Test that PromptSendingAttack sends next_message with multimodal content preserved."""
         attack = PromptSendingAttack(objective_target=mock_chat_target)
 
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
         attack._prompt_normalizer = mock_normalizer
 
@@ -423,7 +423,7 @@ class TestNextMessageSentFirst:
         params = await AttackParameters.from_seed_group_async(seed_group=seed_group)
 
         attack = PromptSendingAttack(objective_target=mock_chat_target)
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
         attack._prompt_normalizer = mock_normalizer
 
@@ -466,7 +466,7 @@ class TestNextMessageSentFirst:
             max_turns=5,
         )
 
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
         attack._prompt_normalizer = mock_normalizer
 
@@ -528,7 +528,7 @@ class TestNextMessageSentFirst:
             max_turns=5,
         )
 
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
         attack._prompt_normalizer = mock_normalizer
 
@@ -582,7 +582,7 @@ class TestNextMessageSentFirst:
             on_topic_checking_enabled=False,  # Disable to simplify test
         )
 
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
         attack._prompt_normalizer = mock_normalizer
 
@@ -806,7 +806,7 @@ class TestPrependedConversationInMemory:
         """Test that prepended conversation is preserved in memory with correct role translation."""
         attack = PromptSendingAttack(objective_target=mock_chat_target)
 
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
         attack._prompt_normalizer = mock_normalizer
 
@@ -819,7 +819,7 @@ class TestPrependedConversationInMemory:
         conversation_id = call_args.kwargs.get("conversation_id")
 
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation_messages(conversation_id=conversation_id))
+        conversation = list(await memory.get_conversation_messages_async(conversation_id=conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -852,7 +852,7 @@ class TestPrependedConversationInMemory:
         )
 
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
+        conversation = list(await memory.get_conversation_messages_async(conversation_id=result.conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -887,7 +887,7 @@ class TestPrependedConversationInMemory:
         )
 
         memory = CentralMemory.get_memory_instance()
-        conversation = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
+        conversation = list(await memory.get_conversation_messages_async(conversation_id=result.conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -941,7 +941,7 @@ class TestPrependedConversationInMemory:
             on_topic_checking_enabled=False,
         )
 
-        mock_normalizer = MagicMock(spec=PromptNormalizer)
+        mock_normalizer = get_mock_prompt_normalizer()
         mock_normalizer.send_prompt_async = AsyncMock(return_value=sample_response)
         attack._prompt_normalizer = mock_normalizer
 
@@ -955,9 +955,9 @@ class TestPrependedConversationInMemory:
         # the single node conversation that holds the prepended messages.
         assert result.conversation_id
         memory = CentralMemory.get_memory_instance()
-        node_conversation_ids = {piece.conversation_id for piece in memory.get_message_pieces()}
+        node_conversation_ids = {piece.conversation_id for piece in (await memory.get_message_pieces_async())}
         assert node_conversation_ids == {result.conversation_id}
-        conversation = list(memory.get_conversation_messages(conversation_id=result.conversation_id))
+        conversation = list(await memory.get_conversation_messages_async(conversation_id=result.conversation_id))
 
         # Should have exactly the prepended messages in memory (mock normalizer doesn't add responses)
         assert len(conversation) == 2, f"Expected exactly 2 prepended messages, got {len(conversation)}"
@@ -1049,7 +1049,7 @@ class TestMultiTurnTurnCounting:
 # =============================================================================
 
 
-def _get_adversarial_chat_text_values(*, adversarial_chat_conversation_id: str) -> list[str]:
+async def _get_adversarial_chat_text_values_async(*, adversarial_chat_conversation_id: str) -> list[str]:
     """
     Get all text values from the adversarial chat conversation in memory.
 
@@ -1062,7 +1062,7 @@ def _get_adversarial_chat_text_values(*, adversarial_chat_conversation_id: str) 
         List of text values from all text pieces in the adversarial conversation.
     """
     memory = CentralMemory.get_memory_instance()
-    conversation = list(memory.get_conversation_messages(conversation_id=adversarial_chat_conversation_id))
+    conversation = list(await memory.get_conversation_messages_async(conversation_id=adversarial_chat_conversation_id))
 
     text_values = []
     for msg in conversation:
@@ -1073,7 +1073,7 @@ def _get_adversarial_chat_text_values(*, adversarial_chat_conversation_id: str) 
     return text_values
 
 
-def _assert_prepended_text_in_adversarial_context(
+async def _assert_prepended_text_in_adversarial_context_async(
     *,
     prepended_conversation: list[Message],
     adversarial_chat_conversation_id: str,
@@ -1098,7 +1098,7 @@ def _assert_prepended_text_in_adversarial_context(
     Raises:
         AssertionError: If any prepended text content is not found in adversarial context.
     """
-    adversarial_text_values = _get_adversarial_chat_text_values(
+    adversarial_text_values = await _get_adversarial_chat_text_values_async(
         adversarial_chat_conversation_id=adversarial_chat_conversation_id
     )
 
@@ -1106,9 +1106,9 @@ def _assert_prepended_text_in_adversarial_context(
     if (
         not adversarial_text_values
         and adversarial_chat_mock is not None
-        and adversarial_chat_mock.set_system_prompt.called
+        and adversarial_chat_mock.set_system_prompt_async.called
     ):
-        for call in adversarial_chat_mock.set_system_prompt.call_args_list:
+        for call in adversarial_chat_mock.set_system_prompt_async.call_args_list:
             system_prompt = call.kwargs.get("system_prompt", "")
             if system_prompt:
                 adversarial_text_values.append(system_prompt)
@@ -1153,10 +1153,12 @@ class TestAdversarialChatContextInjection:
         ]
         assert len(adversarial_conv_refs) >= 1, "Should have adversarial chat conversation reference"
 
-        _assert_prepended_text_in_adversarial_context(
-            prepended_conversation=prepended_conversation_text,
-            adversarial_chat_conversation_id=adversarial_conv_refs[0].conversation_id,
-            adversarial_chat_mock=mock_adversarial_chat,
+        (
+            await _assert_prepended_text_in_adversarial_context_async(
+                prepended_conversation=prepended_conversation_text,
+                adversarial_chat_conversation_id=adversarial_conv_refs[0].conversation_id,
+                adversarial_chat_mock=mock_adversarial_chat,
+            )
         )
 
     async def test_crescendo_injects_prepended_into_adversarial_context(
@@ -1180,10 +1182,12 @@ class TestAdversarialChatContextInjection:
         ]
         assert len(adversarial_conv_refs) >= 1, "Should have adversarial chat conversation reference"
 
-        _assert_prepended_text_in_adversarial_context(
-            prepended_conversation=prepended_conversation_text,
-            adversarial_chat_conversation_id=adversarial_conv_refs[0].conversation_id,
-            adversarial_chat_mock=mock_adversarial_chat,
+        (
+            await _assert_prepended_text_in_adversarial_context_async(
+                prepended_conversation=prepended_conversation_text,
+                adversarial_chat_conversation_id=adversarial_conv_refs[0].conversation_id,
+                adversarial_chat_mock=mock_adversarial_chat,
+            )
         )
 
     async def test_tap_persists_prepended_conversation_in_memory(
@@ -1207,9 +1211,9 @@ class TestAdversarialChatContextInjection:
             )
 
         memory = CentralMemory.get_memory_instance()
-        node_conversation_ids = {piece.conversation_id for piece in memory.get_message_pieces()}
+        node_conversation_ids = {piece.conversation_id for piece in (await memory.get_message_pieces_async())}
         assert len(node_conversation_ids) == 1, f"Expected one conversation in memory, got {node_conversation_ids}"
-        conversation = list(memory.get_conversation_messages(conversation_id=node_conversation_ids.pop()))
+        conversation = list(await memory.get_conversation_messages_async(conversation_id=node_conversation_ids.pop()))
 
         node_text = " ".join(
             piece.original_value

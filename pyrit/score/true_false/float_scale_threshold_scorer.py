@@ -213,7 +213,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         else:
             comparison_symbol = "="
 
-        score = scores[0]
+        score = self._create_wrapper_score(scores[0])
         score.score_type = "true_false"
         score.score_value = str(threshold_result)
         score.status = ScoreStatus.COMPLETE
@@ -230,7 +230,6 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         )
         score.score_value_description = aggregate_score.description
         score.score_category = aggregate_score.category
-        score.id = uuid.uuid4()
         score.scorer_class_identifier = self.get_identifier()
         score.observation_ids = _merge_observation_ids(scores=scores)
         # Store the original float value in metadata for granular comparison

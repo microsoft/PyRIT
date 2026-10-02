@@ -75,7 +75,8 @@ class TestMossBenchDataset:
         """
         memory = CentralMemory.get_memory_instance()
         # Prove database isolation: in-memory, no shared file on disk.
-        assert memory.engine.url.database == ":memory:"
+        assert memory.db_path == ":memory:"
+        assert memory.engine.url.query["mode"] == "memory"
         # Prove results-directory isolation: scoped to a temporary folder,
         # not the default persistent "results/" directory.
         assert os.path.isabs(memory.results_path)

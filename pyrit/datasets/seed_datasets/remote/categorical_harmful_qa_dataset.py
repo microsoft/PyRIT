@@ -72,7 +72,7 @@ class _CategoricalHarmfulQADataset(_RemoteDatasetLoader):
         """The dataset name."""
         return "categorical_harmful_qa"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch CategoricalHarmfulQA dataset from HuggingFace and return as SeedDataset.
 

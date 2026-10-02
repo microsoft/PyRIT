@@ -20,6 +20,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
+from pyrit.models.seeds.seed_origin import SeedOrigin
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -120,6 +121,8 @@ class Seed(BaseModel):
 
     # Name of the dataset this prompt belongs to
     dataset_name: str | None = None
+
+    origin: SeedOrigin = SeedOrigin.UNKNOWN
 
     # Categories of harm associated with this prompt
     harm_categories: list[str] | None = Field(default_factory=list)

@@ -98,7 +98,7 @@ class TestRemoteFilteringIntegration:
 
         captured_name = name
 
-        async def _fetch_dataset(self, *, cache=True):
+        async def _fetch_dataset_async(self: _RemoteDatasetLoader, *, cache: bool = True) -> SeedDataset:
             return SeedDataset(
                 seeds=[SeedPrompt(value="x", data_type="text")],
                 dataset_name=captured_name,
@@ -113,7 +113,7 @@ class TestRemoteFilteringIntegration:
             "__module__": __name__,
             # Concrete implementations satisfy ABC requirements
             "dataset_name": property(lambda self: captured_name),
-            "fetch_dataset_async": _fetch_dataset,
+            "_fetch_dataset_async": _fetch_dataset_async,
             "_fetch_from_url": lambda self, **kw: [],
         }
 
@@ -655,7 +655,7 @@ class TestHarmbenchMetadataInScenario:
         )
 
         # Verify seeds are queryable from memory (this is what scenarios do)
-        seed_groups = sqlite_instance.get_seed_groups(dataset_name="harmbench")
+        seed_groups = await sqlite_instance.get_seed_groups_async(dataset_name="harmbench")
         assert seed_groups is not None
         assert len(list(seed_groups)) > 0
 

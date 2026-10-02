@@ -399,7 +399,7 @@ class AtomicAttack:
             )
 
             # Enrich atomic_attack_identifier with seed identifiers
-            self._enrich_atomic_attack_identifiers(results=results)
+            (await self._enrich_atomic_attack_identifiers_async(results=results))
 
             # Log completion status
             if results.has_incomplete:
@@ -418,7 +418,7 @@ class AtomicAttack:
             logger.error(f"Atomic attack '{self.atomic_attack_name}' execution failed: {str(e)}")
             raise ValueError(f"Failed to execute atomic attack '{self.atomic_attack_name}': {str(e)}") from e
 
-    def _enrich_atomic_attack_identifiers(self, *, results: AttackExecutorResult[AttackResult]) -> None:
+    async def _enrich_atomic_attack_identifiers_async(self, *, results: AttackExecutorResult[AttackResult]) -> None:
         """
         Enrich each AttackResult's atomic_attack_identifier with seed group and
         technique information, then persist the update to the database.
@@ -447,9 +447,9 @@ class AtomicAttack:
                 result.atomic_attack_identifier = identifier
 
                 if result.attack_result_id:
-                    memory.update_attack_result_by_id(
-                        attack_result_id=result.attack_result_id,
-                        update_fields={
-                            "atomic_attack_identifier": identifier.model_dump(),
-                        },
+                    (
+                        await memory.update_attack_result_by_id_async(
+                            attack_result_id=result.attack_result_id,
+                            update_fields={"atomic_attack_identifier": identifier.model_dump()},
+                        )
                     )
