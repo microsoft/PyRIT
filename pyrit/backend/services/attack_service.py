@@ -388,6 +388,7 @@ class AttackService:
         # Merge source label with any user-supplied labels
         labels = dict(request.labels) if request.labels else {}
         labels.setdefault("source", "gui")
+        attack_result_id = str(uuid.uuid4())
 
         # --- Branch via duplication (preferred for tracking) ---------------
         if request.source_conversation_id is not None and request.cutoff_index is not None:
@@ -396,6 +397,7 @@ class AttackService:
                 cutoff_index=request.cutoff_index,
                 remap_assistant_to_simulated=True,
                 target_identifier=target_identifier,
+                attack_result_id=attack_result_id,
             )
         else:
             conversation_id = str(uuid.uuid4())
@@ -407,6 +409,7 @@ class AttackService:
         # as "no explicit objective".
         attack_result = AttackResult(
             conversation_id=conversation_id,
+            attack_result_id=attack_result_id,
             objective=request.name or "",
             atomic_attack_identifier=AtomicAttackIdentifier.build(
                 attack_identifier=AttackIdentifier(
@@ -427,6 +430,13 @@ class AttackService:
         )
 
         # Store in memory
+        await self._memory.add_conversation_to_memory_async(
+            conversation=Conversation(
+                conversation_id=conversation_id,
+                target_identifier=target_identifier,
+                attack_result_id=attack_result_id,
+            )
+        )
         (await self._memory.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
         # Store prepended conversation messages if provided. A system_prompt is lowered to a
@@ -723,6 +733,7 @@ class AttackService:
         cutoff_index: int,
         remap_assistant_to_simulated: bool = False,
         target_identifier: ComponentIdentifier | None = None,
+        attack_result_id: str | None = None,
     ) -> str:
         """
         Duplicate messages from a conversation up to and including a turn index.
@@ -740,6 +751,7 @@ class AttackService:
 
             target_identifier (ComponentIdentifier | None): The target the new conversation
                 is held with, if known. Recorded once for the duplicated conversation.
+            attack_result_id (str | None): The execution that owns the new conversation.
 
         Returns:
             The new conversation ID containing the duplicated messages.
@@ -749,6 +761,7 @@ class AttackService:
             cutoff_index=cutoff_index,
             target_identifier=target_identifier,
         )
+        conversation.attack_result_id = attack_result_id
 
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:

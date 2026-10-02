@@ -52,6 +52,7 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.models import (
     AttackSeedGroup,
+    BoundedDatasetSize,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
 )
@@ -419,15 +420,14 @@ class RedTeamAgent(Scenario):
         self._scenario_composites = composites
         return flat
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate one selected seed population per resolved Foundry composition.
 
         Returns:
             ScenarioRunSizeEstimate: The composition population estimate.
         """
-        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
-        selected_count = sum(len(groups) for groups in selected_groups.values())
+        selected_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
         components = [
             ScenarioRunSizeComponent(
                 label=composition.name,

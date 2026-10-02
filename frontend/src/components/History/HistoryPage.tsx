@@ -24,7 +24,7 @@ export default function HistoryPage({ selectedTab, onTabChange, children }: Hist
 
   return (
     <div className={styles.root}>
-      <header className={styles.header}>
+      <header className={styles.header} data-tour="history-tabs">
         <Text as="h1" size={600} weight="semibold">History</Text>
         <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>
           <Tab value="attacks">Attacks</Tab>

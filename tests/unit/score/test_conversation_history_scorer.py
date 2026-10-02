@@ -719,7 +719,7 @@ async def test_conversation_scorer_opt_in_labels_match_evidence_role(role: ChatM
         original_value_data_type="function_call_output" if "tool" in role else "text",
         conversation_id=str(uuid.uuid4()),
     )
-    memory.add_message_pieces_to_memory(message_pieces=[piece])
+    await memory.add_message_pieces_to_memory_async(message_pieces=[piece])
     wrapped = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
     wrapped._score_nested_async = AsyncMock(return_value=[])
     wrapped.get_identifier.return_value = _make_scorer_id()

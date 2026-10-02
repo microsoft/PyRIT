@@ -17,6 +17,7 @@ from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler, get_manual_send_scheduler
 from pyrit.backend.services.media_persistence import persist_media_value_async
 from pyrit.backend.services.target_service import get_target_service
+from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
@@ -123,13 +124,21 @@ class MessageSendService:
             raise ValueError(f"Target object for '{target_registry_name}' not found")
 
         async with self._scheduler.operation_async():
-            await self._execute_message_async(
-                attack_result_id=attack_result_id,
-                request=request,
-                target=target,
-                request_converter_configurations=request_converter_configs,
-                response_converter_configurations=response_converter_configs,
-            )
+            with attack_result_id_scope(attack_result_id=attack_result_id):
+                await self._memory.add_conversation_to_memory_async(
+                    conversation=Conversation(
+                        conversation_id=msg_conversation_id,
+                        target_identifier=target.get_identifier() if target else None,
+                        attack_result_id=attack_result_id,
+                    )
+                )
+                await self._execute_message_async(
+                    attack_result_id=attack_result_id,
+                    request=request,
+                    target=target,
+                    request_converter_configurations=request_converter_configs,
+                    response_converter_configurations=response_converter_configs,
+                )
 
     async def _execute_message_async(
         self,

@@ -14,6 +14,7 @@ from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import (
     AttackTechniqueSeedGroup,
+    BoundedDatasetSize,
     Parameter,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
@@ -321,7 +322,7 @@ class Jailbreak(Scenario):
         metadata[_JAILBREAK_TEMPLATES_METADATA_KEY] = list(self._resolved_jailbreaks)
         return metadata
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate the template and attempt axes, preserving the target capability caveat.
 
@@ -332,8 +333,7 @@ class Jailbreak(Scenario):
             ValueError: If native system-prompt delivery is the only selected
                 technique but the selected target cannot support it.
         """
-        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
-        seed_group_count = sum(len(groups) for groups in selected_groups.values())
+        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
         template_count = len(self.params.get("jailbreak_names") or []) or (
             self.params.get("num_jailbreaks") or _DEFAULT_NUM_JAILBREAKS
         )
@@ -388,9 +388,6 @@ class Jailbreak(Scenario):
             component.count for component in components if component.label != "Native system-prompt jailbreak delivery"
         )
         planned_count = sum(component.count for component in components)
-        minimum_planned_count = (
-            planned_count if system_delivery_selected and converter_count == 0 else target_agnostic_count
-        )
         baseline_explanation = (
             f" Baseline adds one unit per selected seed group ({seed_group_count} units)."
             if self._include_baseline
@@ -409,7 +406,7 @@ class Jailbreak(Scenario):
                 " The selected technique requires native system-prompt delivery; incompatible targets cannot run it."
                 if converter_count == 0
                 else (
-                    f" {target_agnostic_count} total planned units for target-agnostic delivery; "
+                    f" Budget: up to {target_agnostic_count} planned units for target-agnostic delivery; "
                     f"{planned_count} when native system-prompt delivery is supported."
                 )
             )
@@ -429,7 +426,6 @@ class Jailbreak(Scenario):
             effective_parameters["num_jailbreaks"] = template_count
         return ScenarioRunSizeEstimate(
             total_attack_count=estimated_attack_count,
-            minimum_attack_count=minimum_planned_count if estimated_attack_count is None else None,
             maximum_attack_count=planned_count if estimated_attack_count is None else None,
             components=components,
             datasets=datasets,
