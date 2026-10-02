@@ -140,8 +140,8 @@ class JsonConversationPrinter(ConversationPrinterBase):
         Args:
             piece (MessagePiece): The piece to serialize.
             include_scores (bool): Whether to attach inline scores.
-            objective_scores (dict[str, Score] | None): Objective scores selected for the conversation,
-                or None to attach every score.
+            objective_scores (dict[str, Score] | None): Objective scores selected for the conversation
+                keyed by piece id, or None to attach every score.
 
         Returns:
             dict[str, Any]: The piece's curated fields (a reasoning summary for

@@ -147,10 +147,13 @@ class ConversationPrinterBase(PrinterBase):
         """
         Return the scores to render for a piece.
 
+        When an ``objective_scores`` dict is passed, use the scores already selected for the
+        conversation without fetching again. Otherwise, fetch all scores attached to this piece.
+
         Args:
             piece (MessagePiece): The piece being rendered.
             objective_scores (dict[str, Score] | None): Objective scores selected for the
-                conversation, or None to fetch every score on the piece.
+                conversation keyed by piece id, or None to fetch every score on the piece.
 
         Returns:
             list[Score]: The scores to render for the piece.

@@ -188,7 +188,7 @@ await output_scenario_async(custom_result)
 # %% [markdown]
 # ## Reporting Every Conversation
 #
-# `output_scenario_async` summarizes a run. To see what happened in each attack, use
+# `output_scenario_async` gives a high-level overview of a run. To see granular details within each attack, use
 # `output_scenario_conversations_async`. It reads each attack's conversation from memory and prints
 # one JSON document that shows only the objective score on each response, like
 # `pyrit_scan scenario-results --view conversations`. It includes every attack unless you pass

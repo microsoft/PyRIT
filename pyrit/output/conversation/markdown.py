@@ -445,8 +445,8 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
 
         Args:
             pieces (list[MessagePiece]): The filtered pieces whose scores should be formatted.
-            objective_scores (dict[str, Score] | None): Objective scores selected for the conversation,
-                or None to show every score.
+            objective_scores (dict[str, Score] | None): Objective scores selected for the conversation
+                keyed by piece id, or None to show every score.
 
         Returns:
             list[str]: Markdown strings for the scores.
