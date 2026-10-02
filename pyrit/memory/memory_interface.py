@@ -3380,14 +3380,14 @@ class MemoryInterface(abc.ABC):
         if self.engine is None:
             raise RuntimeError("Engine must be initialized to run schema migrations.")
         run_schema_migrations(engine=self.engine, silent=silent)
-        check_schema_migrations(engine=self.engine, silent=silent)
+        check_schema_migrations(engine=self.engine, silent=True)
 
-    def _check_schema_migration(self, *, silent: bool = False) -> None:
+    def _check_schema_migration(self) -> None:
         """
         Verify that the current database schema matches the models without modifying the database.
 
-        Args:
-            silent (bool): If True, suppresses Alembic console output. Defaults to False.
+        A matching schema is reported by Alembic as console output that confirms nothing happened,
+        so the check is always run silently. A mismatch raises instead of printing.
 
         Raises:
             RuntimeError: If the engine is not initialized.
@@ -3398,7 +3398,7 @@ class MemoryInterface(abc.ABC):
         logger.info("Checking schema migration compatibility.")
         if self.engine is None:
             raise RuntimeError("Engine must be initialized to check schema migrations.")
-        check_schema_migrations(engine=self.engine, silent=silent)
+        check_schema_migrations(engine=self.engine, silent=True)
 
     def reset_database(self) -> None:
         """
