@@ -248,6 +248,7 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     best_conversation_id: str | None = None
     best_objective_score: Score | None = None
     best_adversarial_conversation_id: str | None = None
+    best_auxiliary_scores: dict[str, Score] = field(default_factory=dict)
 
     # Visualization parent for first-level nodes in this execution
     visualization_root_id: str = "root"
@@ -1854,6 +1855,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         context.nodes = []
         context.best_conversation_id = None
         context.best_objective_score = None
+        context.best_adversarial_conversation_id = None
+        context.best_auxiliary_scores = {}
 
         # Initialize executed_turns with prepended conversation turn count
         # Note: We don't call initialize_context_async here because TAP handles
@@ -2227,9 +2230,24 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         if completed_nodes:
             best_node = completed_nodes[0]
+            best_score = best_node.objective_score
+            # An undetermined verdict is the absence of a measurement, not a weak
+            # one, so it must not displace a score a completed node actually
+            # produced. The sort below already ranks undetermined last within a
+            # frontier; this keeps the same rule across frontiers. Reached only
+            # when the whole frontier is undetermined, since that sorts first
+            # otherwise only if no complete node is present.
+            if (
+                best_score is not None
+                and best_score.is_undetermined
+                and context.best_objective_score is not None
+                and not context.best_objective_score.is_undetermined
+            ):
+                return
             context.best_conversation_id = best_node.objective_target_conversation_id
-            context.best_objective_score = best_node.objective_score
+            context.best_objective_score = best_score
             context.best_adversarial_conversation_id = best_node.adversarial_chat_conversation_id
+            context.best_auxiliary_scores = dict(best_node.auxiliary_scores)
         elif not context.best_conversation_id:
             # Fallback: if no completed nodes and no best_conversation_id yet,
             # use any node that has a conversation (even if incomplete/off-topic)
@@ -2239,6 +2257,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                     context.best_conversation_id = node.objective_target_conversation_id
                     context.best_objective_score = node.objective_score
                     context.best_adversarial_conversation_id = node.adversarial_chat_conversation_id
+                    context.best_auxiliary_scores = dict(node.auxiliary_scores)
                     break
 
     def _create_attack_node(
@@ -2489,8 +2508,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             conversation_id=context.best_conversation_id, score=context.best_objective_score
         )
 
-        # Get auxiliary scores from the best node if available
-        auxiliary_scores_summary = self._get_auxiliary_scores_summary(context.nodes)
+        auxiliary_scores_summary = self._get_auxiliary_scores_summary(context.best_auxiliary_scores)
 
         # Calculate statistics from tree visualization
         stats = self._calculate_tree_statistics(context.tree_visualization)
@@ -2592,28 +2610,27 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         responses = await self._memory.get_message_pieces_async(conversation_id=conversation_id)
         return responses[-1] if responses else None
 
-    def _get_auxiliary_scores_summary(self, nodes: list[_TreeOfAttacksNode]) -> dict[str, float]:
+    def _get_auxiliary_scores_summary(self, auxiliary_scores: dict[str, Score]) -> dict[str, float]:
         """
-        Extract auxiliary scores from the best node if available.
+        Summarize the auxiliary scores associated with the selected node.
 
-        Retrieves all auxiliary scorer results from the top-performing node and
-        converts them to a summary dictionary. This provides additional metrics
-        beyond the objective score that may be useful for analysis.
+        Converts the selected node's auxiliary scorer results to a summary
+        dictionary. This provides additional metrics beyond the objective score
+        that may be useful for analysis.
 
         Args:
-            nodes (list[TreeOfAttacksNode]): List of nodes to extract auxiliary scores from.
+            auxiliary_scores (dict[str, Score]): Auxiliary scores from the selected node.
 
         Returns:
             dict[str, float]: A dictionary mapping auxiliary score names to their
                 float values, or an empty dictionary if no auxiliary scores are available.
                 An undetermined auxiliary score summarizes as 0.0.
         """
-        if not nodes or not nodes[0].auxiliary_scores:
+        if not auxiliary_scores:
             return {}
 
         return {
-            name: 0.0 if score.is_undetermined else float(score.get_value())
-            for name, score in nodes[0].auxiliary_scores.items()
+            name: 0.0 if score.is_undetermined else float(score.get_value()) for name, score in auxiliary_scores.items()
         }
 
     def _calculate_tree_statistics(self, tree_visualization: Tree) -> dict[str, int]:
