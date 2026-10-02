@@ -76,6 +76,15 @@ class TestConfigurationLoader:
         with pytest.raises(TypeError, match=r"allow_custom_initializers must be a bool"):
             ConfigurationLoader(allow_custom_initializers=invalid_value)  # type: ignore[arg-type]
 
+    def test_media_url_import_is_enabled_by_default_and_can_be_disabled(self) -> None:
+        assert ConfigurationLoader().allow_media_url_import is True
+        assert ConfigurationLoader.from_dict({"allow_media_url_import": False}).allow_media_url_import is False
+
+    @pytest.mark.parametrize("invalid_value", ["false", 0, 1, [], {}])
+    def test_rejects_non_boolean_allow_media_url_import(self, invalid_value: object) -> None:
+        with pytest.raises(TypeError, match=r"allow_media_url_import must be a bool"):
+            ConfigurationLoader(allow_media_url_import=invalid_value)  # type: ignore[arg-type]
+
     def test_valid_memory_db_types_snake_case(self):
         """Test all valid memory database types in snake_case."""
         for db_type in ["in_memory", "sqlite", "azure_sql"]:

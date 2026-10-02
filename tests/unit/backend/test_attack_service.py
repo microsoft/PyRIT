@@ -12,6 +12,7 @@ import base64
 import json
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -887,6 +888,63 @@ class TestCreateAttack:
             # Both attack result and prepended message pieces should be stored
             mock_memory.add_attack_results_to_memory_async.assert_called_once()
             mock_memory.add_message_pieces_to_memory_async.assert_called()
+
+    async def test_create_attack_rejects_prepended_media_outside_results_before_writing(
+        self, attack_service, mock_memory, tmp_path: Path
+    ) -> None:
+        """Prepended media must point into managed storage, and nothing is written when it does not."""
+        mock_memory.results_path = str(tmp_path / "results")
+        outside_image = tmp_path / "outside.png"
+        outside_image.write_bytes(b"PNG")
+        prepended = [
+            PrependedMessageRequest(
+                role="user",
+                pieces=[MessagePieceRequest(data_type="image_path", original_value=str(outside_image))],
+            )
+        ]
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service,
+            pytest.raises(ValueError, match="outside the allowed results directory"),
+        ):
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_get_target_service.return_value = mock_target_service
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", prepended_conversation=prepended)
+            )
+
+        mock_memory.add_attack_results_to_memory_async.assert_not_called()
+        mock_memory.add_message_pieces_to_memory_async.assert_not_called()
+
+    async def test_create_attack_persists_prepended_base64_media(self, attack_service, mock_memory) -> None:
+        """Prepended base64 media is written to result storage and stored as a file path."""
+        serializer = MagicMock(value="/results/prompt-memory-entries/images/prepended.png")
+        serializer.save_b64_image_async = AsyncMock()
+        prepended = [
+            PrependedMessageRequest(
+                role="user",
+                pieces=[MessagePieceRequest(data_type="image_path", original_value="aW1hZ2U=", mime_type="image/png")],
+            )
+        ]
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service,
+            patch("pyrit.backend.services.attack_service.data_serializer_factory", return_value=serializer) as factory,
+        ):
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_get_target_service.return_value = mock_target_service
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", prepended_conversation=prepended)
+            )
+
+        assert factory.call_args.kwargs["category"] == "prompt-memory-entries"
+        stored_piece = mock_memory.add_message_pieces_to_memory_async.call_args.kwargs["message_pieces"][0]
+        assert stored_piece.original_value == "/results/prompt-memory-entries/images/prepended.png"
 
     async def test_create_attack_lowers_system_prompt_to_system_message(self, attack_service, mock_memory) -> None:
         """Test that system_prompt is lowered to a single system-role message at sequence 0."""

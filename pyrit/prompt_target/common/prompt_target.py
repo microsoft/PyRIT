@@ -84,6 +84,11 @@ class PromptTarget(Identifiable):
     # Azure Blob Storage, Prompt Shield) override this to add ``"identity"``.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
 
+    # Declarative fact consumed by the create-target service. Targets that read files
+    # from the machine running PyRIT or load model code on it set this to True, and the
+    # create-target API rejects them; register those targets in Python or with an initializer.
+    uses_host_resources: ClassVar[bool] = False
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.

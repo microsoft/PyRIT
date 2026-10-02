@@ -257,6 +257,19 @@ async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repai
     assert "in_memory" in await source.read_async()
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_management_applies_media_url_import_setting(enabled: bool) -> None:
+    service = RuntimeLifecycle(app=FastAPI(), source=ConfigurationFileService(config_file_value=None))
+    config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], allow_media_url_import=enabled)
+    with (
+        patch.object(lifecycle_module, "set_media_url_import_enabled") as set_enabled,
+        patch.object(lifecycle_module.InitializerRegistry, "get_registry_singleton", return_value=MagicMock()),
+    ):
+        await service._management_async(config)
+
+    set_enabled.assert_called_once_with(enabled=enabled)
+
+
 def test_authorization_policy_does_not_change_with_environment(runtime: RuntimeLifecycle) -> None:
     runtime.app.state.auth_environment["PYRIT_ALLOW_UNAUTHENTICATED_ADMIN"] = ""
     request = Request({"type": "http", "app": runtime.app})

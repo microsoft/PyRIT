@@ -48,6 +48,7 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationResponse,
 )
 from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
@@ -57,7 +58,7 @@ from pyrit.backend.services.pagination import (
 )
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultKeysetCursor, CentralMemory
+from pyrit.memory import AttackResultKeysetCursor, CentralMemory, data_serializer_factory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -390,6 +391,20 @@ class AttackService:
         labels.setdefault("source", "gui")
         attack_result_id = str(uuid.uuid4())
 
+        # A system_prompt is lowered to a single system-role message at the front, composing
+        # with any prepended_conversation. Media is checked before attack or conversation rows are written.
+        prepended = list(request.prepended_conversation or [])
+        if request.system_prompt:
+            prepended.insert(
+                0,
+                PrependedMessageRequest(
+                    role="system",
+                    pieces=[MessagePieceRequest(original_value=request.system_prompt)],
+                ),
+            )
+        for message in prepended:
+            await persist_message_pieces_async(pieces=message.pieces, serializer_factory=data_serializer_factory)
+
         # --- Branch via duplication (preferred for tracking) ---------------
         if request.source_conversation_id is not None and request.cutoff_index is not None:
             conversation_id = await self._duplicate_conversation_up_to_async(
@@ -439,17 +454,6 @@ class AttackService:
         )
         (await self._memory.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
-        # Store prepended conversation messages if provided. A system_prompt is lowered to a
-        # single system-role message at the front, composing with any prepended_conversation.
-        prepended = list(request.prepended_conversation or [])
-        if request.system_prompt:
-            prepended.insert(
-                0,
-                PrependedMessageRequest(
-                    role="system",
-                    pieces=[MessagePieceRequest(original_value=request.system_prompt)],
-                ),
-            )
         if prepended:
             await self._store_prepended_messages_async(
                 conversation_id=conversation_id,

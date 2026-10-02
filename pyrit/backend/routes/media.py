@@ -23,14 +23,12 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from pyrit.backend.services.media_persistence import resolve_managed_media_path
 from pyrit.memory import CentralMemory
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Only serve files from known media subdirectories under results_path.
-_ALLOWED_SUBDIRECTORIES = {"prompt-memory-entries", "seed-prompt-entries"}
 
 # Only these known-safe media types render inline. Every other extension is
 # served as an application/octet-stream attachment.
@@ -62,12 +60,7 @@ _INLINE_EXTENSIONS = {
 
 def _validate_media_path(*, path: str, allowed_root: Path) -> Path:
     """
-    Validate and sanitize a user-provided file path against an allowed root directory.
-
-    Uses ``Path.resolve()`` to resolve symlinks and ``..`` components, then
-    verifies the canonical path is under the allowed root. This is the standard
-    sanitization pattern recognized by static analysis tools (e.g. CodeQL
-    ``py/path-injection``).
+    Validate a user-provided file path against the allowed results directory.
 
     Args:
         path: The user-provided file path to validate.
@@ -79,20 +72,10 @@ def _validate_media_path(*, path: str, allowed_root: Path) -> Path:
     Raises:
         HTTPException 403: If the path fails any validation check.
     """
-    real_path = Path(path).resolve(strict=False)
-
     try:
-        relative_parts = real_path.relative_to(allowed_root).parts
+        return resolve_managed_media_path(path=path, allowed_root=allowed_root)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=403, detail="Access denied: path is outside the allowed results directory."
-        ) from exc
-
-    # Restrict to known media subdirectories (e.g. prompt-memory-entries/)
-    if not relative_parts or relative_parts[0] not in _ALLOWED_SUBDIRECTORIES:
-        raise HTTPException(status_code=403, detail="Access denied: path is not in a media subdirectory.")
-
-    return real_path
+        raise HTTPException(status_code=403, detail=f"Access denied: {exc}") from exc
 
 
 @router.get("/media")

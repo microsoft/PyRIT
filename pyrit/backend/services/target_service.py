@@ -152,11 +152,12 @@ class TargetService:
         """
         List all available target types from the target class registry.
 
-        Returns every constructible target with its derived constructor
+        Returns every registered target with its derived constructor
         parameters and the auth modes it supports, all projected from the
-        registry's ``TargetMetadata``. Deciding which entries to surface to a
-        user is a presentation concern owned by the caller (e.g. the frontend),
-        not this service.
+        registry's ``TargetMetadata``. Types that read local files or load model
+        code are listed but cannot be created through the API. Deciding which
+        entries to surface to a user is a presentation concern owned by the
+        caller (e.g. the frontend), not this service.
 
         Returns:
             TargetTypeResponse containing all available target classes.
@@ -181,9 +182,10 @@ class TargetService:
         reference resolution, and construction are owned by the
         ``TargetRegistry``. Endpoint trust and identity token minting are owned
         by the target classes themselves. This service only enforces the
-        request-level auth contract: for ``identity`` it confirms the target
-        supports it and omits the api_key so the target validates its own
-        endpoint and authenticates itself.
+        request-level contract: it rejects target types that read local files or
+        load model code, and for ``identity`` it confirms the target supports it
+        and omits the api_key so the target validates its own endpoint and
+        authenticates itself.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -192,10 +194,11 @@ class TargetService:
             TargetInstance with the new target's details.
 
         Raises:
-            ValueError: If the target type is not registered or identity auth is
-                requested but unsupported by the target type. Construction errors
-                (unknown params, incompatible inner targets, unrecognized identity
-                endpoints) are raised by the registry / target classes.
+            ValueError: If the target type is not registered, uses local files or
+                model code, or identity auth is requested but unsupported by the
+                target type. Construction errors (unknown params, incompatible inner
+                targets, unrecognized identity endpoints) are raised by the
+                registry / target classes.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -203,6 +206,11 @@ class TargetService:
             )
 
         target_cls = self._registry.get_class(request.type)
+        if target_cls.uses_host_resources:
+            raise ValueError(
+                f"Target type '{request.type}' reads local files or loads model code and cannot be created "
+                "through the API. Register it in Python or with an initializer instead."
+            )
         params: dict[str, Any] = dict(request.params)
 
         if request.auth_mode == "identity":
