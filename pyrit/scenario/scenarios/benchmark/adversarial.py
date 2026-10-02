@@ -12,14 +12,16 @@ import uuid
 from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from pyrit.analytics import get_cached_results_for_technique
+from pyrit.analytics import get_cached_results_for_technique_async
 from pyrit.common import apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, SCORER_SEED_PROMPT_PATH
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    BoundedDatasetSize,
     ObjectiveTargetEvaluationIdentifier,
+    ScenarioDatasetSizeEstimate,
     ScenarioResult,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
@@ -28,6 +30,7 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     ScorerEvaluationIdentifier,
     SeedPrompt,
+    scenario_dataset_size_from_limit,
 )
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
 from pyrit.models.parameter import Parameter
@@ -35,9 +38,7 @@ from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixAtomicAttackBuilder,
-    filter_compatible_seed_groups,
     resolve_technique_factories,
-    resolve_technique_factories_for_techniques,
 )
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
@@ -369,63 +370,60 @@ class AdversarialBenchmark(Scenario):
         runtime_use_cached = self.params.get("use_cached")
         return self._constructor_use_cached if runtime_use_cached is None else bool(runtime_use_cached)
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """
-        Estimate the target-by-technique matrix using execution compatibility.
+        Use the outer cap, matching benchmark sampling which bypasses child limits.
+
+        Returns:
+            ScenarioDatasetSizeEstimate: Global cap or all available benchmark data.
+        """
+        return scenario_dataset_size_from_limit(self._dataset_config.max_dataset_size)
+
+    def _get_estimate_dataset_configuration(self) -> DatasetAttackConfiguration:
+        """
+        Describe only the outer cap applied by the benchmark sampler.
+
+        Returns:
+            DatasetAttackConfiguration: Cap metadata without ignored child limits.
+        """
+        return DatasetAttackConfiguration(
+            dataset_names=self._dataset_config.dataset_names or None,
+            max_dataset_size=self._dataset_config.max_dataset_size,
+        )
+
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        """
+        Estimate the target-by-technique matrix from the selected population size.
 
         Returns:
             ScenarioRunSizeEstimate: Structured benchmark estimate.
         """
-        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
-        factories = resolve_technique_factories_for_techniques(
-            scenario_techniques=self._scenario_techniques,
-            extra_factories=self._get_technique_factory_overrides(),
-        )
-        per_target_components: list[ScenarioRunSizeComponent] = []
-        for technique in self._scenario_techniques:
-            factory = factories.get(technique.value)
-            if factory is None:
-                continue
-            compatible_count = sum(
-                len(filter_compatible_seed_groups(factory=factory, seed_groups=groups))
-                for groups in selected_groups.values()
+        seed_group_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
+        per_target_components = [
+            ScenarioRunSizeComponent(
+                label=technique.value,
+                count=seed_group_count,
+                factors=[
+                    ScenarioRunSizeFactor(label="selected concrete techniques", count=1),
+                    ScenarioRunSizeFactor(label="selected seed-group estimate", count=seed_group_count),
+                ],
+                note="Count per adversarial target.",
             )
-            per_target_components.append(
-                ScenarioRunSizeComponent(
-                    label=technique.value,
-                    count=compatible_count,
-                    factors=[
-                        ScenarioRunSizeFactor(label="selected concrete techniques", count=1),
-                        ScenarioRunSizeFactor(label="compatible logical seed groups", count=compatible_count),
-                    ],
-                    note="Count per adversarial target.",
-                )
-            )
+            for technique in self._scenario_techniques
+        ]
 
-        compatibility_bounds = (
-            self._get_technique_compatibility_bounds(datasets=datasets) if self._estimate_has_binding_size_cap else None
-        )
-        sampled_per_target_count = sum(component.count for component in per_target_components)
-        if compatibility_bounds is not None:
-            per_target_minimum = sum(bounds[0] for bounds in compatibility_bounds.values())
-            per_target_maximum = sum(bounds[1] for bounds in compatibility_bounds.values())
-        elif self._estimate_has_binding_size_cap:
-            per_target_minimum = None
-            per_target_maximum = None
-        else:
-            per_target_minimum = sampled_per_target_count
-            per_target_maximum = sampled_per_target_count
+        per_target_maximum = sum(component.count for component in per_target_components)
         target_names = self.params.get("adversarial_targets") or []
         if not target_names:
             return ScenarioRunSizeEstimate(
-                status=ScenarioRunSizeEstimateStatus.Conditional,
-                minimum_attack_count=per_target_minimum,
-                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
+                status=ScenarioRunSizeEstimateStatus.Approximate,
+                total_attack_count=per_target_maximum,
                 components=per_target_components,
                 datasets=datasets,
                 note=(
-                    "Counts are per adversarial target. At least one adversarial_targets entry is required, "
-                    "and the total scales with the number of entries supplied. Baseline is forbidden."
+                    "Estimate assumes one adversarial target. Configure adversarial_targets before launch; "
+                    "the total scales with the number of targets. Cached results can reduce actual work. "
+                    "Baseline is forbidden."
                 ),
             )
 
@@ -448,42 +446,13 @@ class AdversarialBenchmark(Scenario):
             return ScenarioRunSizeEstimate(
                 status=ScenarioRunSizeEstimateStatus.Conditional,
                 minimum_attack_count=0,
-                maximum_attack_count=per_target_maximum * target_count if per_target_maximum is not None else None,
+                maximum_attack_count=per_target_maximum * target_count,
                 condition=ScenarioRunSizeEstimateCondition.PriorExecutionResults,
                 components=components,
                 datasets=datasets,
                 note=(
                     "Components describe the candidate population. Live behavioral-cache hits can suppress work, "
                     "so the authoritative total is unavailable before launch."
-                ),
-            )
-        if self._estimate_has_binding_size_cap and compatibility_bounds is None:
-            return ScenarioRunSizeEstimate(
-                status=ScenarioRunSizeEstimateStatus.Conditional,
-                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
-                components=components,
-                datasets=datasets,
-                note=(
-                    "Components describe the sampled candidate population. A binding randomized dataset cap may "
-                    "select a different compatibility mix at launch."
-                ),
-            )
-        if (
-            self._estimate_has_binding_size_cap
-            and per_target_minimum is not None
-            and per_target_maximum is not None
-            and per_target_minimum != per_target_maximum
-        ):
-            return ScenarioRunSizeEstimate(
-                status=ScenarioRunSizeEstimateStatus.Conditional,
-                minimum_attack_count=per_target_minimum * target_count,
-                maximum_attack_count=per_target_maximum * target_count,
-                condition=ScenarioRunSizeEstimateCondition.LaunchConfiguration,
-                components=components,
-                datasets=datasets,
-                note=(
-                    "The range covers every compatibility mix that the randomized per-dataset caps can select. "
-                    "Baseline is forbidden."
                 ),
             )
         return ScenarioRunSizeEstimate(
@@ -558,7 +527,7 @@ class AdversarialBenchmark(Scenario):
         if not self._is_cache_reuse_enabled() or self._scenario_result_id:
             return atomic_attacks
 
-        self._apply_reusable_cached_results(atomic_attacks=atomic_attacks)
+        (await self._apply_reusable_cached_results_async(atomic_attacks=atomic_attacks))
         return atomic_attacks
 
     def _get_technique_factory_overrides(self) -> dict[str, AttackTechniqueFactory] | None:
@@ -704,14 +673,14 @@ class AdversarialBenchmark(Scenario):
             newly executed objective results.
         """
         try:
-            self._persist_precomputed_cached_results()
+            (await self._persist_precomputed_cached_results_async())
         except Exception as error:
             if self._scenario_result_id:
-                self._mark_scenario_failed(scenario_result_id=self._scenario_result_id, error=error)
+                (await self._mark_scenario_failed_async(scenario_result_id=self._scenario_result_id, error=error))
             raise
         return await super().run_async()
 
-    def _apply_reusable_cached_results(self, *, atomic_attacks: list[AtomicAttack]) -> None:
+    async def _apply_reusable_cached_results_async(self, *, atomic_attacks: list[AtomicAttack]) -> None:
         """
         Remove only objectives having an exact reusable result.
 
@@ -719,7 +688,7 @@ class AdversarialBenchmark(Scenario):
             atomic_attacks: Candidate attacks whose seed groups may be pruned.
         """
         self._precomputed_cached_results = {}
-        reusable = self._collect_reusable_cached_results(atomic_attacks=atomic_attacks)
+        reusable = await self._collect_reusable_cached_results_async(atomic_attacks=atomic_attacks)
         for attack in atomic_attacks:
             prior_results = reusable.get(attack.atomic_attack_name, [])
             if not prior_results:
@@ -738,7 +707,9 @@ class AdversarialBenchmark(Scenario):
                 fully_cached_count,
             )
 
-    def _collect_reusable_cached_results(self, *, atomic_attacks: list[AtomicAttack]) -> dict[str, list[AttackResult]]:
+    async def _collect_reusable_cached_results_async(
+        self, *, atomic_attacks: list[AtomicAttack]
+    ) -> dict[str, list[AttackResult]]:
         """
         Select the newest exact compatible result for each objective.
 
@@ -752,11 +723,11 @@ class AdversarialBenchmark(Scenario):
         Returns:
             dict[str, list[AttackResult]]: Reusable results keyed by atomic attack name.
         """
-        candidate_names = self._collect_cached_completion_pairs(atomic_attacks=atomic_attacks)
+        candidate_names = await self._collect_cached_completion_pairs_async(atomic_attacks=atomic_attacks)
         candidate_results = [
             result for name in candidate_names for result in self._cached_results_by_name.get(name, [])
         ]
-        compatible_parent_ids = self._get_compatible_cache_parent_ids(results=candidate_results)
+        compatible_parent_ids = await self._get_compatible_cache_parent_ids_async(results=candidate_results)
         reusable: dict[str, list[AttackResult]] = {}
 
         for attack in atomic_attacks:
@@ -788,7 +759,7 @@ class AdversarialBenchmark(Scenario):
                 ]
         return reusable
 
-    def _get_compatible_cache_parent_ids(self, *, results: list[AttackResult]) -> set[str]:
+    async def _get_compatible_cache_parent_ids_async(self, *, results: list[AttackResult]) -> set[str]:
         """
         Return parent scenario IDs produced by this benchmark version.
 
@@ -806,7 +777,7 @@ class AdversarialBenchmark(Scenario):
         if not parent_ids:
             return set()
         try:
-            parent_results = self._memory.get_scenario_results(
+            parent_results = await self._memory.get_scenario_results_async(
                 scenario_result_ids=parent_ids,
                 scenario_name=type(self).__name__,
                 scenario_version=self.VERSION,
@@ -859,7 +830,7 @@ class AdversarialBenchmark(Scenario):
             scorer_identifier = attack_identifier.get_child("objective_scorer") if attack_identifier else None
         return ScorerEvaluationIdentifier(scorer_identifier).eval_hash if scorer_identifier else None
 
-    def _persist_precomputed_cached_results(self) -> None:
+    async def _persist_precomputed_cached_results_async(self) -> None:
         """
         Copy reusable results into the current scenario result.
 
@@ -890,10 +861,10 @@ class AdversarialBenchmark(Scenario):
                         },
                     )
                 )
-        self._memory.add_attack_results_to_memory(attack_results=copies)
+        (await self._memory.add_attack_results_to_memory_async(attack_results=copies))
         self._precomputed_cached_results = {}
 
-    def _collect_cached_completion_pairs(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:
+    async def _collect_cached_completion_pairs_async(self, *, atomic_attacks: list[AtomicAttack]) -> set[str]:
         """
         Return the set of ``atomic_attack_name`` values already cached for this scenario's objective target.
 
@@ -961,7 +932,7 @@ class AdversarialBenchmark(Scenario):
         raw_results_by_hash: dict[str, list[AttackResult]] = {}
         try:
             for technique_eval_hash in set().union(*lookup_hashes_by_name.values()) if lookup_hashes_by_name else set():
-                raw_results_by_hash[technique_eval_hash] = get_cached_results_for_technique(
+                raw_results_by_hash[technique_eval_hash] = await get_cached_results_for_technique_async(
                     self._memory,
                     technique_eval_hash=technique_eval_hash,
                     objective_target_eval_hash=objective_target_eval_hash,

@@ -526,7 +526,7 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
         Returns:
             list[Message]: The conversation messages.
         """
-        return list(self._memory.get_conversation_messages(conversation_id=conversation_id))
+        return list(await self._memory.get_conversation_messages_async(conversation_id=conversation_id))
 
     async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
         """
@@ -535,4 +535,4 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
         Returns:
             list[Score]: The scores.
         """
-        return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))
+        return list(await self._memory.get_prompt_scores_async(prompt_ids=prompt_ids))

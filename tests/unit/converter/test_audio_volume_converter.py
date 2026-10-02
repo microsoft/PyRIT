@@ -2,14 +2,48 @@
 # Licensed under the MIT license.
 
 
+import asyncio
 import os
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy.io import wavfile
 
 from pyrit.converter.audio_volume_converter import AudioVolumeConverter
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+@pytest.mark.parametrize("stereo", [False, True])
+@pytest.mark.parametrize(
+    ("samples", "factor", "expected"),
+    [
+        ([128, 128, 128], 0.5, [128, 128, 128]),
+        ([64, 128, 192], 0.5, [96, 128, 160]),
+        ([127, 128, 129], 0.5, [128, 128, 128]),
+        ([0, 128, 255], 2.0, [0, 128, 255]),
+        ([0, 64, 128, 192, 255], 1.0, [0, 64, 128, 192, 255]),
+    ],
+)
+async def test_volume_unsigned_pcm_async(
+    tmp_path: Path, stereo: bool, samples: list[int], factor: float, expected: list[int]
+) -> None:
+    """Volume scales unsigned PCM around 128, preserving silence and clipping correctly."""
+    data = np.array(samples, dtype=np.uint8)
+    expected_data = np.array(expected, dtype=np.uint8)
+    if stereo:
+        data = np.column_stack((data, data[::-1]))
+        expected_data = np.column_stack((expected_data, expected_data[::-1]))
+    source = tmp_path / "unsigned.wav"
+    await asyncio.to_thread(wavfile.write, source, 8000, data)
+
+    result = await AudioVolumeConverter(volume_factor=factor).convert_async(prompt=str(source))
+    rate, output = await asyncio.to_thread(wavfile.read, result.output_text)
+
+    assert rate == 8000
+    assert output.dtype == np.uint8
+    np.testing.assert_array_equal(output, expected_data)
 
 
 async def test_volume_increase(sqlite_instance):

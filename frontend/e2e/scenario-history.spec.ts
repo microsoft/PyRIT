@@ -1,4 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./_fixtures";
+import { mockVersion } from "./_compatibility";
+
+import { READY_RUNTIME } from "./_runtime";
 
 const RUN_ID = "123e4567-e89b-12d3-a456-426614174000";
 const ACTIVE_RUN_ID = "123e4567-e89b-12d3-a456-426614174001";
@@ -33,6 +36,8 @@ const datasetSummary = {
 };
 
 const configuredEstimate = {
+  dataset_size: { kind: 'bounded', value: 4 },
+  dataset_limit: { state: 'scenario_default' },
   estimated_attack_count: 8,
   minimum_attack_count: null,
   maximum_attack_count: null,
@@ -116,6 +121,8 @@ const catalogScenario = {
     },
   ],
   default_run_size: {
+    dataset_size: { kind: 'bounded', value: 8 },
+    dataset_limit: { state: 'scenario_default' },
     estimated_attack_count: 16,
     minimum_attack_count: null,
     maximum_attack_count: null,
@@ -252,11 +259,20 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
     });
   });
 
+  await page.route(/\/api\/runtime(?:\?|$)/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(READY_RUNTIME),
+    });
+  });
+
   await page.route(/\/api\/version(?:\?|$)/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
+        ...mockVersion(),
         version: "1.1.0",
         display: "PyRIT 1.1.0",
         default_labels: {

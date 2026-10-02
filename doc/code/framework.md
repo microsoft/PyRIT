@@ -145,6 +145,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Datasets should never be retrieved from SeedDatasetProviders; SeedDatasetProviders should load into memory, and then components retrieve from memory
 - Most components should always work with seeds passed directly in (except scenarios which may package them from memory). Never use SeedDatasetProviders, file paths, etc. Either pass the seed as an argument or retrieve from memory.
 - There is a Seed hierarchy and the right types should be used (SeedObjective, SeedPrompt, SimulatedSeedPrompt, AttackSeedGroup, ...)
+- Generated dataset providers adapt generation-strategy results to typed seeds. Strategies
+  own model interaction and validation; memory stores the seeds, and scenarios select them.
 - `SeedObjective.conditions` holds typed criteria beside its objective text. Seed storage and
   identity retain those criteria; `SeedGroup.scoring_expectation` exposes them for execution.
 - **Does not own**: a dataset defines and holds seeds; it doesn't package them for an attack. Specifically not:
@@ -199,6 +201,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 **Attack Responsibility**: An attack is a type of executor, which manages conversations to achieve an objective.
 
+- A conversation created for an attack belongs to that execution. Reusing conversation history in another execution, child attack, or branch requires a copy with a new conversation ID.
+- Each attack execution has a unique `attack_result_id`.
 - Any branching decision (e.g. the next thing(s) to do is based on a previous result) should be an attack/executor.
 - Executors should always make use of other component's responsibilities. An executor should always branch based on a scorer and NOT a direct response. (e.g. was this prompt blocked? is a scorer responsibility, not an executor responsibility)
 - Executors should use scoring and target capabilities implicitly. Executors should support multi-modal.
@@ -244,7 +248,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A target may observe an internal, caller-owned send context at the provider-invocation boundary,
   after target-side waits and immediately before irreversible provider I/O, but the caller owns any
   bootstrap-history identity, replay, or branching state.
-- HTTP targets can propagate a separate trace context for each send. `TargetTraceConfig` controls this
+- HTTP targets and `LiteLLMChatTarget` can propagate a separate trace context for each send. `TargetTraceConfig` controls this
   behavior, is off by default, and can use a caller-owned tracer. Enable it only for an endpoint that
   is known to accept W3C trace context. Targets record request trace metadata; the prompt normalizer
   persists it. Outbound request metadata is separate from chat role, so missing trace
@@ -272,6 +276,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A scorer is not limited to a message, it could be anything (e.g. was this tool called or was this file written). It receives a `Scorable`, which identifies that evidence, and an optional `ScoringExpectation`.
 - `TrueFalseScorer` and `FloatScaleScorer` define result families. `MessageScorer` adds message resolution and message-only policy on top of them.
 - A scorer declares which evidence it reads, rather than the caller filtering evidence for it. A `MessageScorer` states the conversation roles and data types it reads on its `ScorerPromptValidator`.
+- Injected calls and results use simulated response roles and are excluded from message scoring
+  unless explicitly selected. Prepended history is not an outbound request; execution scoring
+  uses live request traces, not injected message content.
 - Target-backed scorers over text evidence persist an `Observation` that references and hashes the retained SCORE-conversation response. The observation and its first score are committed atomically.
 - Trace sources acquire and normalize execution evidence for
   `TraceScorable` IDs through an injected `TraceClient`. `OtelToolCallScorer`

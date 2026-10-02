@@ -67,6 +67,8 @@ function makeScenario(overrides: Partial<RegisteredScenario> & { scenario_name: 
     uses_default_adversarial_target: true,
     supported_parameters: [],
     default_run_size: {
+      dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
+      dataset_limit: { state: 'scenario_default' },
       estimated_attack_count: null,
       minimum_attack_count: null,
       maximum_attack_count: null,
@@ -132,6 +134,8 @@ describe('ScenarioCatalog', () => {
       scenario_name: 'scenario.pending',
       default_datasets: ['harmbench'],
       default_run_size: {
+        dataset_size: { kind: 'bounded', value: 4 },
+        dataset_limit: { state: 'scenario_default' },
         estimated_attack_count: 4,
         minimum_attack_count: null,
         maximum_attack_count: null,
@@ -161,7 +165,8 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     expect(await screen.findByText('scenario.pending')).toBeInTheDocument()
-    expect(screen.getAllByText('Calculating...')).toHaveLength(2)
+    expect(screen.getAllByText('Calculating...')).toHaveLength(1)
+    expect(screen.getByText('harmbench')).toBeInTheDocument()
     expect(mockListCatalog).toHaveBeenNthCalledWith(1, 200, undefined, false)
 
     await act(async () => {
@@ -427,6 +432,7 @@ describe('ScenarioCatalog', () => {
           default_techniques: [],
           default_datasets: ['dataset-one'],
           default_run_size: {
+            dataset_size: { kind: 'bounded', value: 1 }, dataset_limit: { state: 'value', value: 1 },
             estimated_attack_count: null,
             components: [],
             datasets: [{
@@ -444,6 +450,8 @@ describe('ScenarioCatalog', () => {
           scenario_name: 'scenario.two',
           default_datasets: ['dataset-two'],
           default_run_size: {
+            dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
+            dataset_limit: { state: 'scenario_default' },
             estimated_attack_count: null,
             components: [],
             datasets: [{
@@ -466,7 +474,7 @@ describe('ScenarioCatalog', () => {
     await user.type(screen.getByLabelText('Search scenarios'), 'dataset')
 
     const firstRow = screen.getByTestId('scenario-card-scenario.one')
-    expect(within(firstRow).getByText('1 objective')).toBeInTheDocument()
+    expect(within(firstRow).getByText('Up to 1 objective')).toBeInTheDocument()
     expect(within(firstRow).getByText(/dataset-one/)).toBeInTheDocument()
     expect(within(firstRow).getByText('No default techniques')).toBeInTheDocument()
     expect(screen.getByText('scenario.two')).toBeInTheDocument()
@@ -499,7 +507,7 @@ describe('ScenarioCatalog', () => {
     expect(card).toHaveAttribute('href', '/scanner/foundry%2Fred_team_agent')
   })
 
-  it('shows the total default objectives followed by the dataset names', async () => {
+  it('shows configured limits rather than known population counts', async () => {
     mockListCatalog.mockResolvedValue({
       items: [
         makeScenario({
@@ -511,6 +519,7 @@ describe('ScenarioCatalog', () => {
             override_scope: 'per_dataset',
           },
           default_run_size: {
+            dataset_size: { kind: 'bounded', value: 10 }, dataset_limit: { state: 'value', value: 10 },
             estimated_attack_count: null,
             components: [],
             datasets: [
@@ -541,7 +550,7 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     const row = await screen.findByTestId('scenario-card-scenario.compound')
-    expect(within(row).getByText('6 objectives')).toBeInTheDocument()
+    expect(within(row).getByText('Up to 10 objectives')).toBeInTheDocument()
     expect(within(row).getByText('population-a · population-b')).toBeInTheDocument()
   })
 
@@ -551,6 +560,8 @@ describe('ScenarioCatalog', () => {
         makeScenario({
           scenario_name: 'adaptive.text_adaptive',
           default_run_size: {
+            dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
+            dataset_limit: { state: 'scenario_default' },
             estimated_attack_count: null,
             minimum_attack_count: 21,
             maximum_attack_count: 42,
@@ -601,7 +612,7 @@ describe('ScenarioCatalog', () => {
 
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
     const row = await screen.findByTestId('scenario-card-scenario.unsized')
-    expect(within(row).getByText('Population counts unavailable')).toBeInTheDocument()
+    expect(within(row).queryByText('Population counts unavailable')).not.toBeInTheDocument()
     expect(within(row).getByText('harmbench')).toBeInTheDocument()
   })
 
@@ -629,6 +640,7 @@ describe('ScenarioCatalog', () => {
             estimated_attack_count: null,
             minimum_attack_count: 12,
             maximum_attack_count: 20,
+            dataset_size: { kind: 'bounded', value: 4 }, dataset_limit: { state: 'value', value: 4 },
             components: [
               {
                 label: 'Default attacks',
@@ -664,7 +676,7 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     const row = await screen.findByTestId('scenario-card-airt.jailbreak')
-    expect(within(row).getByText('4 objectives')).toBeInTheDocument()
+    expect(within(row).getByText('Up to 4 objectives')).toBeInTheDocument()
     expect(within(row).getByText('harmbench')).toBeInTheDocument()
     expect(within(row).getByText('2 techniques')).toBeInTheDocument()
     expect(within(row).getByText('prompt_sending · jailbreak_system_prompt')).toBeInTheDocument()

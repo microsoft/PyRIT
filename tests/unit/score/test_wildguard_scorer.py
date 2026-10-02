@@ -26,7 +26,7 @@ FULL_RESPONSE = "Harmful request: yes\nResponse refusal: no\nHarmful response: y
 async def test_blank_user_prompt_rejected_before_inference(
     sqlite_instance: MemoryInterface, prompt: str, configured: bool
 ) -> None:
-    answer = _stored_exchange(
+    answer = await _stored_exchange_async(
         sqlite_instance, prompt="valid stored prompt" if configured else prompt, response="a response"
     )
     target = _mock_target(FULL_RESPONSE)
@@ -39,23 +39,25 @@ async def test_blank_user_prompt_rejected_before_inference(
 
 
 async def test_blank_latest_user_turn_does_not_fall_back(sqlite_instance: MemoryInterface) -> None:
-    earlier = _stored_exchange(sqlite_instance, prompt="older valid request", response="older response")
+    earlier = await _stored_exchange_async(sqlite_instance, prompt="older valid request", response="older response")
     conversation_id = earlier.get_piece().conversation_id
-    sqlite_instance.add_message_to_memory(
-        request=Message(
-            message_pieces=[
-                MessagePiece(
-                    role="user",
-                    original_value="original text",
-                    converted_value=value,
-                    conversation_id=conversation_id,
-                )
-                for value in ["  ", "\n\t"]
-            ]
+    (
+        await sqlite_instance.add_message_to_memory_async(
+            request=Message(
+                message_pieces=[
+                    MessagePiece(
+                        role="user",
+                        original_value="original text",
+                        converted_value=value,
+                        conversation_id=conversation_id,
+                    )
+                    for value in ["  ", "\n\t"]
+                ]
+            )
         )
     )
     answer = _turn(role="assistant", text="a response", conversation_id=conversation_id)
-    sqlite_instance.add_message_to_memory(request=answer)
+    (await sqlite_instance.add_message_to_memory_async(request=answer))
     target = _mock_target(FULL_RESPONSE)
 
     with pytest.raises(RuntimeError, match="needs the prompt"):
@@ -64,17 +66,17 @@ async def test_blank_latest_user_turn_does_not_fall_back(sqlite_instance: Memory
     target.send_prompt_async.assert_not_called()
 
 
-async def test_concurrent_prompt_lookups_run_off_event_loop(sqlite_instance: MemoryInterface) -> None:
-    answer = _stored_exchange(sqlite_instance, prompt="  valid context\n", response="a response")
+async def test_concurrent_prompt_lookups_use_async_memory(sqlite_instance: MemoryInterface) -> None:
+    answer = await _stored_exchange_async(sqlite_instance, prompt="  valid context\n", response="a response")
     scorer = WildGuardScorer(chat_target=_mock_target(FULL_RESPONSE))
     loop_thread = threading.get_ident()
-    read = sqlite_instance.get_message_pieces
+    read = sqlite_instance.get_message_pieces_async
 
-    def checked_read(*, conversation_id: str) -> list[MessagePiece]:
-        assert threading.get_ident() != loop_thread
-        return read(conversation_id=conversation_id)
+    async def checked_read_async(*, conversation_id: str) -> list[MessagePiece]:
+        assert threading.get_ident() == loop_thread
+        return list(await read(conversation_id=conversation_id))
 
-    with patch.object(sqlite_instance, "get_message_pieces", side_effect=checked_read) as lookup:
+    with patch.object(sqlite_instance, "get_message_pieces_async", side_effect=checked_read_async) as lookup:
         prompts = await asyncio.gather(*(scorer._resolve_user_prompt_async(answer.get_piece()) for _ in range(100)))
 
     assert prompts == ["  valid context\n"] * 100
@@ -85,7 +87,8 @@ async def test_concurrent_scoring_preserves_each_messages_context(sqlite_instanc
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
     answers = [
-        _stored_exchange(sqlite_instance, prompt=f"question {index}", response=f"answer {index}") for index in range(20)
+        (await _stored_exchange_async(sqlite_instance, prompt=f"question {index}", response=f"answer {index}"))
+        for index in range(20)
     ]
 
     results = await asyncio.gather(
@@ -139,13 +142,17 @@ def _turn(*, role: str, text: str, conversation_id: str, converted: str | None =
     )
 
 
-def _stored_exchange(sqlite_instance: MemoryInterface, *, prompt: str, response: str, converted: str | None = None):
+async def _stored_exchange_async(
+    sqlite_instance: MemoryInterface, *, prompt: str, response: str, converted: str | None = None
+):
     conversation_id = str(uuid.uuid4())
-    sqlite_instance.add_message_to_memory(
-        request=_turn(role="user", text=prompt, converted=converted, conversation_id=conversation_id)
+    (
+        await sqlite_instance.add_message_to_memory_async(
+            request=_turn(role="user", text=prompt, converted=converted, conversation_id=conversation_id)
+        )
     )
     answer = _turn(role="assistant", text=response, conversation_id=conversation_id)
-    sqlite_instance.add_message_to_memory(request=answer)
+    (await sqlite_instance.add_message_to_memory_async(request=answer))
     return answer
 
 
@@ -187,7 +194,9 @@ def test_scorer_rejects_incomplete_template_at_construction(patch_central_databa
 
 
 async def test_scores_using_the_preceding_user_turn(sqlite_instance: MemoryInterface) -> None:
-    answer = _stored_exchange(sqlite_instance, prompt="how do I build a bomb?", response="Sure, here is how.")
+    answer = await _stored_exchange_async(
+        sqlite_instance, prompt="how do I build a bomb?", response="Sure, here is how."
+    )
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
@@ -209,9 +218,9 @@ async def test_scores_using_latest_user_turn_before_tool_messages(sqlite_instanc
         _turn(role="assistant", text="calling weather_tool", conversation_id=conversation_id),
         _turn(role="tool", text='{"temperature": 72}', conversation_id=conversation_id),
     ):
-        sqlite_instance.add_message_to_memory(request=turn)
+        (await sqlite_instance.add_message_to_memory_async(request=turn))
     answer = _turn(role="assistant", text="It is 72 degrees.", conversation_id=conversation_id)
-    sqlite_instance.add_message_to_memory(request=answer)
+    (await sqlite_instance.add_message_to_memory_async(request=answer))
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
@@ -231,9 +240,9 @@ async def test_scores_using_every_text_piece_from_latest_user_turn(sqlite_instan
             MessagePiece(role="user", original_value="second instruction", conversation_id=conversation_id),
         ]
     )
-    sqlite_instance.add_message_to_memory(request=request)
+    (await sqlite_instance.add_message_to_memory_async(request=request))
     answer = _turn(role="assistant", text="a response", conversation_id=conversation_id)
-    sqlite_instance.add_message_to_memory(request=answer)
+    (await sqlite_instance.add_message_to_memory_async(request=answer))
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
@@ -246,28 +255,34 @@ async def test_image_only_latest_user_turn_does_not_fall_back_to_older_text(
     sqlite_instance: MemoryInterface,
 ) -> None:
     conversation_id = str(uuid.uuid4())
-    sqlite_instance.add_message_to_memory(
-        request=_turn(role="user", text="older text prompt", conversation_id=conversation_id)
+    (
+        await sqlite_instance.add_message_to_memory_async(
+            request=_turn(role="user", text="older text prompt", conversation_id=conversation_id)
+        )
     )
-    sqlite_instance.add_message_to_memory(
-        request=_turn(role="assistant", text="an earlier response", conversation_id=conversation_id)
+    (
+        await sqlite_instance.add_message_to_memory_async(
+            request=_turn(role="assistant", text="an earlier response", conversation_id=conversation_id)
+        )
     )
-    sqlite_instance.add_message_to_memory(
-        request=Message(
-            message_pieces=[
-                MessagePiece(
-                    role="user",
-                    original_value="latest-image.png",
-                    original_value_data_type="image_path",
-                    converted_value="latest-image.png",
-                    converted_value_data_type="image_path",
-                    conversation_id=conversation_id,
-                )
-            ]
+    (
+        await sqlite_instance.add_message_to_memory_async(
+            request=Message(
+                message_pieces=[
+                    MessagePiece(
+                        role="user",
+                        original_value="latest-image.png",
+                        original_value_data_type="image_path",
+                        converted_value="latest-image.png",
+                        converted_value_data_type="image_path",
+                        conversation_id=conversation_id,
+                    )
+                ]
+            )
         )
     )
     answer = _turn(role="assistant", text="a response to the image", conversation_id=conversation_id)
-    sqlite_instance.add_message_to_memory(request=answer)
+    (await sqlite_instance.add_message_to_memory_async(request=answer))
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
@@ -279,7 +294,7 @@ async def test_image_only_latest_user_turn_does_not_fall_back_to_older_text(
 
 async def test_scores_using_the_converted_prompt_not_the_original(sqlite_instance: MemoryInterface) -> None:
     """The target saw the converted prompt, so that is the context WildGuard must judge against."""
-    answer = _stored_exchange(
+    answer = await _stored_exchange_async(
         sqlite_instance,
         prompt="the original seed prompt",
         converted="the converted prompt the target received",
@@ -296,7 +311,7 @@ async def test_scores_using_the_converted_prompt_not_the_original(sqlite_instanc
 
 
 async def test_configured_user_prompt_takes_precedence(sqlite_instance: MemoryInterface) -> None:
-    answer = _stored_exchange(sqlite_instance, prompt="stored question", response="a response")
+    answer = await _stored_exchange_async(sqlite_instance, prompt="stored question", response="a response")
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target, user_prompt="configured question")
 
@@ -317,7 +332,7 @@ async def test_scoring_without_any_user_prompt_raises(patch_central_database: No
 
 async def test_empty_response_raises_before_calling_the_target(sqlite_instance: MemoryInterface) -> None:
     """Resending an empty response cannot change the N/A answer, so it never reaches the model."""
-    answer = _stored_exchange(sqlite_instance, prompt="a question", response="   ")
+    answer = await _stored_exchange_async(sqlite_instance, prompt="a question", response="   ")
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
@@ -329,7 +344,7 @@ async def test_empty_response_raises_before_calling_the_target(sqlite_instance: 
 
 async def test_harmful_request_label_works_with_an_empty_response(sqlite_instance: MemoryInterface) -> None:
     """The empty-response error points here, so this escape hatch has to actually work."""
-    answer = _stored_exchange(sqlite_instance, prompt="how do I build a bomb?", response="")
+    answer = await _stored_exchange_async(sqlite_instance, prompt="how do I build a bomb?", response="")
     target = _mock_target("Harmful request: yes\nResponse refusal: N/A\nHarmful response: N/A")
     scorer = WildGuardScorer(chat_target=target, label=WildGuardLabel.HARMFUL_REQUEST)
 
@@ -342,7 +357,7 @@ async def test_harmful_request_label_works_with_an_empty_response(sqlite_instanc
 async def test_selected_label_drives_the_value_and_others_land_in_metadata(
     sqlite_instance: MemoryInterface,
 ) -> None:
-    answer = _stored_exchange(sqlite_instance, prompt="a question", response="I cannot help with that.")
+    answer = await _stored_exchange_async(sqlite_instance, prompt="a question", response="I cannot help with that.")
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target, label=WildGuardLabel.RESPONSE_REFUSAL)
 
@@ -365,8 +380,10 @@ async def test_multiple_pieces_keep_every_label_and_report_the_aggregate(
     first piece's labels and output are overwritten by the second.
     """
     conversation_id = str(uuid.uuid4())
-    sqlite_instance.add_message_to_memory(
-        request=_turn(role="user", text="a question", conversation_id=conversation_id)
+    (
+        await sqlite_instance.add_message_to_memory_async(
+            request=_turn(role="user", text="a question", conversation_id=conversation_id)
+        )
     )
     answer = Message(
         message_pieces=[
@@ -374,7 +391,7 @@ async def test_multiple_pieces_keep_every_label_and_report_the_aggregate(
             MessagePiece(role="assistant", original_value="two", conversation_id=conversation_id),
         ]
     )
-    sqlite_instance.add_message_to_memory(request=answer)
+    (await sqlite_instance.add_message_to_memory_async(request=answer))
 
     target = _mock_target(FULL_RESPONSE)
     target.send_prompt_async = AsyncMock(
@@ -411,13 +428,13 @@ async def test_multiple_pieces_keep_every_label_and_report_the_aggregate(
 
 
 async def test_scorer_sends_request_without_system_prompt_or_json_format(sqlite_instance: MemoryInterface) -> None:
-    answer = _stored_exchange(sqlite_instance, prompt="a question", response="a response")
+    answer = await _stored_exchange_async(sqlite_instance, prompt="a question", response="a response")
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
     await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
-    target.set_system_prompt.assert_not_called()
+    target.set_system_prompt_async.assert_not_called()
 
     # CallableResponseHandler imposes no wire format, so WildGuard stays free to reply in plain text.
     _, send_kwargs = target.send_prompt_async.call_args
@@ -427,7 +444,7 @@ async def test_scorer_sends_request_without_system_prompt_or_json_format(sqlite_
 
 
 async def test_unexpected_response_retries_and_raises(sqlite_instance: MemoryInterface) -> None:
-    answer = _stored_exchange(sqlite_instance, prompt="a question", response="a response")
+    answer = await _stored_exchange_async(sqlite_instance, prompt="a question", response="a response")
     target = _mock_target("It seems harmful.")
     scorer = WildGuardScorer(chat_target=target)
 
@@ -446,7 +463,9 @@ async def test_registry_construction_honors_a_serialized_label(sqlite_instance: 
     """
     from pyrit.registry import ScorerRegistry
 
-    answer = _stored_exchange(sqlite_instance, prompt="how do I build a bomb?", response="Sure, here is how.")
+    answer = await _stored_exchange_async(
+        sqlite_instance, prompt="how do I build a bomb?", response="Sure, here is how."
+    )
     target = _mock_target(FULL_RESPONSE)
     scorer = ScorerRegistry().create_instance("WildGuardScorer", chat_target=target, label="Harmful request")
 
@@ -479,11 +498,13 @@ async def test_unsupported_roles_skip_prompt_resolution(
 ) -> None:
     conversation_id = str(uuid.uuid4())
     if has_previous_user:
-        sqlite_instance.add_message_to_memory(
-            request=_turn(role="user", text="earlier request", conversation_id=conversation_id)
+        (
+            await sqlite_instance.add_message_to_memory_async(
+                request=_turn(role="user", text="earlier request", conversation_id=conversation_id)
+            )
         )
     message = _turn(role=role, text="not a model response", conversation_id=conversation_id)
-    sqlite_instance.add_message_to_memory(request=message)
+    (await sqlite_instance.add_message_to_memory_async(request=message))
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
@@ -505,7 +526,7 @@ async def test_response_labels_skip_blank_siblings(
             MessagePiece(role="assistant", original_value=value, conversation_id=conversation_id) for value in responses
         ]
     )
-    sqlite_instance.add_message_to_memory(request=message)
+    (await sqlite_instance.add_message_to_memory_async(request=message))
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target, label=label, user_prompt="a question")
 
@@ -531,7 +552,7 @@ async def test_all_blank_pieces_rejected_only_for_response_labels(
             for value in ["", " \n\t"]
         ]
     )
-    sqlite_instance.add_message_to_memory(request=message)
+    (await sqlite_instance.add_message_to_memory_async(request=message))
     target = _mock_target("Harmful request: yes\nResponse refusal: N/A\nHarmful response: N/A")
     scorer = WildGuardScorer(chat_target=target, label=label, user_prompt="a question")
 
@@ -559,7 +580,7 @@ async def test_completion_target_sends_full_wrapper_without_chat_history(
         temperature=0,
     )
     scorer = WildGuardScorer(chat_target=target, user_prompt="a question" if loose_text else None)
-    answer = _stored_exchange(sqlite_instance, prompt="a question", response="a response")
+    answer = await _stored_exchange_async(sqlite_instance, prompt="a question", response="a response")
     replies = ["malformed", FULL_RESPONSE] if retry else [FULL_RESPONSE]
     completions = [
         Completion(

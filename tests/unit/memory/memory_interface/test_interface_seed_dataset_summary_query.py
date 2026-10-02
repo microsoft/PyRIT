@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from pyrit.memory import MemoryInterface
+from pyrit.memory.memory_session import MemorySession
 from pyrit.models import SeedPrompt
 
 
@@ -22,13 +23,11 @@ async def test_get_seed_dataset_summaries_avoids_metadata_row_multiplication(
         added_by="tester",
     )
 
-    real_session = sqlite_instance.get_session()
-    session = MagicMock(wraps=real_session)
-    original_execute = real_session.execute
+    original_execute = MemorySession.execute
     captured_rows: list[object] = []
 
-    def execute(statement, *args, **kwargs):
-        result = original_execute(statement, *args, **kwargs)
+    def execute(session, statement, *args, **kwargs):
+        result = original_execute(session, statement, *args, **kwargs)
         original_all = result.all
 
         def all_rows():
@@ -39,13 +38,8 @@ async def test_get_seed_dataset_summaries_avoids_metadata_row_multiplication(
         result.all = all_rows
         return result
 
-    session.execute.side_effect = execute
-
-    try:
-        with patch.object(sqlite_instance, "get_session", return_value=session):
-            summaries = sqlite_instance.get_seed_dataset_summaries()
-    finally:
-        real_session.close()
+    with patch.object(MemorySession, "execute", execute):
+        summaries = await sqlite_instance.get_seed_dataset_summaries_async()
 
     assert len(captured_rows) == 3
     assert len(summaries) == 1

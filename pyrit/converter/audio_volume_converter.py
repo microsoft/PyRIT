@@ -26,6 +26,7 @@ class AudioVolumeConverter(Converter):
     The converter scales all audio samples by the given factor and clips
     the result to the valid range for the original data type.
     Sample rate, bit depth, and number of channels are preserved.
+    Unsigned 8-bit PCM is scaled around its silence midpoint of 128.
     """
 
     SUPPORTED_INPUT_TYPES = ("audio_path",)
@@ -67,14 +68,16 @@ class AudioVolumeConverter(Converter):
         Returns:
             numpy array with the volume adjusted, same length and dtype as input.
         """
-        scaled = data.astype(np.float64) * self._volume_factor
+        midpoint = 128 if data.dtype == np.uint8 else 0
+        scaled = (data.astype(np.float64) - midpoint) * self._volume_factor
 
-        # Clip to the valid range for the original dtype
+        # Clip and quantize amplitudes before restoring an unsigned midpoint.
         if np.issubdtype(data.dtype, np.integer):
             info = np.iinfo(data.dtype)
-            scaled = np.clip(scaled, info.min, info.max)
+            scaled = np.clip(scaled, info.min - midpoint, info.max - midpoint)
+            scaled = np.trunc(scaled)
 
-        return scaled
+        return scaled + midpoint
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "audio_path") -> ConverterResult:
         """

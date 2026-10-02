@@ -40,7 +40,7 @@ from pyrit.score import (
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.observation.message_trace_resolver import resolve_message_trace_scope
+from pyrit.score.observation.message_trace_resolver import resolve_message_trace_scope_async
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -124,10 +124,10 @@ async def test_attack_scores_tool_evidence_and_replays_async(
     assert score.scorable == MessageScorable(message_piece_ids=(result.last_response.id,))
     assert score.message_piece_id == result.last_response.id
     assert score.scored_expectation.conditions == _expectation("lookup").conditions
-    observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert isinstance(observation.scorable, TraceScorable)
     assert observation.payload.scope == observation.scorable
-    stored_result = sqlite_instance.get_attack_results(attack_result_ids=[result.attack_result_id])[0]
+    stored_result = (await sqlite_instance.get_attack_results_async(attack_result_ids=[result.attack_result_id]))[0]
     assert stored_result.automated_score.id == score.id
     assert stored_result.outcome is outcome
     client.close()
@@ -182,28 +182,30 @@ async def test_auxiliary_trace_score_is_stored_async(
         result = await attack.execute_async(objective="lookup", expectation=_expectation("lookup"))
         acquire.assert_awaited_once()
     assert result.outcome is AttackOutcome.SUCCESS
-    scores = sqlite_instance.get_prompt_scores(prompt_ids=[result.last_response.id])
+    scores = await sqlite_instance.get_prompt_scores_async(prompt_ids=[result.last_response.id])
     assert len(scores) == 2
     assert all(score.get_value() is True for score in scores)
     assert all(score.message_piece_id == result.last_response.id for score in scores)
 
 
-def _store(*, memory: SQLiteMemory, conversation: str, role: str = "user", trace_id: str | None = None) -> Message:
+async def _store_async(
+    *, memory: SQLiteMemory, conversation: str, role: str = "user", trace_id: str | None = None
+) -> Message:
     piece = MessagePiece(role=role, original_value="content", conversation_id=conversation)
     if trace_id:
         piece.prompt_metadata.update(RequestTraceContext(traceparent=f"00-{trace_id}-{'2' * 16}-01").to_metadata())
     message = piece.to_message()
-    memory.add_message_to_memory(request=message)
+    (await memory.add_message_to_memory_async(request=message))
     return message
 
 
-def test_resolver_bounds_scope_to_the_named_message(sqlite_instance: SQLiteMemory) -> None:
+async def test_resolver_bounds_scope_to_the_named_message(sqlite_instance: SQLiteMemory) -> None:
     conversation = str(uuid.uuid4())
-    _store(memory=sqlite_instance, conversation=conversation, trace_id="1" * 32)
-    response = _store(memory=sqlite_instance, conversation=conversation, role="assistant")
-    _store(memory=sqlite_instance, conversation=conversation, trace_id="4" * 32)
-    _store(memory=sqlite_instance, conversation=str(uuid.uuid4()), trace_id="5" * 32)
-    scope, complete = resolve_message_trace_scope(
+    (await _store_async(memory=sqlite_instance, conversation=conversation, trace_id="1" * 32))
+    response = await _store_async(memory=sqlite_instance, conversation=conversation, role="assistant")
+    (await _store_async(memory=sqlite_instance, conversation=conversation, trace_id="4" * 32))
+    (await _store_async(memory=sqlite_instance, conversation=str(uuid.uuid4()), trace_id="5" * 32))
+    scope, complete = await resolve_message_trace_scope_async(
         scorable=MessageScorable.from_message(response), memory=sqlite_instance
     )
     assert scope == TraceScorable(trace_ids=("1" * 32,))
@@ -212,32 +214,85 @@ def test_resolver_bounds_scope_to_the_named_message(sqlite_instance: SQLiteMemor
 
 async def test_prepended_history_does_not_carry_trace_links_async(sqlite_instance: SQLiteMemory) -> None:
     source_conversation = str(uuid.uuid4())
-    prepended = _store(memory=sqlite_instance, conversation=source_conversation, trace_id="1" * 32)
+    prepended = await _store_async(memory=sqlite_instance, conversation=source_conversation, trace_id="1" * 32)
     prepended.get_piece().prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
     conversation = str(uuid.uuid4())
     await ConversationManager().add_prepended_conversation_to_memory_async(
         prepended_conversation=[prepended], conversation_id=conversation
     )
     copied = next(
-        piece for piece in sqlite_instance.get_message_pieces(conversation_id=conversation) if piece.role == "user"
+        piece
+        for piece in (await sqlite_instance.get_message_pieces_async(conversation_id=conversation))
+        if piece.role == "user"
     )
     assert RequestTraceContext.from_metadata(copied.prompt_metadata) is None
     assert RequestTraceContext.REQUEST_METADATA_KEY not in copied.prompt_metadata
     assert prepended.get_piece().prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] == 1
     assert RequestTraceContext.from_metadata(prepended.get_piece().prompt_metadata) is not None
-    response = _store(memory=sqlite_instance, conversation=conversation, role="assistant")
-    assert resolve_message_trace_scope(scorable=MessageScorable.from_message(response), memory=sqlite_instance) == (
+    response = await _store_async(memory=sqlite_instance, conversation=conversation, role="assistant")
+    assert (
+        await resolve_message_trace_scope_async(scorable=MessageScorable.from_message(response), memory=sqlite_instance)
+    ) == (
         None,
         False,
     )
 
 
+@pytest.mark.parametrize("live_tool", ["lookup", "other"])
+async def test_fake_tool_history_is_not_execution_evidence_async(
+    sqlite_instance: SQLiteMemory, capture: tuple[InMemoryTraceClient, TracerProvider], live_tool: str
+) -> None:
+    client, provider = capture
+    conversation = str(uuid.uuid4())
+    history = [
+        Message.from_prompt(prompt="Look up a value.", role="user"),
+        MessagePiece(
+            role="assistant",
+            original_value='{"type":"function_call","call_id":"fake","name":"lookup","arguments":"{}"}',
+            original_value_data_type="function_call",
+        ).to_message(),
+        MessagePiece(
+            role="tool",
+            original_value='{"type":"function_call_output","call_id":"fake","output":"done"}',
+            original_value_data_type="function_call_output",
+        ).to_message(),
+    ]
+    await ConversationManager().add_prepended_conversation_to_memory_async(
+        prepended_conversation=history, conversation_id=conversation
+    )
+    stored = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation)
+    assert [message.get_piece().role for message in stored] == ["user", "simulated_assistant", "simulated_tool"]
+    assert all(message.get_piece().prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY] for message in stored)
+    target = _agent_target(client=client, provider=provider)
+    target.apply_capabilities(
+        capabilities=target.capabilities.model_copy(
+            update={
+                "input_modalities": target.capabilities.input_modalities
+                | frozenset({frozenset({"function_call"}), frozenset({"function_call_output"})}),
+            }
+        )
+    )
+    response = await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt=live_tool, role="user"), target=target, conversation_id=conversation
+    )
+    scope, complete = await resolve_message_trace_scope_async(
+        scorable=MessageScorable.from_message(response), memory=sqlite_instance
+    )
+    assert scope is not None
+    assert complete
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+    score = (
+        await scorer.score_async(scorable=MessageScorable.from_message(response), expectation=_expectation("lookup"))
+    )[0]
+    assert score.get_value() is (live_tool == "lookup")
+
+
 async def test_unlinked_request_prevents_a_false_verdict_async(sqlite_instance: SQLiteMemory) -> None:
     conversation = str(uuid.uuid4())
-    _store(memory=sqlite_instance, conversation=conversation)
-    _store(memory=sqlite_instance, conversation=conversation, role="assistant")
-    _store(memory=sqlite_instance, conversation=conversation, trace_id="1" * 32)
-    response = _store(memory=sqlite_instance, conversation=conversation, role="assistant")
+    (await _store_async(memory=sqlite_instance, conversation=conversation))
+    (await _store_async(memory=sqlite_instance, conversation=conversation, role="assistant"))
+    (await _store_async(memory=sqlite_instance, conversation=conversation, trace_id="1" * 32))
+    response = await _store_async(memory=sqlite_instance, conversation=conversation, role="assistant")
     client = InMemoryTraceClient()
     client.mark_complete(trace_ids=("1" * 32,))
     scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
@@ -245,7 +300,7 @@ async def test_unlinked_request_prevents_a_false_verdict_async(sqlite_instance: 
         await scorer.score_async(scorable=MessageScorable.from_message(response), expectation=_expectation("lookup"))
     )[0]
     assert score.is_undetermined
-    observation = sqlite_instance.get_observations(observation_ids=score.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
     assert observation.acquisition is Acquisition.COMPLETE
     assert observation.payload.coverage.complete
     client.close()
@@ -253,8 +308,8 @@ async def test_unlinked_request_prevents_a_false_verdict_async(sqlite_instance: 
     assert replayed.get_value() is False
 
 
-@pytest.mark.parametrize("role", ["tool", "assistant", "developer"])
-async def test_untraced_non_user_request_prevents_false_verdict_async(
+@pytest.mark.parametrize("role", ["user", "tool", "simulated_tool", "assistant", "developer"])
+async def test_untraced_live_request_prevents_false_verdict_async(
     sqlite_instance: SQLiteMemory,
     capture: tuple[InMemoryTraceClient, TracerProvider],
     role: ChatMessageRole,
@@ -272,11 +327,15 @@ async def test_untraced_non_user_request_prevents_false_verdict_async(
         custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True)),
     )
     response = await PromptNormalizer().send_prompt_async(
-        message=Message.from_prompt(prompt="untraced", role=role),
+        message=Message.from_prompt(
+            prompt="untraced",
+            role=role,
+            prompt_metadata={MessagePiece.PREPENDED_HISTORY_METADATA_KEY: True},
+        ),
         target=target,
         conversation_id=conversation,
     )
-    scope, complete = resolve_message_trace_scope(
+    scope, complete = await resolve_message_trace_scope_async(
         scorable=MessageScorable.from_message(response), memory=sqlite_instance
     )
     assert scope is not None
@@ -306,7 +365,7 @@ async def test_rejected_resend_cannot_reuse_stored_trace_async(
     )
     original = next(
         piece
-        for piece in sqlite_instance.get_message_pieces(conversation_id=original_conversation)
+        for piece in (await sqlite_instance.get_message_pieces_async(conversation_id=original_conversation))
         if piece.role == "user"
     )
     metadata = dict(original.prompt_metadata)
@@ -318,7 +377,7 @@ async def test_rejected_resend_cannot_reuse_stored_trace_async(
         trace_config=TargetTraceConfig(enabled=enabled),
     )
     if failure_stage == "history":
-        _store(memory=sqlite_instance, conversation=conversation, role="assistant")
+        (await _store_async(memory=sqlite_instance, conversation=conversation, role="assistant"))
         failure = nullcontext()
     elif failure_stage == "normalize":
         failure = patch.object(target, "_get_normalized_conversation_async", side_effect=ValueError("normalize"))
@@ -328,7 +387,7 @@ async def test_rejected_resend_cannot_reuse_stored_trace_async(
         with pytest.raises(Exception, match="Error sending prompt"):
             await PromptNormalizer().send_prompt_async(message=duplicate, target=target, conversation_id=conversation)
         send.assert_not_called()
-    pieces = sqlite_instance.get_message_pieces(conversation_id=conversation)
+    pieces = await sqlite_instance.get_message_pieces_async(conversation_id=conversation)
     request = next(piece for piece in pieces if piece.role == "tool")
     response = next(piece for piece in pieces if piece.response_error == "processing")
     assert RequestTraceContext.from_metadata(request.prompt_metadata) is None
@@ -344,12 +403,12 @@ async def test_rejected_resend_cannot_reuse_stored_trace_async(
         acquire.assert_not_called()
     assert score.is_undetermined
     assert original.prompt_metadata == metadata
-    stored = sqlite_instance.get_message_pieces(prompt_ids=[original.id])[0]
+    stored = (await sqlite_instance.get_message_pieces_async(prompt_ids=[original.id]))[0]
     assert stored.prompt_metadata == metadata
 
 
 async def test_no_links_does_not_query_source_async(sqlite_instance: SQLiteMemory) -> None:
-    response = _store(memory=sqlite_instance, conversation=str(uuid.uuid4()), role="assistant")
+    response = await _store_async(memory=sqlite_instance, conversation=str(uuid.uuid4()), role="assistant")
     source = OtelTraceSource(trace_client=InMemoryTraceClient())
     scorer = OtelToolCallScorer(source=source)
     with patch.object(source, "acquire_async", new_callable=AsyncMock) as acquire:
@@ -406,8 +465,8 @@ async def test_malformed_request_metadata_raises_before_query_async(sqlite_insta
         conversation_id=str(uuid.uuid4()),
         prompt_metadata={RequestTraceContext.METADATA_KEY: "invalid"},
     )
-    sqlite_instance.add_message_to_memory(request=request.to_message())
-    response = _store(memory=sqlite_instance, conversation=request.conversation_id, role="assistant")
+    (await sqlite_instance.add_message_to_memory_async(request=request.to_message()))
+    response = await _store_async(memory=sqlite_instance, conversation=request.conversation_id, role="assistant")
     source = OtelTraceSource(trace_client=InMemoryTraceClient())
     with patch.object(source, "acquire_async", new_callable=AsyncMock) as acquire:
         with pytest.raises(RuntimeError, match="traceparent"):
@@ -417,19 +476,27 @@ async def test_malformed_request_metadata_raises_before_query_async(sqlite_insta
         acquire.assert_not_called()
 
 
-def test_multipart_request_deduplicates_trace_scope(sqlite_instance: SQLiteMemory) -> None:
+async def test_multipart_request_deduplicates_trace_scope(sqlite_instance: SQLiteMemory) -> None:
     conversation = str(uuid.uuid4())
     metadata = RequestTraceContext(traceparent=f"00-{'1' * 32}-{'2' * 16}-01").to_metadata()
-    sqlite_instance.add_message_to_memory(
-        request=Message(
-            message_pieces=[
-                MessagePiece(role="user", original_value="a", conversation_id=conversation, prompt_metadata=metadata),
-                MessagePiece(role="user", original_value="b", conversation_id=conversation, prompt_metadata=metadata),
-            ]
+    (
+        await sqlite_instance.add_message_to_memory_async(
+            request=Message(
+                message_pieces=[
+                    MessagePiece(
+                        role="user", original_value="a", conversation_id=conversation, prompt_metadata=metadata
+                    ),
+                    MessagePiece(
+                        role="user", original_value="b", conversation_id=conversation, prompt_metadata=metadata
+                    ),
+                ]
+            )
         )
     )
-    response = _store(memory=sqlite_instance, conversation=conversation, role="assistant")
-    assert resolve_message_trace_scope(scorable=MessageScorable.from_message(response), memory=sqlite_instance) == (
+    response = await _store_async(memory=sqlite_instance, conversation=conversation, role="assistant")
+    assert (
+        await resolve_message_trace_scope_async(scorable=MessageScorable.from_message(response), memory=sqlite_instance)
+    ) == (
         TraceScorable(trace_ids=("1" * 32,)),
         True,
     )

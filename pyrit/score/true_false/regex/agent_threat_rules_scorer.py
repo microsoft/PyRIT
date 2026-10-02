@@ -212,14 +212,14 @@ class AgentThreatRulesScorer(RegexScorer):
         data_type = piece.converted_value_data_type
         if data_type == "text":
             values: dict[str, str | None] = {"content": piece.converted_value}
-            if role_field := cls._ROLE_FIELDS.get(piece.role):
+            if role_field := cls._ROLE_FIELDS.get(piece.api_role):
                 values[role_field] = piece.converted_value
             return values
-        if data_type == "function_call_output" and piece.role == "tool":
+        if data_type == "function_call_output" and piece.api_role == "tool":
             payload = _json_object(piece.converted_value)
             output = _field_text(payload["output"]) if payload is not None and "output" in payload else None
             return {"content": output, "tool_response": output}
-        if data_type != "function_call" or piece.role != "assistant":
+        if data_type != "function_call" or piece.api_role != "assistant":
             return {}
         payload = _json_object(piece.converted_value)
         # Chat Completions nests the call under "function"; Responses keeps it flat.

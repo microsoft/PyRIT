@@ -10,6 +10,7 @@ from pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset import (
     VisualLeakBenchPIIType,
     _VisualLeakBenchDataset,
 )
+from pyrit.memory import MemoryInterface
 from pyrit.models import SeedDataset
 
 
@@ -339,7 +340,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     from unittest.mock import AsyncMock, MagicMock
 
     mock_serializer = MagicMock()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = "/results"
     mock_storage_io = AsyncMock()
     mock_storage_io.path_exists_async = AsyncMock(return_value=True)
