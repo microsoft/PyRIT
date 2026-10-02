@@ -90,6 +90,60 @@ docker compose --profile jupyter up --build
 docker compose --profile gui up --build
 ```
 
+Both profiles publish ports on `127.0.0.1` only. Open the GUI at
+`http://127.0.0.1:8000` or Jupyter at `http://127.0.0.1:8888` on the Docker host.
+The backend still listens on `0.0.0.0` **inside the container** so Docker can
+forward requests; the host-side port mapping is what restricts publication.
+
+**Security:** The GUI API does not require authentication when
+`ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, and `ENTRA_ALLOWED_GROUP_IDS` are all unset.
+Target API keys do not authenticate incoming GUI requests. Do not change the
+GUI mapping to `8000:8000` or expose it through a proxy without first configuring
+Entra authentication, HTTPS, and appropriate network access restrictions.
+Direct (non-Docker) backend launches should likewise bind to `127.0.0.1` unless
+you have secured remote access.
+
+### Updating an existing GUI installation
+
+Existing containers keep their original port mappings. Editing the Compose file
+or running `docker restart` does **not** apply the corrected publication.
+After updating your checkout, recreate the GUI container from the same `docker`
+directory, preserving any Compose project name or options used originally.
+Refresh the [source provenance variables](./README.md#source-build-provenance)
+in this shell before running Compose:
+
+```bash
+docker compose --profile gui up -d --force-recreate pyrit-gui
+```
+
+This briefly interrupts the GUI; finish any in-progress work first. If the
+existing installation is exposed to an untrusted network, restrict ingress
+before updating it. Check any custom Compose overrides for broader publication.
+
+Verify the **running** container, not just the YAML:
+
+```bash
+docker inspect pyrit-gui --format '{{json .NetworkSettings.Ports}}'
+```
+
+The `8000/tcp` entry must contain exactly one binding with
+`"HostIp":"127.0.0.1"` and `"HostPort":"8000"`, with no additional wildcard or
+IPv6 publication.
+
+For local no-auth acceptance, ensure the Entra settings above and
+`PYRIT_ALLOW_UNAUTHENTICATED_ADMIN` are unset in the effective container
+environment, including mounted environment files. Verify:
+
+- On the Docker host, the GUI loads at `http://127.0.0.1:8000`,
+  `/api/auth/config` reports `"enabled": false`, and `/api/targets` returns 200
+  without credentials.
+- `/api/config` still returns 403 without credentials.
+- From another machine, a TCP connection to the Docker host's LAN address on
+  port 8000 fails. An HTTP 401 or 403 is not a successful network-isolation test.
+
+The Docker CI workflow checks resolved Compose bindings without starting
+containers. That check does not replace this live local/remote verification.
+
 ## Troubleshooting
 
 **Image not found**: Run `python docker/build_pyrit_docker.py --source local` first
